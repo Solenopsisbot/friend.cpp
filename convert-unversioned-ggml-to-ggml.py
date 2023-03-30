@@ -27,7 +27,7 @@ def write_header(f_out, header):
 
     if magic != 0x67676d6c:
         raise Exception('Invalid file magic. Must be an old style ggml file.')
-    
+
     values = [
         0x67676d66,  # magic: ggml in hex
         1, # file version
