@@ -9,12 +9,11 @@
 
 #include <time.h>
 #include "./examples/main/main.cpp"
-#include "extra.h"
 #include "ggml.h"
-#include "llama_adapter.h"
+#include "model_adapter.h"
 
 //return val: 0=fail, 1=(original ggml, alpaca), 2=(ggmf), 3=(ggjt)
-static int file_format = 0;
+static FileFormat file_format = FileFormat::FAIL;
 static llama_context_params ctx_params;
 static gpt_params params;
 static int n_past = 0;
@@ -25,36 +24,7 @@ static llama_context *ctx;
 static std::vector<llama_token> last_n_tokens;
 static std::vector<llama_token> current_context_tokens;
 
-static clock_t bench_timer = 0;
-
-void timer_start()
-{
-    bench_timer = clock();
-}
-double timer_check()
-{
-    double ticks = clock() - bench_timer;
-    double time_taken = ((double)ticks) / CLOCKS_PER_SEC;
-    return time_taken;
-}
-
-void print_tok_vec(std::vector<llama_token> &embd)
-{
-    std::cout << "[";
-    bool first = true;
-    for (auto i : embd)
-    {
-        if (!first)
-        {
-            std::cout << ',';
-        }
-        first = false;
-        std::cout << i;
-    }
-    std::cout << "]";
-}
-
-bool llama_load_model(const load_model_inputs inputs, FileFormat file_format)
+bool llama_load_model(const load_model_inputs inputs, FileFormat in_file_format)
 {
     printf("System Info: %s\n", llama_print_system_info());
 
@@ -69,6 +39,8 @@ bool llama_load_model(const load_model_inputs inputs, FileFormat file_format)
     ctx_params.seed = -1;
     ctx_params.f16_kv = inputs.f16_kv;
     ctx_params.logits_all = false;
+
+    file_format = in_file_format;
 
     if (file_format == FileFormat::GGML || file_format == FileFormat::GGHF)
     {
