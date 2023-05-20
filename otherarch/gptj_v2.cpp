@@ -18,7 +18,7 @@
 
 
 // load the model's weights from a file
-ModelLoadResult gptj_model_load(const std::string & fname, gptj_model & model, gpt_vocab & vocab, int gpulayers) {
+ModelLoadResult gptj_v2_model_load(const std::string & fname, gptj_v2_model & model, gpt_vocab & vocab, int gpulayers) {
     printf("%s: loading model from '%s' - please wait ...\n", __func__, fname.c_str());
 
     auto fin = std::ifstream(fname, std::ios::binary);
@@ -382,8 +382,8 @@ ModelLoadResult gptj_model_load(const std::string & fname, gptj_model & model, g
 //
 // The GPT-J model requires about 16MB of memory per input token.
 //
-bool gptj_eval(
-        const gptj_model & model,
+bool gptj_v2_eval(
+        const gptj_v2_model & model,
         const int n_threads,
         const int n_past,
         const std::vector<gpt_vocab::id> & embd_inp,

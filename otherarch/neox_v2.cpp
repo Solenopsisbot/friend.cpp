@@ -16,7 +16,7 @@
 
 
 // load the model's weights from a file
-ModelLoadResult gpt_neox_model_load(const std::string & fname, gpt_neox_model & model, gpt_vocab & vocab, FileFormat file_format) {
+ModelLoadResult gpt_neox_v2_model_load(const std::string & fname, gpt_neox_v2_model & model, gpt_vocab & vocab, FileFormat file_format) {
     printf("%s: loading model from '%s' - please wait ...\n", __func__, fname.c_str());
 
     auto fin = std::ifstream(fname, std::ios::binary);
@@ -344,7 +344,7 @@ ModelLoadResult gpt_neox_model_load(const std::string & fname, gpt_neox_model & 
 
 // feed-forward network
 ggml_v2_tensor * gpt_neox_ff(
-        const gpt_neox_layer &layer,
+        const gpt_neox_layer_v2 &layer,
         ggml_v2_context * ctx0,
         ggml_v2_tensor * inp) {
     ggml_v2_tensor * cur = ggml_v2_norm(ctx0, inp);
@@ -386,8 +386,8 @@ ggml_v2_tensor * gpt_neox_ff(
 //   - embd_inp:  the embeddings of the tokens in the context
 //   - embd_w:    the predicted logits for the next token
 //
-bool gpt_neox_eval(
-        const gpt_neox_model & model,
+bool gpt_neox_v2_eval(
+        const gpt_neox_v2_model & model,
         const int n_threads,
         const int n_past,
         const std::vector<gpt_vocab::id> & embd_inp,

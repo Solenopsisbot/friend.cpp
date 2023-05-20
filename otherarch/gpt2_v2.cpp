@@ -15,12 +15,9 @@
 
 #include "model_adapter.h"
 
-#if defined(GGML_USE_CLBLAST)
-#include "ggml_v2-opencl.h"
-#endif
 
 // load the model's weights from a file
-ModelLoadResult gpt2_model_load(const std::string & fname, gpt2_model & model, gpt_vocab & vocab, FileFormat file_format, int gpulayers) {
+ModelLoadResult gpt2_v2_model_load(const std::string & fname, gpt2_v2_model & model, gpt_vocab & vocab, FileFormat file_format, int gpulayers) {
     printf("%s: loading model from '%s'\n", __func__, fname.c_str());
 
     auto fin = std::ifstream(fname, std::ios::binary);
@@ -379,8 +376,8 @@ ModelLoadResult gpt2_model_load(const std::string & fname, gpt2_model & model, g
 //   - embd_inp:  the embeddings of the tokens in the context
 //   - embd_w:    the predicted logits for the next token
 //
-bool gpt2_eval(
-        const gpt2_model & model,
+bool gpt2_v2_eval(
+        const gpt2_v2_model & model,
         const int n_threads,
         const int n_past,
         const std::vector<gpt_vocab::id> & embd_inp,
