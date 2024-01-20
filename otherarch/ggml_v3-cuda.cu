@@ -7414,7 +7414,7 @@ static void * ggml_v3_cuda_pool_malloc_vmm(int device, size_t size, size_t * act
     g_cuda_pool_used_v3[device] += size;
 
 #ifdef DEBUG_CUDA_MALLOC
-    printf("cuda pool[%d]: allocated %llu bytes at %llx [%s]\n", id, (unsigned long long) size, ptr);
+    printf("cuda pool[%d]: allocated %llu bytes at %llx []\n", device, (unsigned long long) size, ptr);
 #endif
 
     return ptr;
@@ -7424,7 +7424,7 @@ static void ggml_v3_cuda_pool_free_vmm(int device, void * ptr, size_t size) {
     scoped_spin_lock lock(g_cuda_pool_lock_v3);
 
 #ifdef DEBUG_CUDA_MALLOC
-    printf("cuda pool[%d]: freed %llu bytes at %llx\n", id, (unsigned long long) size, ptr);
+    printf("cuda pool[%d]: freed %llu bytes at %llx\n", device, (unsigned long long) size, ptr);
 #endif
 
     g_cuda_pool_used_v3[device] -= size;
