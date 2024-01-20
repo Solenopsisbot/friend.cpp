@@ -7434,19 +7434,11 @@ static void ggml_v3_cuda_pool_free_vmm(int device, void * ptr, size_t size) {
 }
 
 static void * ggml_v3_cuda_pool_malloc(int device, size_t size, size_t * actual_size) {
-    if (g_device_caps[device].vmm) {
-        return ggml_v3_cuda_pool_malloc_vmm(device, size, actual_size);
-    } else {
-        return ggml_v3_cuda_pool_malloc_leg(device, size, actual_size);
-    }
+    return ggml_v3_cuda_pool_malloc_leg(device, size, actual_size);
 }
 
 static void ggml_v3_cuda_pool_free(int device, void * ptr, size_t size) {
-    if (g_device_caps[device].vmm) {
-        ggml_v3_cuda_pool_free_vmm(device, ptr, size);
-    } else {
-        ggml_v3_cuda_pool_free_leg(device, ptr, size);
-    }
+    ggml_v3_cuda_pool_free_leg(device, ptr, size);
 }
 #else
 #define ggml_v3_cuda_pool_malloc ggml_v3_cuda_pool_malloc_leg
