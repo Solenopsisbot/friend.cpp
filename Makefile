@@ -139,7 +139,7 @@ endif
 ifdef LLAMA_CUBLAS
 	CUBLAS_FLAGS = -DGGML_USE_CUBLAS -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include
 	CUBLASLD_FLAGS = -lcuda -lcublas -lculibos -lcudart -lcublasLt -lpthread -ldl -lrt -Lconda/envs/linux/lib -Lconda/envs/linux/lib/stubs -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L$(CUDA_PATH)/targets/x86_64-linux/lib -L/usr/local/cuda/targets/aarch64-linux/lib -L/usr/lib/wsl/lib
-	CUBLAS_OBJS = ggml-cuda.o ggml_v2-cuda.o ggml_v2-cuda-legacy.o
+	CUBLAS_OBJS = ggml-cuda.o ggml_v3-cuda.o ggml_v2-cuda.o ggml_v2-cuda-legacy.o
 	NVCC      = nvcc
 	NVCCFLAGS = --forward-unknown-to-host-compiler -use_fast_math
 
@@ -193,6 +193,8 @@ ggml_v2-cuda.o: otherarch/ggml_v2-cuda.cu otherarch/ggml_v2-cuda.h
 	$(NVCC) $(NVCCFLAGS) $(subst -Ofast,-O3,$(CXXFLAGS)) $(CUBLAS_FLAGS) $(CUBLAS_CXXFLAGS) -Wno-pedantic -c $< -o $@
 ggml_v2-cuda-legacy.o: otherarch/ggml_v2-cuda-legacy.cu otherarch/ggml_v2-cuda-legacy.h
 	$(NVCC) $(NVCCFLAGS) $(subst -Ofast,-O3,$(CXXFLAGS)) $(CUBLAS_FLAGS) $(CUBLAS_CXXFLAGS) -Wno-pedantic -c $< -o $@
+ggml_v3-cuda.o: otherarch/ggml_v3-cuda.cu otherarch/ggml_v3-cuda.h
+	$(NVCC) $(NVCCFLAGS) $(subst -Ofast,-O3,$(CXXFLAGS)) $(CUBLAS_FLAGS) $(CUBLAS_CXXFLAGS) -Wno-pedantic -c $< -o $@
 endif # LLAMA_CUBLAS
 
 ifdef LLAMA_HIPBLAS
@@ -205,7 +207,7 @@ ifdef LLAMA_HIPBLAS
 	LLAMA_CUDA_KQUANTS_ITER ?= 2
 	HIPFLAGS   += -DGGML_USE_HIPBLAS -DGGML_USE_CUBLAS $(shell $(ROCM_PATH)/bin/hipconfig -C)
 	HIPLDFLAGS    += -L$(ROCM_PATH)/lib -Wl,-rpath=$(ROCM_PATH)/lib -lhipblas -lamdhip64 -lrocblas
-	HIP_OBJS       += ggml-cuda.o ggml_v2-cuda.o ggml_v2-cuda-legacy.o
+	HIP_OBJS       += ggml-cuda.o ggml_v3-cuda.o ggml_v2-cuda.o ggml_v2-cuda-legacy.o
 ggml-cuda.o: HIPFLAGS += $(addprefix --offload-arch=,$(GPU_TARGETS)) \
 						-DGGML_CUDA_DMMV_X=$(LLAMA_CUDA_DMMV_X) \
                         -DGGML_CUDA_MMV_Y=$(LLAMA_CUDA_MMV_Y) \
@@ -218,11 +220,17 @@ ggml_v2-cuda-legacy.o: HIPFLAGS += $(addprefix --offload-arch=,$(GPU_TARGETS)) \
 						-DGGML_CUDA_DMMV_X=$(LLAMA_CUDA_DMMV_X) \
                         -DGGML_CUDA_MMV_Y=$(LLAMA_CUDA_MMV_Y) \
                         -DK_QUANTS_PER_ITERATION=$(LLAMA_CUDA_KQUANTS_ITER)
+ggml_v3-cuda.o: HIPFLAGS += $(addprefix --offload-arch=,$(GPU_TARGETS)) \
+						-DGGML_CUDA_DMMV_X=$(LLAMA_CUDA_DMMV_X) \
+                        -DGGML_CUDA_MMV_Y=$(LLAMA_CUDA_MMV_Y) \
+                        -DK_QUANTS_PER_ITERATION=$(LLAMA_CUDA_KQUANTS_ITER)
 ggml-cuda.o: ggml-cuda.cu ggml-cuda.h
 	$(HCXX) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
 ggml_v2-cuda.o: otherarch/ggml_v2-cuda.cu otherarch/ggml_v2-cuda.h
 	$(HCXX) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
 ggml_v2-cuda-legacy.o: otherarch/ggml_v2-cuda-legacy.cu otherarch/ggml_v2-cuda-legacy.h
+	$(HCXX) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
+ggml_v3-cuda.o: otherarch/ggml_v3-cuda.cu otherarch/ggml_v3-cuda.h
 	$(HCXX) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
 endif # LLAMA_HIPBLAS
 
@@ -371,6 +379,22 @@ ggml-alloc.o: ggml-alloc.c ggml.h ggml-alloc.h
 ggml-backend.o: ggml-backend.c ggml.h ggml-backend.h
 	$(CC)  $(CFLAGS) -c $< -o $@
 
+#version 3 libs
+ggml_v3.o: otherarch/ggml_v3.c otherarch/ggml_v3.h
+	$(CC)  $(CFLAGS) $(FULLCFLAGS) -c $< -o $@
+ggml_v3_openblas.o: otherarch/ggml_v3.c otherarch/ggml_v3.h
+	$(CC)  $(CFLAGS) $(FULLCFLAGS) $(OPENBLAS_FLAGS) -c $< -o $@
+ggml_v3_failsafe.o: otherarch/ggml_v3.c otherarch/ggml_v3.h
+	$(CC)  $(CFLAGS) $(NONECFLAGS) -c $< -o $@
+ggml_v3_noavx2.o: otherarch/ggml_v3.c otherarch/ggml_v3.h
+	$(CC)  $(CFLAGS) $(SIMPLECFLAGS) -c $< -o $@
+ggml_v3_clblast.o: otherarch/ggml_v3.c otherarch/ggml_v3.h
+	$(CC)  $(CFLAGS) $(FULLCFLAGS) $(CLBLAST_FLAGS) -c $< -o $@
+ggml_v3_cublas.o: otherarch/ggml_v3.c otherarch/ggml_v3.h
+	$(CC)  $(CFLAGS) $(FULLCFLAGS) $(CUBLAS_FLAGS) $(HIPFLAGS) -c $< -o $@
+ggml_v3_clblast_noavx2.o: otherarch/ggml_v3.c otherarch/ggml_v3.h
+	$(CC)  $(CFLAGS) $(SIMPLECFLAGS) $(CLBLAST_FLAGS) -c $< -o $@
+
 #version 2 libs
 ggml_v2.o: otherarch/ggml_v2.c otherarch/ggml_v2.h
 	$(CC)  $(CFLAGS) $(FULLCFLAGS) -c $< -o $@
@@ -400,6 +424,8 @@ ggml_v2-opencl.o: otherarch/ggml_v2-opencl.cpp otherarch/ggml_v2-opencl.h
 	$(CXX) $(CXXFLAGS) $(CLBLAST_FLAGS) -c $< -o $@
 ggml_v2-opencl-legacy.o: otherarch/ggml_v2-opencl-legacy.c otherarch/ggml_v2-opencl-legacy.h
 	$(CC) $(CFLAGS) -c $< -o $@
+ggml_v3-opencl.o: otherarch/ggml_v3-opencl.cpp otherarch/ggml_v3-opencl.h
+	$(CXX) $(CXXFLAGS) $(CLBLAST_FLAGS) -c $< -o $@
 
 # intermediate objects
 llama.o: llama.cpp ggml.h ggml-alloc.h ggml-backend.h ggml-cuda.h ggml-metal.h llama.h otherarch/llama-util.h
@@ -440,11 +466,11 @@ gguf: examples/gguf/gguf.cpp build-info.h ggml.o llama.o $(OBJS)
 
 
 #generated libraries
-koboldcpp_default: ggml.o ggml_v2.o ggml_v1.o expose.o common.o gpttype_adapter.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
+koboldcpp_default: ggml.o ggml_v3.o ggml_v2.o ggml_v1.o expose.o common.o gpttype_adapter.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
 	$(DEFAULT_BUILD)
 
 ifdef OPENBLAS_BUILD
-koboldcpp_openblas: ggml_openblas.o ggml_v2_openblas.o ggml_v1.o expose.o common.o gpttype_adapter.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
+koboldcpp_openblas: ggml_openblas.o ggml_v3_openblas.o ggml_v2_openblas.o ggml_v1.o expose.o common.o gpttype_adapter.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
 	$(OPENBLAS_BUILD)
 else
 koboldcpp_openblas:
@@ -452,7 +478,7 @@ koboldcpp_openblas:
 endif
 
 ifdef FAILSAFE_BUILD
-koboldcpp_failsafe: ggml_failsafe.o ggml_v2_failsafe.o ggml_v1_failsafe.o expose.o common.o gpttype_adapter_failsafe.o ggml-quants_failsafe.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
+koboldcpp_failsafe: ggml_failsafe.o ggml_v3_failsafe.o ggml_v2_failsafe.o ggml_v1_failsafe.o expose.o common.o gpttype_adapter_failsafe.o ggml-quants_failsafe.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
 	$(FAILSAFE_BUILD)
 else
 koboldcpp_failsafe:
@@ -460,7 +486,7 @@ koboldcpp_failsafe:
 endif
 
 ifdef NOAVX2_BUILD
-koboldcpp_noavx2: ggml_noavx2.o ggml_v2_noavx2.o ggml_v1_failsafe.o expose.o common.o gpttype_adapter_failsafe.o ggml-quants_noavx2.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
+koboldcpp_noavx2: ggml_noavx2.o ggml_v3_noavx2.o ggml_v2_noavx2.o ggml_v1_failsafe.o expose.o common.o gpttype_adapter_failsafe.o ggml-quants_noavx2.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
 	$(NOAVX2_BUILD)
 else
 koboldcpp_noavx2:
@@ -468,10 +494,10 @@ koboldcpp_noavx2:
 endif
 
 ifdef CLBLAST_BUILD
-koboldcpp_clblast: ggml_clblast.o ggml_v2_clblast.o ggml_v1.o expose.o common.o gpttype_adapter_clblast.o ggml-opencl.o ggml_v2-opencl.o ggml_v2-opencl-legacy.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
+koboldcpp_clblast: ggml_clblast.o ggml_v3_clblast.o ggml_v2_clblast.o ggml_v1.o expose.o common.o gpttype_adapter_clblast.o ggml-opencl.o ggml_v3-opencl.o ggml_v2-opencl.o ggml_v2-opencl-legacy.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
 	$(CLBLAST_BUILD)
 ifdef NOAVX2_BUILD
-koboldcpp_clblast_noavx2: ggml_clblast_noavx2.o ggml_v2_clblast_noavx2.o ggml_v1_failsafe.o expose.o common.o gpttype_adapter_clblast_noavx2.o ggml-opencl.o ggml_v2-opencl.o ggml_v2-opencl-legacy.o ggml-quants_noavx2.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
+koboldcpp_clblast_noavx2: ggml_clblast_noavx2.o ggml_v3_clblast_noavx2.o ggml_v2_clblast_noavx2.o ggml_v1_failsafe.o expose.o common.o gpttype_adapter_clblast_noavx2.o ggml-opencl.o ggml_v3-opencl.o ggml_v2-opencl.o ggml_v2-opencl-legacy.o ggml-quants_noavx2.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
 	$(CLBLAST_BUILD)
 else
 koboldcpp_clblast_noavx2:
@@ -485,7 +511,7 @@ koboldcpp_clblast_noavx2:
 endif
 
 ifdef CUBLAS_BUILD
-koboldcpp_cublas: ggml_cublas.o ggml_v2_cublas.o ggml_v1.o expose.o common.o gpttype_adapter_cublas.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(CUBLAS_OBJS) $(OBJS)
+koboldcpp_cublas: ggml_cublas.o ggml_v3_cublas.o ggml_v2_cublas.o ggml_v1.o expose.o common.o gpttype_adapter_cublas.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(CUBLAS_OBJS) $(OBJS)
 	$(CUBLAS_BUILD)
 else
 koboldcpp_cublas:
@@ -493,7 +519,7 @@ koboldcpp_cublas:
 endif
 
 ifdef HIPBLAS_BUILD
-koboldcpp_hipblas: ggml_cublas.o ggml_v2_cublas.o ggml_v1.o expose.o common.o gpttype_adapter_cublas.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(HIP_OBJS) $(OBJS)
+koboldcpp_hipblas: ggml_cublas.o ggml_v3_cublas.o ggml_v2_cublas.o ggml_v1.o expose.o common.o gpttype_adapter_cublas.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(HIP_OBJS) $(OBJS)
 	$(HIPBLAS_BUILD)
 else
 koboldcpp_hipblas:
