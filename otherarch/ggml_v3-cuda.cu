@@ -7254,7 +7254,7 @@ static void im2col_f32_f16_cuda(const float* x, half* dst,
 }
 
 // buffer pool for cuda
-#define MAX_CUDA_BUFFERS 256
+#define MAX_CUDA_BUFFERS_V3 512
 
 struct scoped_spin_lock {
     std::atomic_flag& lock;
@@ -7278,7 +7278,7 @@ struct ggml_v3_cuda_buffer {
     size_t size = 0;
 };
 
-static ggml_v3_cuda_buffer g_cuda_buffer_pool[GGML_V3_CUDA_MAX_DEVICES][MAX_CUDA_BUFFERS];
+static ggml_v3_cuda_buffer g_cuda_buffer_pool[GGML_V3_CUDA_MAX_DEVICES][MAX_CUDA_BUFFERS_V3];
 static size_t g_cuda_pool_size[GGML_V3_CUDA_MAX_DEVICES] = {0};
 
 static void * ggml_v3_cuda_pool_malloc_leg(int device, size_t size, size_t * actual_size) {
@@ -7289,7 +7289,7 @@ static void * ggml_v3_cuda_pool_malloc_leg(int device, size_t size, size_t * act
     int worst_i = -1;
     size_t worst_size = 0; //largest unused buffer seen so far
 
-    for (int i = 0; i < MAX_CUDA_BUFFERS; ++i) {
+    for (int i = 0; i < MAX_CUDA_BUFFERS_V3; ++i) {
         ggml_v3_cuda_buffer& b = g_cuda_buffer_pool[device][i];
         if (b.size > 0 && b.size >= size && b.size < best_size)
         {
@@ -7336,7 +7336,7 @@ static void * ggml_v3_cuda_pool_malloc_leg(int device, size_t size, size_t * act
 static void ggml_v3_cuda_pool_free_leg(int device, void * ptr, size_t size) {
     scoped_spin_lock lock(g_cuda_pool_lock);
 
-    for (int i = 0; i < MAX_CUDA_BUFFERS; ++i) {
+    for (int i = 0; i < MAX_CUDA_BUFFERS_V3; ++i) {
         ggml_v3_cuda_buffer& b = g_cuda_buffer_pool[device][i];
         if (b.ptr == nullptr) {
             b.ptr = ptr;
@@ -7344,7 +7344,7 @@ static void ggml_v3_cuda_pool_free_leg(int device, void * ptr, size_t size) {
             return;
         }
     }
-    fprintf(stderr, "WARNING: cuda buffer pool full, increase MAX_CUDA_BUFFERS\n");
+    fprintf(stderr, "WARNING: cuda buffer pool full, increase MAX_CUDA_BUFFERS_V3\n");
     ggml_v3_cuda_set_device(device);
     CUDA_CHECK(cudaFree(ptr));
     g_cuda_pool_size[device] -= size;
