@@ -147,7 +147,7 @@ ifdef CUDA_DOCKER_ARCH
 	NVCCFLAGS += -Wno-deprecated-gpu-targets -arch=$(CUDA_DOCKER_ARCH)
 else
 ifdef LLAMA_PORTABLE
-	NVCCFLAGS += -Wno-deprecated-gpu-targets -arch=all-major
+	NVCCFLAGS += -Wno-deprecated-gpu-targets -arch=all
 else
 	NVCCFLAGS += -arch=native
 endif
