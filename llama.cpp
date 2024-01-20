@@ -6482,6 +6482,7 @@ static uint8_t llama_token_to_byte(const llama_vocab& vocab, llama_token id) {
     }
     default:
         GGML_ASSERT_CONTINUE(false);
+        return 0;
     }
 }
 
@@ -6497,6 +6498,7 @@ static llama_token llama_byte_to_token(const llama_vocab & vocab, uint8_t ch) {
         }
         default:
             GGML_ASSERT_CONTINUE(false);
+            return 0;
     }
 }
 
