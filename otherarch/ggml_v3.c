@@ -939,7 +939,7 @@ static_assert(sizeof(block_q8_1) == 2*sizeof(float) + QK8_1, "wrong q8_1 block s
 //
 
 // Super-block size
-#ifdef GGML_V3_QKK_64
+#ifdef GGML_QKK_64
 #define QK_K 64
 #define K_SCALE_SIZE 4
 #else
@@ -963,7 +963,7 @@ static_assert(sizeof(block_q2_K) == 2*sizeof(ggml_v3_fp16_t) + QK_K/16 + QK_K/4,
 // weight is represented as x = a * q
 // 16 blocks of 16 elements each
 // Effectively 3.4375 bits per weight
-#ifdef GGML_V3_QKK_64
+#ifdef GGML_QKK_64
 typedef struct {
     uint8_t hmask[QK_K/8];     // quants - high bit
     uint8_t qs[QK_K/4];        // quants - low 2 bits
@@ -985,7 +985,7 @@ static_assert(sizeof(block_q3_K) == sizeof(ggml_v3_fp16_t) + QK_K / 4 + QK_K / 8
 // 8 blocks of 32 elements each
 // weight is represented as x = a * q + b
 // Effectively 4.5 bits per weight
-#ifdef GGML_V3_QKK_64
+#ifdef GGML_QKK_64
 typedef struct {
     ggml_v3_fp16_t d[2];          // super-block scales/mins
     uint8_t scales[2];         // 4-bit block scales/mins
@@ -1006,7 +1006,7 @@ static_assert(sizeof(block_q4_K) == 2*sizeof(ggml_v3_fp16_t) + K_SCALE_SIZE + QK
 // 8 blocks of 32 elements each
 // weight is represented as x = a * q + b
 // Effectively 5.5 bits per weight
-#ifdef GGML_V3_QKK_64
+#ifdef GGML_QKK_64
 typedef struct {
     ggml_v3_fp16_t d;               // super-block scale
     int8_t  scales[QK_K/16];     // 8-bit block scales

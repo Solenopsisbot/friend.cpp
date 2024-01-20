@@ -23,7 +23,7 @@
 
 #ifdef GGML_USE_K_QUANTS
 #ifndef QK_K
-#ifdef GGML_V3_QKK_64
+#ifdef GGML_QKK_64
 #define QK_K 64
 #else
 #define QK_K 256

@@ -400,7 +400,7 @@ typedef float (*vec_dot_q_mul_mat_cuda_t)(
 
 //================================= k-quants
 
-#ifdef GGML_V3_QKK_64
+#ifdef GGML_QKK_64
 #define QK_K 64
 #define K_SCALE_SIZE 4
 #else
@@ -422,7 +422,7 @@ static_assert(sizeof(block_q2_K) == 2*sizeof(ggml_v3_fp16_t) + QK_K/16 + QK_K/4,
 typedef struct {
     uint8_t hmask[QK_K/8];     // quants - high bit
     uint8_t qs[QK_K/4];        // quants - low 2 bits
-#ifdef GGML_V3_QKK_64
+#ifdef GGML_QKK_64
     uint8_t scales[2]; // scales, quantized with 8 bits
 #else
     uint8_t scales[K_SCALE_SIZE]; // scales, quantized with 6 bits
@@ -433,7 +433,7 @@ typedef struct {
 
 #define QR4_K 2
 #define QI4_K (QK_K / (4*QR4_K))
-#ifdef GGML_V3_QKK_64
+#ifdef GGML_QKK_64
 typedef struct {
     half    dm[2];             // super-block scales/mins
     uint8_t scales[2];         // 4-bit block scales/mins
@@ -451,7 +451,7 @@ static_assert(sizeof(block_q4_K) == 2*sizeof(ggml_v3_fp16_t) + 3*QK_K/64 + QK_K/
 
 #define QR5_K 2
 #define QI5_K (QK_K / (4*QR5_K))
-#ifdef GGML_V3_QKK_64
+#ifdef GGML_QKK_64
 typedef struct {
     half d;                  // super-block scale
     int8_t scales[QK_K/16];  // block scales
@@ -541,7 +541,7 @@ static_assert(K_QUANTS_PER_ITERATION == 1 || K_QUANTS_PER_ITERATION == 2, "K_QUA
 #define MUL_MAT_SRC1_COL_STRIDE 128
 
 #define MAX_STREAMS 8
-static cudaStream_t g_cudaStreams[GGML_V3_CUDA_MAX_DEVICES][MAX_STREAMS] = { { nullptr } };
+static cudaStream_t g_cudaStreams_v3[GGML_V3_CUDA_MAX_DEVICES][MAX_STREAMS] = { { nullptr } };
 
 struct ggml_v3_tensor_extra_gpu {
     void * data_device[GGML_V3_CUDA_MAX_DEVICES]; // 1 pointer for each device for split tensors
@@ -561,25 +561,25 @@ static void ggml_v3_cuda_set_device(const int device) {
     CUDA_CHECK(cudaSetDevice(device));
 }
 
-static int g_device_count = -1;
-static int g_main_device = 0;
-static float g_tensor_split[GGML_V3_CUDA_MAX_DEVICES] = {0};
-static bool g_mul_mat_q = false;
+static int g_device_count_v3 = -1;
+static int g_main_device_v3 = 0;
+static float g_tensor_split_v3[GGML_V3_CUDA_MAX_DEVICES] = {0};
+static bool g_mul_mat_q_v3 = false;
 
-struct cuda_device_capabilities {
+struct cuda_device_capabilities_v3 {
     int     cc;                 // compute capability
     size_t  smpb;               // max. shared memory per block
     bool    vmm;                // virtual memory support
     size_t  vmm_granularity;    // granularity of virtual memory
 };
 
-static cuda_device_capabilities g_device_caps[GGML_V3_CUDA_MAX_DEVICES] = { {0, 0, false, 0} };
+static cuda_device_capabilities_v3 g_device_caps_v3[GGML_V3_CUDA_MAX_DEVICES] = { {0, 0, false, 0} };
 
-static void * g_scratch_buffer = nullptr;
-static size_t g_scratch_size = 0; // disabled by default
-static size_t g_scratch_offset = 0;
+static void * g_scratch_buffer_v3 = nullptr;
+static size_t g_scratch_size_v3 = 0; // disabled by default
+static size_t g_scratch_offset_v3 = 0;
 
-static cublasHandle_t g_cublas_handles[GGML_V3_CUDA_MAX_DEVICES] = {nullptr};
+static cublasHandle_t g_cublas_handles_v3[GGML_V3_CUDA_MAX_DEVICES] = {nullptr};
 
 [[noreturn]]
 static __device__ void bad_arch() {
@@ -3643,7 +3643,7 @@ static __device__ __forceinline__ float vec_dot_q3_K_q8_1_mul_mat(
 static __device__ __forceinline__ float vec_dot_q4_K_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
 
-#ifndef GGML_V3_QKK_64
+#ifndef GGML_QKK_64
     const block_q4_K * bq4_K = (const block_q4_K *) vbq;
 
     int    v[2];
@@ -3830,7 +3830,7 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1_mul_mat(
 static __device__ __forceinline__ float vec_dot_q5_K_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & iqs) {
 
-#ifndef GGML_V3_QKK_64
+#ifndef GGML_QKK_64
     const block_q5_K * bq5_K = (const block_q5_K *) vbq;
 
     int   vl[2];
@@ -6524,7 +6524,7 @@ static void ggml_v3_mul_mat_q4_0_q8_1_cuda(
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
-    const int compute_capability = g_device_caps[id].cc;
+    const int compute_capability = g_device_caps_v3[id].cc;
 
     int mmq_x, mmq_y, nwarps;
     if (compute_capability >= CC_RDNA2) {
@@ -6569,7 +6569,7 @@ static void ggml_v3_mul_mat_q4_1_q8_1_cuda(
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
-    const int compute_capability = g_device_caps[id].cc;
+    const int compute_capability = g_device_caps_v3[id].cc;
 
     int mmq_x, mmq_y, nwarps;
     if (compute_capability >= CC_RDNA2) {
@@ -6614,7 +6614,7 @@ static void ggml_v3_mul_mat_q5_0_q8_1_cuda(
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
-    const int compute_capability = g_device_caps[id].cc;
+    const int compute_capability = g_device_caps_v3[id].cc;
 
     int mmq_x, mmq_y, nwarps;
     if (compute_capability >= CC_RDNA2) {
@@ -6659,7 +6659,7 @@ static void ggml_v3_mul_mat_q5_1_q8_1_cuda(
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
-    const int compute_capability = g_device_caps[id].cc;
+    const int compute_capability = g_device_caps_v3[id].cc;
 
     int mmq_x, mmq_y, nwarps;
     if (compute_capability >= CC_RDNA2) {
@@ -6704,7 +6704,7 @@ static void ggml_v3_mul_mat_q8_0_q8_1_cuda(
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
-    const int compute_capability = g_device_caps[id].cc;
+    const int compute_capability = g_device_caps_v3[id].cc;
 
     int mmq_x, mmq_y, nwarps;
     if (compute_capability >= CC_RDNA2) {
@@ -6749,7 +6749,7 @@ static void ggml_v3_mul_mat_q2_K_q8_1_cuda(
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
-    const int compute_capability = g_device_caps[id].cc;
+    const int compute_capability = g_device_caps_v3[id].cc;
 
     int mmq_x, mmq_y, nwarps;
     if (compute_capability >= CC_RDNA2) {
@@ -6796,7 +6796,7 @@ static void ggml_v3_mul_mat_q3_K_q8_1_cuda(
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
-    const int compute_capability = g_device_caps[id].cc;
+    const int compute_capability = g_device_caps_v3[id].cc;
 
     int mmq_x, mmq_y, nwarps;
     if (compute_capability >= CC_RDNA2) {
@@ -6842,7 +6842,7 @@ static void ggml_v3_mul_mat_q4_K_q8_1_cuda(
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
-    const int compute_capability = g_device_caps[id].cc;
+    const int compute_capability = g_device_caps_v3[id].cc;
 
     int mmq_x, mmq_y, nwarps;
     if (compute_capability >= CC_RDNA2) {
@@ -6887,7 +6887,7 @@ static void ggml_v3_mul_mat_q5_K_q8_1_cuda(
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
-    const int compute_capability = g_device_caps[id].cc;
+    const int compute_capability = g_device_caps_v3[id].cc;
 
     int mmq_x, mmq_y, nwarps;
     if (compute_capability >= CC_RDNA2) {
@@ -6932,7 +6932,7 @@ static void ggml_v3_mul_mat_q6_K_q8_1_cuda(
 
     int id;
     CUDA_CHECK(cudaGetDevice(&id));
-    const int compute_capability = g_device_caps[id].cc;
+    const int compute_capability = g_device_caps_v3[id].cc;
 
     int mmq_x, mmq_y, nwarps;
     if (compute_capability >= CC_RDNA2) {
@@ -7164,7 +7164,7 @@ static void soft_max_f16_cuda(const float * x, const float * y, float * dst, con
     const dim3 block_nums(nrows_x, 1, 1);
     const size_t shmem = (GGML_V3_PAD(ncols_x, 2*WARP_SIZE) + WARP_SIZE)*sizeof(half);
     static_assert(CUDA_SOFT_MAX_BLOCK_SIZE == 1024, "These values need to be adjusted.");
-    if (shmem <= g_device_caps[g_main_device].smpb) {
+    if (shmem <= g_device_caps_v3[g_main_device_v3].smpb) {
         switch (ncols_x) {
             case 32:
                 soft_max_f16<true, 32, 32, true><<<block_nums, block_dims, shmem, stream>>>(x, y, dst, ncols_x, nrows_y, scale);
@@ -7207,7 +7207,7 @@ static void soft_max_f32_cuda(const float * x, const float * y, float * dst, con
     const dim3 block_nums(nrows_x, 1, 1);
     const size_t shmem = (GGML_V3_PAD(ncols_x, WARP_SIZE) + WARP_SIZE)*sizeof(float);
     static_assert(CUDA_SOFT_MAX_BLOCK_SIZE == 1024, "These values need to be adjusted.");
-    if (shmem < g_device_caps[g_main_device].smpb) {
+    if (shmem < g_device_caps_v3[g_main_device_v3].smpb) {
         switch (ncols_x) {
             case 32:
                 soft_max_f32<true, 32, 32><<<block_nums, block_dims, shmem, stream>>>(x, y, dst, ncols_x, nrows_y, scale);
@@ -7270,7 +7270,7 @@ struct scoped_spin_lock {
     scoped_spin_lock& operator=(const scoped_spin_lock&) = delete;
 };
 
-static std::atomic_flag g_cuda_pool_lock = ATOMIC_FLAG_INIT;
+static std::atomic_flag g_cuda_pool_lock_v3 = ATOMIC_FLAG_INIT;
 
 // #define DEBUG_CUDA_MALLOC
 struct ggml_v3_cuda_buffer {
@@ -7278,11 +7278,11 @@ struct ggml_v3_cuda_buffer {
     size_t size = 0;
 };
 
-static ggml_v3_cuda_buffer g_cuda_buffer_pool[GGML_V3_CUDA_MAX_DEVICES][MAX_CUDA_BUFFERS_V3];
-static size_t g_cuda_pool_size[GGML_V3_CUDA_MAX_DEVICES] = {0};
+static ggml_v3_cuda_buffer g_cuda_buffer_pool_v3[GGML_V3_CUDA_MAX_DEVICES][MAX_CUDA_BUFFERS_V3];
+static size_t g_cuda_pool_size_v3[GGML_V3_CUDA_MAX_DEVICES] = {0};
 
 static void * ggml_v3_cuda_pool_malloc_leg(int device, size_t size, size_t * actual_size) {
-    scoped_spin_lock lock(g_cuda_pool_lock);
+    scoped_spin_lock lock(g_cuda_pool_lock_v3);
 
     int best_i = -1;
     size_t best_size = std::numeric_limits<size_t>::max(); //smallest unused buffer that fits our needs
@@ -7290,7 +7290,7 @@ static void * ggml_v3_cuda_pool_malloc_leg(int device, size_t size, size_t * act
     size_t worst_size = 0; //largest unused buffer seen so far
 
     for (int i = 0; i < MAX_CUDA_BUFFERS_V3; ++i) {
-        ggml_v3_cuda_buffer& b = g_cuda_buffer_pool[device][i];
+        ggml_v3_cuda_buffer& b = g_cuda_buffer_pool_v3[device][i];
         if (b.size > 0 && b.size >= size && b.size < best_size)
         {
             best_i = i;
@@ -7304,21 +7304,21 @@ static void * ggml_v3_cuda_pool_malloc_leg(int device, size_t size, size_t * act
     }
     if(best_i!=-1) //found the smallest buffer that fits our needs
     {
-        ggml_v3_cuda_buffer& b = g_cuda_buffer_pool[device][best_i];
+        ggml_v3_cuda_buffer& b = g_cuda_buffer_pool_v3[device][best_i];
         void * ptr = b.ptr;
         *actual_size = b.size;
         b.ptr = nullptr;
         b.size = 0;
         return ptr;
     }
-    if(worst_i!=-1 && !g_mul_mat_q) //no buffer that fits our needs, resize largest one to save memory (non mmq only)
+    if(worst_i!=-1 && !g_mul_mat_q_v3) //no buffer that fits our needs, resize largest one to save memory (non mmq only)
     {
-        ggml_v3_cuda_buffer& b = g_cuda_buffer_pool[device][worst_i];
+        ggml_v3_cuda_buffer& b = g_cuda_buffer_pool_v3[device][worst_i];
         b.size = 0;
         void * ptr = b.ptr;
 		ggml_v3_cuda_set_device(device);
         cudaFree(ptr);
-		g_cuda_pool_size[device] -= size;
+		g_cuda_pool_size_v3[device] -= size;
         b.ptr = ptr = nullptr;
     }
     void * ptr;
@@ -7328,16 +7328,16 @@ static void * ggml_v3_cuda_pool_malloc_leg(int device, size_t size, size_t * act
     ggml_v3_cuda_set_device(device);
     CUDA_CHECK(cudaMalloc((void **) &ptr, look_ahead_size));
     *actual_size = look_ahead_size;
-    g_cuda_pool_size[device] += look_ahead_size;
+    g_cuda_pool_size_v3[device] += look_ahead_size;
 
     return ptr;
 }
 
 static void ggml_v3_cuda_pool_free_leg(int device, void * ptr, size_t size) {
-    scoped_spin_lock lock(g_cuda_pool_lock);
+    scoped_spin_lock lock(g_cuda_pool_lock_v3);
 
     for (int i = 0; i < MAX_CUDA_BUFFERS_V3; ++i) {
-        ggml_v3_cuda_buffer& b = g_cuda_buffer_pool[device][i];
+        ggml_v3_cuda_buffer& b = g_cuda_buffer_pool_v3[device][i];
         if (b.ptr == nullptr) {
             b.ptr = ptr;
             b.size = size;
@@ -7347,31 +7347,31 @@ static void ggml_v3_cuda_pool_free_leg(int device, void * ptr, size_t size) {
     fprintf(stderr, "WARNING: cuda buffer pool full, increase MAX_CUDA_BUFFERS_V3\n");
     ggml_v3_cuda_set_device(device);
     CUDA_CHECK(cudaFree(ptr));
-    g_cuda_pool_size[device] -= size;
+    g_cuda_pool_size_v3[device] -= size;
 }
 
 #if !defined(GGML_USE_HIPBLAS)
 // pool with virtual memory
-static CUdeviceptr g_cuda_pool_addr[GGML_V3_CUDA_MAX_DEVICES] = {0};
-static size_t g_cuda_pool_used[GGML_V3_CUDA_MAX_DEVICES] = {0};
+static CUdeviceptr g_cuda_pool_addr_v3[GGML_V3_CUDA_MAX_DEVICES] = {0};
+static size_t g_cuda_pool_used_v3[GGML_V3_CUDA_MAX_DEVICES] = {0};
 static const size_t CUDA_POOL_VMM_MAX_SIZE = 1ull << 35; // 32 GB
 
 static void * ggml_v3_cuda_pool_malloc_vmm(int device, size_t size, size_t * actual_size) {
-    scoped_spin_lock lock(g_cuda_pool_lock);
+    scoped_spin_lock lock(g_cuda_pool_lock_v3);
 
     // round up the allocation size to the alignment to ensure that all allocations are aligned for all data types
     const size_t alignment = 128;
     size = alignment * ((size + alignment - 1) / alignment);
 
-    size_t avail = g_cuda_pool_size[device] - g_cuda_pool_used[device];
+    size_t avail = g_cuda_pool_size_v3[device] - g_cuda_pool_used_v3[device];
 
     if (size > avail) {
         // round up to the next multiple of the granularity
         size_t reserve_size = size - avail;
-        const size_t granularity = g_device_caps[device].vmm_granularity;
+        const size_t granularity = g_device_caps_v3[device].vmm_granularity;
         reserve_size = granularity * ((reserve_size + granularity - 1) / granularity);
 
-        GGML_V3_ASSERT(g_cuda_pool_size[device] + reserve_size <= CUDA_POOL_VMM_MAX_SIZE);
+        GGML_V3_ASSERT(g_cuda_pool_size_v3[device] + reserve_size <= CUDA_POOL_VMM_MAX_SIZE);
 
         // allocate more physical memory
         CUmemAllocationProp prop = {};
@@ -7382,12 +7382,12 @@ static void * ggml_v3_cuda_pool_malloc_vmm(int device, size_t size, size_t * act
         CU_CHECK(cuMemCreate(&handle, reserve_size, &prop, 0));
 
         // reserve virtual address space (if not already reserved)
-        if (g_cuda_pool_addr[device] == 0) {
-            CU_CHECK(cuMemAddressReserve(&g_cuda_pool_addr[device], CUDA_POOL_VMM_MAX_SIZE, 0, 0, 0));
+        if (g_cuda_pool_addr_v3[device] == 0) {
+            CU_CHECK(cuMemAddressReserve(&g_cuda_pool_addr_v3[device], CUDA_POOL_VMM_MAX_SIZE, 0, 0, 0));
         }
 
         // map at the end of the pool
-        CU_CHECK(cuMemMap(g_cuda_pool_addr[device] + g_cuda_pool_size[device], reserve_size, 0, handle, 0));
+        CU_CHECK(cuMemMap(g_cuda_pool_addr_v3[device] + g_cuda_pool_size_v3[device], reserve_size, 0, handle, 0));
 
         // the memory allocation handle is no longer needed after mapping
         CU_CHECK(cuMemRelease(handle));
@@ -7397,21 +7397,21 @@ static void * ggml_v3_cuda_pool_malloc_vmm(int device, size_t size, size_t * act
         access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
         access.location.id = device;
         access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-        CU_CHECK(cuMemSetAccess(g_cuda_pool_addr[device] + g_cuda_pool_size[device], reserve_size, &access, 1));
+        CU_CHECK(cuMemSetAccess(g_cuda_pool_addr_v3[device] + g_cuda_pool_size_v3[device], reserve_size, &access, 1));
 
         // add to the pool
-        g_cuda_pool_size[device] += reserve_size;
+        g_cuda_pool_size_v3[device] += reserve_size;
 
         //printf("cuda pool[%d]: size increased to %llu MB (reserved %llu MB)\n",
-        //       id, (unsigned long long) (g_cuda_pool_size[id]/1024/1024),
+        //       id, (unsigned long long) (g_cuda_pool_size_v3[id]/1024/1024),
         //       (unsigned long long) (reserve_size/1024/1024));
     }
 
-    GGML_V3_ASSERT(g_cuda_pool_addr[device] != 0);
+    GGML_V3_ASSERT(g_cuda_pool_addr_v3[device] != 0);
 
-    void * ptr = (void *) (g_cuda_pool_addr[device] + g_cuda_pool_used[device]);
+    void * ptr = (void *) (g_cuda_pool_addr_v3[device] + g_cuda_pool_used_v3[device]);
     *actual_size = size;
-    g_cuda_pool_used[device] += size;
+    g_cuda_pool_used_v3[device] += size;
 
 #ifdef DEBUG_CUDA_MALLOC
     printf("cuda pool[%d]: allocated %llu bytes at %llx [%s]\n", id, (unsigned long long) size, ptr);
@@ -7421,24 +7421,32 @@ static void * ggml_v3_cuda_pool_malloc_vmm(int device, size_t size, size_t * act
 }
 
 static void ggml_v3_cuda_pool_free_vmm(int device, void * ptr, size_t size) {
-    scoped_spin_lock lock(g_cuda_pool_lock);
+    scoped_spin_lock lock(g_cuda_pool_lock_v3);
 
 #ifdef DEBUG_CUDA_MALLOC
     printf("cuda pool[%d]: freed %llu bytes at %llx\n", id, (unsigned long long) size, ptr);
 #endif
 
-    g_cuda_pool_used[device] -= size;
+    g_cuda_pool_used_v3[device] -= size;
 
     // all deallocations must be in reverse order of the allocations
-    GGML_V3_ASSERT(ptr == (void *) (g_cuda_pool_addr[device] + g_cuda_pool_used[device]));
+    GGML_V3_ASSERT(ptr == (void *) (g_cuda_pool_addr_v3[device] + g_cuda_pool_used_v3[device]));
 }
 
 static void * ggml_v3_cuda_pool_malloc(int device, size_t size, size_t * actual_size) {
-    return ggml_v3_cuda_pool_malloc_leg(device, size, actual_size);
+    if (g_device_caps_v3[device].vmm) {
+        return ggml_v3_cuda_pool_malloc_vmm(device, size, actual_size);
+    } else {
+        return ggml_v3_cuda_pool_malloc_leg(device, size, actual_size);
+    }
 }
 
 static void ggml_v3_cuda_pool_free(int device, void * ptr, size_t size) {
-    ggml_v3_cuda_pool_free_leg(device, ptr, size);
+    if (g_device_caps_v3[device].vmm) {
+        ggml_v3_cuda_pool_free_vmm(device, ptr, size);
+    } else {
+        ggml_v3_cuda_pool_free_leg(device, ptr, size);
+    }
 }
 #else
 #define ggml_v3_cuda_pool_malloc ggml_v3_cuda_pool_malloc_leg
@@ -7446,7 +7454,7 @@ static void ggml_v3_cuda_pool_free(int device, void * ptr, size_t size) {
 #endif // !defined(GGML_USE_HIPBLAS)
 
 template<typename T>
-struct cuda_pool_alloc {
+struct cuda_pool_alloc_v3 {
     int device = -1;
     T * ptr = nullptr;
     size_t actual_size = 0;
@@ -7459,11 +7467,11 @@ struct cuda_pool_alloc {
         return ptr;
     }
 
-    cuda_pool_alloc(size_t size) {
+    cuda_pool_alloc_v3(size_t size) {
         alloc(size);
     }
 
-    ~cuda_pool_alloc() {
+    ~cuda_pool_alloc_v3() {
         if (ptr != nullptr) {
             ggml_v3_cuda_pool_free(device, ptr, actual_size);
         }
@@ -7473,23 +7481,23 @@ struct cuda_pool_alloc {
         return ptr;
     }
 
-    cuda_pool_alloc() = default;
-    cuda_pool_alloc(const cuda_pool_alloc &) = delete;
-    cuda_pool_alloc(cuda_pool_alloc &&) = delete;
-    cuda_pool_alloc& operator=(const cuda_pool_alloc &) = delete;
-    cuda_pool_alloc& operator=(cuda_pool_alloc &&) = delete;
+    cuda_pool_alloc_v3() = default;
+    cuda_pool_alloc_v3(const cuda_pool_alloc_v3 &) = delete;
+    cuda_pool_alloc_v3(cuda_pool_alloc_v3 &&) = delete;
+    cuda_pool_alloc_v3& operator=(const cuda_pool_alloc_v3 &) = delete;
+    cuda_pool_alloc_v3& operator=(cuda_pool_alloc_v3 &&) = delete;
 };
 
-static bool g_cublas_loaded = false;
+static bool g_cublas_loaded_v3 = false;
 
 bool ggml_v3_cublas_loaded(void) {
-    return g_cublas_loaded;
+    return g_cublas_loaded_v3;
 }
 
 void ggml_v3_init_cublas() {
-    static bool initialized = false;
+    static bool initialized_v3 = false;
 
-    if (!initialized) {
+    if (!initialized_v3) {
 
 #ifdef __HIP_PLATFORM_AMD__
         // Workaround for a rocBLAS bug when using multiple graphics cards:
@@ -7498,18 +7506,18 @@ void ggml_v3_init_cublas() {
         CUDA_CHECK(cudaDeviceSynchronize());
 #endif
 
-        if (cudaGetDeviceCount(&g_device_count) != cudaSuccess) {
-            initialized = true;
-            g_cublas_loaded = false;
+        if (cudaGetDeviceCount(&g_device_count_v3) != cudaSuccess) {
+            initialized_v3 = true;
+            g_cublas_loaded_v3 = false;
             return;
         }
 
-        GGML_V3_ASSERT(g_device_count <= GGML_V3_CUDA_MAX_DEVICES);
+        GGML_V3_ASSERT(g_device_count_v3 <= GGML_V3_CUDA_MAX_DEVICES);
         int64_t total_vram = 0;
         // fprintf(stderr, "%s: GGML_V3_CUDA_FORCE_MMQ:   %s\n", __func__,"maybe");
         // fprintf(stderr, "%s: CUDA_USE_TENSOR_CORES: %s\n", __func__,"maybe");
-        fprintf(stderr, "%s: found %d " GGML_V3_CUDA_NAME " devices:\n", __func__, g_device_count);
-        for (int id = 0; id < g_device_count; ++id) {
+        fprintf(stderr, "%s: found %d " GGML_V3_CUDA_NAME " devices:\n", __func__, g_device_count_v3);
+        for (int id = 0; id < g_device_count_v3; ++id) {
             int device_vmm = 0;
 
 #if !defined(GGML_USE_HIPBLAS)
@@ -7522,46 +7530,46 @@ void ggml_v3_init_cublas() {
                 alloc_prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
                 alloc_prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
                 alloc_prop.location.id = id;
-                CU_CHECK(cuMemGetAllocationGranularity(&g_device_caps[id].vmm_granularity, &alloc_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
+                CU_CHECK(cuMemGetAllocationGranularity(&g_device_caps_v3[id].vmm_granularity, &alloc_prop, CU_MEM_ALLOC_GRANULARITY_RECOMMENDED));
             }
 #endif // !defined(GGML_USE_HIPBLAS)
-            g_device_caps[id].vmm = !!device_vmm;
+            g_device_caps_v3[id].vmm = !!device_vmm;
 
             cudaDeviceProp prop;
             CUDA_CHECK(cudaGetDeviceProperties(&prop, id));
             fprintf(stderr, "  Device %d: %s, compute capability %d.%d, VMM: %s\n", id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no");
 
-            g_tensor_split[id] = total_vram;
+            g_tensor_split_v3[id] = total_vram;
             total_vram += prop.totalGlobalMem;
 #if defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-            g_device_caps[id].cc = 100*prop.major + 10*prop.minor + CC_OFFSET_AMD;
+            g_device_caps_v3[id].cc = 100*prop.major + 10*prop.minor + CC_OFFSET_AMD;
 #else
-            g_device_caps[id].cc = 100*prop.major + 10*prop.minor;
+            g_device_caps_v3[id].cc = 100*prop.major + 10*prop.minor;
 #endif // defined(GGML_USE_HIPBLAS) && defined(__HIP_PLATFORM_AMD__)
-            g_device_caps[id].smpb = prop.sharedMemPerBlock;
+            g_device_caps_v3[id].smpb = prop.sharedMemPerBlock;
         }
-        for (int id = 0; id < g_device_count; ++id) {
-            g_tensor_split[id] /= total_vram;
+        for (int id = 0; id < g_device_count_v3; ++id) {
+            g_tensor_split_v3[id] /= total_vram;
         }
 
-        for (int id = 0; id < g_device_count; ++id) {
+        for (int id = 0; id < g_device_count_v3; ++id) {
             ggml_v3_cuda_set_device(id);
 
             // create cuda streams
             for (int is = 0; is < MAX_STREAMS; ++is) {
-                CUDA_CHECK(cudaStreamCreateWithFlags(&g_cudaStreams[id][is], cudaStreamNonBlocking));
+                CUDA_CHECK(cudaStreamCreateWithFlags(&g_cudaStreams_v3[id][is], cudaStreamNonBlocking));
             }
 
             // create cublas handle
-            CUBLAS_CHECK(cublasCreate(&g_cublas_handles[id]));
-            CUBLAS_CHECK(cublasSetMathMode(g_cublas_handles[id], CUBLAS_TF32_TENSOR_OP_MATH));
+            CUBLAS_CHECK(cublasCreate(&g_cublas_handles_v3[id]));
+            CUBLAS_CHECK(cublasSetMathMode(g_cublas_handles_v3[id], CUBLAS_TF32_TENSOR_OP_MATH));
         }
 
         // configure logging to stdout
         // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
 
-        initialized = true;
-        g_cublas_loaded = true;
+        initialized_v3 = true;
+        g_cublas_loaded_v3 = true;
     }
 }
 
@@ -7570,7 +7578,7 @@ void ggml_v3_cuda_set_tensor_split(const float * tensor_split) {
         return;
     }
     bool all_zero = true;
-    for (int i = 0; i < g_device_count; ++i) {
+    for (int i = 0; i < g_device_count_v3; ++i) {
         if (tensor_split[i] != 0.0f) {
             all_zero = false;
             break;
@@ -7580,12 +7588,12 @@ void ggml_v3_cuda_set_tensor_split(const float * tensor_split) {
         return;
     }
     float split_sum = 0.0f;
-    for (int i = 0; i < g_device_count; ++i) {
-        g_tensor_split[i] = split_sum;
+    for (int i = 0; i < g_device_count_v3; ++i) {
+        g_tensor_split_v3[i] = split_sum;
         split_sum += tensor_split[i];
     }
-    for (int i = 0; i < g_device_count; ++i) {
-        g_tensor_split[i] /= split_sum;
+    for (int i = 0; i < g_device_count_v3; ++i) {
+        g_tensor_split_v3[i] /= split_sum;
     }
 }
 
@@ -7997,7 +8005,7 @@ static void ggml_v3_cuda_op_mul_mat_q(
 
     // the main device has a larger memory buffer to hold the results from all GPUs
     // nrows_dst == nrows of the matrix that the dequantize_mul_mat kernel writes into
-    const int64_t nrows_dst = dst->backend == GGML_V3_BACKEND_GPU && id == g_main_device ? ne0 : row_diff;
+    const int64_t nrows_dst = dst->backend == GGML_V3_BACKEND_GPU && id == g_main_device_v3 ? ne0 : row_diff;
 
     switch (src0->type) {
         case GGML_V3_TYPE_Q4_0:
@@ -8043,13 +8051,13 @@ static void ggml_v3_cuda_op_mul_mat_q(
 static int64_t get_row_rounding(ggml_v3_type type) {
     int64_t min_compute_capability = INT_MAX;
     int64_t max_compute_capability = INT_MIN;
-    for (int id = 0; id < g_device_count; ++id) {
-        if (g_tensor_split[id] < (id + 1 < g_device_count ? g_tensor_split[id + 1] : 1.0f)) {
-            if (min_compute_capability > g_device_caps[id].cc) {
-                min_compute_capability = g_device_caps[id].cc;
+    for (int id = 0; id < g_device_count_v3; ++id) {
+        if (g_tensor_split_v3[id] < (id + 1 < g_device_count_v3 ? g_tensor_split_v3[id + 1] : 1.0f)) {
+            if (min_compute_capability > g_device_caps_v3[id].cc) {
+                min_compute_capability = g_device_caps_v3[id].cc;
             }
-            if (max_compute_capability < g_device_caps[id].cc) {
-                max_compute_capability = g_device_caps[id].cc;
+            if (max_compute_capability < g_device_caps_v3[id].cc) {
+                max_compute_capability = g_device_caps_v3[id].cc;
             }
         }
     }
@@ -8176,7 +8184,7 @@ static void ggml_v3_cuda_op_dequantize_mul_mat_vec(
 
     // on some GPUs it is faster to convert src1 to half and to use half precision intrinsics
 #ifdef GGML_V3_CUDA_F16
-    cuda_pool_alloc<half> src1_dfloat_a;
+    cuda_pool_alloc_v3<half> src1_dfloat_a;
     half * src1_dfloat = nullptr; // dfloat == half
 
     bool src1_convert_f16 =
@@ -8261,14 +8269,14 @@ static void ggml_v3_cuda_op_mul_mat_cublas(
 
     // the main device has a larger memory buffer to hold the results from all GPUs
     // ldc == nrows of the matrix that cuBLAS writes into
-    int ldc = dst->backend == GGML_V3_BACKEND_GPU && id == g_main_device ? ne0 : row_diff;
+    int ldc = dst->backend == GGML_V3_BACKEND_GPU && id == g_main_device_v3 ? ne0 : row_diff;
 
-    const int compute_capability = g_device_caps[id].cc;
+    const int compute_capability = g_device_caps_v3[id].cc;
 
     if (compute_capability >= CC_VOLTA && (src0->type == GGML_V3_TYPE_F16 || ggml_v3_is_quantized(src0->type)) && ggml_v3_is_contiguous(src0) && row_diff == src0->ne[1] && dst->op_params[0] == GGML_V3_PREC_DEFAULT) {
         //printf("this branch\n");
         // convert src0 and src1 to fp16, multiply as fp16, convert dst to fp32
-        cuda_pool_alloc<half> src0_as_f16;
+        cuda_pool_alloc_v3<half> src0_as_f16;
         if (src0->type != GGML_V3_TYPE_F16) {
             const to_fp16_cuda_t to_fp16_cuda = ggml_v3_get_to_fp16_cuda(src0->type);
             GGML_V3_ASSERT(to_fp16_cuda != nullptr);
@@ -8278,7 +8286,7 @@ static void ggml_v3_cuda_op_mul_mat_cublas(
         }
         const half * src0_ptr = src0->type == GGML_V3_TYPE_F16 ? (const half *) src0_dd_i : src0_as_f16.get();
 
-        cuda_pool_alloc<half> src1_as_f16;
+        cuda_pool_alloc_v3<half> src1_as_f16;
         if (src1->type != GGML_V3_TYPE_F16) {
             const to_fp16_cuda_t to_fp16_cuda = ggml_v3_get_to_fp16_cuda(src1->type);
             GGML_V3_ASSERT(to_fp16_cuda != nullptr);
@@ -8287,14 +8295,14 @@ static void ggml_v3_cuda_op_mul_mat_cublas(
             to_fp16_cuda(src1_ddf_i, src1_as_f16.get(), ne, stream);
         }
         const half * src1_ptr = src1->type == GGML_V3_TYPE_F16 ? (const half *) src1_ddf_i : src1_as_f16.get();
-        cuda_pool_alloc<half> dst_f16(row_diff*src1_ncols);
+        cuda_pool_alloc_v3<half> dst_f16(row_diff*src1_ncols);
 
         const half alpha_f16 = 1.0f;
         const half beta_f16 = 0.0f;
 
-        CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], stream));
+        CUBLAS_CHECK(cublasSetStream(g_cublas_handles_v3[id], stream));
         CUBLAS_CHECK(
-            cublasGemmEx(g_cublas_handles[id], CUBLAS_OP_T, CUBLAS_OP_N,
+            cublasGemmEx(g_cublas_handles_v3[id], CUBLAS_OP_T, CUBLAS_OP_N,
                     row_diff, src1_ncols, ne10,
                     &alpha_f16, src0_ptr,       CUDA_R_16F, ne00,
                                 src1_ptr,       CUDA_R_16F, ne10,
@@ -8305,8 +8313,8 @@ static void ggml_v3_cuda_op_mul_mat_cublas(
         const to_fp32_cuda_t to_fp32_cuda = ggml_v3_get_to_fp32_cuda(GGML_V3_TYPE_F16);
         to_fp32_cuda(dst_f16.get(), dst_dd_i, row_diff*src1_ncols, stream);
     } else {
-        cuda_pool_alloc<float> src0_ddq_as_f32;
-        cuda_pool_alloc<float> src1_ddq_as_f32;
+        cuda_pool_alloc_v3<float> src0_ddq_as_f32;
+        cuda_pool_alloc_v3<float> src1_ddq_as_f32;
 
         if (src0->type != GGML_V3_TYPE_F32) {
             const to_fp32_cuda_t to_fp32_cuda = ggml_v3_get_to_fp32_cuda(src0->type);
@@ -8327,9 +8335,9 @@ static void ggml_v3_cuda_op_mul_mat_cublas(
         const float alpha = 1.0f;
         const float beta = 0.0f;
 
-        CUBLAS_CHECK(cublasSetStream(g_cublas_handles[id], stream));
+        CUBLAS_CHECK(cublasSetStream(g_cublas_handles_v3[id], stream));
         CUBLAS_CHECK(
-            cublasSgemm(g_cublas_handles[id], CUBLAS_OP_T, CUBLAS_OP_N,
+            cublasSgemm(g_cublas_handles_v3[id], CUBLAS_OP_T, CUBLAS_OP_N,
                     row_diff, src1_ncols, ne10,
                     &alpha, src0_ddf_i,  ne00,
                             src1_ddf1_i, ne10,
@@ -8638,15 +8646,15 @@ static void ggml_v3_cuda_op_flatten(const ggml_v3_tensor * src0, const ggml_v3_t
     float * src1_ddf = nullptr;
     float *  dst_ddf = nullptr;
 
-    cuda_pool_alloc<float> src0_f;
-    cuda_pool_alloc<float> src1_f;
-    cuda_pool_alloc<float>  dst_f;
+    cuda_pool_alloc_v3<float> src0_f;
+    cuda_pool_alloc_v3<float> src1_f;
+    cuda_pool_alloc_v3<float>  dst_f;
 
-    ggml_v3_cuda_set_device(g_main_device);
-    cudaStream_t main_stream = g_cudaStreams[g_main_device][0];
+    ggml_v3_cuda_set_device(g_main_device_v3);
+    cudaStream_t main_stream = g_cudaStreams_v3[g_main_device_v3][0];
 
     if (src0_on_device) {
-        src0_ddf = (float *) src0_extra->data_device[g_main_device];
+        src0_ddf = (float *) src0_extra->data_device[g_main_device_v3];
     } else {
         src0_ddf = src0_f.alloc(ggml_v3_nelements(src0));
         CUDA_CHECK(ggml_v3_cuda_cpy_tensor_2d(src0_ddf, src0, 0, 0, 0, nrows0, main_stream));
@@ -8654,14 +8662,14 @@ static void ggml_v3_cuda_op_flatten(const ggml_v3_tensor * src0, const ggml_v3_t
 
     if (use_src1) {
         if (src1_on_device) {
-            src1_ddf = (float *) src1_extra->data_device[g_main_device];
+            src1_ddf = (float *) src1_extra->data_device[g_main_device_v3];
         } else {
             src1_ddf = src1_f.alloc(ggml_v3_nelements(src1));
             CUDA_CHECK(ggml_v3_cuda_cpy_tensor_2d(src1_ddf, src1, 0, 0, 0, nrows1, main_stream));
         }
     }
     if (dst_on_device) {
-        dst_ddf = (float *) dst_extra->data_device[g_main_device];
+        dst_ddf = (float *) dst_extra->data_device[g_main_device_v3];
     } else {
         dst_ddf = dst_f.alloc(ggml_v3_nelements(dst));
     }
@@ -8681,28 +8689,28 @@ static void ggml_v3_cuda_op_flatten(const ggml_v3_tensor * src0, const ggml_v3_t
 }
 
 static void ggml_v3_cuda_set_peer_access(const int n_tokens) {
-    static bool peer_access_enabled = false;
+    static bool peer_access_enabled_v3 = false;
 
     const bool enable_peer_access = n_tokens <= GGML_V3_CUDA_PEER_MAX_BATCH_SIZE;
 
-    if (peer_access_enabled == enable_peer_access) {
+    if (peer_access_enabled_v3 == enable_peer_access) {
         return;
     }
 
 #ifdef NDEBUG
-    for (int id = 0; id < g_device_count; ++id) {
+    for (int id = 0; id < g_device_count_v3; ++id) {
         ggml_v3_cuda_set_device(id);
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 
-    for (int id = 0; id < g_device_count; ++id) {
+    for (int id = 0; id < g_device_count_v3; ++id) {
         ggml_v3_cuda_set_device(id);
 
-        for (int id_other = 0; id_other < g_device_count; ++id_other) {
+        for (int id_other = 0; id_other < g_device_count_v3; ++id_other) {
             if (id == id_other) {
                 continue;
             }
-            if (id != g_main_device && id_other != g_main_device) {
+            if (id != g_main_device_v3 && id_other != g_main_device_v3) {
                 continue;
             }
 
@@ -8719,7 +8727,7 @@ static void ggml_v3_cuda_set_peer_access(const int n_tokens) {
     }
 #endif // NDEBUG
 
-    peer_access_enabled = enable_peer_access;
+    peer_access_enabled_v3 = enable_peer_access;
 }
 
 static void ggml_v3_cuda_op_mul_mat(
@@ -8774,10 +8782,10 @@ static void ggml_v3_cuda_op_mul_mat(
     GGML_V3_ASSERT(!(split && ne02 < ne12));
 
     struct dev_data {
-        cuda_pool_alloc<char>  src0_dd_alloc;
-        cuda_pool_alloc<float> src1_ddf_alloc;
-        cuda_pool_alloc<char>  src1_ddq_alloc;
-        cuda_pool_alloc<float>   dst_dd_alloc;
+        cuda_pool_alloc_v3<char>  src0_dd_alloc;
+        cuda_pool_alloc_v3<float> src1_ddf_alloc;
+        cuda_pool_alloc_v3<char>  src1_ddq_alloc;
+        cuda_pool_alloc_v3<float>   dst_dd_alloc;
 
         char  *  src0_dd = nullptr;
         float * src1_ddf = nullptr; // float
@@ -8792,7 +8800,7 @@ static void ggml_v3_cuda_op_mul_mat(
 
     int used_devices = 0;
 
-    for (int id = 0; id < g_device_count; ++id) {
+    for (int id = 0; id < g_device_count_v3; ++id) {
         // by default, use all rows
         dev[id].row_low  = 0;
         dev[id].row_high = ne01;
@@ -8803,14 +8811,14 @@ static void ggml_v3_cuda_op_mul_mat(
             const int64_t rounding = get_row_rounding(src0->type);
 
             if (id != 0) {
-                dev[id].row_low  = ne01*g_tensor_split[id];
+                dev[id].row_low  = ne01*g_tensor_split_v3[id];
                 if (dev[id].row_low < ne01) {
                     dev[id].row_low -= dev[id].row_low % rounding;
                 }
             }
 
-            if (id != g_device_count - 1) {
-                dev[id].row_high  = ne01*g_tensor_split[id + 1];
+            if (id != g_device_count_v3 - 1) {
+                dev[id].row_high  = ne01*g_tensor_split_v3[id + 1];
                 if (dev[id].row_high < ne01) {
                     dev[id].row_high -= dev[id].row_high % rounding;
                 }
@@ -8818,18 +8826,18 @@ static void ggml_v3_cuda_op_mul_mat(
         }
     }
 
-    for (int id = 0; id < g_device_count; ++id) {
-        if ((!split && id != g_main_device) || dev[id].row_low == dev[id].row_high) {
+    for (int id = 0; id < g_device_count_v3; ++id) {
+        if ((!split && id != g_main_device_v3) || dev[id].row_low == dev[id].row_high) {
             continue;
         }
 
         used_devices++;
 
-        const bool src1_on_device = src1->backend == GGML_V3_BACKEND_GPU && id == g_main_device;
-        const bool  dst_on_device =  dst->backend == GGML_V3_BACKEND_GPU && id == g_main_device;
+        const bool src1_on_device = src1->backend == GGML_V3_BACKEND_GPU && id == g_main_device_v3;
+        const bool  dst_on_device =  dst->backend == GGML_V3_BACKEND_GPU && id == g_main_device_v3;
 
         ggml_v3_cuda_set_device(id);
-        cudaStream_t stream = g_cudaStreams[id][0];
+        cudaStream_t stream = g_cudaStreams_v3[id][0];
 
         if (src0_on_device && src0_is_contiguous) {
             dev[id].src0_dd = (char *) src0_extra->data_device[id];
@@ -8863,8 +8871,8 @@ static void ggml_v3_cuda_op_mul_mat(
     // if multiple devices are used they need to wait for the main device
     // here an event is recorded that signals that the main device has finished calculating the input data
     if (split && used_devices > 1) {
-        ggml_v3_cuda_set_device(g_main_device);
-        CUDA_CHECK(cudaEventRecord(src0_extra->events[g_main_device][0], g_cudaStreams[g_main_device][0]));
+        ggml_v3_cuda_set_device(g_main_device_v3);
+        CUDA_CHECK(cudaEventRecord(src0_extra->events[g_main_device_v3][0], g_cudaStreams_v3[g_main_device_v3][0]));
     }
 
     const int64_t src1_col_stride = split && used_devices > 1 ? MUL_MAT_SRC1_COL_STRIDE : ne11;
@@ -8872,21 +8880,21 @@ static void ggml_v3_cuda_op_mul_mat(
         const int64_t is = split ? (src1_col_0/src1_col_stride) % MAX_STREAMS : 0;
         const int64_t src1_ncols = src1_col_0 + src1_col_stride > ne11 ? ne11 - src1_col_0 : src1_col_stride;
 
-        for (int id = 0; id < g_device_count; ++id) {
-            if ((!split && id != g_main_device) || dev[id].row_low == dev[id].row_high) {
+        for (int id = 0; id < g_device_count_v3; ++id) {
+            if ((!split && id != g_main_device_v3) || dev[id].row_low == dev[id].row_high) {
                 continue;
             }
 
-            const bool src1_on_device = src1->backend == GGML_V3_BACKEND_GPU && id == g_main_device;
-            const bool  dst_on_device =  dst->backend == GGML_V3_BACKEND_GPU && id == g_main_device;
+            const bool src1_on_device = src1->backend == GGML_V3_BACKEND_GPU && id == g_main_device_v3;
+            const bool  dst_on_device =  dst->backend == GGML_V3_BACKEND_GPU && id == g_main_device_v3;
             const int64_t row_diff = dev[id].row_high - dev[id].row_low;
 
             ggml_v3_cuda_set_device(id);
-            cudaStream_t stream = g_cudaStreams[id][is];
+            cudaStream_t stream = g_cudaStreams_v3[id][is];
 
             // wait for main GPU data if necessary
-            if (split && (id != g_main_device || is != 0)) {
-                CUDA_CHECK(cudaStreamWaitEvent(stream, src0_extra->events[g_main_device][0], 0));
+            if (split && (id != g_main_device_v3 || is != 0)) {
+                CUDA_CHECK(cudaStreamWaitEvent(stream, src0_extra->events[g_main_device_v3][0], 0));
             }
 
             for (int64_t i0 = 0; i0 < ne13*ne12; ++i0) {
@@ -8903,21 +8911,21 @@ static void ggml_v3_cuda_op_mul_mat(
 
                 // the main device memory buffer can be on VRAM scratch, with space for all partial results
                 // in that case an offset on dst_ddf_i is needed
-                if (dst->backend == GGML_V3_BACKEND_GPU && id == g_main_device) {
+                if (dst->backend == GGML_V3_BACKEND_GPU && id == g_main_device_v3) {
                     dst_dd_i += dev[id].row_low; // offset is 0 if no tensor split
                 }
 
                 // copy src0, src1 to device if necessary
                 if (src1->backend == GGML_V3_BACKEND_GPU && src1_is_contiguous) {
-                    if (id != g_main_device) {
+                    if (id != g_main_device_v3) {
                         if (convert_src1_to_q8_1) {
-                            char * src1_ddq_i_source = dev[g_main_device].src1_ddq + src1_ddq_i_offset;
-                            CUDA_CHECK(cudaMemcpyPeerAsync(src1_ddq_i, id, src1_ddq_i_source, g_main_device,
+                            char * src1_ddq_i_source = dev[g_main_device_v3].src1_ddq + src1_ddq_i_offset;
+                            CUDA_CHECK(cudaMemcpyPeerAsync(src1_ddq_i, id, src1_ddq_i_source, g_main_device_v3,
                                                             src1_ncols*src1_padded_col_size*q8_1_ts/q8_1_bs, stream));
                         } else {
-                            float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device];
+                            float * src1_ddf_i_source = (float *) src1_extra->data_device[g_main_device_v3];
                             src1_ddf_i_source += (i0*ne11 + src1_col_0) * ne10;
-                            CUDA_CHECK(cudaMemcpyPeerAsync(src1_ddf_i, id, src1_ddf_i_source, g_main_device,
+                            CUDA_CHECK(cudaMemcpyPeerAsync(src1_ddf_i, id, src1_ddf_i_source, g_main_device_v3,
                                                             src1_ncols*ne10*sizeof(float), stream));
                         }
                     }
@@ -8950,7 +8958,7 @@ static void ggml_v3_cuda_op_mul_mat(
                         dst_off_device = dst->data;
                         kind = cudaMemcpyDeviceToHost;
                     } else if (dst->backend == GGML_V3_BACKEND_GPU) {
-                        dst_off_device = dst_extra->data_device[g_main_device];
+                        dst_off_device = dst_extra->data_device[g_main_device_v3];
                         kind = cudaMemcpyDeviceToDevice;
                     } else {
                         GGML_V3_ASSERT(false);
@@ -8968,7 +8976,7 @@ static void ggml_v3_cuda_op_mul_mat(
                         if (kind == cudaMemcpyDeviceToDevice) {
                             // cudaMemcpy2DAsync may fail with copies between vmm pools of different devices
                             cudaMemcpy3DPeerParms p = {};
-                            p.dstDevice = g_main_device;
+                            p.dstDevice = g_main_device_v3;
                             p.dstPtr = make_cudaPitchedPtr(dhf_dst_i, ne0*sizeof(float), row_diff, src1_ncols);
                             p.srcDevice = id;
                             p.srcPtr = make_cudaPitchedPtr(dst_dd_i, row_diff*sizeof(float), row_diff, src1_ncols);
@@ -8991,7 +8999,7 @@ static void ggml_v3_cuda_op_mul_mat(
                 }
 
                 // add event for the main device to wait on until other device is done
-                if (split && (id != g_main_device || is != 0)) {
+                if (split && (id != g_main_device_v3 || is != 0)) {
                     CUDA_CHECK(cudaEventRecord(src0_extra->events[id][is], stream));
                 }
             }
@@ -8999,23 +9007,23 @@ static void ggml_v3_cuda_op_mul_mat(
     }
 
     // main device waits for all other devices to be finished
-    if (split && g_device_count > 1) {
+    if (split && g_device_count_v3 > 1) {
         int64_t is_max = (ne11 + MUL_MAT_SRC1_COL_STRIDE - 1) / MUL_MAT_SRC1_COL_STRIDE;
         is_max = is_max <= MAX_STREAMS ? is_max : MAX_STREAMS;
 
-        ggml_v3_cuda_set_device(g_main_device);
-        for (int id = 0; id < g_device_count; ++id) {
+        ggml_v3_cuda_set_device(g_main_device_v3);
+        for (int id = 0; id < g_device_count_v3; ++id) {
             if (dev[id].row_low == dev[id].row_high) {
                 continue;
             }
             for (int64_t is = 0; is < is_max; ++is) {
-                CUDA_CHECK(cudaStreamWaitEvent(g_cudaStreams[g_main_device][0], src0_extra->events[id][is], 0));
+                CUDA_CHECK(cudaStreamWaitEvent(g_cudaStreams_v3[g_main_device_v3][0], src0_extra->events[id][is], 0));
             }
         }
     }
 
     if (dst->backend == GGML_V3_BACKEND_CPU) {
-        ggml_v3_cuda_set_device(g_main_device);
+        ggml_v3_cuda_set_device(g_main_device_v3);
         CUDA_CHECK(cudaDeviceSynchronize());
     }
 }
@@ -9097,7 +9105,7 @@ static void ggml_v3_cuda_rms_norm(const ggml_v3_tensor * src0, const ggml_v3_ten
 }
 
 bool ggml_v3_cuda_can_mul_mat(const struct ggml_v3_tensor * src0, const struct ggml_v3_tensor * src1, struct ggml_v3_tensor * dst) {
-    if (!g_cublas_loaded) return false;
+    if (!g_cublas_loaded_v3) return false;
 
     const int64_t ne10 = src1->ne[0];
 
@@ -9125,17 +9133,17 @@ static void ggml_v3_cuda_mul_mat_vec_p021(const ggml_v3_tensor * src0, const ggm
 
     const int64_t ne12 = src1->ne[2];
 
-    ggml_v3_cuda_set_device(g_main_device);
-    cudaStream_t main_stream = g_cudaStreams[g_main_device][0];
+    ggml_v3_cuda_set_device(g_main_device_v3);
+    cudaStream_t main_stream = g_cudaStreams_v3[g_main_device_v3][0];
 
     ggml_v3_tensor_extra_gpu * src0_extra = (ggml_v3_tensor_extra_gpu *) src0->extra;
-    void * src0_ddq = src0_extra->data_device[g_main_device];
+    void * src0_ddq = src0_extra->data_device[g_main_device_v3];
 
     ggml_v3_tensor_extra_gpu * src1_extra = (ggml_v3_tensor_extra_gpu *) src1->extra;
-    float * src1_ddf = (float *) src1_extra->data_device[g_main_device];
+    float * src1_ddf = (float *) src1_extra->data_device[g_main_device_v3];
 
     ggml_v3_tensor_extra_gpu * dst_extra = (ggml_v3_tensor_extra_gpu *) dst->extra;
-    float * dst_ddf = (float *) dst_extra->data_device[g_main_device];
+    float * dst_ddf = (float *) dst_extra->data_device[g_main_device_v3];
 
     ggml_v3_mul_mat_p021_f16_f32_cuda(src0_ddq, src1_ddf, dst_ddf, ne00, ne01, ne02, ne12, main_stream);
 }
@@ -9157,17 +9165,17 @@ static void ggml_v3_cuda_mul_mat_vec_nc(const ggml_v3_tensor * src0, const ggml_
 
     const int64_t ne12 = src1->ne[2];
 
-    ggml_v3_cuda_set_device(g_main_device);
-    cudaStream_t main_stream = g_cudaStreams[g_main_device][0];
+    ggml_v3_cuda_set_device(g_main_device_v3);
+    cudaStream_t main_stream = g_cudaStreams_v3[g_main_device_v3][0];
 
     ggml_v3_tensor_extra_gpu * src0_extra = (ggml_v3_tensor_extra_gpu *) src0->extra;
-    void * src0_ddq = src0_extra->data_device[g_main_device];
+    void * src0_ddq = src0_extra->data_device[g_main_device_v3];
 
     ggml_v3_tensor_extra_gpu * src1_extra = (ggml_v3_tensor_extra_gpu *) src1->extra;
-    float * src1_ddf = (float *) src1_extra->data_device[g_main_device];
+    float * src1_ddf = (float *) src1_extra->data_device[g_main_device_v3];
 
     ggml_v3_tensor_extra_gpu * dst_extra = (ggml_v3_tensor_extra_gpu *) dst->extra;
-    float * dst_ddf = (float *) dst_extra->data_device[g_main_device];
+    float * dst_ddf = (float *) dst_extra->data_device[g_main_device_v3];
 
     const int64_t row_stride_x = nb01 / sizeof(half);
     const int64_t channel_stride_x = nb02 / sizeof(half);
@@ -9210,23 +9218,23 @@ static void ggml_v3_cuda_mul_mat_mat_batched_cublas(const ggml_v3_tensor * src0,
 
     const int64_t ne_dst = ggml_v3_nelements(dst);
 
-    ggml_v3_cuda_set_device(g_main_device);
-    cudaStream_t main_stream = g_cudaStreams[g_main_device][0];
+    ggml_v3_cuda_set_device(g_main_device_v3);
+    cudaStream_t main_stream = g_cudaStreams_v3[g_main_device_v3][0];
 
-    CUBLAS_CHECK(cublasSetStream(g_cublas_handles[g_main_device], main_stream));
+    CUBLAS_CHECK(cublasSetStream(g_cublas_handles_v3[g_main_device_v3], main_stream));
 
     ggml_v3_tensor_extra_gpu * src0_extra = (ggml_v3_tensor_extra_gpu *) src0->extra;
-    void * src0_ddq = src0_extra->data_device[g_main_device];
+    void * src0_ddq = src0_extra->data_device[g_main_device_v3];
     half * src0_f16 = (half *) src0_ddq;
 
     ggml_v3_tensor_extra_gpu * src1_extra = (ggml_v3_tensor_extra_gpu *) src1->extra;
-    float * src1_ddf = (float *) src1_extra->data_device[g_main_device];
+    float * src1_ddf = (float *) src1_extra->data_device[g_main_device_v3];
 
     ggml_v3_tensor_extra_gpu * dst_extra = (ggml_v3_tensor_extra_gpu *) dst->extra;
-    float * dst_ddf = (float *) dst_extra->data_device[g_main_device];
+    float * dst_ddf = (float *) dst_extra->data_device[g_main_device_v3];
 
     // convert src1 to fp16
-    cuda_pool_alloc<half> src1_f16_alloc;
+    cuda_pool_alloc_v3<half> src1_f16_alloc;
     if (src1->type != GGML_V3_TYPE_F16) {
         const to_fp16_cuda_t to_fp16_cuda = ggml_v3_get_to_fp16_cuda(src1->type);
         const int64_t ne_src1 = ggml_v3_nelements(src1);
@@ -9236,7 +9244,7 @@ static void ggml_v3_cuda_mul_mat_mat_batched_cublas(const ggml_v3_tensor * src0,
     }
     half * src1_f16 = src1->type == GGML_V3_TYPE_F16 ? (half *) src1_ddf : src1_f16_alloc.get();
 
-    cuda_pool_alloc<half> dst_f16;
+    cuda_pool_alloc_v3<half> dst_f16;
     char * dst_t;
 
     cublasComputeType_t cu_compute_type = CUBLAS_COMPUTE_16F;
@@ -9286,7 +9294,7 @@ static void ggml_v3_cuda_mul_mat_mat_batched_cublas(const ggml_v3_tensor * src0,
                 int i02 = i12 / r2;
 
                 CUBLAS_CHECK(
-                        cublasGemmEx(g_cublas_handles[g_main_device], CUBLAS_OP_T, CUBLAS_OP_N,
+                        cublasGemmEx(g_cublas_handles_v3[g_main_device_v3], CUBLAS_OP_T, CUBLAS_OP_N,
                             ne01, ne11, ne10,
                             alpha, (const char *) src0_as_f16 + i02*src0->nb[2]   + i03*src0->nb[3]  , CUDA_R_16F,   nb01/sizeof(half),
                                    (const char *) src1_as_f16 + i12*src1->nb[2]/2 + i13*src1->nb[3]/2, CUDA_R_16F,   nb11/sizeof(float),
@@ -9301,7 +9309,7 @@ static void ggml_v3_cuda_mul_mat_mat_batched_cublas(const ggml_v3_tensor * src0,
         // there is no broadcast and src0, src1 are contiguous across dims 2, 3
         // use cublasGemmStridedBatchedEx
         CUBLAS_CHECK(
-        cublasGemmStridedBatchedEx(g_cublas_handles[g_main_device], CUBLAS_OP_T, CUBLAS_OP_N,
+        cublasGemmStridedBatchedEx(g_cublas_handles_v3[g_main_device_v3], CUBLAS_OP_T, CUBLAS_OP_N,
                 ne01, ne11, ne10,
                 alpha, (const char *) src0_f16, CUDA_R_16F,   nb01/nb00, nb02/nb00,  // strideA
                        (const char *) src1_f16, CUDA_R_16F,   nb11/nb10, nb12/nb10,  // strideB
@@ -9313,8 +9321,8 @@ static void ggml_v3_cuda_mul_mat_mat_batched_cublas(const ggml_v3_tensor * src0,
         // use cublasGemmBatchedEx
         const int ne23 = ne12*ne13;
 
-        cuda_pool_alloc<const void *> ptrs_src(2*ne23);
-        cuda_pool_alloc<      void *> ptrs_dst(1*ne23);
+        cuda_pool_alloc_v3<const void *> ptrs_src(2*ne23);
+        cuda_pool_alloc_v3<      void *> ptrs_dst(1*ne23);
 
         dim3 block_dims(ne13, ne12);
         k_compute_batched_ptrs<<<1, block_dims, 0, main_stream>>>(
@@ -9330,7 +9338,7 @@ static void ggml_v3_cuda_mul_mat_mat_batched_cublas(const ggml_v3_tensor * src0,
         CUDA_CHECK(cudaGetLastError());
 
         CUBLAS_CHECK(
-        cublasGemmBatchedEx(g_cublas_handles[g_main_device], CUBLAS_OP_T, CUBLAS_OP_N,
+        cublasGemmBatchedEx(g_cublas_handles_v3[g_main_device_v3], CUBLAS_OP_T, CUBLAS_OP_N,
                 ne01, ne11, ne10,
                 alpha, (const void **) (ptrs_src.get() + 0*ne23), CUDA_R_16F,   nb01/nb00,
                        (const void **) (ptrs_src.get() + 1*ne23), CUDA_R_16F,   nb11/nb10,
@@ -9356,9 +9364,9 @@ static void ggml_v3_cuda_mul_mat(const ggml_v3_tensor * src0, const ggml_v3_tens
     const bool split = src0->backend == GGML_V3_BACKEND_GPU_SPLIT;
 
     int64_t min_compute_capability = INT_MAX;
-    for (int id = 0; id < g_device_count; ++id) {
-        if (min_compute_capability > g_device_caps[id].cc && g_tensor_split[id] < (id + 1 < g_device_count ? g_tensor_split[id + 1] : 1.0f)) {
-            min_compute_capability = g_device_caps[id].cc;
+    for (int id = 0; id < g_device_count_v3; ++id) {
+        if (min_compute_capability > g_device_caps_v3[id].cc && g_tensor_split_v3[id] < (id + 1 < g_device_count_v3 ? g_tensor_split_v3[id + 1] : 1.0f)) {
+            min_compute_capability = g_device_caps_v3[id].cc;
         }
     }
 
@@ -9367,7 +9375,7 @@ static void ggml_v3_cuda_mul_mat(const ggml_v3_tensor * src0, const ggml_v3_tens
     const bool fp16_performance_good = min_compute_capability >= CC_RDNA1;
     bool               use_mul_mat_q = ggml_v3_is_quantized(src0->type);
 
-    if(!g_mul_mat_q)
+    if(!g_mul_mat_q_v3)
     {
         use_mul_mat_q = use_mul_mat_q && min_compute_capability < CC_RDNA3;
     }
@@ -9380,7 +9388,7 @@ static void ggml_v3_cuda_mul_mat(const ggml_v3_tensor * src0, const ggml_v3_tens
 
     // when tensor cores are available, use them for large batch size
     // ref: https://github.com/ggerganov/llama.cpp/pull/3776
-    if(!g_mul_mat_q)
+    if(!g_mul_mat_q_v3)
     {
         use_mul_mat_q = use_mul_mat_q && !(fp16_performance_good && src1->ne[1] > MMQ_MAX_BATCH_SIZE);
     }
@@ -9512,20 +9520,20 @@ static void ggml_v3_cuda_mul_mat_id_cublas(ggml_v3_tensor * dst) {
     const int64_t ne1 = ggml_v3_nelements(src1);
     const int64_t ne  = ggml_v3_nelements(dst);
 
-    ggml_v3_cuda_set_device(g_main_device);
-    cudaStream_t main_stream = g_cudaStreams[g_main_device][0];
+    ggml_v3_cuda_set_device(g_main_device_v3);
+    cudaStream_t main_stream = g_cudaStreams_v3[g_main_device_v3][0];
 
-    CUBLAS_CHECK(cublasSetStream(g_cublas_handles[g_main_device], main_stream));
+    CUBLAS_CHECK(cublasSetStream(g_cublas_handles_v3[g_main_device_v3], main_stream));
 
     //ggml_v3_tensor_extra_gpu * src0_extra = (ggml_v3_tensor_extra_gpu *) src0->extra;
-    //void * src0_ddq = src0_extra->data_device[g_main_device];
+    //void * src0_ddq = src0_extra->data_device[g_main_device_v3];
     //half * src0_as_f16 = (half *) src0_ddq;
 
     ggml_v3_tensor_extra_gpu * src1_extra = (ggml_v3_tensor_extra_gpu *) src1->extra;
-    float * src1_ddf = (float *) src1_extra->data_device[g_main_device];
+    float * src1_ddf = (float *) src1_extra->data_device[g_main_device_v3];
 
     ggml_v3_tensor_extra_gpu * dst_extra = (ggml_v3_tensor_extra_gpu *) dst->extra;
-    float * dst_ddf = (float *) dst_extra->data_device[g_main_device];
+    float * dst_ddf = (float *) dst_extra->data_device[g_main_device_v3];
 
     // convert src1 to fp16
     const to_fp16_cuda_t to_fp16_cuda = ggml_v3_get_to_fp16_cuda(src1->type);
@@ -9579,16 +9587,16 @@ static void ggml_v3_cuda_mul_mat_id_cublas(ggml_v3_tensor * dst) {
             r2, r3,
             src00->type, src0_as_f16, src0_ne,
             src1_as_f16, dst_f16,
-            (const int *)((ggml_v3_tensor_extra_gpu *)ids->extra)->data_device[g_main_device], id,
-            dst->src[2] ? (const half *)((ggml_v3_tensor_extra_gpu *)dst->src[2]->extra)->data_device[g_main_device] : nullptr,
-            dst->src[3] ? (const half *)((ggml_v3_tensor_extra_gpu *)dst->src[3]->extra)->data_device[g_main_device] : nullptr,
-            dst->src[4] ? (const half *)((ggml_v3_tensor_extra_gpu *)dst->src[4]->extra)->data_device[g_main_device] : nullptr,
-            dst->src[5] ? (const half *)((ggml_v3_tensor_extra_gpu *)dst->src[5]->extra)->data_device[g_main_device] : nullptr
+            (const int *)((ggml_v3_tensor_extra_gpu *)ids->extra)->data_device[g_main_device_v3], id,
+            dst->src[2] ? (const half *)((ggml_v3_tensor_extra_gpu *)dst->src[2]->extra)->data_device[g_main_device_v3] : nullptr,
+            dst->src[3] ? (const half *)((ggml_v3_tensor_extra_gpu *)dst->src[3]->extra)->data_device[g_main_device_v3] : nullptr,
+            dst->src[4] ? (const half *)((ggml_v3_tensor_extra_gpu *)dst->src[4]->extra)->data_device[g_main_device_v3] : nullptr,
+            dst->src[5] ? (const half *)((ggml_v3_tensor_extra_gpu *)dst->src[5]->extra)->data_device[g_main_device_v3] : nullptr
     );
     CUDA_CHECK(cudaGetLastError());
 
     CUBLAS_CHECK(
-    cublasGemmBatchedEx(g_cublas_handles[g_main_device], CUBLAS_OP_T, CUBLAS_OP_N,
+    cublasGemmBatchedEx(g_cublas_handles_v3[g_main_device_v3], CUBLAS_OP_T, CUBLAS_OP_N,
             ne01, ne11, ne10,
             &alpha_f16, (const void **) (ptrs_src + 0*ne23), CUDA_R_16F, ne00,
                         (const void **) (ptrs_src + 1*ne23), CUDA_R_16F, ne10,
@@ -9630,10 +9638,10 @@ static void ggml_v3_cuda_mul_mat_id(const ggml_v3_tensor * src0, const ggml_v3_t
 
     std::vector<char> ids_host(ggml_v3_nbytes(ids));
 
-    cudaStream_t stream = g_cudaStreams[g_main_device][0];
+    cudaStream_t stream = g_cudaStreams_v3[g_main_device_v3][0];
 
     if (ids->backend == GGML_V3_BACKEND_GPU) {
-        const char * ids_dev = (const char *)((const ggml_v3_tensor_extra_gpu *)ids->extra)->data_device[g_main_device];
+        const char * ids_dev = (const char *)((const ggml_v3_tensor_extra_gpu *)ids->extra)->data_device[g_main_device_v3];
         CUDA_CHECK(cudaMemcpyAsync(ids_host.data(), ids_dev, ggml_v3_nbytes(ids), cudaMemcpyDeviceToHost, stream));
         CUDA_CHECK(cudaStreamSynchronize(stream));
     } else {
@@ -9656,9 +9664,9 @@ static void ggml_v3_cuda_mul_mat_id(const ggml_v3_tensor * src0, const ggml_v3_t
     dst_row.extra = &dst_row_extra;
 
     char * src1_original = src1->backend == GGML_V3_BACKEND_CPU ?
-        (char *) src1->data : (char *) src1_extra->data_device[g_main_device];
+        (char *) src1->data : (char *) src1_extra->data_device[g_main_device_v3];
     char * dst_original  =  dst->backend == GGML_V3_BACKEND_CPU ?
-        (char *)  dst->data : (char *)  dst_extra->data_device[g_main_device];
+        (char *)  dst->data : (char *)  dst_extra->data_device[g_main_device_v3];
 
     if (src1->ne[1] == 1) {
         GGML_V3_ASSERT(src1->backend == GGML_V3_BACKEND_GPU);
@@ -9666,8 +9674,8 @@ static void ggml_v3_cuda_mul_mat_id(const ggml_v3_tensor * src0, const ggml_v3_t
 
         for (int64_t i01 = 0; i01 < ids->ne[1]; i01++) {
             //int32_t row_id;
-            //CUDA_CHECK(cudaMemcpyAsync(&row_id, ids_dev + i01*ids->nb[1] + id*ids->nb[0], sizeof(int32_t), cudaMemcpyDeviceToHost, g_cudaStreams[g_main_device][0]));
-            //CUDA_CHECK(cudaStreamSynchronize(g_cudaStreams[g_main_device][0]));
+            //CUDA_CHECK(cudaMemcpyAsync(&row_id, ids_dev + i01*ids->nb[1] + id*ids->nb[0], sizeof(int32_t), cudaMemcpyDeviceToHost, g_cudaStreams_v3[g_main_device_v3][0]));
+            //CUDA_CHECK(cudaStreamSynchronize(g_cudaStreams_v3[g_main_device_v3][0]));
 
             const int32_t row_id = *(const int32_t *) (ids_host.data() + i01*ids->nb[1] + id*ids->nb[0]);
 
@@ -9675,20 +9683,20 @@ static void ggml_v3_cuda_mul_mat_id(const ggml_v3_tensor * src0, const ggml_v3_t
 
             const struct ggml_v3_tensor * src0_row = dst->src[row_id + 2];
 
-            src1_row_extra.data_device[g_main_device] = src1_original + i01*src1->nb[1];
+            src1_row_extra.data_device[g_main_device_v3] = src1_original + i01*src1->nb[1];
             src1_row.data = (char *) src1->data + i01*src1->nb[1]; // TODO why is this set?
 
-            dst_row_extra.data_device[g_main_device] = dst_original + i01*dst->nb[1];
+            dst_row_extra.data_device[g_main_device_v3] = dst_original + i01*dst->nb[1];
             dst_row.data = (char *) dst->data + i01*dst->nb[1]; // TODO why is this set?
 
             ggml_v3_cuda_mul_mat(src0_row, &src1_row, &dst_row);
         }
     } else {
-        cuda_pool_alloc<char> src1_contiguous(sizeof(float)*ggml_v3_nelements(src1));
-        cuda_pool_alloc<char>  dst_contiguous(sizeof(float)*ggml_v3_nelements(dst));
+        cuda_pool_alloc_v3<char> src1_contiguous(sizeof(float)*ggml_v3_nelements(src1));
+        cuda_pool_alloc_v3<char>  dst_contiguous(sizeof(float)*ggml_v3_nelements(dst));
 
-        src1_row_extra.data_device[g_main_device] = src1_contiguous.get();
-        dst_row_extra.data_device[g_main_device]  =  dst_contiguous.get();
+        src1_row_extra.data_device[g_main_device_v3] = src1_contiguous.get();
+        dst_row_extra.data_device[g_main_device_v3]  =  dst_contiguous.get();
 
         const cudaMemcpyKind src1_kind = src1->backend == GGML_V3_BACKEND_CPU ?
             cudaMemcpyHostToDevice : cudaMemcpyDeviceToDevice;
@@ -9786,14 +9794,14 @@ static void ggml_v3_cuda_cpy(const ggml_v3_tensor * src0, const ggml_v3_tensor *
     const int64_t nb11 = src1->nb[1];
     const int64_t nb12 = src1->nb[2];
 
-    ggml_v3_cuda_set_device(g_main_device);
-    cudaStream_t main_stream = g_cudaStreams[g_main_device][0];
+    ggml_v3_cuda_set_device(g_main_device_v3);
+    cudaStream_t main_stream = g_cudaStreams_v3[g_main_device_v3][0];
 
     const ggml_v3_tensor_extra_gpu * src0_extra = (ggml_v3_tensor_extra_gpu *) src0->extra;
     const ggml_v3_tensor_extra_gpu * src1_extra = (ggml_v3_tensor_extra_gpu *) src1->extra;
 
-    char * src0_ddc = (char *) src0_extra->data_device[g_main_device];
-    char * src1_ddc = (char *) src1_extra->data_device[g_main_device];
+    char * src0_ddc = (char *) src0_extra->data_device[g_main_device_v3];
+    char * src1_ddc = (char *) src1_extra->data_device[g_main_device_v3];
 
     if (src0->type == GGML_V3_TYPE_F32 && src1->type == GGML_V3_TYPE_F32) {
         ggml_v3_cpy_f32_f32_cuda (src0_ddc, src1_ddc, ne, ne00, ne01, nb00, nb01, nb02, ne10, ne11, nb10, nb11, nb12, main_stream);
@@ -9876,8 +9884,8 @@ void ggml_v3_cuda_transform_tensor(void * data, struct ggml_v3_tensor * tensor) 
     ggml_v3_tensor_extra_gpu * extra = new struct ggml_v3_tensor_extra_gpu;
     memset(extra, 0, sizeof(*extra));
 
-    for (int id = 0; id < g_device_count; ++id) {
-        if (backend == GGML_V3_BACKEND_GPU && id != g_main_device) {
+    for (int id = 0; id < g_device_count_v3; ++id) {
+        if (backend == GGML_V3_BACKEND_GPU && id != g_main_device_v3) {
             continue;
         }
 
@@ -9890,13 +9898,13 @@ void ggml_v3_cuda_transform_tensor(void * data, struct ggml_v3_tensor * tensor) 
         } else if (backend == GGML_V3_BACKEND_GPU_SPLIT) {
             const int64_t rounding = get_row_rounding(tensor->type);
 
-            row_low = id == 0 ? 0 : nrows*g_tensor_split[id];
+            row_low = id == 0 ? 0 : nrows*g_tensor_split_v3[id];
             row_low -= row_low % rounding;
 
-            if (id == g_device_count - 1) {
+            if (id == g_device_count_v3 - 1) {
                 row_high = nrows;
             } else {
-                row_high = nrows*g_tensor_split[id + 1];
+                row_high = nrows*g_tensor_split_v3[id + 1];
                 row_high -= row_high % rounding;
             }
         } else {
@@ -9947,7 +9955,7 @@ void ggml_v3_cuda_free_data(struct ggml_v3_tensor * tensor) {
 
     ggml_v3_tensor_extra_gpu * extra = (ggml_v3_tensor_extra_gpu *) tensor->extra;
 
-    for (int id = 0; id < g_device_count; ++id) {
+    for (int id = 0; id < g_device_count_v3; ++id) {
         ggml_v3_cuda_set_device(id);
         if (extra->data_device[id] != nullptr) {
             CUDA_CHECK(cudaFree(extra->data_device[id]));
@@ -9980,7 +9988,7 @@ static ggml_v3_tensor_extra_gpu * ggml_v3_cuda_alloc_temp_tensor_extra() {
 }
 
 static void ggml_v3_cuda_assign_buffers_impl(struct ggml_v3_tensor * tensor, bool scratch, bool force_inplace, bool no_alloc) {
-    if (scratch && g_scratch_size == 0) {
+    if (scratch && g_scratch_size_v3 == 0) {
         return;
     }
 
@@ -10008,57 +10016,57 @@ static void ggml_v3_cuda_assign_buffers_impl(struct ggml_v3_tensor * tensor, boo
         force_inplace;
     const size_t size = ggml_v3_nbytes(tensor);
 
-    ggml_v3_cuda_set_device(g_main_device);
+    ggml_v3_cuda_set_device(g_main_device_v3);
     if (inplace && (tensor->src[0]->backend == GGML_V3_BACKEND_GPU || tensor->src[0]->backend == GGML_V3_BACKEND_GPU_SPLIT)) {
         ggml_v3_tensor_extra_gpu * src0_extra = (ggml_v3_tensor_extra_gpu * ) tensor->src[0]->extra;
-        char * src0_ddc = (char *) src0_extra->data_device[g_main_device];
+        char * src0_ddc = (char *) src0_extra->data_device[g_main_device_v3];
         size_t offset = 0;
         if (tensor->op == GGML_V3_OP_VIEW) {
             memcpy(&offset, tensor->op_params, sizeof(size_t));
         }
         extra = ggml_v3_cuda_alloc_temp_tensor_extra();
-        extra->data_device[g_main_device] = src0_ddc + offset;
+        extra->data_device[g_main_device_v3] = src0_ddc + offset;
     } else if (tensor->op == GGML_V3_OP_CPY) {
         ggml_v3_tensor_extra_gpu * src1_extra = (ggml_v3_tensor_extra_gpu * ) tensor->src[1]->extra;
-        void * src1_ddv = src1_extra->data_device[g_main_device];
+        void * src1_ddv = src1_extra->data_device[g_main_device_v3];
         extra = ggml_v3_cuda_alloc_temp_tensor_extra();
-        extra->data_device[g_main_device] = src1_ddv;
+        extra->data_device[g_main_device_v3] = src1_ddv;
     } else if (scratch) {
-        GGML_V3_ASSERT(size <= g_scratch_size);
-        if (g_scratch_offset + size > g_scratch_size) {
-            g_scratch_offset = 0;
+        GGML_V3_ASSERT(size <= g_scratch_size_v3);
+        if (g_scratch_offset_v3 + size > g_scratch_size_v3) {
+            g_scratch_offset_v3 = 0;
         }
 
-        char * data = (char *) g_scratch_buffer;
+        char * data = (char *) g_scratch_buffer_v3;
         if (data == nullptr) {
-            CUDA_CHECK(cudaMalloc(&data, g_scratch_size));
-            g_scratch_buffer = data;
+            CUDA_CHECK(cudaMalloc(&data, g_scratch_size_v3));
+            g_scratch_buffer_v3 = data;
         }
         extra = ggml_v3_cuda_alloc_temp_tensor_extra();
-        extra->data_device[g_main_device] = data + g_scratch_offset;
+        extra->data_device[g_main_device_v3] = data + g_scratch_offset_v3;
 
-        g_scratch_offset += size;
+        g_scratch_offset_v3 += size;
 
-        GGML_V3_ASSERT(g_scratch_offset <= g_scratch_size);
+        GGML_V3_ASSERT(g_scratch_offset_v3 <= g_scratch_size_v3);
     } else { // allocate new buffers outside of scratch
         void * data;
         CUDA_CHECK(cudaMalloc(&data, size));
         CUDA_CHECK(cudaMemset(data, 0, size));
         extra = new ggml_v3_tensor_extra_gpu;
         memset(extra, 0, sizeof(*extra));
-        extra->data_device[g_main_device] = data;
+        extra->data_device[g_main_device_v3] = data;
     }
 
     tensor->extra = extra;
 }
 
 void ggml_v3_cuda_assign_scratch_offset(struct ggml_v3_tensor * tensor, size_t offset) {
-    if (g_scratch_size == 0) {
+    if (g_scratch_size_v3 == 0) {
         return;
     }
-    if (g_scratch_buffer == nullptr) {
-        ggml_v3_cuda_set_device(g_main_device);
-        CUDA_CHECK(cudaMalloc(&g_scratch_buffer, g_scratch_size));
+    if (g_scratch_buffer_v3 == nullptr) {
+        ggml_v3_cuda_set_device(g_main_device_v3);
+        CUDA_CHECK(cudaMalloc(&g_scratch_buffer_v3, g_scratch_size_v3));
     }
 
     ggml_v3_tensor_extra_gpu * extra = ggml_v3_cuda_alloc_temp_tensor_extra();
@@ -10067,14 +10075,14 @@ void ggml_v3_cuda_assign_scratch_offset(struct ggml_v3_tensor * tensor, size_t o
 
     if (inplace && (tensor->view_src->backend == GGML_V3_BACKEND_GPU || tensor->view_src->backend == GGML_V3_BACKEND_GPU_SPLIT)) {
         ggml_v3_tensor_extra_gpu * src0_extra = (ggml_v3_tensor_extra_gpu * ) tensor->view_src->extra;
-        char * src0_ddc = (char *) src0_extra->data_device[g_main_device];
+        char * src0_ddc = (char *) src0_extra->data_device[g_main_device_v3];
         size_t view_offset = 0;
         if (tensor->op == GGML_V3_OP_VIEW) {
             memcpy(&view_offset, tensor->op_params, sizeof(size_t));
         }
-        extra->data_device[g_main_device] = src0_ddc + view_offset;
+        extra->data_device[g_main_device_v3] = src0_ddc + view_offset;
     } else {
-        extra->data_device[g_main_device] = (char *) g_scratch_buffer + offset;
+        extra->data_device[g_main_device_v3] = (char *) g_scratch_buffer_v3 + offset;
     }
 
     tensor->extra = extra;
@@ -10085,8 +10093,8 @@ void ggml_v3_cuda_copy_to_device(struct ggml_v3_tensor * tensor) {
     GGML_V3_ASSERT(ggml_v3_is_contiguous(tensor));
 
     ggml_v3_tensor_extra_gpu * extra = (ggml_v3_tensor_extra_gpu *) tensor->extra;
-    ggml_v3_cuda_set_device(g_main_device);
-    CUDA_CHECK(cudaMemcpy(extra->data_device[g_main_device], tensor->data, ggml_v3_nbytes(tensor), cudaMemcpyHostToDevice));
+    ggml_v3_cuda_set_device(g_main_device_v3);
+    CUDA_CHECK(cudaMemcpy(extra->data_device[g_main_device_v3], tensor->data, ggml_v3_nbytes(tensor), cudaMemcpyHostToDevice));
 }
 
 void ggml_v3_cuda_assign_buffers(struct ggml_v3_tensor * tensor) {
@@ -10106,44 +10114,44 @@ void ggml_v3_cuda_assign_buffers_force_inplace(struct ggml_v3_tensor * tensor) {
 }
 
 void ggml_v3_cuda_set_main_device(const int main_device) {
-    if (main_device >= g_device_count) {
+    if (main_device >= g_device_count_v3) {
         fprintf(stderr, "warning: cannot set main_device=%d because there are only %d devices. Using device %d instead.\n",
-                main_device, g_device_count, g_main_device);
+                main_device, g_device_count_v3, g_main_device_v3);
         return;
     }
 
-    if (g_main_device != main_device && g_device_count > 1) {
-        g_main_device = main_device;
+    if (g_main_device_v3 != main_device && g_device_count_v3 > 1) {
+        g_main_device_v3 = main_device;
         cudaDeviceProp prop;
-        CUDA_CHECK(cudaGetDeviceProperties(&prop, g_main_device));
-        fprintf(stderr, "%s: using device %d (%s) as main device\n", __func__, g_main_device, prop.name);
+        CUDA_CHECK(cudaGetDeviceProperties(&prop, g_main_device_v3));
+        fprintf(stderr, "%s: using device %d (%s) as main device\n", __func__, g_main_device_v3, prop.name);
     }
 }
 
 void ggml_v3_cuda_set_mul_mat_q(const bool mul_mat_q) {
-    g_mul_mat_q = mul_mat_q;
+    g_mul_mat_q_v3 = mul_mat_q;
 }
 
 void ggml_v3_cuda_set_scratch_size(const size_t scratch_size) {
     // this is a hack to not completely break llama.cpp when using multiple models or contexts simultaneously
     // it still won't always work as expected, but it's better than nothing
-    if (scratch_size > g_scratch_size) {
+    if (scratch_size > g_scratch_size_v3) {
         ggml_v3_cuda_free_scratch();
     }
-    g_scratch_size = std::max(g_scratch_size, scratch_size);
+    g_scratch_size_v3 = std::max(g_scratch_size_v3, scratch_size);
 }
 
 void ggml_v3_cuda_free_scratch() {
-    if (g_scratch_buffer == nullptr) {
+    if (g_scratch_buffer_v3 == nullptr) {
         return;
     }
 
-    CUDA_CHECK(cudaFree(g_scratch_buffer));
-    g_scratch_buffer = nullptr;
+    CUDA_CHECK(cudaFree(g_scratch_buffer_v3));
+    g_scratch_buffer_v3 = nullptr;
 }
 
 bool ggml_v3_cuda_compute_forward(struct ggml_v3_compute_params * params, struct ggml_v3_tensor * tensor) {
-    if (!g_cublas_loaded) return false;
+    if (!g_cublas_loaded_v3) return false;
 
     ggml_v3_cuda_func_t func;
     const bool any_on_device = tensor->backend == GGML_V3_BACKEND_GPU
