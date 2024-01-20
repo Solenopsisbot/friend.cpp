@@ -7254,7 +7254,7 @@ static void im2col_f32_f16_cuda(const float* x, half* dst,
 }
 
 // buffer pool for cuda
-#define MAX_CUDA_BUFFERS_V3 512
+#define MAX_CUDA_BUFFERS_V3 256
 
 struct scoped_spin_lock {
     std::atomic_flag& lock;

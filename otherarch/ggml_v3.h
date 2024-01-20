@@ -2256,6 +2256,23 @@ extern "C" {
 
     GGML_V3_API ggml_v3_type_traits_t ggml_v3_internal_get_type_traits(enum ggml_v3_type type);
 
+//allocator stuff
+
+GGML_V3_API struct ggml_v3_allocr * ggml_v3_allocr_new(void * data, size_t size, size_t alignment);
+GGML_V3_API struct ggml_v3_allocr * ggml_v3_allocr_new_measure(size_t alignment);
+// tell the allocator to parse nodes following the order described in the list
+// you should call this if your graph are optimized to execute out-of-order
+GGML_V3_API void   ggml_v3_allocr_set_parse_seq(struct ggml_v3_allocr * alloc, const int * list, int n);
+GGML_V3_API void   ggml_v3_allocr_free(struct ggml_v3_allocr * alloc);
+GGML_V3_API bool   ggml_v3_allocr_is_measure(struct ggml_v3_allocr * alloc);
+GGML_V3_API void   ggml_v3_allocr_reset(struct ggml_v3_allocr * alloc);
+GGML_V3_API void   ggml_v3_allocr_alloc(struct ggml_v3_allocr * alloc, struct ggml_v3_tensor * tensor);
+GGML_V3_API size_t ggml_v3_allocr_alloc_graph(struct ggml_v3_allocr * alloc, struct ggml_v3_cgraph * graph);
+GGML_V3_API size_t ggml_v3_allocr_max_size(struct ggml_v3_allocr * alloc);
+
+#define GGML_V3_GRAPH_HASHTABLE_SIZE 32771
+#define GGML_V3_MAX_NODES 8192
+
 #ifdef  __cplusplus
 }
 #endif

@@ -61,14 +61,12 @@ static void llama_v3_log_callback_default(llama_v3_log_level level, const char *
 #define LLAMA_V3_LOG_WARN(...)  llama_v3_log_internal(LLAMA_V3_LOG_LEVEL_WARN , __VA_ARGS__)
 #define LLAMA_V3_LOG_ERROR(...) llama_v3_log_internal(LLAMA_V3_LOG_LEVEL_ERROR, __VA_ARGS__)
 
-// disable allocator for backwards compatibility - to avoid gguf changes messing it up
-// #include "ggml-alloc.h"
-// #if !defined(GGML_USE_CUBLAS)
-// #define LLAMA_V3_USE_ALLOCATOR
-// #else
+#if !defined(GGML_USE_CUBLAS)
+#define LLAMA_V3_USE_ALLOCATOR
+#else
 #define LLAMA_V3_USE_SCRATCH
 #define LLAMA_V3_MAX_SCRATCH_BUFFERS 16
-// #endif
+#endif
 
 
 // available llama models
