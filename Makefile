@@ -60,8 +60,8 @@ CUBLASLD_FLAGS =
 CUBLAS_OBJS =
 
 #lets try enabling everything
-CFLAGS   += -pthread -s
-CXXFLAGS += -pthread -s -Wno-multichar -Wno-write-strings
+CFLAGS   += -pthread -s -Wno-deprecated -Wno-deprecated-declarations
+CXXFLAGS += -pthread -s -Wno-multichar -Wno-write-strings -Wno-deprecated -Wno-deprecated-declarations
 
 # OS specific
 # TODO: support Windows

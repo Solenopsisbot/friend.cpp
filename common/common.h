@@ -53,6 +53,7 @@ struct gpt_params {
     float   p_split                         = 0.1f;  // speculative decoding split probability
     int32_t n_gpu_layers                    = -1;    // number of layers to store in VRAM (-1 - use default)
     int32_t n_gpu_layers_draft              = -1;    // number of layers to store in VRAM for the draft model (-1 - use default)
+    llama_split_mode split_mode             = LLAMA_SPLIT_LAYER; // how to split the model across GPUs
     int32_t main_gpu                        = 0;     // the GPU that is used for scratch and small tensors
     float   tensor_split[LLAMA_MAX_DEVICES] = {0};   // how split tensors should be distributed across GPUs
     int32_t n_beams                         = 0;     // if non-zero then use beam search of given width.
@@ -137,6 +138,7 @@ struct gpt_params {
     bool use_mlock         = false; // use mlock to keep model in memory
     bool numa              = false; // attempt optimizations that help on some NUMA systems
     bool verbose_prompt    = false; // print prompt tokens before generation
+    bool display_prompt    = true;  // print prompt before generation
     bool infill            = false; // use infill mode
     bool dump_kv_cache     = false; // dump the KV cache contents for debugging purposes
     bool no_kv_offload     = false; // disable KV offloading

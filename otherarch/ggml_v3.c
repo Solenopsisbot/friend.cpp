@@ -266,7 +266,7 @@ size_t ggml_v3_hash_find_or_insert(      struct ggml_v3_hash_set hash_set, struc
     #include <windows.h>
     #include <memoryapi.h>
 #endif
-#define UNUSED(x) (void)(x)
+#define UNUSED GGML_V3_UNUSED
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define GGML_V3_MAX_CONCUR (2*GGML_V3_MAX_NODES)
 //#define GGML_V3_ALLOCATOR_DEBUG
@@ -1354,7 +1354,6 @@ inline static void * ggml_v3_aligned_malloc(size_t size) {
 #endif
 #endif
 
-#define UNUSED GGML_V3_UNUSED
 #define SWAP(x, y, T) do { T SWAP = x; x = y; y = SWAP; } while (0)
 
 #if defined(GGML_USE_ACCELERATE)
