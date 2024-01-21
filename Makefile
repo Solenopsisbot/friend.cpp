@@ -138,19 +138,27 @@ endif
 # it is recommended to use the CMAKE file to build for cublas if you can - will likely work better
 ifdef LLAMA_CUBLAS
 	CUBLAS_FLAGS = -DGGML_USE_CUBLAS -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include
-	CUBLASLD_FLAGS = -lcuda -lcublas -lculibos -lcudart -lcublasLt -lpthread -ldl -lrt -Lconda/envs/linux/lib -Lconda/envs/linux/lib/stubs -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L$(CUDA_PATH)/targets/x86_64-linux/lib -L/usr/local/cuda/targets/aarch64-linux/lib -L/usr/lib/wsl/lib
+	CUBLASLD_FLAGS = -lcuda -lcublas -lculibos -lcudart -lcublasLt -lpthread -ldl -lrt -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L$(CUDA_PATH)/targets/x86_64-linux/lib -L/usr/local/cuda/targets/aarch64-linux/lib -L/usr/lib/wsl/lib
 	CUBLAS_OBJS = ggml-cuda.o ggml_v3-cuda.o ggml_v2-cuda.o ggml_v2-cuda-legacy.o
 	NVCC      = nvcc
 	NVCCFLAGS = --forward-unknown-to-host-compiler -use_fast_math
+
+ifdef LLAMA_ADD_CONDA_PATHS
+	CUBLASLD_FLAGS += -Lconda/envs/linux/lib -Lconda/envs/linux/lib/stubs
+endif
 
 ifdef CUDA_DOCKER_ARCH
 	NVCCFLAGS += -Wno-deprecated-gpu-targets -arch=$(CUDA_DOCKER_ARCH)
 else
 ifdef LLAMA_PORTABLE
+ifdef LLAMA_COLAB #colab does not need all targets, all-major doesnt work correctly with pascal
+	NVCCFLAGS += -Wno-deprecated-gpu-targets -arch=all-major
+else
 	NVCCFLAGS += -Wno-deprecated-gpu-targets -arch=all
+endif #LLAMA_COLAB
 else
 	NVCCFLAGS += -arch=native
-endif
+endif #LLAMA_PORTABLE
 endif # CUDA_DOCKER_ARCH
 
 ifdef LLAMA_CUDA_FORCE_DMMV
@@ -187,6 +195,7 @@ endif
 ifdef LLAMA_CUDA_CCBIN
 	NVCCFLAGS += -ccbin $(LLAMA_CUDA_CCBIN)
 endif
+
 ggml-cuda.o: ggml-cuda.cu ggml-cuda.h
 	$(NVCC) $(NVCCFLAGS) $(subst -Ofast,-O3,$(CXXFLAGS)) $(CUBLAS_FLAGS) $(CUBLAS_CXXFLAGS) -Wno-pedantic -c $< -o $@
 ggml_v2-cuda.o: otherarch/ggml_v2-cuda.cu otherarch/ggml_v2-cuda.h
