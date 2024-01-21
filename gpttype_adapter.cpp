@@ -780,15 +780,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
 
     printf("System Info: %s\n", llama_print_system_info());
     #if defined(GGML_USE_CUBLAS)
-    if(file_format==FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON)
-    {
-        if(ggml_cpu_has_gpublas() && cu_parseinfo_maindevice>0)
-        {
-            printf("CUBLAS: Set main device to %d\n",cu_parseinfo_maindevice);
-            ggml_cuda_set_main_device(cu_parseinfo_maindevice);
-        }
-    }
-    else
+    if(file_format!=FileFormat::GGUF_LLAMA && file_format!=FileFormat::GGUF_FALCON)
     {
         if(ggml_v3_cpu_has_gpublas() && cu_parseinfo_maindevice>0)
         {
@@ -932,9 +924,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
            llama_ctx_params.n_ctx += extra_context_handle_fragmentation;
         }
 
-        //llama_ctx_paran_parts = -1;
         llama_ctx_params.seed = -1;
-        //llama_ctx_params.f16_kv = true;
         llama_ctx_params.offload_kqv = !inputs.low_vram;
         llama_ctx_params.mul_mat_q = inputs.use_mmq;
         llama_ctx_params.logits_all = false;
@@ -946,6 +936,12 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         {
             printf("\nGPU layer offload for GGUF FALCON on OpenCL is known to have issues, it has been set to 0.\n");
             model_params.n_gpu_layers = 0;
+        }
+        #endif
+        #if defined(GGML_USE_CUBLAS)
+        if(ggml_cpu_has_gpublas() && cu_parseinfo_maindevice>0)
+        {
+            printf("CUBLAS: Set main device to %d\n",cu_parseinfo_maindevice);
         }
         #endif
         model_params.main_gpu = cu_parseinfo_maindevice;
