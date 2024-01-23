@@ -771,7 +771,8 @@ extern "C" {
                            float   p,
                            size_t   min_keep,
                            float min_temp,
-                           float max_temp);
+                           float max_temp,
+                           float dynatemp_exponent);
 
     /// @details Tail Free Sampling described in https://www.trentonbricken.com/Tail-Free-Sampling/.
     LLAMA_API void llama_sample_tail_free(

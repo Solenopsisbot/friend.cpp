@@ -8479,12 +8479,12 @@ void llama_sample_temperature(struct llama_context * ctx, llama_token_data_array
     llama_sample_temp(ctx, candidates_p, temp);
 }
 
-void llama_sample_entropy(struct llama_context * ctx, llama_token_data_array * candidates_p, float temp, float min_temp = 0, float max_temp = 2.0f) {
+void llama_sample_entropy(struct llama_context * ctx, llama_token_data_array * candidates_p, float temp, float min_temp = 0, float max_temp = 2.0f, float dynatemp_exponent = 1.0f) {
     const int64_t t_start_sample_us = ggml_time_us();
 
     llama_sample_softmax(ctx, candidates_p);
 
-    float exponent_val = 1.0f;
+    float exponent_val = dynatemp_exponent;
 
     // Calculate entropy of the softmax probabilities
     float entropy = 0.0f;
