@@ -1149,13 +1149,7 @@ def show_new_gui():
     contextsize_text = ["256", "512", "1024", "2048", "3072", "4096", "6144", "8192", "12288", "16384", "24576", "32768", "49152", "65536"]
     runopts = [opt for lib, opt in lib_option_pairs if file_exists(lib)]
     antirunopts = [opt.replace("Use ", "") for lib, opt in lib_option_pairs if not (opt in runopts)]
-    if os.name != 'nt':
-        if "NoAVX2 Mode (Old CPU)" in antirunopts:
-            antirunopts.remove("NoAVX2 Mode (Old CPU)")
-        if "Failsafe Mode (Old CPU)" in antirunopts:
-            antirunopts.remove("Failsafe Mode (Old CPU)")
-        if "CLBlast NoAVX2 (Old CPU)" in antirunopts:
-            antirunopts.remove("CLBlast NoAVX2 (Old CPU)")
+
     if not any(runopts):
         exitcounter = 999
         show_gui_msgbox("No Backends Available!","KoboldCPP couldn't locate any backends to use (i.e Default, OpenBLAS, CLBlast, CuBLAS).\n\nTo use the program, please run the 'make' command from the directory.")
@@ -1430,7 +1424,7 @@ def show_new_gui():
         # backend count label with the tooltip function
         nl = '\n'
         tooltxt = f"Number of backends you have built and available." + (f"\n\nMissing Backends: \n\n{nl.join(antirunopts)}" if len(runopts) != 6 else "")
-        num_backends_built = makelabel(parent, str(len(runopts)) + f"/{7 if os.name == 'nt' else 4}", 5, 2,tooltxt)
+        num_backends_built = makelabel(parent, str(len(runopts)) + f"/7", 5, 2,tooltxt)
         num_backends_built.grid(row=1, column=1, padx=195, pady=0)
         num_backends_built.configure(text_color="#00ff00")
 

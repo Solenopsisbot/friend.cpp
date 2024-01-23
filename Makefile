@@ -113,13 +113,15 @@ ifeq ($(UNAME_M),$(filter $(UNAME_M),x86_64 i686))
 	ifeq ($(OS),Windows_NT)
 		CFLAGS +=
 		NONECFLAGS +=
-# -mno-sse3
 		SIMPLECFLAGS += -mavx -msse3
 		FULLCFLAGS += -mavx2 -msse3 -mfma -mf16c -mavx
 	else
 # if not on windows, they are clearly building it themselves, so lets just use whatever is supported
 		ifdef LLAMA_PORTABLE
-		CFLAGS += -mavx2 -msse3 -mfma -mf16c -mavx
+		CFLAGS +=
+		NONECFLAGS +=
+		SIMPLECFLAGS += -mavx -msse3
+		FULLCFLAGS += -mavx2 -msse3 -mfma -mf16c -mavx
 		else
 		CFLAGS += -march=native -mtune=native
 		endif
@@ -314,6 +316,10 @@ ifeq ($(OS),Windows_NT)
 	endif
 else
 	DEFAULT_BUILD = $(CXX) $(CXXFLAGS)  $^ -shared -o $@.so $(LDFLAGS)
+	ifdef LLAMA_PORTABLE
+	FAILSAFE_BUILD = $(CXX) $(CXXFLAGS)  $^ -shared -o $@.so $(LDFLAGS)
+	NOAVX2_BUILD = $(CXX) $(CXXFLAGS)  $^ -shared -o $@.so $(LDFLAGS)
+	endif
 
 	ifdef LLAMA_OPENBLAS
 	OPENBLAS_BUILD = $(CXX) $(CXXFLAGS) $^ $(ARCH_ADD) -lopenblas -shared -o $@.so $(LDFLAGS)
