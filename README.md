@@ -98,8 +98,17 @@ You can then run koboldcpp anywhere from the terminal by running `koboldcpp` to 
   - You can attempt a CuBLAS build with using the provided CMake file with visual studio. If you use the CMake file to build, copy the `koboldcpp_cublas.dll` generated into the same directory as the `koboldcpp.py` file. If you are bundling executables, you may need to include CUDA dynamic libraries (such as `cublasLt64_11.dll` and `cublas64_11.dll`) in order for the executable to work correctly on a different PC.
   - Make the KoboldCPP project using the instructions above.
 
-## Android (Termux) Alternative method
-- See https://github.com/ggerganov/llama.cpp/pull/1828/files
+## Compiling on Android (Termux Installation)
+- [Install and run Termux from F-Droid](https://f-droid.org/en/packages/com.termux/)
+- Enter the command `termux-change-repo` and choose `Mirror by BFSU`
+- Install dependencies with `pkg install wget git python` (plus any other missing packages)
+- Install dependencies `apt install openssl` (if needed)
+- Clone the repo `git clone https://github.com/LostRuins/koboldcpp.git`
+- Navigate to the koboldcpp folder `cd koboldcpp`
+- Build the project `make`
+- Grab a small GGUF model, such as `wget https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q2_K.gguf`
+- Start the python server `python koboldcpp.py --model phi-2.Q2_K.gguf`
+- Connect to `http://localhost:5001` on your mobile browser
 
 ## AMD
 - Please check out https://github.com/YellowRoseCx/koboldcpp-rocm
