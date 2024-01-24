@@ -1268,9 +1268,11 @@ def show_new_gui():
     def makefileentry(parent, text, searchtext, var, row=0, width=200, filetypes=[], onchoosefile=None, singlerow=False, tooltiptxt=""):
         makelabel(parent, text, row,0,tooltiptxt)
         def getfilename(var, text):
-            var.set(askopenfilename(title=text,filetypes=filetypes))
-            if onchoosefile:
-                onchoosefile(var.get())
+            fnam = askopenfilename(title=text,filetypes=filetypes)
+            if fnam:
+                var.set(fnam)
+                if onchoosefile:
+                    onchoosefile(var.get())
         entry = ctk.CTkEntry(parent, width, textvariable=var)
         button = ctk.CTkButton(parent, 50, text="Browse", command= lambda a=var,b=searchtext:getfilename(a,b))
         if singlerow:
