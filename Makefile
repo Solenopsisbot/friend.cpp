@@ -266,8 +266,8 @@ endif # LLAMA_METAL
 ifneq ($(filter aarch64%,$(UNAME_M)),)
 	# Apple M1, M2, etc.
 	# Raspberry Pi 3, 4, Zero 2 (64-bit)
-	CFLAGS 	 += -mcpu=native
-	CXXFLAGS += -mcpu=native
+	CFLAGS 	 +=
+	CXXFLAGS +=
 endif
 ifneq ($(filter armv6%,$(UNAME_M)),)
 	# Raspberry Pi 1, Zero

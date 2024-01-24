@@ -109,6 +109,7 @@ You can then run koboldcpp anywhere from the terminal by running `koboldcpp` to 
 - Grab a small GGUF model, such as `wget https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q2_K.gguf`
 - Start the python server `python koboldcpp.py --model phi-2.Q2_K.gguf`
 - Connect to `http://localhost:5001` on your mobile browser
+- If you encounter any errors, make sure your packages are up-to-date with `pkg up`
 
 ## AMD
 - Please check out https://github.com/YellowRoseCx/koboldcpp-rocm
