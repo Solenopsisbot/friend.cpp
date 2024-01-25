@@ -1,6 +1,8 @@
 #define LLAMA_API_INTERNAL
 #include "llama.h"
 
+#include <iostream>
+
 #include "unicode.h"
 
 #include "ggml.h"
@@ -11,6 +13,8 @@
 #  include "ggml-cuda.h"
 #elif defined(GGML_USE_CLBLAST)
 #  include "ggml-opencl.h"
+#elif defined(GGML_USE_VULKAN)
+#  include "ggml-vulkan.h"
 #endif
 
 #ifdef GGML_USE_METAL
@@ -1258,6 +1262,10 @@ static ggml_backend_buffer_type_t llama_default_buffer_type_cpu(bool host_buffer
     }
 #elif defined(GGML_USE_CPU_HBM)
     buft = ggml_backend_cpu_hbm_buffer_type();
+#elif defined(GGML_USE_VULKAN)
+    if (host_buffer) {
+        buft = ggml_backend_vk_host_buffer_type();
+    }
 #endif
 
     if (buft == nullptr) {
@@ -1275,6 +1283,8 @@ static ggml_backend_buffer_type_t llama_default_buffer_type_offload(int gpu) {
     buft = ggml_backend_metal_buffer_type();
 #elif defined(GGML_USE_CUBLAS)
     buft = ggml_backend_cuda_buffer_type(gpu);
+#elif defined(GGML_USE_VULKAN)
+    buft = ggml_backend_vk_buffer_type();
 #elif defined(GGML_USE_CLBLAST)
     buft = ggml_backend_opencl_buffer_type();
 #endif
@@ -6652,7 +6662,7 @@ static int llama_decode_internal(
     }
 
     const bool fully_offloaded = model.n_gpu_layers >= (int) hparams.n_layer + 1;
-    if (ggml_cpu_has_cublas() && fully_offloaded) {
+    if ((ggml_cpu_has_cublas() || ggml_cpu_has_vulkan()) && fully_offloaded) {
         n_threads = 1;
     }
 
@@ -9877,6 +9887,16 @@ struct llama_context * llama_new_context_with_model(
                     ctx->backends.push_back(backend);
                 }
             }
+        }
+#elif defined(GGML_USE_VULKAN)
+        if (model->n_gpu_layers > 0) {
+            ggml_backend_t backend = ggml_backend_vk_init();
+            if (backend == nullptr) {
+                LLAMA_LOG_ERROR("%s: failed to initialize Vulkan backend\n", __func__);
+                llama_free(ctx);
+                return nullptr;
+            }
+            ctx->backends.push_back(backend);
         }
 #endif
         ctx->backend_cpu = ggml_backend_cpu_init();

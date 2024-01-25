@@ -448,6 +448,21 @@ ggml-opencl.o: ggml-opencl.cpp ggml-opencl.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 endif # LLAMA_CLBLAST
 
+ifdef LLAMA_VULKAN
+	CFLAGS  += -DGGML_USE_VULKAN
+	CXXFLAGS  += -DGGML_USE_VULKAN
+	LDFLAGS += -lvulkan
+	OBJS    += ggml-vulkan.o
+
+ifdef LLAMA_VULKAN_CHECK_RESULTS
+	CFLAGS  += -DGGML_VULKAN_CHECK_RESULTS
+	CXXFLAGS  += -DGGML_VULKAN_CHECK_RESULTS
+endif
+
+ggml-vulkan.o: ggml-vulkan.cpp ggml-vulkan.h
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+endif # LLAMA_VULKAN
+
 ifdef LLAMA_HIPBLAS
 
 	ifeq ($(wildcard /opt/rocm),)
