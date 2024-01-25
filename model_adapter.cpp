@@ -255,7 +255,7 @@ void print_tok_vec(std::vector<float> &embd)
     else if(magic == 0x46554747)
     {
         fin.close();
-        fileformat = FileFormat::GGUF_LLAMA;
+        fileformat = FileFormat::GGUF_GENERIC;
 
         struct gguf_init_params ggufparams;
         ggufparams.no_alloc = true;
@@ -267,18 +267,7 @@ void print_tok_vec(std::vector<float> &embd)
         std::string modelarch = "";
         if (keyidx != -1) { modelarch = gguf_get_val_str(ctx, keyidx); }
 
-        if(modelarch=="llama")
-        {
-            fileformat = FileFormat::GGUF_LLAMA;
-        }
-        else if(modelarch=="falcon")
-        {
-            fileformat = FileFormat::GGUF_FALCON; //uses the same loader
-        }
-
-
         printf("\nThe reported GGUF Arch is: %s\n",(modelarch==""?"unknown":modelarch.c_str()));
-
 
         if(modelarch!="" && fileformatmeta!=nullptr)
         {
@@ -289,6 +278,15 @@ void print_tok_vec(std::vector<float> &embd)
             }
             int filever = gguf_get_version(ctx);
             fileformatmeta->fileversion = filever;
+            fileformatmeta->model_architecture = GGUFArch::DEFAULT;
+            if(modelarch=="phi2")
+            {
+                fileformatmeta->model_architecture = GGUFArch::PHI;
+            }
+            else if(modelarch=="falcon")
+            {
+                fileformatmeta->model_architecture = GGUFArch::FALCON;
+            }
         }
         gguf_free(ctx);
     }

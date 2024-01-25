@@ -141,7 +141,7 @@ static std::string FileFormatTokenizeID(int id, FileFormat file_format)
     {
         return std::string(llama_v3_token_to_str(llama_ctx_v3, id));
     }
-    else if(file_format == FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON)
+    else if(file_format == FileFormat::GGUF_GENERIC)
     {
         return std::string(llama_token_to_str(llama_ctx_v4, id));
     }
@@ -153,7 +153,7 @@ static std::string FileFormatTokenizeID(int id, FileFormat file_format)
 
 static void TokenizeString(const std::string & str_to_tokenize, std::vector<int> & output_tokens, FileFormat file_format)
 {
-    if (file_format == FileFormat::GGML || file_format == FileFormat::GGHF || file_format == FileFormat::GGJT || file_format == FileFormat::GGJT_2  || file_format == FileFormat::GGJT_3 || file_format == FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON)
+    if (file_format == FileFormat::GGML || file_format == FileFormat::GGHF || file_format == FileFormat::GGJT || file_format == FileFormat::GGJT_2  || file_format == FileFormat::GGJT_3 || file_format == FileFormat::GGUF_GENERIC)
     {
         if(file_format == FileFormat::GGHF || file_format == FileFormat::GGJT || file_format == FileFormat::GGJT_2 )
         {
@@ -182,9 +182,9 @@ static int GetEosID(FileFormat file_format, int32_t n_vocab)
 {
     unsigned int eosID = 0;
 
-    if(file_format == FileFormat::GGML || file_format == FileFormat::GGHF || file_format == FileFormat::GGJT || file_format == FileFormat::GGJT_2 || file_format == FileFormat::GGJT_3 || file_format == FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON)
+    if(file_format == FileFormat::GGML || file_format == FileFormat::GGHF || file_format == FileFormat::GGJT || file_format == FileFormat::GGJT_2 || file_format == FileFormat::GGJT_3 || file_format == FileFormat::GGUF_GENERIC)
     {
-        if(file_format == FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON)
+        if(file_format == FileFormat::GGUF_GENERIC)
         {
             eosID = llama_token_eos(&(llama_ctx_v4->model));
         }
@@ -696,7 +696,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     file_format = in_file_format;
     n_threads = kcpp_params->n_threads = inputs.threads;
     n_blasthreads = kcpp_params->n_threads_batch = inputs.blasthreads;
-    bool isGguf = (file_format == FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON);
+    bool isGguf = (file_format == FileFormat::GGUF_GENERIC);
 
     n_batch = kcpp_params->n_batch = (isGguf?normalbatchsize:smallbatchsize);
     modelname = kcpp_params->model = inputs.model_filename;
@@ -712,7 +712,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     auto clamped_max_context_length = inputs.max_context_length;
 
     if(clamped_max_context_length>16384 &&
-    file_format != FileFormat::GGUF_LLAMA && file_format!=FileFormat::GGUF_FALCON)
+    file_format != FileFormat::GGUF_GENERIC)
     {
         printf("Warning: Only GGUF models can use max context above 16k. Max context lowered to 16k.\n");
         clamped_max_context_length = 16384;
@@ -748,7 +748,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         {
             //approximate NTK aware ctx
             auto effectivenctx = kcpp_params->n_ctx;
-            if((file_format == FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON) && file_format_meta.n_ctx_train > 2048)
+            if((file_format == FileFormat::GGUF_GENERIC) && file_format_meta.n_ctx_train > 2048)
             {
                 float factor = file_format_meta.n_ctx_train/2048;
                 effectivenctx = effectivenctx/factor;
@@ -781,7 +781,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
 
     printf("System Info: %s\n", llama_print_system_info());
     #if defined(GGML_USE_CUBLAS)
-    if(file_format!=FileFormat::GGUF_LLAMA && file_format!=FileFormat::GGUF_FALCON)
+    if(file_format!=FileFormat::GGUF_GENERIC)
     {
         if(ggml_v3_cpu_has_gpublas() && cu_parseinfo_maindevice>0)
         {
@@ -915,7 +915,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         }
         return ModelLoadResult::SUCCESS;
     }
-    else if(file_format==FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON)
+    else if(file_format==FileFormat::GGUF_GENERIC)
     {
         llama_model_params model_params = llama_model_default_params();
         llama_context_params llama_ctx_params = llama_context_default_params();
@@ -932,10 +932,11 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         model_params.use_mmap = inputs.use_mmap;
         model_params.use_mlock = inputs.use_mlock;
         model_params.n_gpu_layers = inputs.gpulayers;
+
         #if defined(GGML_USE_CLBLAST)
-        if(file_format==FileFormat::GGUF_FALCON && model_params.n_gpu_layers>0)
+        if(file_format==FileFormat::GGUF_GENERIC && (file_format_meta.model_architecture == GGUFArch::FALCON || file_format_meta.model_architecture == GGUFArch::PHI) && model_params.n_gpu_layers>0)
         {
-            printf("\nGPU layer offload for GGUF FALCON on OpenCL is known to have issues, it has been set to 0.\n");
+            printf("\nOpenCL does not support GPU Layer offloading for this model architecture! GPU Offload has been disabled.\n");
             model_params.n_gpu_layers = 0;
         }
         #endif
@@ -1642,13 +1643,13 @@ generation_outputs gpttype_generate(const generation_inputs inputs, generation_o
     else
     {
         bool triggersc = useSmartContext;
-        if(useContextShift && (file_format == FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON))
+        if(useContextShift && (file_format == FileFormat::GGUF_GENERIC))
         {
             PurgeMissingTokens(llama_ctx_v4, current_context_tokens, embd_inp, inputs.max_length, nctx);
             triggersc = false;
         }
         ContextFastForward(current_context_tokens, embd_inp, n_past, last_n_tokens, nctx, smartcontext, triggersc, false);
-        if(file_format == FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON)
+        if(file_format == FileFormat::GGUF_GENERIC)
         {
             llama_kv_cache_seq_rm(llama_ctx_v4, 0, n_past, -1);
         }
@@ -1669,7 +1670,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs, generation_o
     {
         //for non llama, limit to 256
         int bbs = blasbatchsize;
-        if (file_format != FileFormat::GGML && file_format != FileFormat::GGHF && file_format != FileFormat::GGJT && file_format != FileFormat::GGJT_2 && file_format != FileFormat::GGJT_3 && file_format != FileFormat::GGUF_LLAMA && file_format!=FileFormat::GGUF_FALCON)
+        if (file_format != FileFormat::GGML && file_format != FileFormat::GGHF && file_format != FileFormat::GGJT && file_format != FileFormat::GGJT_2 && file_format != FileFormat::GGJT_3 && file_format != FileFormat::GGUF_GENERIC)
         {
             bbs = (blasbatchsize > 256 ? 256 : blasbatchsize);
         }
@@ -1821,7 +1822,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs, generation_o
             {
                 evalres = (llama_v3_eval(llama_ctx_v3, embd.data(), embdsize, n_past, kcpp_params->n_threads)==0);
             }
-            else if(file_format == FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON)
+            else if(file_format == FileFormat::GGUF_GENERIC)
             {
                 evalres = (llama_decode(llama_ctx_v4, llama_batch_get_one(embd.data(), embdsize, n_past, 0))==0);
             }
@@ -1934,9 +1935,9 @@ generation_outputs gpttype_generate(const generation_inputs inputs, generation_o
             float * logitsPtr;
             float lowestLogit = 0;
             int btsize = banned_token_ids.size();
-            if(file_format == FileFormat::GGML || file_format == FileFormat::GGHF || file_format == FileFormat::GGJT || file_format == FileFormat::GGJT_2 || file_format == FileFormat::GGJT_3 || file_format == FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON)
+            if(file_format == FileFormat::GGML || file_format == FileFormat::GGHF || file_format == FileFormat::GGJT || file_format == FileFormat::GGJT_2 || file_format == FileFormat::GGJT_3 || file_format == FileFormat::GGUF_GENERIC)
             {
-                if(file_format == FileFormat::GGUF_LLAMA || file_format==FileFormat::GGUF_FALCON)
+                if(file_format == FileFormat::GGUF_GENERIC)
                 {
                     logitsPtr = llama_get_logits(llama_ctx_v4);
                 }
