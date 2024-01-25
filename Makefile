@@ -1,4 +1,4 @@
-default: koboldcpp_default koboldcpp_failsafe koboldcpp_openblas koboldcpp_noavx2 koboldcpp_clblast koboldcpp_clblast_noavx2 koboldcpp_cublas koboldcpp_hipblas
+default: koboldcpp_default koboldcpp_failsafe koboldcpp_openblas koboldcpp_noavx2 koboldcpp_clblast koboldcpp_clblast_noavx2 koboldcpp_cublas koboldcpp_hipblas koboldcpp_vulkan
 tools: quantize_gpt2 quantize_gptj quantize_llama quantize_neox quantize_mpt
 dev: koboldcpp_openblas
 dev2: koboldcpp_clblast
@@ -39,8 +39,8 @@ endif
 #
 
 # keep standard at C11 and C++11
-CFLAGS   = -I.            -I./include -I./include/CL -I./otherarch -I./otherarch/tools -O3 -DNDEBUG -std=c11   -fPIC -DLOG_DISABLE_LOGS -D_GNU_SOURCE
-CXXFLAGS = -I. -I./common -I./include -I./include/CL -I./otherarch -I./otherarch/tools -O3 -DNDEBUG -std=c++11 -fPIC -DLOG_DISABLE_LOGS -D_GNU_SOURCE
+CFLAGS   = -I.            -I./include -I./include/CL -I./otherarch -I./otherarch/tools -I./include/vulkan -O3 -DNDEBUG -std=c11   -fPIC -DLOG_DISABLE_LOGS -D_GNU_SOURCE
+CXXFLAGS = -I. -I./common -I./include -I./include/CL -I./otherarch -I./otherarch/tools -I./include/vulkan -O3 -DNDEBUG -std=c++11 -fPIC -DLOG_DISABLE_LOGS -D_GNU_SOURCE
 LDFLAGS  =
 
 # these are used on windows, to build some libraries with extra old device compatibility
@@ -51,6 +51,7 @@ NONECFLAGS =
 OPENBLAS_FLAGS = -DGGML_USE_OPENBLAS -I/usr/local/include/openblas
 CLBLAST_FLAGS = -DGGML_USE_CLBLAST
 FAILSAFE_FLAGS = -DUSE_FAILSAFE
+VULKAN_FLAGS = -DGGML_USE_VULKAN
 ifdef LLAMA_CUBLAS
 	CUBLAS_FLAGS = -DGGML_USE_CUBLAS
 else
@@ -300,6 +301,7 @@ NOAVX2_BUILD =
 CLBLAST_BUILD =
 CUBLAS_BUILD =
 HIPBLAS_BUILD =
+VULKAN_BUILD =
 
 ifeq ($(OS),Windows_NT)
 	DEFAULT_BUILD = $(CXX) $(CXXFLAGS)  $^ -shared -o $@.dll $(LDFLAGS)
@@ -307,6 +309,7 @@ ifeq ($(OS),Windows_NT)
 	OPENBLAS_BUILD = $(CXX) $(CXXFLAGS) $^ lib/libopenblas.lib -shared -o $@.dll $(LDFLAGS)
 	NOAVX2_BUILD = $(CXX) $(CXXFLAGS) $^ -shared -o $@.dll $(LDFLAGS)
 	CLBLAST_BUILD = $(CXX) $(CXXFLAGS) $^ lib/OpenCL.lib lib/clblast.lib -shared -o $@.dll $(LDFLAGS)
+	VULKAN_BUILD = $(CXX) $(CXXFLAGS) $^ lib/vulkan-1.lib -shared -o $@.dll $(LDFLAGS)
 
 	ifdef LLAMA_CUBLAS
 		CUBLAS_BUILD = $(CXX) $(CXXFLAGS) $(CUBLAS_FLAGS) $^ -shared -o $@.dll $(CUBLASLD_FLAGS) $(LDFLAGS)
@@ -337,12 +340,17 @@ else
 	ifdef LLAMA_HIPBLAS
 		HIPBLAS_BUILD = $(HCXX) $(CXXFLAGS) $(HIPFLAGS) $^ -shared -o $@.so $(HIPLDFLAGS) $(LDFLAGS)
 	endif
+	ifdef LLAMA_VULKAN
+		VULKAN_BUILD = $(CXX) $(CXXFLAGS) $^ -lvulkan -shared -o $@.so $(LDFLAGS)
+	endif
 
 	ifndef LLAMA_OPENBLAS
 	ifndef LLAMA_CLBLAST
 	ifndef LLAMA_CUBLAS
 	ifndef LLAMA_HIPBLAS
+	ifndef LLAMA_VULKAN
 	OPENBLAS_BUILD = @echo 'Your OS $(OS) does not appear to be Windows. For faster speeds, install and link a BLAS library. Set LLAMA_OPENBLAS=1 to compile with OpenBLAS support or LLAMA_CLBLAST=1 to compile with ClBlast support. This is just a reminder, not an error.'
+	endif
 	endif
 	endif
 	endif
@@ -373,18 +381,20 @@ $(info )
 
 ggml.o: ggml.c ggml.h ggml-cuda.h
 	$(CC)  $(CFLAGS) $(FULLCFLAGS) -c $< -o $@
-ggml_openblas.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_openblas.o: ggml.c ggml.h ggml-cuda.h
 	$(CC)  $(CFLAGS) $(FULLCFLAGS) $(OPENBLAS_FLAGS) -c $< -o $@
-ggml_failsafe.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_failsafe.o: ggml.c ggml.h ggml-cuda.h
 	$(CC)  $(CFLAGS) $(NONECFLAGS) -c $< -o $@
-ggml_noavx2.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_noavx2.o: ggml.c ggml.h ggml-cuda.h
 	$(CC)  $(CFLAGS) $(SIMPLECFLAGS) -c $< -o $@
-ggml_clblast.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_clblast.o: ggml.c ggml.h ggml-cuda.h
 	$(CC)  $(CFLAGS) $(FULLCFLAGS) $(CLBLAST_FLAGS) -c $< -o $@
-ggml_cublas.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_cublas.o: ggml.c ggml.h ggml-cuda.h
 	$(CC)  $(CFLAGS) $(FULLCFLAGS) $(CUBLAS_FLAGS) $(HIPFLAGS) -c $< -o $@
-ggml_clblast_noavx2.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_clblast_noavx2.o: ggml.c ggml.h ggml-cuda.h
 	$(CC)  $(CFLAGS) $(SIMPLECFLAGS) $(CLBLAST_FLAGS) -c $< -o $@
+ggml_v4_vulkan.o: ggml.c ggml.h ggml-cuda.h
+	$(CC)  $(CFLAGS) $(FULLCFLAGS) $(VULKAN_FLAGS) -c $< -o $@
 
 #quants
 ggml-quants.o: ggml-quants.c ggml.h ggml-quants.h ggml-cuda.h
@@ -449,6 +459,10 @@ ggml_v2-opencl-legacy.o: otherarch/ggml_v2-opencl-legacy.c otherarch/ggml_v2-ope
 ggml_v3-opencl.o: otherarch/ggml_v3-opencl.cpp otherarch/ggml_v3-opencl.h
 	$(CXX) $(CXXFLAGS) $(CLBLAST_FLAGS) -c $< -o $@
 
+#vulkan
+ggml-vulkan.o: ggml-vulkan.cpp ggml-vulkan.h
+	$(CXX) $(CXXFLAGS) $(VULKAN_FLAGS) -c $< -o $@
+
 # intermediate objects
 llama.o: llama.cpp ggml.h ggml-alloc.h ggml-backend.h ggml-cuda.h ggml-metal.h llama.h otherarch/llama-util.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -473,9 +487,11 @@ gpttype_adapter_cublas.o: $(GPTTYPE_ADAPTER)
 	$(CXX) $(CXXFLAGS) $(CUBLAS_FLAGS) $(HIPFLAGS) -c $< -o $@
 gpttype_adapter_clblast_noavx2.o: $(GPTTYPE_ADAPTER)
 	$(CXX) $(CXXFLAGS) $(FAILSAFE_FLAGS) $(CLBLAST_FLAGS) -c $< -o $@
+gpttype_adapter_vulkan.o: $(GPTTYPE_ADAPTER)
+	$(CXX) $(CXXFLAGS) $(VULKAN_FLAGS) -c $< -o $@
 
 clean:
-	rm -vf *.o main quantize_llama quantize_gpt2 quantize_gptj quantize_neox quantize_mpt quantize-stats perplexity embedding benchmark-matmult save-load-state gguf gguf.exe main.exe quantize_llama.exe quantize_gptj.exe quantize_gpt2.exe quantize_neox.exe quantize_mpt.exe koboldcpp_default.dll koboldcpp_openblas.dll koboldcpp_failsafe.dll koboldcpp_noavx2.dll koboldcpp_clblast.dll koboldcpp_clblast_noavx2.dll koboldcpp_cublas.dll koboldcpp_hipblas.dll koboldcpp_default.so koboldcpp_openblas.so koboldcpp_failsafe.so koboldcpp_noavx2.so koboldcpp_clblast.so koboldcpp_clblast_noavx2.so koboldcpp_cublas.so koboldcpp_hipblas.so
+	rm -vf *.o main quantize_llama quantize_gpt2 quantize_gptj quantize_neox quantize_mpt quantize-stats perplexity embedding benchmark-matmult save-load-state gguf gguf.exe main.exe quantize_llama.exe quantize_gptj.exe quantize_gpt2.exe quantize_neox.exe quantize_mpt.exe koboldcpp_default.dll koboldcpp_openblas.dll koboldcpp_failsafe.dll koboldcpp_noavx2.dll koboldcpp_clblast.dll koboldcpp_clblast_noavx2.dll koboldcpp_cublas.dll koboldcpp_hipblas.dll koboldcpp_vulkan.dll koboldcpp_default.so koboldcpp_openblas.so koboldcpp_failsafe.so koboldcpp_noavx2.so koboldcpp_clblast.so koboldcpp_clblast_noavx2.so koboldcpp_cublas.so koboldcpp_hipblas.so koboldcpp_vulkan.so
 
 main: examples/main/main.cpp common/sampling.cpp build-info.h ggml.o ggml-quants.o ggml-alloc.o ggml-backend.o llama.o common.o console.o grammar-parser.o $(OBJS)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
@@ -492,7 +508,7 @@ koboldcpp_default: ggml.o ggml_v3.o ggml_v2.o ggml_v1.o expose.o common.o gpttyp
 	$(DEFAULT_BUILD)
 
 ifdef OPENBLAS_BUILD
-koboldcpp_openblas: ggml_openblas.o ggml_v3_openblas.o ggml_v2_openblas.o ggml_v1.o expose.o common.o gpttype_adapter.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
+koboldcpp_openblas: ggml_v4_openblas.o ggml_v3_openblas.o ggml_v2_openblas.o ggml_v1.o expose.o common.o gpttype_adapter.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
 	$(OPENBLAS_BUILD)
 else
 koboldcpp_openblas:
@@ -500,7 +516,7 @@ koboldcpp_openblas:
 endif
 
 ifdef FAILSAFE_BUILD
-koboldcpp_failsafe: ggml_failsafe.o ggml_v3_failsafe.o ggml_v2_failsafe.o ggml_v1_failsafe.o expose.o common.o gpttype_adapter_failsafe.o ggml-quants_failsafe.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
+koboldcpp_failsafe: ggml_v4_failsafe.o ggml_v3_failsafe.o ggml_v2_failsafe.o ggml_v1_failsafe.o expose.o common.o gpttype_adapter_failsafe.o ggml-quants_failsafe.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
 	$(FAILSAFE_BUILD)
 else
 koboldcpp_failsafe:
@@ -508,7 +524,7 @@ koboldcpp_failsafe:
 endif
 
 ifdef NOAVX2_BUILD
-koboldcpp_noavx2: ggml_noavx2.o ggml_v3_noavx2.o ggml_v2_noavx2.o ggml_v1_failsafe.o expose.o common.o gpttype_adapter_failsafe.o ggml-quants_noavx2.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
+koboldcpp_noavx2: ggml_v4_noavx2.o ggml_v3_noavx2.o ggml_v2_noavx2.o ggml_v1_failsafe.o expose.o common.o gpttype_adapter_failsafe.o ggml-quants_noavx2.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
 	$(NOAVX2_BUILD)
 else
 koboldcpp_noavx2:
@@ -516,10 +532,10 @@ koboldcpp_noavx2:
 endif
 
 ifdef CLBLAST_BUILD
-koboldcpp_clblast: ggml_clblast.o ggml_v3_clblast.o ggml_v2_clblast.o ggml_v1.o expose.o common.o gpttype_adapter_clblast.o ggml-opencl.o ggml_v3-opencl.o ggml_v2-opencl.o ggml_v2-opencl-legacy.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
+koboldcpp_clblast: ggml_v4_clblast.o ggml_v3_clblast.o ggml_v2_clblast.o ggml_v1.o expose.o common.o gpttype_adapter_clblast.o ggml-opencl.o ggml_v3-opencl.o ggml_v2-opencl.o ggml_v2-opencl-legacy.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
 	$(CLBLAST_BUILD)
 ifdef NOAVX2_BUILD
-koboldcpp_clblast_noavx2: ggml_clblast_noavx2.o ggml_v3_clblast_noavx2.o ggml_v2_clblast_noavx2.o ggml_v1_failsafe.o expose.o common.o gpttype_adapter_clblast_noavx2.o ggml-opencl.o ggml_v3-opencl.o ggml_v2-opencl.o ggml_v2-opencl-legacy.o ggml-quants_noavx2.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
+koboldcpp_clblast_noavx2: ggml_v4_clblast_noavx2.o ggml_v3_clblast_noavx2.o ggml_v2_clblast_noavx2.o ggml_v1_failsafe.o expose.o common.o gpttype_adapter_clblast_noavx2.o ggml-opencl.o ggml_v3-opencl.o ggml_v2-opencl.o ggml_v2-opencl-legacy.o ggml-quants_noavx2.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
 	$(CLBLAST_BUILD)
 else
 koboldcpp_clblast_noavx2:
@@ -533,7 +549,7 @@ koboldcpp_clblast_noavx2:
 endif
 
 ifdef CUBLAS_BUILD
-koboldcpp_cublas: ggml_cublas.o ggml_v3_cublas.o ggml_v2_cublas.o ggml_v1.o expose.o common.o gpttype_adapter_cublas.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(CUBLAS_OBJS) $(OBJS)
+koboldcpp_cublas: ggml_v4_cublas.o ggml_v3_cublas.o ggml_v2_cublas.o ggml_v1.o expose.o common.o gpttype_adapter_cublas.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(CUBLAS_OBJS) $(OBJS)
 	$(CUBLAS_BUILD)
 else
 koboldcpp_cublas:
@@ -541,10 +557,18 @@ koboldcpp_cublas:
 endif
 
 ifdef HIPBLAS_BUILD
-koboldcpp_hipblas: ggml_cublas.o ggml_v3_cublas.o ggml_v2_cublas.o ggml_v1.o expose.o common.o gpttype_adapter_cublas.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(HIP_OBJS) $(OBJS)
+koboldcpp_hipblas: ggml_v4_cublas.o ggml_v3_cublas.o ggml_v2_cublas.o ggml_v1.o expose.o common.o gpttype_adapter_cublas.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(HIP_OBJS) $(OBJS)
 	$(HIPBLAS_BUILD)
 else
 koboldcpp_hipblas:
+	$(DONOTHING)
+endif
+
+ifdef VULKAN_BUILD
+koboldcpp_vulkan: ggml_v4_vulkan.o ggml_v3.o ggml_v2.o ggml_v1.o expose.o common.o gpttype_adapter_vulkan.o ggml-vulkan.o ggml-quants.o ggml-alloc.o ggml-backend.o grammar-parser.o $(OBJS)
+	$(VULKAN_BUILD)
+else
+koboldcpp_vulkan:
 	$(DONOTHING)
 endif
 

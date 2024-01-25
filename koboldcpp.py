@@ -38,6 +38,7 @@ class load_model_inputs(ctypes.Structure):
                 ("use_contextshift", ctypes.c_bool),
                 ("clblast_info", ctypes.c_int),
                 ("cublas_info", ctypes.c_int),
+                ("vulkan_info", ctypes.c_int),
                 ("blasbatchsize", ctypes.c_int),
                 ("debugmode", ctypes.c_int),
                 ("forceversion", ctypes.c_int),
@@ -126,11 +127,11 @@ lib_clblast = pick_existant_file("koboldcpp_clblast.dll","koboldcpp_clblast.so")
 lib_clblast_noavx2 = pick_existant_file("koboldcpp_clblast_noavx2.dll","koboldcpp_clblast_noavx2.so")
 lib_cublas = pick_existant_file("koboldcpp_cublas.dll","koboldcpp_cublas.so")
 lib_hipblas = pick_existant_file("koboldcpp_hipblas.dll","koboldcpp_hipblas.so")
-
+lib_vulkan = pick_existant_file("koboldcpp_vulkan.dll","koboldcpp_vulkan.so")
 
 def init_library():
     global handle, args
-    global lib_default,lib_failsafe,lib_openblas,lib_noavx2,lib_clblast,lib_clblast_noavx2,lib_cublas,lib_hipblas
+    global lib_default,lib_failsafe,lib_openblas,lib_noavx2,lib_clblast,lib_clblast_noavx2,lib_cublas,lib_hipblas,lib_vulkan
 
     libname = ""
     use_openblas = False # if true, uses OpenBLAS for acceleration. libopenblas.dll must exist in the same dir.
@@ -139,6 +140,8 @@ def init_library():
     use_hipblas = False #uses hipblas instead
     use_noavx2 = False #uses no avx2 instructions
     use_failsafe = False #uses no intrinsics, failsafe mode
+    use_vulkan = False #uses vulkan (needs avx2)
+
     if args.noavx2:
         use_noavx2 = True
         if args.useclblast:
@@ -171,6 +174,12 @@ def init_library():
             elif file_exists(lib_hipblas):
                 print("Attempting to use hipBLAS library for faster prompt ingestion. A compatible AMD GPU will be required.")
                 use_hipblas = True
+    elif (args.usevulkan is not None):
+        if not file_exists(lib_vulkan):
+            print("Warning: Vulkan library file not found. Non-BLAS library will be used.")
+        else:
+            print("Attempting to use Vulkan library for faster prompt ingestion. A compatible Vulkan will be required.")
+            use_vulkan = True
 
     else:
         if not file_exists(lib_openblas) or (os.name=='nt' and not file_exists("libopenblas.dll")):
@@ -199,6 +208,8 @@ def init_library():
             libname = lib_hipblas
         elif use_openblas:
             libname = lib_openblas
+        elif use_vulkan:
+            libname = lib_vulkan
         else:
             libname = lib_default
 
@@ -300,6 +311,11 @@ def load_model(model_filename):
             inputs.cublas_info = 2
         elif (args.usecublas and "3" in args.usecublas):
             inputs.cublas_info = 3
+
+    if args.usevulkan:
+        inputs.vulkan_info = int(args.usevulkan)
+    else:
+        inputs.vulkan_info = 0
 
     inputs.executable_path = (getdirpath()+"/").encode("UTF-8")
     inputs.debugmode = args.debugmode
@@ -1138,11 +1154,12 @@ def show_new_gui():
         (lib_clblast, "Use CLBlast"),
         (lib_cublas, "Use CuBLAS"),
         (lib_hipblas, "Use hipBLAS (ROCm)"),
+        (lib_vulkan, "Use Vulkan"),
         (lib_default, "Use No BLAS"),
         (lib_clblast_noavx2, "CLBlast NoAVX2 (Old CPU)"),
         (lib_noavx2, "NoAVX2 Mode (Old CPU)"),
         (lib_failsafe, "Failsafe Mode (Old CPU)")]
-    openblas_option, clblast_option, cublas_option, hipblas_option, default_option, clblast_noavx2_option, noavx2_option, failsafe_option = (opt if file_exists(lib) or (os.name == 'nt' and file_exists(opt + ".dll")) else None for lib, opt in lib_option_pairs)
+    openblas_option, clblast_option, cublas_option, hipblas_option, vulkan_option, default_option, clblast_noavx2_option, noavx2_option, failsafe_option = (opt if file_exists(lib) or (os.name == 'nt' and file_exists(opt + ".dll")) else None for lib, opt in lib_option_pairs)
     # slider data
     blasbatchsize_values = ["-1", "32", "64", "128", "256", "512", "1024", "2048"]
     blasbatchsize_text = ["Don't Batch BLAS","32","64","128","256","512","1024","2048"]
@@ -1443,7 +1460,10 @@ def show_new_gui():
             try:
                 s = int(gpu_choice_var.get())-1
                 v = runopts_var.get()
-                if v == "Use CLBlast" or v == "CLBlast NoAVX2 (Old CPU)":
+                if v == "Use Vulkan":
+                    quick_gpuname_label.configure(text="")
+                    gpuname_label.configure(text="")
+                elif v == "Use CLBlast" or v == "CLBlast NoAVX2 (Old CPU)":
                     quick_gpuname_label.configure(text=CLDevicesNames[s])
                     gpuname_label.configure(text=CLDevicesNames[s])
                 else:
@@ -1462,12 +1482,12 @@ def show_new_gui():
         global runmode_untouched
         runmode_untouched = False
         index = runopts_var.get()
-        if index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
+        if index == "Use Vulkan" or index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
             quick_gpuname_label.grid(row=3, column=1, padx=75, sticky="W")
             gpuname_label.grid(row=3, column=1, padx=75, sticky="W")
             gpu_selector_label.grid(row=3, column=0, padx = 8, pady=1, stick="nw")
             quick_gpu_selector_label.grid(row=3, column=0, padx = 8, pady=1, stick="nw")
-            if index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)":
+            if index == "Use Vulkan" or index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)":
                 gpu_selector_box.grid(row=3, column=1, padx=8, pady=1, stick="nw")
                 quick_gpu_selector_box.grid(row=3, column=1, padx=8, pady=1, stick="nw")
                 if gpu_choice_var.get()=="All":
@@ -1500,7 +1520,7 @@ def show_new_gui():
             tensor_split_label.grid_forget()
             tensor_split_entry.grid_forget()
 
-        if index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
+        if index == "Use Vulkan" or index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
             gpu_layers_label.grid(row=5, column=0, padx = 8, pady=1, stick="nw")
             gpu_layers_entry.grid(row=5, column=1, padx=8, pady=1, stick="nw")
             quick_gpu_layers_label.grid(row=5, column=0, padx = 8, pady=1, stick="nw")
@@ -1714,6 +1734,8 @@ def show_new_gui():
                 args.usecublas = ["lowvram",str(gpuchoiceidx)] if lowvram_var.get() == 1 else ["normal",str(gpuchoiceidx)]
             if mmq_var.get()==1:
                 args.usecublas.append("mmq")
+        if runopts_var.get() == "Use Vulkan":
+            args.usevulkan = int(gpuchoiceidx)
         if gpulayers_var.get():
             args.gpulayers = int(gpulayers_var.get())
         if runopts_var.get()=="Use No BLAS":
@@ -1793,6 +1815,11 @@ def show_new_gui():
                     if str(g) in dict["usecublas"]:
                         gpu_choice_var.set(str(g+1))
                         break
+        elif "usevulkan" in dict:
+            if vulkan_option is not None:
+                runopts_var.set(vulkan_option)
+                gpu_choice_var.set(str(int(dict["usevulkan"])+1))
+
         elif  "noavx2" in dict and "noblas" in dict and dict["noblas"] and dict["noavx2"]:
             if failsafe_option is not None:
                 runopts_var.set(failsafe_option)
@@ -2520,7 +2547,8 @@ if __name__ == '__main__':
     compatgroup.add_argument("--noblas", help="Do not use OpenBLAS for accelerated prompt ingestion", action='store_true')
     compatgroup.add_argument("--useclblast", help="Use CLBlast for GPU Acceleration. Must specify exactly 2 arguments, platform ID and device ID (e.g. --useclblast 1 0).", type=int, choices=range(0,9), nargs=2)
     compatgroup.add_argument("--usecublas", help="Use CuBLAS for GPU Acceleration. Requires CUDA. Select lowvram to not allocate VRAM scratch buffer. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs. For hipBLAS binaries, please check YellowRoseCx rocm fork.", nargs='*',metavar=('[lowvram|normal] [main GPU ID] [mmq]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'mmq'])
-    parser.add_argument("--gpulayers", help="Set number of layers to offload to GPU when using GPU. Requires GPU.",metavar=('[GPU layers]'), type=int, default=0)
+    compatgroup.add_argument("--usevulkan", help="Use Vulkan for GPU Acceleration. Can optionally specify GPU Device ID (e.g. --usevulkan 0).", metavar=('[Device ID]'), nargs='?', const=0, type=int, default=None)
+    parser.add_argument("--gpulayers", help="Set number of layers to offload to GPU when using GPU. Requires GPU.",metavar=('[GPU layers]'), nargs='?', const=1, type=int, default=0)
     parser.add_argument("--tensor_split", help="For CUDA with ALL GPU set only, ratio to split tensors across multiple GPUs, space-separated list of proportions, e.g. 7 3", metavar=('[Ratios]'), type=float, nargs='+')
     parser.add_argument("--onready", help="An optional shell command to execute after the model has been loaded.", metavar=('[shell command]'), type=str, default="",nargs=1)
     parser.add_argument("--multiuser", help="Runs in multiuser mode, which queues incoming requests instead of blocking them.", metavar=('limit'), nargs='?', const=1, type=int, default=0)

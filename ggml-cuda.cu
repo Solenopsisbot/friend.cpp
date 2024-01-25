@@ -4284,7 +4284,7 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
         q8 += 8;
         aux32 >>= 7;
     }
-    const float d = (float)bq2->d * (0.5f + aux32) * (float)bq8_1[ib32].ds.x * 0.25f;
+    const float d = (float)bq2->d * (0.5f + aux32) * __low2float(bq8_1[ib32].ds) * 0.25f;
     return d * sumi;
 #else
     // iqs is 0...15
@@ -4295,7 +4295,7 @@ static __device__ __forceinline__ float vec_dot_iq2_xxs_q8_1(
     const uint8_t  * grid1 = (const uint8_t *)(iq2xxs_grid + aux8[2*il+0]);
     const uint8_t  * grid2 = (const uint8_t *)(iq2xxs_grid + aux8[2*il+1]);
     const uint32_t aux32 = q2[2] | (q2[3] << 16);
-    const float d = (float)bq2->d * (0.5f + (aux32 >> 28)) * (float)bq8_1[ib32].ds.x * 0.25f;
+    const float d = (float)bq2->d * (0.5f + (aux32 >> 28)) * __low2float(bq8_1[ib32].ds) * 0.25f;
     const uint8_t signs1 = ksigns_iq2xs[(aux32 >> 14*il) & 127];
     const uint8_t signs2 = ksigns_iq2xs[(aux32 >> (14*il + 7)) & 127];
     const int8_t * q8 = bq8_1[ib32].qs + 16*il;
@@ -4340,7 +4340,7 @@ static __device__ __forceinline__ float vec_dot_iq2_xs_q8_1(
         }
         q8 += 8;
     }
-    const float d = (float)bq2->d * (float)bq8_1[ib32].ds.x * 0.25f;
+    const float d = (float)bq2->d * __low2float(bq8_1[ib32].ds) * 0.25f;
     return d * ((0.5f + ls1) * sumi1 + (0.5f + ls2) * sumi2);
 #else
     assert(false);
@@ -10450,6 +10450,7 @@ static ggml_backend_buffer_type_i ggml_backend_cuda_buffer_type_interface = {
     /* .get_name         = */ ggml_backend_cuda_buffer_type_name,
     /* .alloc_buffer     = */ ggml_backend_cuda_buffer_type_alloc_buffer,
     /* .get_alignment    = */ ggml_backend_cuda_buffer_type_get_alignment,
+    /* .get_max_size     = */ NULL, // defaults to SIZE_MAX
     /* .get_alloc_size   = */ ggml_backend_cuda_buffer_type_get_alloc_size,
     /* .supports_backend = */ ggml_backend_cuda_buffer_type_supports_backend,
     /* .is_host          = */ NULL,
@@ -10725,6 +10726,7 @@ static ggml_backend_buffer_type_i ggml_backend_cuda_split_buffer_type_interface 
     /* .get_name         = */ ggml_backend_cuda_split_buffer_type_name,
     /* .alloc_buffer     = */ ggml_backend_cuda_split_buffer_type_alloc_buffer,
     /* .get_alignment    = */ ggml_backend_cuda_split_buffer_type_get_alignment,
+    /* .get_max_size     = */ NULL, // defaults to SIZE_MAX
     /* .get_alloc_size   = */ ggml_backend_cuda_split_buffer_type_get_alloc_size,
     /* .supports_backend = */ ggml_backend_cuda_split_buffer_type_supports_backend,
     /* .is_host          = */ ggml_backend_cuda_split_buffer_type_is_host,
@@ -10804,6 +10806,7 @@ GGML_CALL ggml_backend_buffer_type_t ggml_backend_cuda_host_buffer_type() {
             /* .get_name         = */ ggml_backend_cuda_host_buffer_type_name,
             /* .alloc_buffer     = */ ggml_backend_cuda_host_buffer_type_alloc_buffer,
             /* .get_alignment    = */ ggml_backend_cpu_buffer_type()->iface.get_alignment,
+            /* .get_max_size     = */ NULL, // defaults to SIZE_MAX
             /* .get_alloc_size   = */ ggml_backend_cpu_buffer_type()->iface.get_alloc_size,
             /* .supports_backend = */ ggml_backend_cpu_buffer_type()->iface.supports_backend,
             /* .is_host          = */ ggml_backend_cpu_buffer_type()->iface.is_host,

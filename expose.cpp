@@ -23,7 +23,7 @@
 extern "C"
 {
 
-    std::string platformenv, deviceenv;
+    std::string platformenv, deviceenv, vulkandeviceenv;
 
     //return val: 0=fail, 1=(original ggml, alpaca), 2=(ggmf), 3=(ggjt)
     static FileFormat file_format = FileFormat::BADFORMAT;
@@ -58,6 +58,11 @@ extern "C"
         deviceenv = "GGML_OPENCL_DEVICE="+std::to_string(devices);
         putenv((char*)platformenv.c_str());
         putenv((char*)deviceenv.c_str());
+
+        int vulkan_info = inputs.vulkan_info;
+        vulkandeviceenv = "GGML_VULKAN_DEVICE="+std::to_string(vulkan_info);
+        putenv((char*)vulkandeviceenv.c_str());
+
         executable_path = inputs.executable_path;
 
         if(file_format==FileFormat::GPTJ_1 || file_format==FileFormat::GPTJ_2 || file_format==FileFormat::GPTJ_3 || file_format==FileFormat::GPTJ_4  || file_format==FileFormat::GPTJ_5)
