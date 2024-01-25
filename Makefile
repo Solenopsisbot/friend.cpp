@@ -449,9 +449,9 @@ ggml-opencl.o: ggml-opencl.cpp ggml-opencl.h
 endif # LLAMA_CLBLAST
 
 ifdef LLAMA_VULKAN
-	CFLAGS  += -DGGML_USE_VULKAN
-	CXXFLAGS  += -DGGML_USE_VULKAN
-	LDFLAGS += -lvulkan
+	CFLAGS  += -DGGML_USE_VULKAN -I./include/vulkan
+	CXXFLAGS  += -DGGML_USE_VULKAN -I./include/vulkan
+	LDFLAGS +=
 	OBJS    += ggml-vulkan.o
 
 ifdef LLAMA_VULKAN_CHECK_RESULTS
@@ -596,7 +596,7 @@ clean:
 #
 
 main: examples/main/main.cpp                                  ggml.o llama.o $(COMMON_DEPS) console.o grammar-parser.o $(OBJS)
-	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ lib/vulkan-1.lib $(LDFLAGS)
 	@echo
 	@echo '====  Run ./main -h for help.  ===='
 	@echo
