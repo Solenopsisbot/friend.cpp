@@ -1146,6 +1146,7 @@ def show_new_gui():
     CUDevices = ["1","2","3","4","All"]
     CLDevicesNames = ["","","",""]
     CUDevicesNames = ["","","","",""]
+    VKDevicesNames = ["","","",""]
     MaxMemory = [0]
 
     tabcontent = {}
@@ -1360,6 +1361,17 @@ def show_new_gui():
             except Exception as e:
                 pass
 
+        try: # Get Vulkan names
+            output = run(['vulkaninfo','--summary'], capture_output=True, text=True, check=True, encoding='utf-8').stdout
+            devicelist = [line.split("=")[1].strip() for line in output.splitlines() if "deviceName" in line]
+            idx = 0
+            for dname in devicelist:
+                if idx<len(VKDevicesNames):
+                    VKDevicesNames[idx] = dname
+                    idx += 1
+        except Exception as e:
+            pass
+
         for idx in range(0,4):
             if(len(FetchedCUdevices)>idx):
                 CUDevicesNames[idx] = FetchedCUdevices[idx]
@@ -1461,8 +1473,8 @@ def show_new_gui():
                 s = int(gpu_choice_var.get())-1
                 v = runopts_var.get()
                 if v == "Use Vulkan":
-                    quick_gpuname_label.configure(text="")
-                    gpuname_label.configure(text="")
+                    quick_gpuname_label.configure(text=VKDevicesNames[s])
+                    gpuname_label.configure(text=VKDevicesNames[s])
                 elif v == "Use CLBlast" or v == "CLBlast NoAVX2 (Old CPU)":
                     quick_gpuname_label.configure(text=CLDevicesNames[s])
                     gpuname_label.configure(text=CLDevicesNames[s])
