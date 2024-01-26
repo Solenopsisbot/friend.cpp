@@ -174,9 +174,13 @@ extern "C"
             {
                 printf("\n---\nIdentified as RWKV model: (ver %d)\nAttempting to Load...\n---\n", file_format);
             }
-            else
+            else if(file_format==FileFormat::GGUF_GENERIC)
             {
                 printf("\n---\nIdentified as GGUF model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+            }
+            else
+            {
+                printf("\n---\nUnidentified Model Encountered: (ver %d)\n---\n", file_format);
             }
             ModelLoadResult lr = gpttype_load_model(inputs, file_format, file_format_meta);
             if (lr == ModelLoadResult::FAIL || lr == ModelLoadResult::RETRY_LOAD)
