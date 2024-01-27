@@ -1455,7 +1455,7 @@ def show_new_gui():
         # backend count label with the tooltip function
         nl = '\n'
         tooltxt = f"Number of backends you have built and available." + (f"\n\nMissing Backends: \n\n{nl.join(antirunopts)}" if len(runopts) != 6 else "")
-        num_backends_built = makelabel(parent, str(len(runopts)) + f"/7", 5, 2,tooltxt)
+        num_backends_built = makelabel(parent, str(len(runopts)) + f"/8", 5, 2,tooltxt)
         num_backends_built.grid(row=1, column=1, padx=195, pady=0)
         num_backends_built.configure(text_color="#00ff00")
 
