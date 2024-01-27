@@ -62,6 +62,7 @@ struct FileFormatExtraMeta
     int n_ctx_train = 2048;
     int fileversion = 0;
     GGUFArch model_architecture = GGUFArch::DEFAULT;
+    int n_expert_count = 0;
 };
 
 enum ModelLoadResult

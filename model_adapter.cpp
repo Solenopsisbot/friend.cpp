@@ -272,10 +272,16 @@ void print_tok_vec(std::vector<float> &embd)
         if(modelarch!="" && fileformatmeta!=nullptr)
         {
             std::string fkey = modelarch+".context_length";
-            auto keyidx = gguf_find_key(ctx, fkey.c_str());
+            int keyidx = gguf_find_key(ctx, fkey.c_str());
             if (keyidx != -1) {
                 fileformatmeta->n_ctx_train = gguf_get_val_u32(ctx, keyidx);
             }
+            fkey = modelarch+".expert_count";
+            keyidx = gguf_find_key(ctx, fkey.c_str());
+            if (keyidx != -1) {
+                fileformatmeta->n_expert_count = gguf_get_val_u32(ctx, keyidx);
+            }
+
             int filever = gguf_get_version(ctx);
             fileformatmeta->fileversion = filever;
             fileformatmeta->model_architecture = GGUFArch::DEFAULT;

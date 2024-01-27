@@ -934,10 +934,18 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         model_params.n_gpu_layers = inputs.gpulayers;
 
         #if defined(GGML_USE_CLBLAST)
-        if(file_format==FileFormat::GGUF_GENERIC && (file_format_meta.model_architecture == GGUFArch::FALCON || file_format_meta.model_architecture == GGUFArch::PHI) && model_params.n_gpu_layers>0)
+        if(file_format==FileFormat::GGUF_GENERIC && model_params.n_gpu_layers>0)
         {
-            printf("\nOpenCL does not support GPU Layer offloading for this model architecture! GPU Offload has been disabled.\n");
-            model_params.n_gpu_layers = 0;
+            if(file_format_meta.model_architecture == GGUFArch::FALCON)
+            {
+                printf("\nOpenCL does not support GPU Layer offloading for this model architecture! GPU Offload has been disabled.\n");
+                model_params.n_gpu_layers = 0;
+            }
+            else if(file_format_meta.model_architecture == GGUFArch::PHI || file_format_meta.n_expert_count>1)
+            {
+                printf("\nOpenCL cannot use regular GPU offloading for this model architecture. A fallback GPU offloader will be used with degraded performance.\n");
+                clblast_offload_fallback_mode = true;
+            }
         }
         #endif
         #if defined(GGML_USE_CUBLAS)

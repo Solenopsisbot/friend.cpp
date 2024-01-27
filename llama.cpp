@@ -180,6 +180,25 @@ static std::string format(const char * fmt, ...) {
     return std::string(buf.data(), size);
 }
 
+static bool clblast_offload_fallback_mode = false; //used when regular offload will segfault
+static int clblast_offload_fallback_layers = 0;
+static int layer_name_to_number(std::string inputString)
+{
+    size_t firstDotPosition = inputString.find('.');
+    int converted = -1;
+
+    if (firstDotPosition != std::string::npos) {
+        size_t secondDotPosition = inputString.find('.', firstDotPosition + 1);
+        if (secondDotPosition != std::string::npos) {
+            std::string numbersPortion = inputString.substr(firstDotPosition + 1, secondDotPosition - firstDotPosition - 1);
+            try{converted = std::stoi(numbersPortion);}
+            catch (const std::invalid_argument& e) {}
+            catch (const std::out_of_range& e) {}
+        }
+    }
+    return converted;
+}
+
 //
 // gguf constants (sync with gguf.py)
 //
@@ -2628,6 +2647,19 @@ struct llama_model_loader {
                 }
             }
 
+            #if defined(GGML_USE_CLBLAST)
+            if(clblast_offload_fallback_mode)
+            {
+                int layernum = layer_name_to_number(cur->name);
+                bool shouldoffload = (layernum>=0 && clblast_offload_fallback_layers>layernum);
+                if(shouldoffload)
+                {
+                    cur->backend = GGML_BACKEND_GPU;
+                    ggml_cl_transform_tensor(cur->data, cur);
+                }
+            }
+            #endif
+
             size_done += ggml_nbytes(cur);
         }
 
@@ -3330,7 +3362,14 @@ static bool llm_load_tensors(
     model.n_gpu_layers = n_gpu_layers;
 
     const int64_t n_layer     = hparams.n_layer;
-    const int64_t i_gpu_start = std::max((int64_t) hparams.n_layer - n_gpu_layers, (int64_t) 0);
+    int64_t i_gpu_start = std::max((int64_t) hparams.n_layer - n_gpu_layers, (int64_t) 0);
+
+    if(clblast_offload_fallback_mode)
+    {
+        printf("\nOpenCL GPU Offload Fallback...");
+        clblast_offload_fallback_layers = n_gpu_layers;
+        i_gpu_start = std::max((int64_t) hparams.n_layer, (int64_t) 0);
+    }
 
     // there is very little benefit to offloading the input layer, so always keep it on the CPU
     model.buft_input = llama_default_buffer_type_cpu(true);
@@ -3401,7 +3440,7 @@ static bool llm_load_tensors(
             };
         }
         // assign the output layer
-        if (n_gpu_layers > n_layer) {
+        if (n_gpu_layers > n_layer && !clblast_offload_fallback_mode) {
             model.buft_output = {
                 split_buft,
                 llama_default_buffer_type_offload(main_gpu)
