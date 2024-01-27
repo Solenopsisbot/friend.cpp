@@ -549,7 +549,7 @@ int mirostat, float mirostat_tau, float mirostat_eta, const std::vector<samplers
                         dynatemp_min = dynatemp_min<0?0:dynatemp_min;
                         dynatemp_max = dynatemp_max<0?0:dynatemp_max;
                         dynatemp_exponent = dynatemp_exponent<0?0:dynatemp_exponent;
-                        llama_sample_entropy(nullptr, &candidates_p, temp, dynatemp_min, dynatemp_max, dynatemp_exponent);
+                        llama_sample_entropy(nullptr, &candidates_p, dynatemp_min, dynatemp_max, dynatemp_exponent);
                     }
                     else
                     {
@@ -941,7 +941,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
                 printf("\nOpenCL does not support GPU Layer offloading for this model architecture! GPU Offload has been disabled.\n");
                 model_params.n_gpu_layers = 0;
             }
-            else if(file_format_meta.model_architecture == GGUFArch::PHI || file_format_meta.n_expert_count>1)
+            else if(file_format_meta.n_expert_count>1)
             {
                 printf("\nOpenCL cannot use regular GPU offloading for this model architecture. A fallback GPU offloader will be used with degraded performance.\n");
                 clblast_offload_fallback_mode = true;
