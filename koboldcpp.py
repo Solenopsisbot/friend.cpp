@@ -329,7 +329,7 @@ def load_model(model_filename):
     return ret
 
 def generate(prompt, memory="", max_length=32, max_context_length=512, temperature=0.7, top_k=100, top_a=0.0, top_p=0.92, min_p=0.0, typical_p=1.0, tfs=1.0, rep_pen=1.0, rep_pen_range=128, presence_penalty=0.0, mirostat=0, mirostat_tau=5.0, mirostat_eta=0.1, sampler_order=[6,0,1,3,4,2,5], seed=-1, stop_sequence=[], use_default_badwordsids=False, stream_sse=False, grammar='', grammar_retain_state=False, genkey='', trimstop=False, quiet=False, dynatemp_range=0.0, dynatemp_exponent=1.0, logit_biases={}):
-    global maxctx, args, currentusergenkey, totalgens
+    global maxctx, args, currentusergenkey, totalgens, pendingabortkey
     inputs = generation_inputs()
     outputs = ctypes.create_unicode_buffer(ctypes.sizeof(generation_outputs))
     inputs.prompt = prompt.encode("UTF-8")
@@ -408,16 +408,23 @@ def generate(prompt, memory="", max_length=32, max_context_length=512, temperatu
 
     currentusergenkey = genkey
     totalgens += 1
-    ret = handle.generate(inputs,outputs)
-    outstr = ""
-    if ret.status==1:
-        outstr = ret.text.decode("UTF-8","ignore")
-    if trimstop:
-        for trim_str in stop_sequence:
-            sindex = outstr.find(trim_str)
-            if sindex != -1 and trim_str!="":
-                outstr = outstr[:sindex]
-    return outstr
+    #early exit if aborted
+
+    if pendingabortkey!="" and pendingabortkey==genkey:
+        print(f"\nDeferred Abort for GenKey: {pendingabortkey}")
+        pendingabortkey = ""
+        return ""
+    else:
+        ret = handle.generate(inputs,outputs)
+        outstr = ""
+        if ret.status==1:
+            outstr = ret.text.decode("UTF-8","ignore")
+        if trimstop:
+            for trim_str in stop_sequence:
+                sindex = outstr.find(trim_str)
+                if sindex != -1 and trim_str!="":
+                    outstr = outstr[:sindex]
+        return outstr
 
 def utfprint(str):
     try:
@@ -457,6 +464,7 @@ punishcounter = 0 #causes a timeout if too many errors
 rewardcounter = 0 #reduces error counts for successful jobs
 totalgens = 0
 currentusergenkey = "" #store a special key so polled streaming works even in multiuser
+pendingabortkey = "" #if an abort is received for the non-active request, remember it (at least 1) to cancel later
 args = None #global args
 gui_layers_untouched = True
 runmode_untouched = True
@@ -879,7 +887,7 @@ Enter Prompt:<br>
         return
 
     def do_POST(self):
-        global modelbusy, requestsinqueue, currentusergenkey, totalgens
+        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey
         content_length = int(self.headers['content-length'])
         body = self.rfile.read(content_length)
         self.path = self.path.rstrip('/')
@@ -914,10 +922,13 @@ Enter Prompt:<br>
             if (multiuserkey=="" and requestsinqueue==0) or (multiuserkey!="" and multiuserkey==currentusergenkey):
                 ag = handle.abort_generate()
                 time.sleep(0.1) #short delay before replying
-                response_body = (json.dumps({"success": ("true" if ag else "false")}).encode())
+                response_body = (json.dumps({"success": ("true" if ag else "false"), "done":"true"}).encode())
                 print("\nGeneration Aborted")
+            elif (multiuserkey!="" and requestsinqueue>0):
+                pendingabortkey = multiuserkey
+                response_body = (json.dumps({"success": "true", "done":"false"}).encode())
             else:
-                response_body = (json.dumps({"success": "false"}).encode())
+                response_body = (json.dumps({"success": "false", "done":"false"}).encode())
 
         elif self.path.endswith('/api/extra/generate/check'):
             pendtxtStr = ""
