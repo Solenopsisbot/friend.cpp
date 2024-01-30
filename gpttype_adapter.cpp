@@ -955,6 +955,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         }
         #endif
         model_params.main_gpu = cu_parseinfo_maindevice;
+        model_params.split_mode = llama_split_mode::LLAMA_SPLIT_ROW;
 
         llama_ctx_params.n_batch = blasbatchsize;
         llama_ctx_params.n_threads = n_threads;
