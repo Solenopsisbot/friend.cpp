@@ -1568,6 +1568,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs, generation_o
     if (kcpp_params->seed <= 0 || kcpp_params->seed==0xFFFFFFFF)
     {
         kcpp_params->seed = (((uint32_t)time(NULL)) % 1000000u);
+        if(debugmode==1)
+        {
+            printf("\nUsing Seed: %d",kcpp_params->seed);
+        }
     }
 
     // tokenize the prompt
