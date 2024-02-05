@@ -1938,6 +1938,8 @@ def show_new_gui():
         with open(filename, 'r') as f:
             dict = json.load(f)
             import_vars(dict)
+            global runmode_untouched
+            runmode_untouched = False
         pass
 
     def display_help():
