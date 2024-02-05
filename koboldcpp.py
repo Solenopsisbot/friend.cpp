@@ -1932,14 +1932,14 @@ def show_new_gui():
 
     def load_config():
         file_type = [("KoboldCpp Settings", "*.kcpps")]
+        global runmode_untouched
+        runmode_untouched = False
         filename = askopenfilename(filetypes=file_type, defaultextension=file_type)
         if not filename or filename=="":
             return
         with open(filename, 'r') as f:
             dict = json.load(f)
             import_vars(dict)
-            global runmode_untouched
-            runmode_untouched = False
         pass
 
     def display_help():
