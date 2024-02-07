@@ -129,9 +129,10 @@ lib_clblast_noavx2 = pick_existant_file("koboldcpp_clblast_noavx2.dll","koboldcp
 lib_cublas = pick_existant_file("koboldcpp_cublas.dll","koboldcpp_cublas.so")
 lib_hipblas = pick_existant_file("koboldcpp_hipblas.dll","koboldcpp_hipblas.so")
 lib_vulkan = pick_existant_file("koboldcpp_vulkan.dll","koboldcpp_vulkan.so")
+libname = ""
 
 def init_library():
-    global handle, args
+    global handle, args, libname
     global lib_default,lib_failsafe,lib_openblas,lib_noavx2,lib_clblast,lib_clblast_noavx2,lib_cublas,lib_hipblas,lib_vulkan
 
     libname = ""
@@ -2515,12 +2516,50 @@ def main(launch_args,start_server=True):
         timer_thread.start()
 
     if args.benchmark is not None:
+        from datetime import datetime, timezone
+        global libname
         start_server = False
-        if args.benchmark=="stdout":
-            print("Running benchmark (Not saving to file)...")
-
+        save_to_file = (args.benchmark!="stdout" and args.benchmark!="")
+        benchmaxctx =  (2048 if maxctx>2048 else maxctx)
+        benchlen = 100
+        benchmodel = sanitize_string(os.path.splitext(os.path.basename(modelname))[0])
+        if save_to_file:
+            print(f"\nRunning benchmark (Save to File: {args.benchmark})...")
         else:
-            print("Running benchmark (Saving to file)...")
+            print(f"\nRunning benchmark (Not Saved)...")
+
+        benchprompt = "11111111"
+        for i in range(0,10): #generate massive prompt
+            benchprompt += benchprompt
+        result = generate(benchprompt,memory="",max_length=benchlen,max_context_length=benchmaxctx)
+        resultok = (len(result)>5 and result[:5]=="11111")
+        t_pp = float(handle.get_last_process_time())*float(benchmaxctx-benchlen)*0.001
+        t_gen = float(handle.get_last_eval_time())*float(benchlen)*0.001
+        s_pp = float(benchmaxctx-benchlen)/t_pp
+        s_gen = float(benchlen)/t_gen
+        datetimestamp = datetime.now(timezone.utc)
+        print(f"\nBenchmark Completed - Results:\n======")
+        print(f"Timestamp: {datetimestamp}")
+        print(f"Backend: {libname}")
+        print(f"Layers: {args.gpulayers}")
+        print(f"Model: {benchmodel}")
+        print(f"MaxCtx: {benchmaxctx}")
+        print(f"GenAmount: {benchlen}\n-----")
+        print(f"ProcessingTime: {t_pp:.2f}s")
+        print(f"ProcessingSpeed: {s_pp:.2f}T/s")
+        print(f"GenerationTime: {t_gen:.2f}s")
+        print(f"GenerationSpeed: {s_gen:.2f}T/s")
+        print(f"TotalTime: {(t_pp+t_gen):.2f}s")
+        print(f"Coherent: {resultok}\n-----")
+        if save_to_file:
+            try:
+                with open(args.benchmark, "a") as file:
+                    file.seek(0, 2)
+                    if file.tell() == 0: #empty file
+                        file.write(f"Timestamp,Backend,Layers,Model,MaxCtx,GenAmount,ProcessingTime,ProcessingSpeed,GenerationTime,GenerationSpeed,TotalTime,Coherent\n")
+                    file.write(f"{datetimestamp},{libname},{args.gpulayers},{benchmodel},{benchmaxctx},{benchlen},{t_pp:.2f},{s_pp:.2f},{t_gen:.2f},{s_gen:.2f},{(t_pp+t_gen):.2f},{resultok}")
+            except Exception as e:
+                print(f"Error writing benchmark to file: {e}")
 
 
     if start_server:

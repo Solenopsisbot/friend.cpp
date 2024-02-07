@@ -170,7 +170,6 @@ Current version: 109
 
 		#gamescreen {
 			overflow-x: hidden;
-			height: 66vh;
 			display: flex;
 			vertical-align: bottom;
 			color: #ffffff;
@@ -1849,8 +1848,15 @@ Current version: 109
 
 
 	.chat_msg_history {
-		height: 72vh;
 		overflow-y: auto;
+	}
+	.normal_viewport_height
+	{
+		height: 66vh;
+	}
+	.aesthetic_viewport_height
+	{
+		height: 72vh;
 	}
 
 	/**
@@ -3412,6 +3418,7 @@ Current version: 109
 		prev_custom_endpoint_type: 0, //show a reconnect box to custom endpoint if needed. 0 is horde, otherwise its dropdown value+1
 
 		autoscroll: true, //automatically scroll to bottom on render
+		printer_view: false, //automatically scroll to bottom on render
 		trimsentences: true, //trim to last punctuation
 		trimwhitespace: false, //trim trailing whitespace
 		compressnewlines: false, //compress multiple newlines
@@ -3455,6 +3462,8 @@ Current version: 109
 		multiline_replies: true,
 		multiline_replies_adventure: true,
 		allow_continue_chat: false,
+		inject_timestamps_chat: false,
+		inject_timestamps_instruct: false,
 		idle_responses: 0,
 		idle_duration: 60,
 		export_settings: true, //affects if settings are included with the story and sharelinks
@@ -5284,6 +5293,107 @@ Current version: 109
 		},false);
 	}
 
+	function get_chubai_portrait(userinput, card_is_defective, original_no_exist)
+	{
+		//try to obtain the full portrait image
+		fetch("https://api.chub.ai/api/characters/download", {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+			"format": "tavern",
+			"fullPath": userinput,
+			"version": "main"
+			}),
+			referrerPolicy: 'no-referrer',
+			})
+			.then(rb => {
+				if(rb.ok)
+				{
+					return rb.blob();
+				}else{
+					throw new Error('Cannot fetch tavern image');
+				}
+			})
+			.then(blob => {
+				preview_temp_scenario();
+
+				readTavernPngFromBlob(blob,(obj)=>{
+					if(obj!=null)
+					{
+						//a lightweight tavern card loader, not fully compliant
+						if(obj.spec=="chara_card_v2" && obj.data!=null)
+						{
+							obj = obj.data;
+						}
+
+						if(card_is_defective)
+						{
+							let chatopponent = obj.name?obj.name:"Bot";
+							let memory = obj.description?("Persona: "+obj.description):"";
+							memory += obj.personality?("\nPersonality: "+obj.personality):"";
+							let scenario = obj.scenario?obj.scenario:"";
+							let examplemsg = obj.mes_example?obj.mes_example:"";
+							let greeting = obj.first_mes?obj.first_mes:"";
+							let sysprompt = obj.system_prompt?obj.system_prompt:"";
+
+							if(scenario!="")
+							{
+								scenario = "\n[Scenario: "+scenario+"]";
+							}
+							if(examplemsg!="")
+							{
+								examplemsg = "\n"+examplemsg;
+							}
+							if(sysprompt!="")
+							{
+								sysprompt = sysprompt+"\n";
+							}
+							let combinedmem = sysprompt + memory + scenario + examplemsg;
+							temp_scenario.title = chatopponent;
+							let prev2 = replaceAll(obj.description,"{{char}}",chatopponent,true);
+							prev2 = replaceAll(prev2,"{{user}}","You",true);
+							temp_scenario.desc = prev2;
+							temp_scenario.chatopponent = chatopponent;
+							temp_scenario.prompt = ("\n{{char}}: "+ greeting);
+							temp_scenario.memory = combinedmem;
+						}
+
+						//since cai format has no wi, try to grab it from tavern format
+						if(obj.character_book && obj.character_book.entries && obj.character_book.entries.length>0)
+						{
+							let myname = ((localsettings.chatname && localsettings.chatname!="")?localsettings.chatname:"You");
+							temp_scenario.worldinfo = load_tavern_wi(obj.character_book,chatopponent,myname);
+						}
+						preview_temp_scenario();
+					}
+
+				});
+
+				const objectURL = URL.createObjectURL(blob);
+				const compressedImg = compressImage(objectURL, (compressedImageURI, aspectratio)=>{
+					temp_scenario.image = compressedImageURI;
+					temp_scenario.image_aspect = aspectratio;
+					preview_temp_scenario();
+				}, true);
+			})
+			.catch(error => {
+				if(original_no_exist)
+				{
+					temp_scenario = null;
+					document.getElementById("scenariodesc").innerText = "Error: Selected scenario is invalid.";
+					console.log("Error: " + error);
+				}
+				else
+				{
+					preview_temp_scenario();
+					console.error("Error fetching tavern image:", error);
+				}
+
+		});
+	}
+
 	function get_chubai_scenario(chubstr="")
 	{
 		const loadchub = function(userinput)
@@ -5302,6 +5412,21 @@ Current version: 109
 				userinput = userinput.endsWith('/') ? userinput.slice(0, -1) : userinput;
 				if(userinput!="")
 				{
+					temp_scenario = {
+						"title":"",
+						"desc": "",
+						"opmode":3,
+						"chatname": "You",
+						"chatopponent": "",
+						"gui_type":1,
+						"prefmodel1":chatmodels1,
+						"prefmodel2":chatmodels2,
+						"prompt":"",
+						"memory": "",
+						"authorsnote": "",
+						"worldinfo": [],
+					};
+
 					document.getElementById("scenariodesc").innerText = "Loading scenario from Chub...";
 					fetch("https://api.chub.ai/api/characters/download", {
 					method: 'POST',
@@ -5320,121 +5445,33 @@ Current version: 109
 						{
 							return x.json();
 						}else{
-							throw new Error('Cannot fetch chub scenario');
+							console.log('Cannot fetch chub scenario: try fallback to tavern image');
+							//cai format failed, try fallback to portrait only
+							get_chubai_portrait(userinput, true, true);
+							return null;
 						}
 					})
 					.then(data => {
-						console.log(data);
-						let botname = data.name?data.name:"Bot";
-						let cdef = data.definition?data.definition.replace("END_OF_DIALOG","").trim():"";
-						let cdesc = data.description?data.description:"";
-						let greeting = data.greeting?data.greeting:"";
-						let previewtxt = (data.title ? data.title + '\n\n' : '') + replaceAll(cdesc,"{{char}}",botname,true);
-						previewtxt = replaceAll(previewtxt,"{{user}}","You",true);
-						temp_scenario =
+						if(data) //if cai fetch was successul
 						{
-							"title":data.name?data.name:"",
-							"desc": previewtxt,
-							"opmode":3,
-							"chatname": "You",
-							"chatopponent": botname,
-							"gui_type":1,
-							"prefmodel1":chatmodels1,
-							"prefmodel2":chatmodels2,
-							"prompt":("\n{{char}}: "+greeting),
-							"memory": cdesc +"\n"+ cdef,
-							"authorsnote": "",
-							"worldinfo": [],
-						};
-						let card_is_defective = (data.name==""&&previewtxt==""&&greeting==""&&cdesc==""&&cdef=="");
+							console.log(data);
+							let botname = data.name?data.name:"Bot";
+							let cdef = data.definition?data.definition.replace("END_OF_DIALOG","").trim():"";
+							let cdesc = data.description?data.description:"";
+							let greeting = data.greeting?data.greeting:"";
+							let previewtxt = (data.title ? data.title + '\n\n' : '') + replaceAll(cdesc,"{{char}}",botname,true);
+							previewtxt = replaceAll(previewtxt,"{{user}}","You",true);
 
-						//try to obtain the full portrait image
-						fetch("https://api.chub.ai/api/characters/download", {
-						method: 'POST',
-						headers: {
-							'Content-Type': 'application/json',
-						},
-						body: JSON.stringify({
-						"format": "tavern",
-						"fullPath": userinput,
-						"version": "main"
-						}),
-						referrerPolicy: 'no-referrer',
-						})
-						.then(rb => {
-							if(rb.ok)
-							{
-								return rb.blob();
-							}else{
-								throw new Error('Cannot fetch tavern image');
-							}
-						})
-						.then(blob => {
-							preview_temp_scenario();
+							temp_scenario.title = data.name?data.name:"";
+							temp_scenario.desc = previewtxt;
+							temp_scenario.chatopponent = botname;
+							temp_scenario.prompt = ("\n{{char}}: "+greeting);
+							temp_scenario.memory = cdesc +"\n"+ cdef;
 
-							readTavernPngFromBlob(blob,(obj)=>{
-								if(obj!=null)
-								{
-									//a lightweight tavern card loader, not fully compliant
-									if(obj.spec=="chara_card_v2" && obj.data!=null)
-									{
-										obj = obj.data;
-									}
+							let card_is_defective = (data.name==""&&previewtxt==""&&greeting==""&&cdesc==""&&cdef=="");
 
-									if(card_is_defective)
-									{
-										let chatopponent = obj.name?obj.name:"Bot";
-										let memory = obj.description?("Persona: "+obj.description):"";
-										memory += obj.personality?("\nPersonality: "+obj.personality):"";
-										let scenario = obj.scenario?obj.scenario:"";
-										let examplemsg = obj.mes_example?obj.mes_example:"";
-										let greeting = obj.first_mes?obj.first_mes:"";
-										let sysprompt = obj.system_prompt?obj.system_prompt:"";
-
-										if(scenario!="")
-										{
-											scenario = "\n[Scenario: "+scenario+"]";
-										}
-										if(examplemsg!="")
-										{
-											examplemsg = "\n"+examplemsg;
-										}
-										if(sysprompt!="")
-										{
-											sysprompt = sysprompt+"\n";
-										}
-										let combinedmem = sysprompt + memory + scenario + examplemsg;
-										temp_scenario.title = chatopponent;
-										let prev2 = replaceAll(obj.description,"{{char}}",chatopponent,true);
-										prev2 = replaceAll(prev2,"{{user}}","You",true);
-										temp_scenario.desc = prev2;
-										temp_scenario.chatopponent = chatopponent;
-										temp_scenario.prompt = ("\n{{char}}: "+ greeting);
-										temp_scenario.memory = combinedmem;
-									}
-
-									//since cai format has no wi, try to grab it from tavern format
-									if(obj.character_book && obj.character_book.entries && obj.character_book.entries.length>0)
-									{
-										let myname = ((localsettings.chatname && localsettings.chatname!="")?localsettings.chatname:"You");
-										temp_scenario.worldinfo = load_tavern_wi(obj.character_book,chatopponent,myname);
-									}
-									preview_temp_scenario();
-								}
-
-							});
-
-							const objectURL = URL.createObjectURL(blob);
-							const compressedImg = compressImage(objectURL, (compressedImageURI, aspectratio)=>{
-								temp_scenario.image = compressedImageURI;
-								temp_scenario.image_aspect = aspectratio;
-								preview_temp_scenario();
-							}, true);
-						})
-						.catch(error => {
-							preview_temp_scenario();
-							console.error("Error fetching tavern image:", error);
-						});
+							get_chubai_portrait(userinput, card_is_defective, false);
+						}
 
 					}).catch((error) => {
 						temp_scenario = null;
@@ -7394,6 +7431,7 @@ Current version: 109
 		document.getElementById("rep_pen_range").value = localsettings.rep_pen_range;
 		document.getElementById("top_p").value = document.getElementById("top_p_slide").value = localsettings.top_p;
 		document.getElementById("autoscroll").checked = localsettings.autoscroll;
+		document.getElementById("printer_view").checked = localsettings.printer_view;
 		document.getElementById("export_settings").checked = localsettings.export_settings;
 		document.getElementById("show_advanced_load").checked = localsettings.show_advanced_load;
 		document.getElementById("invert_colors").checked = localsettings.invert_colors;
@@ -7452,6 +7490,8 @@ Current version: 109
 		document.getElementById("multiline_replies").checked = localsettings.multiline_replies;
 		document.getElementById("multiline_replies_adventure").checked = localsettings.multiline_replies_adventure;
 		document.getElementById("allow_continue_chat").checked = localsettings.allow_continue_chat;
+		document.getElementById("inject_timestamps_chat").checked = localsettings.inject_timestamps_chat;
+		document.getElementById("inject_timestamps_instruct").checked = localsettings.inject_timestamps_instruct;
 		document.getElementById("idle_responses").value = localsettings.idle_responses;
 		document.getElementById("idle_duration").value = localsettings.idle_duration;
 		document.getElementById("adventure_context_mod").checked = localsettings.adventure_context_mod;
@@ -7628,6 +7668,7 @@ Current version: 109
 		localsettings.rep_pen_range = document.getElementById("rep_pen_range").value;
 		localsettings.top_p = document.getElementById("top_p").value;
 		localsettings.autoscroll = (document.getElementById("autoscroll").checked ? true : false);
+		localsettings.printer_view = (document.getElementById("printer_view").checked ? true : false);
 		localsettings.export_settings = (document.getElementById("export_settings").checked ? true : false);
 		localsettings.show_advanced_load = (document.getElementById("show_advanced_load").checked ? true : false);
 		localsettings.invert_colors = (document.getElementById("invert_colors").checked ? true : false);
@@ -7655,6 +7696,8 @@ Current version: 109
 		localsettings.multiline_replies = (document.getElementById("multiline_replies").checked ? true : false);
 		localsettings.multiline_replies_adventure = (document.getElementById("multiline_replies_adventure").checked ? true : false);
 		localsettings.allow_continue_chat = (document.getElementById("allow_continue_chat").checked ? true : false);
+		localsettings.inject_timestamps_chat = (document.getElementById("inject_timestamps_chat").checked ? true : false);
+		localsettings.inject_timestamps_instruct = (document.getElementById("inject_timestamps_instruct").checked ? true : false);
 		localsettings.idle_responses = document.getElementById("idle_responses").value;
 		localsettings.idle_duration = document.getElementById("idle_duration").value;
 		localsettings.adventure_context_mod = (document.getElementById("adventure_context_mod").checked ? true : false);
@@ -8602,6 +8645,10 @@ Current version: 109
 			{
 				if(newgen != "")
 				{
+					if(localsettings.inject_timestamps_instruct)
+					{
+						newgen = "["+(new Date().toLocaleTimeString([], {year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}))+"] " + newgen;
+					}
 					//append instruction for instruct mode
 					if (!localsettings.placeholder_tags) {
 						newgen = get_instruct_starttag(false) + newgen + get_instruct_endtag(false);
@@ -8635,7 +8682,12 @@ Current version: 109
 			}
 			if (localsettings.opmode == 3 && newgen != "") {
 				//append chatname for chatmode
-				newgen = "\n" + localsettings.chatname + ": " + newgen + "";
+				let injecttime = "";
+				if(localsettings.inject_timestamps_chat)
+				{
+					injecttime = " ["+(new Date().toLocaleTimeString([], {year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}))+"]";
+				}
+				newgen = "\n" + localsettings.chatname + ":"+ injecttime +" "+ newgen + "";
 			}
 			else if(localsettings.opmode==3 && newgen.trim()=="")
 			{
@@ -8823,6 +8875,10 @@ Current version: 109
 				{
 					co = replaceAll(co,"\n","");
 					pending_context_preinjection = "\n"+co + ":";
+					if(localsettings.inject_timestamps_chat)
+					{
+						pending_context_preinjection += " ["+(new Date().toLocaleTimeString([], {year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}))+"]";
+					}
 				}
 				else
 				{
@@ -8852,6 +8908,10 @@ Current version: 109
 			}
 
 			if (localsettings.opmode == 4) {
+				if(localsettings.inject_timestamps_instruct)
+				{
+					pending_context_preinjection += "["+(new Date().toLocaleTimeString([], {year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}))+"] ";
+				}
 				truncated_context += pending_context_preinjection;
 			}
 
@@ -9799,6 +9859,12 @@ Current version: 109
 	{
 		if(target)
 		{
+			if(localsettings.invert_colors)
+			{
+				document.getElementById("zoomedimg").classList.add("invert_colors");
+			}else{
+				document.getElementById("zoomedimg").classList.remove("invert_colors");
+			}
 			document.getElementById("zoomedimgcontainer").classList.remove("hidden");
 			document.getElementById("zoomedimg").src = target.src;
 			let tmpdsc = target.title;
@@ -11080,6 +11146,15 @@ Current version: 109
 			document.getElementById("gametext").scrollTop = document.getElementById("gametext").scrollHeight;
 			document.getElementById("chat_msg_body").scrollTop = document.getElementById("chat_msg_body").scrollHeight;
 		}
+		if(localsettings.printer_view)
+		{
+			document.getElementById("gamescreen").classList.remove("normal_viewport_height");
+			document.getElementById("chat_msg_body").classList.remove("aesthetic_viewport_height");
+		}else
+		{
+			document.getElementById("gamescreen").classList.add("normal_viewport_height");
+			document.getElementById("chat_msg_body").classList.add("aesthetic_viewport_height");
+		}
 
 
 		idle_timer = 0;
@@ -12283,7 +12358,7 @@ Current version: 109
 		</div>
 		<div id="normalinterface">
 		<div id="maineditbody" class="layer-container">
-			<div class="layer-bottom gamescreenbgnormal" id="gamescreen">
+			<div class="layer-bottom gamescreenbgnormal normal_viewport_height" id="gamescreen">
 				<span id="gametext" contenteditable="false" onclick="click_gametext()" onblur="merge_edit_field()">
 					<p id="tempgtloadtxt">Loading...</p>
 					<noscript><style>#tempgtloadtxt { display: none; } #gametext { white-space: normal!important; }</style><p>Sorry, Kobold Lite requires Javascript to function.</p></noscript>
@@ -12337,7 +12412,7 @@ Current version: 109
 		</div>
 
 		<div id="enhancedchatinterface" class="chat_mesgs hidden">
-			<div id="chat_msg_body" class="chat_msg_history"></div>
+			<div id="chat_msg_body" class="chat_msg_history aesthetic_viewport_height"></div>
 			<div class="hidden" id="chatistyping" style="text-align:right;font-size:13px;color:#999999; padding-bottom: 3px;"><div style="padding-bottom: 2px;" id="chataityping">The AI is typing...</div><div style="padding-top:2px;text-align:right;" class="dot-flashing flex flex-push-right"></div></div>
 
 			<!-- A greatly simplified action menu for this mode -->
@@ -12891,17 +12966,25 @@ Current version: 109
 							  </table>
 
 							<div class="settinglabel">
-							<div class="justifyleft settingsmall" title="Whether to allow multiple lines in AI responses.">Multiline Replies </div>
+							<div class="justifyleft settingsmall">Multiline Replies <span class="helpicon">?<span
+								class="helptext">Whether to allow multiple lines in AI responses. Disable this if the AI starts generating rubbish.</span></span> </div>
 							<input type="checkbox" id="multiline_replies" style="margin:0px 0 0;">
 							</div>
 							<div class="settinglabel">
-							<div class="justifyleft settingsmall" title="Allow incomplete AI chat replies, which can be continued by pressing submit again. Not recommended.">Continue Bot Replies</div>
+							<div class="justifyleft settingsmall">Continue Bot Replies <span class="helpicon">?<span
+								class="helptext">Allow incomplete AI chat replies, which can be continued by pressing submit again. Not recommended for newbies.</span></span></div>
 							<input type="checkbox" id="allow_continue_chat" style="margin:0px 0 0;">
+							</div>
+							<div class="settinglabel">
+							<div class="justifyleft settingsmall">Inject Timestamps <span class="helpicon">?<span
+								class="helptext">Injects timestamps into context, allowing the AI to have a sense of time.</span></span></div>
+							<input type="checkbox" id="inject_timestamps_chat" style="margin:0px 0 0;">
 							</div>
 						</div>
 						<div id="adventuresection2" class="settinglabel hidden" style="padding-top: 3px;">
 							<div class="settinglabel">
-								<div class="justifyleft settingsmall" title="Whether to allow multiple lines in AI responses.">Multiline Replies </div>
+								<div class="justifyleft settingsmall">Multiline Replies <span class="helpicon">?<span
+									class="helptext">Whether to allow multiple lines in AI responses. Disable this if the AI starts generating rubbish.</span></span></div>
 								<input type="checkbox" id="multiline_replies_adventure" style="margin:0px 0 0;">
 							</div>
 						</div>
@@ -12931,6 +13014,11 @@ Current version: 109
 							<div class="justifyleft settingsmall">Enable Markdown <span class="helpicon">?<span
 								class="helptext">Allows the UI to use markdown formatting such as quotes and code blocks.</span></span> </div>
 							<input type="checkbox" id="instruct_has_markdown" style="margin:0px 0 0;">
+							<div class="settinglabel">
+								<div class="justifyleft settingsmall">Inject Timestamps <span class="helpicon">?<span
+									class="helptext">Injects timestamps into context, allowing the AI to have a sense of time.</span></span></div>
+								<input type="checkbox" id="inject_timestamps_instruct" style="margin:0px 0 0;">
+							</div>
 						</div>
 					</div>
 					</div>
@@ -13224,6 +13312,11 @@ Current version: 109
 							<div class="justifyleft settingsmall">Autoscroll Text <span class="helpicon">?<span
 								class="helptext">Automatically scrolls the text window down when new text is generated</span></span></div>
 						   <input type="checkbox" id="autoscroll" style="margin:0px 0px 0px auto;">
+						</div>
+						<div class="settinglabel">
+							<div class="justifyleft settingsmall">Unlock Scroll Height <span class="helpicon">?<span
+								class="helptext">Unlocks the text viewport, allowing for infinite height without scrolling (Printable View)</span></span></div>
+						   <input type="checkbox" id="printer_view" style="margin:0px 0px 0px auto;">
 						</div>
 						<div class="settinglabel">
 							<div class="justifyleft settingsmall">Inverted Colors <span class="helpicon">?<span
