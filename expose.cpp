@@ -60,7 +60,7 @@ extern "C"
         putenv((char*)deviceenv.c_str());
 
         int vulkan_info = inputs.vulkan_info;
-        vulkandeviceenv = "GGML_VULKAN_DEVICE="+std::to_string(vulkan_info);
+        vulkandeviceenv = "GGML_VK_VISIBLE_DEVICES="+std::to_string(vulkan_info);
         putenv((char*)vulkandeviceenv.c_str());
 
         executable_path = inputs.executable_path;

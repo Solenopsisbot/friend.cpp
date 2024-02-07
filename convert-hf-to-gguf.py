@@ -22,6 +22,8 @@ if 'NO_LOCAL_GGUF' not in os.environ:
     sys.path.insert(1, str(Path(__file__).parent / 'gguf-py'))
 import gguf
 
+from convert import HfVocab
+
 
 # check for any of the given keys in the dictionary and return the value of the first key found
 def get_key_opts(d, keys):
@@ -205,6 +207,8 @@ class Model:
             return OrionModel
         if model_architecture == "InternLM2ForCausalLM":
             return InternLM2Model
+        if model_architecture == "MiniCPMForCausalLM":
+            return MiniCPMModel
         return Model
 
     def _is_model_safetensors(self) -> bool:
@@ -258,6 +262,8 @@ class Model:
             return gguf.MODEL_ARCH.ORION
         if arch == "InternLM2ForCausalLM":
             return gguf.MODEL_ARCH.INTERNLM2
+        if arch == "MiniCPMForCausalLM":
+            return gguf.MODEL_ARCH.MINICPM
 
         raise NotImplementedError(f'Architecture "{arch}" not supported!')
 
@@ -393,6 +399,31 @@ class Model:
                     tokens.append(key.encode("utf-8"))
                     scores.append(-1000.0)
                     toktypes.append(SentencePieceTokenTypes.USER_DEFINED)
+
+        self.gguf_writer.add_tokenizer_model("llama")
+        self.gguf_writer.add_token_list(tokens)
+        self.gguf_writer.add_token_scores(scores)
+        self.gguf_writer.add_token_types(toktypes)
+
+        special_vocab = gguf.SpecialVocab(self.dir_model, n_vocab=len(tokens))
+        special_vocab.add_to_gguf(self.gguf_writer)
+
+    def _set_vocab_hf(self):
+        path = self.dir_model
+        added_tokens_path = self.dir_model
+        vocab = HfVocab(
+            path, added_tokens_path if added_tokens_path.exists() else None
+        )
+        tokens = []
+        scores = []
+        toktypes = []
+
+        for text, score, toktype in vocab.all_tokens():
+            tokens.append(text)
+            scores.append(score)
+            toktypes.append(toktype)
+
+        assert len(tokens) == vocab.vocab_size
 
         self.gguf_writer.add_tokenizer_model("llama")
         self.gguf_writer.add_token_list(tokens)
@@ -1041,6 +1072,24 @@ class MixtralModel(Model):
         self._set_vocab_sentencepiece()
 
 
+class MiniCPMModel(Model):
+    def set_gguf_parameters(self):
+        block_count = self.hparams["num_hidden_layers"]
+        self.gguf_writer.add_name("MiniCPM")
+        self.gguf_writer.add_context_length(self.hparams["max_position_embeddings"])
+        self.gguf_writer.add_embedding_length(self.hparams["hidden_size"])
+        self.gguf_writer.add_feed_forward_length(self.hparams["intermediate_size"])
+        self.gguf_writer.add_block_count(block_count)
+        self.gguf_writer.add_head_count(self.hparams["num_attention_heads"])
+        self.gguf_writer.add_head_count_kv(self.hparams["num_key_value_heads"])
+        self.gguf_writer.add_layer_norm_rms_eps(self.hparams["rms_norm_eps"])
+        self.gguf_writer.add_file_type(self.ftype)
+        self.gguf_writer.add_rope_dimension_count(self.hparams["hidden_size"] // self.hparams["num_attention_heads"])
+
+    def set_vocab(self):
+        self._set_vocab_hf()
+
+
 class QwenModel(Model):
     @staticmethod
     def token_bytes_to_string(b):
@@ -1416,7 +1465,31 @@ class InternLM2Model(Model):
         self.gguf_writer.add_add_space_prefix(add_prefix)
 
         special_vocab = gguf.SpecialVocab(self.dir_model, n_vocab=len(tokens))
+        old_eos = special_vocab.special_token_ids["eos"]
+        if "chat" in os.path.basename(self.dir_model.absolute()):
+            # For the chat model, we replace the eos with '<|im_end|>'.
+            special_vocab.special_token_ids["eos"] = self._try_get_sft_eos(tokenizer)
+            print(f"Replace eos:{old_eos} with a special token:{special_vocab.special_token_ids['eos']} \
+in chat mode so that the conversation can end normally.")
+
         special_vocab.add_to_gguf(self.gguf_writer)
+
+    def _try_get_sft_eos(self, tokenizer):
+        unused_145_list = tokenizer.encode('[UNUSED_TOKEN_145]')
+        im_end_list = tokenizer.encode('<|im_end|>')
+        assert (len(unused_145_list) == 1) ^ (len(im_end_list) == 1)
+        if len(unused_145_list) == 1:
+            eos_token = unused_145_list[0]
+        if len(im_end_list) == 1:
+            eos_token = im_end_list[0]
+        return eos_token
+
+    def _hf_permute_qk(self, weights, n_head: int, n_head_kv: int):
+        if n_head_kv is not None and n_head != n_head_kv:
+            n_head = n_head_kv
+        return (weights.reshape(n_head, 2, weights.shape[0] // n_head // 2, *weights.shape[1:])
+                .swapaxes(1, 2)
+                .reshape(weights.shape))
 
     def set_gguf_parameters(self):
         self.gguf_writer.add_name("InternLM2")
@@ -1486,8 +1559,9 @@ class InternLM2Model(Model):
                 qkv = data_torch
                 qkv = rearrange(qkv.T, " o (g n i) ->o g n i", g=num_groups, n=q_per_kv + 2, i=head_dim)
                 q, k, v = qkv[..., : q_per_kv, :], qkv[..., q_per_kv: q_per_kv + 1, :], qkv[..., q_per_kv + 1: q_per_kv + 2, :]
-                q = rearrange(q, " o g n i ->  o (g n i)").T
-                k = rearrange(k, " o g n i ->  o (g n i)").T
+                # The model weights of q and k equire additional reshape.
+                q = self._hf_permute_qk(rearrange(q, " o g n i ->  o (g n i)").T, num_heads, num_heads)
+                k = self._hf_permute_qk(rearrange(k, " o g n i ->  o (g n i)").T, num_heads, num_kv_heads)
                 v = rearrange(v, " o g n i ->  o (g n i)").T
                 self.post_write_tensors(tensor_map, f"model.layers.{bid}.attention.wq.weight", q)
                 self.post_write_tensors(tensor_map, f"model.layers.{bid}.attention.wk.weight", k)
