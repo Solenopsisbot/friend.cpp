@@ -38,7 +38,7 @@ class load_model_inputs(ctypes.Structure):
                 ("use_contextshift", ctypes.c_bool),
                 ("clblast_info", ctypes.c_int),
                 ("cublas_info", ctypes.c_int),
-                ("vulkan_info", ctypes.c_int),
+                ("vulkan_info", ctypes.c_char_p),
                 ("blasbatchsize", ctypes.c_int),
                 ("debugmode", ctypes.c_int),
                 ("forceversion", ctypes.c_int),
@@ -256,6 +256,7 @@ def load_model(model_filename):
     inputs.threads = args.threads
     inputs.low_vram = (True if (args.usecublas and "lowvram" in args.usecublas) else False)
     inputs.use_mmq = (True if (args.usecublas and "mmq" in args.usecublas) else False)
+    inputs.vulkan_info = "0".encode("UTF-8")
     inputs.blasthreads = args.blasthreads
     inputs.use_mmap = (not args.nommap)
     inputs.use_mlock = args.usemlock
@@ -315,9 +316,14 @@ def load_model(model_filename):
             inputs.cublas_info = 3
 
     if args.usevulkan:
-        inputs.vulkan_info = int(args.usevulkan)
+        s = ""
+        for l in range(0,len(args.usevulkan)):
+            s += str(args.usevulkan[l])
+        if s=="":
+            s = "0"
+        inputs.vulkan_info = s.encode("UTF-8")
     else:
-        inputs.vulkan_info = 0
+        inputs.vulkan_info = "0".encode("UTF-8")
 
     inputs.executable_path = (getdirpath()+"/").encode("UTF-8")
     inputs.debugmode = args.debugmode
@@ -476,6 +482,7 @@ gui_layers_untouched = True
 runmode_untouched = True
 preloaded_story = None
 sslvalid = False
+start_time = time.time()
 
 class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
     sys_version = ""
@@ -846,7 +853,8 @@ Enter Prompt:<br>
             totalgens = handle.get_total_gens()
             stopreason = handle.get_last_stop_reason()
             lastseed = handle.get_last_seed()
-            response_body = (json.dumps({"last_process":lastp,"last_eval":laste,"last_token_count":lastc, "last_seed":lastseed, "total_gens":totalgens, "stop_reason":stopreason, "queue":requestsinqueue, "idle":(0 if modelbusy.locked() else 1), "hordeexitcounter":exitcounter}).encode())
+            uptime = time.time() - start_time
+            response_body = (json.dumps({"last_process":lastp,"last_eval":laste,"last_token_count":lastc, "last_seed":lastseed, "total_gens":totalgens, "stop_reason":stopreason, "queue":requestsinqueue, "idle":(0 if modelbusy.locked() else 1), "hordeexitcounter":exitcounter, "uptime":uptime}).encode())
 
         elif self.path.endswith('/api/extra/generate/check'):
             pendtxtStr = ""
@@ -1765,7 +1773,7 @@ def show_new_gui():
             if mmq_var.get()==1:
                 args.usecublas.append("mmq")
         if runopts_var.get() == "Use Vulkan":
-            args.usevulkan = int(gpuchoiceidx)
+            args.usevulkan = [int(gpuchoiceidx)]
         if gpulayers_var.get():
             args.gpulayers = int(gpulayers_var.get())
         if runopts_var.get()=="Use No BLAS":
@@ -1848,7 +1856,11 @@ def show_new_gui():
         elif "usevulkan" in dict:
             if vulkan_option is not None:
                 runopts_var.set(vulkan_option)
-                gpu_choice_var.set(str(int(dict["usevulkan"])+1))
+                gpu_choice_var.set("1")
+                for opt in range(0,4):
+                    if opt in dict["usevulkan"]:
+                        gpu_choice_var.set(str(opt+1))
+                        break
 
         elif  "noavx2" in dict and "noblas" in dict and dict["noblas"] and dict["noavx2"]:
             if failsafe_option is not None:
@@ -2630,7 +2642,7 @@ if __name__ == '__main__':
     compatgroup.add_argument("--noblas", help="Do not use OpenBLAS for accelerated prompt ingestion", action='store_true')
     compatgroup.add_argument("--useclblast", help="Use CLBlast for GPU Acceleration. Must specify exactly 2 arguments, platform ID and device ID (e.g. --useclblast 1 0).", type=int, choices=range(0,9), nargs=2)
     compatgroup.add_argument("--usecublas", help="Use CuBLAS for GPU Acceleration. Requires CUDA. Select lowvram to not allocate VRAM scratch buffer. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs. For hipBLAS binaries, please check YellowRoseCx rocm fork.", nargs='*',metavar=('[lowvram|normal] [main GPU ID] [mmq]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'mmq'])
-    compatgroup.add_argument("--usevulkan", help="Use Vulkan for GPU Acceleration. Can optionally specify GPU Device ID (e.g. --usevulkan 0).", metavar=('[Device ID]'), nargs='?', const=0, type=int, default=None)
+    compatgroup.add_argument("--usevulkan", help="Use Vulkan for GPU Acceleration. Can optionally specify GPU Device ID (e.g. --usevulkan 0).", metavar=('[Device ID]'), nargs='*', type=int, default=None)
     parser.add_argument("--gpulayers", help="Set number of layers to offload to GPU when using GPU. Requires GPU.",metavar=('[GPU layers]'), nargs='?', const=1, type=int, default=0)
     parser.add_argument("--tensor_split", help="For CUDA with ALL GPU set only, ratio to split tensors across multiple GPUs, space-separated list of proportions, e.g. 7 3", metavar=('[Ratios]'), type=float, nargs='+')
     parser.add_argument("--onready", help="An optional shell command to execute after the model has been loaded.", metavar=('[shell command]'), type=str, default="",nargs=1)

@@ -306,6 +306,10 @@
                             "type": "integer",
                             "description": "Last token count."
                          },
+                         "last_seed": {
+                            "type": "integer",
+                            "description": "Last generation seed used."
+                         },
                          "total_gens": {
                             "type": "integer",
                             "description": "Total requests generated since startup."
@@ -321,6 +325,14 @@
                          "idle": {
                             "type": "integer",
                             "description": "Status of backend, busy or idle."
+                         },
+                         "hordeexitcounter": {
+                            "type": "integer",
+                            "description": "Status of embedded horde worker. If it's too high, may have crashed."
+                         },
+                          "uptime": {
+                            "type": "integer",
+                            "description": "Seconds that the server has been running for."
                          }
                       },
                       "required": [

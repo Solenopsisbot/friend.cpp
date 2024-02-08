@@ -865,7 +865,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         llama_ctx_params.rope_freq_scale = rope_freq_scale;
         llama_ctx_params.n_batch = kcpp_params->n_batch;
 
-        #if defined(GGML_USE_CUBLAS)
+        #if defined(GGML_USE_CUBLAS) || defined(GGML_USE_VULKAN)
         bool ts_all_zero = true;
         for (int i = 0; i < tensor_split_max; ++i) {
             if (inputs.tensor_split[i] != 0.0f) {
@@ -966,7 +966,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         llama_ctx_params.n_threads = kcpp_params->n_threads;
         llama_ctx_params.n_threads_batch = kcpp_params->n_threads_batch;
 
-        #if defined(GGML_USE_CUBLAS)
+        #if defined(GGML_USE_CUBLAS) || defined(GGML_USE_VULKAN)
         bool ts_all_zero = true;
         for (int i = 0; i < tensor_split_max; ++i) {
             if (inputs.tensor_split[i] != 0.0f) {

@@ -254,9 +254,9 @@ class model_backend(InferenceModel):
             self.kcpp_noblas = True
             self.kcpp_nommap = True
         elif accel==8:
-            self.kcpp_usevulkan = 0
+            self.kcpp_usevulkan = [0]
         elif accel==9:
-            self.kcpp_usevulkan = 1
+            self.kcpp_usevulkan = [1]
         pass
 
     def unload(self):
