@@ -875,6 +875,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         }
         if(!ts_all_zero)
         {
+            printf("\nApplying Tensor Split...");
             llama_ctx_params.tensor_split = inputs.tensor_split;
         }
         #endif
@@ -976,6 +977,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         }
         if(!ts_all_zero)
         {
+            printf("\nApplying Tensor Split...");
             model_params.tensor_split = inputs.tensor_split;
         }
         #endif
