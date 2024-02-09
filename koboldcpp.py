@@ -2550,8 +2550,9 @@ def main(launch_args,start_server=True):
         benchprompt = "11111111"
         for i in range(0,10): #generate massive prompt
             benchprompt += benchprompt
-        result = generate(benchprompt,memory="",max_length=benchlen,max_context_length=benchmaxctx)
-        resultok = (len(result)>5 and result[:5]=="11111")
+        result = generate(benchprompt,memory="",max_length=benchlen,max_context_length=benchmaxctx,use_default_badwordsids=True)
+        result = (result[:5] if len(result)>5 else "")
+        resultok = (result=="11111")
         t_pp = float(handle.get_last_process_time())*float(benchmaxctx-benchlen)*0.001
         t_gen = float(handle.get_last_eval_time())*float(benchlen)*0.001
         s_pp = float(benchmaxctx-benchlen)/t_pp
@@ -2569,14 +2570,15 @@ def main(launch_args,start_server=True):
         print(f"GenerationTime: {t_gen:.2f}s")
         print(f"GenerationSpeed: {s_gen:.2f}T/s")
         print(f"TotalTime: {(t_pp+t_gen):.2f}s")
-        print(f"Coherent: {resultok}\n-----")
+        print(f"Coherent: {resultok}")
+        print(f"Output: {result}\n-----")
         if save_to_file:
             try:
                 with open(args.benchmark, "a") as file:
                     file.seek(0, 2)
                     if file.tell() == 0: #empty file
-                        file.write(f"Timestamp,Backend,Layers,Model,MaxCtx,GenAmount,ProcessingTime,ProcessingSpeed,GenerationTime,GenerationSpeed,TotalTime,Coherent\n")
-                    file.write(f"{datetimestamp},{libname},{args.gpulayers},{benchmodel},{benchmaxctx},{benchlen},{t_pp:.2f},{s_pp:.2f},{t_gen:.2f},{s_gen:.2f},{(t_pp+t_gen):.2f},{resultok}")
+                        file.write(f"Timestamp,Backend,Layers,Model,MaxCtx,GenAmount,ProcessingTime,ProcessingSpeed,GenerationTime,GenerationSpeed,TotalTime,Coherent,Output\n")
+                    file.write(f"{datetimestamp},{libname},{args.gpulayers},{benchmodel},{benchmaxctx},{benchlen},{t_pp:.2f},{s_pp:.2f},{t_gen:.2f},{s_gen:.2f},{(t_pp+t_gen):.2f},{resultok},{result}")
             except Exception as e:
                 print(f"Error writing benchmark to file: {e}")
 
