@@ -2535,6 +2535,9 @@ def main(launch_args,start_server=True):
         benchmaxctx =  (2048 if maxctx>2048 else maxctx)
         benchlen = 100
         benchmodel = sanitize_string(os.path.splitext(os.path.basename(modelname))[0])
+        if os.path.exists(args.benchmark) and os.path.getsize(args.benchmark) > 1000000:
+            print(f"\nWarning: The benchmark CSV output file you selected exceeds 1MB. This is probably not what you want, did you select the wrong CSV file?\nFor safety, benchmark output will not be saved.")
+            save_to_file = False
         if save_to_file:
             print(f"\nRunning benchmark (Save to File: {args.benchmark})...")
         else:
