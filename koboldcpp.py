@@ -28,6 +28,7 @@ class load_model_inputs(ctypes.Structure):
                 ("max_context_length", ctypes.c_int),
                 ("low_vram", ctypes.c_bool),
                 ("use_mmq", ctypes.c_bool),
+                ("use_rowsplit", ctypes.c_bool),
                 ("executable_path", ctypes.c_char_p),
                 ("model_filename", ctypes.c_char_p),
                 ("lora_filename", ctypes.c_char_p),
@@ -256,6 +257,7 @@ def load_model(model_filename):
     inputs.threads = args.threads
     inputs.low_vram = (True if (args.usecublas and "lowvram" in args.usecublas) else False)
     inputs.use_mmq = (True if (args.usecublas and "mmq" in args.usecublas) else False)
+    inputs.use_rowsplit = (True if (args.usecublas and "rowsplit" in args.usecublas) else False)
     inputs.vulkan_info = "0".encode("UTF-8")
     inputs.blasthreads = args.blasthreads
     inputs.use_mmap = (not args.nommap)
@@ -653,7 +655,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         current_token = 0
         incomplete_token_buffer = bytearray()
-        await asyncio.sleep(0.05) #anti race condition, prevent check from overtaking generate
+        await asyncio.sleep(0.25) #anti race condition, prevent check from overtaking generate
         try:
             while True:
                 streamDone = handle.has_finished() #exit next loop on done
@@ -1220,6 +1222,7 @@ def show_new_gui():
     blas_size_var = ctk.IntVar()
     version_var = ctk.StringVar(value="0")
     tensor_split_str_vars = ctk.StringVar(value="")
+    rowsplit_var = ctk.IntVar()
 
     contextshift = ctk.IntVar(value=1)
     remotetunnel = ctk.IntVar(value=0)
@@ -1548,8 +1551,9 @@ def show_new_gui():
             quick_lowvram_box.grid(row=4, column=0, padx=8, pady=1,  stick="nw")
             mmq_box.grid(row=4, column=1, padx=8, pady=1,  stick="nw")
             quick_mmq_box.grid(row=4, column=1, padx=8, pady=1,  stick="nw")
-            tensor_split_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
-            tensor_split_entry.grid(row=6, column=1, padx=8, pady=1, stick="nw")
+            splitmode_box.grid(row=5, column=1, padx=8, pady=1,  stick="nw")
+            tensor_split_label.grid(row=8, column=0, padx = 8, pady=1, stick="nw")
+            tensor_split_entry.grid(row=8, column=1, padx=8, pady=1, stick="nw")
         else:
             lowvram_box.grid_forget()
             quick_lowvram_box.grid_forget()
@@ -1557,12 +1561,13 @@ def show_new_gui():
             quick_mmq_box.grid_forget()
             tensor_split_label.grid_forget()
             tensor_split_entry.grid_forget()
+            splitmode_box.grid_forget()
 
         if index == "Use Vulkan" or index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
-            gpu_layers_label.grid(row=5, column=0, padx = 8, pady=1, stick="nw")
-            gpu_layers_entry.grid(row=5, column=1, padx=8, pady=1, stick="nw")
-            quick_gpu_layers_label.grid(row=5, column=0, padx = 8, pady=1, stick="nw")
-            quick_gpu_layers_entry.grid(row=5, column=1, padx=8, pady=1, stick="nw")
+            gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
+            gpu_layers_entry.grid(row=6, column=1, padx=8, pady=1, stick="nw")
+            quick_gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
+            quick_gpu_layers_entry.grid(row=6, column=1, padx=8, pady=1, stick="nw")
         else:
             gpu_layers_label.grid_forget()
             gpu_layers_entry.grid_forget()
@@ -1588,15 +1593,10 @@ def show_new_gui():
     quick_gpuname_label = ctk.CTkLabel(quick_tab, text="")
     quick_gpuname_label.grid(row=3, column=1, padx=75, sticky="W")
     quick_gpuname_label.configure(text_color="#ffff00")
-    quick_gpu_layers_entry,quick_gpu_layers_label = makelabelentry(quick_tab,"GPU Layers:", gpulayers_var, 5, 50,"How many layers to offload onto the GPU.\nVRAM intensive, usage increases with model and context size.\nRequires some trial and error to find the best fit value.")
+    quick_gpu_layers_entry,quick_gpu_layers_label = makelabelentry(quick_tab,"GPU Layers:", gpulayers_var, 6, 50,"How many layers to offload onto the GPU.\nVRAM intensive, usage increases with model and context size.\nRequires some trial and error to find the best fit value.")
     quick_lowvram_box = makecheckbox(quick_tab,  "Low VRAM", lowvram_var, 4,0,tooltiptxt="Low VRAM mode avoids offloading the KV cache to the GPU.")
     quick_mmq_box = makecheckbox(quick_tab,  "Use QuantMatMul (mmq)", mmq_var, 4,1,tooltiptxt="Enable MMQ mode instead of CuBLAS for prompt processing. Read the wiki. Speed may vary.")
 
-    # # threads
-    # makelabelentry(quick_tab, "Threads:" , threads_var, 8, 50,"How many threads to use.\nRecommended value is your CPU core count, defaults are usually OK.")
-
-    # # blas batch size
-    # makeslider(quick_tab, "BLAS Batch Size:", blasbatchsize_text, blas_size_var, 0, 7, 12, set=5,tooltip="How many tokens to process at once per batch.\nLarger values use more memory.")
 
     # quick boxes
     quick_boxes = {"Launch Browser": launchbrowser , "Disable MMAP":disablemmap,"Use ContextShift":contextshift,"Remote Tunnel":remotetunnel}
@@ -1631,13 +1631,14 @@ def show_new_gui():
     gpuname_label = ctk.CTkLabel(hardware_tab, text="")
     gpuname_label.grid(row=3, column=1, padx=75, sticky="W")
     gpuname_label.configure(text_color="#ffff00")
-    gpu_layers_entry,gpu_layers_label = makelabelentry(hardware_tab,"GPU Layers:", gpulayers_var, 5, 50,"How many layers to offload onto the GPU.\nVRAM intensive, usage increases with model and context size.\nRequires some trial and error to find the best fit value.")
-    tensor_split_entry,tensor_split_label = makelabelentry(hardware_tab, "Tensor Split:", tensor_split_str_vars, 6, 80)
+    gpu_layers_entry,gpu_layers_label = makelabelentry(hardware_tab,"GPU Layers:", gpulayers_var, 6, 50,"How many layers to offload onto the GPU.\nVRAM intensive, usage increases with model and context size.\nRequires some trial and error to find the best fit value.")
+    tensor_split_entry,tensor_split_label = makelabelentry(hardware_tab, "Tensor Split:", tensor_split_str_vars, 8, 80)
     lowvram_box = makecheckbox(hardware_tab,  "Low VRAM", lowvram_var, 4,0)
     mmq_box = makecheckbox(hardware_tab,  "Use QuantMatMul (mmq)", mmq_var, 4,1)
+    splitmode_box = makecheckbox(hardware_tab,  "Row-Split", rowsplit_var, 5,0)
 
     # threads
-    makelabelentry(hardware_tab, "Threads:" , threads_var, 8, 50,"How many threads to use.\nRecommended value is your CPU core count, defaults are usually OK.")
+    makelabelentry(hardware_tab, "Threads:" , threads_var, 11, 50,"How many threads to use.\nRecommended value is your CPU core count, defaults are usually OK.")
 
     # hardware checkboxes
     hardware_boxes = {"Launch Browser": launchbrowser, "High Priority" : highpriority, "Disable MMAP":disablemmap, "Use mlock":usemlock, "Debug Mode":debugmode, "Keep Foreground":keepforeground}
@@ -1652,9 +1653,9 @@ def show_new_gui():
         makecheckbox(hardware_tab, name, hardware_boxes[name], int(idx/2) +30, idx%2, tooltiptxt=hardware_boxes_desc[name])
 
     # blas thread specifier
-    makelabelentry(hardware_tab, "BLAS threads:" , blas_threads_var, 11, 50,"How many threads to use during BLAS processing.\nIf left blank, uses same value as regular thread count.")
+    makelabelentry(hardware_tab, "BLAS threads:" , blas_threads_var, 14, 50,"How many threads to use during BLAS processing.\nIf left blank, uses same value as regular thread count.")
     # blas batch size
-    makeslider(hardware_tab, "BLAS Batch Size:", blasbatchsize_text, blas_size_var, 0, 7, 12, set=5,tooltip="How many tokens to process at once per batch.\nLarger values use more memory.")
+    makeslider(hardware_tab, "BLAS Batch Size:", blasbatchsize_text, blas_size_var, 0, 7, 16, set=5,tooltip="How many tokens to process at once per batch.\nLarger values use more memory.")
     # force version
     makelabelentry(hardware_tab, "Force Version:" , version_var, 100, 50,"If the autodetected version is wrong, you can change it here.\nLeave as 0 for default.")
 
@@ -1772,6 +1773,8 @@ def show_new_gui():
                 args.usecublas = ["lowvram",str(gpuchoiceidx)] if lowvram_var.get() == 1 else ["normal",str(gpuchoiceidx)]
             if mmq_var.get()==1:
                 args.usecublas.append("mmq")
+            if rowsplit_var.get()==1:
+                args.usecublas.append("rowsplit")
         if runopts_var.get() == "Use Vulkan":
             args.usevulkan = [int(gpuchoiceidx)]
         if gpulayers_var.get():
@@ -1848,6 +1851,7 @@ def show_new_gui():
                     runopts_var.set(hipblas_option)
                 lowvram_var.set(1 if "lowvram" in dict["usecublas"] else 0)
                 mmq_var.set(1 if "mmq" in dict["usecublas"] else 0)
+                rowsplit_var.set(1 if "rowsplit" in dict["usecublas"] else 0)
                 gpu_choice_var.set("All")
                 for g in range(4):
                     if str(g) in dict["usecublas"]:
@@ -2644,7 +2648,7 @@ if __name__ == '__main__':
     compatgroup = parser.add_mutually_exclusive_group()
     compatgroup.add_argument("--noblas", help="Do not use OpenBLAS for accelerated prompt ingestion", action='store_true')
     compatgroup.add_argument("--useclblast", help="Use CLBlast for GPU Acceleration. Must specify exactly 2 arguments, platform ID and device ID (e.g. --useclblast 1 0).", type=int, choices=range(0,9), nargs=2)
-    compatgroup.add_argument("--usecublas", help="Use CuBLAS for GPU Acceleration. Requires CUDA. Select lowvram to not allocate VRAM scratch buffer. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs. For hipBLAS binaries, please check YellowRoseCx rocm fork.", nargs='*',metavar=('[lowvram|normal] [main GPU ID] [mmq]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'mmq'])
+    compatgroup.add_argument("--usecublas", help="Use CuBLAS for GPU Acceleration. Requires CUDA. Select lowvram to not allocate VRAM scratch buffer. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs. For hipBLAS binaries, please check YellowRoseCx rocm fork.", nargs='*',metavar=('[lowvram|normal] [main GPU ID] [mmq] [rowsplit]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'mmq', 'rowsplit'])
     compatgroup.add_argument("--usevulkan", help="Use Vulkan for GPU Acceleration. Can optionally specify GPU Device ID (e.g. --usevulkan 0).", metavar=('[Device ID]'), nargs='*', type=int, default=None)
     parser.add_argument("--gpulayers", help="Set number of layers to offload to GPU when using GPU. Requires GPU.",metavar=('[GPU layers]'), nargs='?', const=1, type=int, default=0)
     parser.add_argument("--tensor_split", help="For CUDA and Vulkan only, ratio to split tensors across multiple GPUs, space-separated list of proportions, e.g. 7 3", metavar=('[Ratios]'), type=float, nargs='+')

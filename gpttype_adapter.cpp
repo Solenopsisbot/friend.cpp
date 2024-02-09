@@ -963,7 +963,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         model_params.main_gpu = cu_parseinfo_maindevice;
 
         #if defined(GGML_USE_CUBLAS)
-        model_params.split_mode = llama_split_mode::LLAMA_SPLIT_ROW;
+        model_params.split_mode = (inputs.use_rowsplit?llama_split_mode::LLAMA_SPLIT_ROW:llama_split_mode::LLAMA_SPLIT_LAYER);
         #else
         model_params.split_mode = llama_split_mode::LLAMA_SPLIT_LAYER;
         #endif
