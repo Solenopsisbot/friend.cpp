@@ -2234,13 +2234,13 @@ def setuptunnel():
             tunnelproc.wait()
 
         if os.name == 'nt':
-            if os.path.exists("cloudflared.exe") and os.path.getsize("cloudflared.exe") > 100000:
+            if os.path.exists("cloudflared.exe") and os.path.getsize("cloudflared.exe") > 1000000:
                 print("Cloudflared file exists, reusing it...")
             else:
                 print("Downloading Cloudflare Tunnel for Windows...")
                 subprocess.run("curl -fL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -o cloudflared.exe", shell=True, capture_output=True, text=True, check=True, encoding='utf-8')
         else:
-            if os.path.exists("cloudflared-linux-amd64") and os.path.getsize("cloudflared-linux-amd64") > 100000:
+            if os.path.exists("cloudflared-linux-amd64") and os.path.getsize("cloudflared-linux-amd64") > 1000000:
                 print("Cloudflared file exists, reusing it...")
             else:
                 print("Downloading Cloudflare Tunnel for Linux...")
