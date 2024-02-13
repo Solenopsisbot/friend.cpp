@@ -691,7 +691,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     await asyncio.sleep(0.02) #this should keep things responsive
 
                 if streamDone:
-                    if api_format == 4:  # if oai chat, send last [DONE] message consistent with openai format
+                    if api_format == 4 or api_format == 3:  # if oai chat, send last [DONE] message consistent with openai format
                         await self.send_oai_sse_event('[DONE]')
                     break
         except Exception as ex:
