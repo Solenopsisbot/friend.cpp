@@ -638,7 +638,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         if data=="[DONE]":
             self.wfile.write(f'data: {data}'.encode())
         else:
-            self.wfile.write(f'data: {data}\r\n\r\n'.encode())
+            self.wfile.write(f'data: {data}\n\n'.encode())
         self.wfile.flush()
 
     async def send_kai_sse_event(self, data):
