@@ -1073,7 +1073,7 @@ def RunServerMultiThreaded(addr, port, embedded_kailite = None, embedded_kcpp_do
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((addr, port))
-    sock.listen(5)
+    sock.listen(12)
 
     class Thread(threading.Thread):
         def __init__(self, i):
