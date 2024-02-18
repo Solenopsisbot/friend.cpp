@@ -1520,6 +1520,13 @@ def show_new_gui():
     gpu_choice_var.trace("w", changed_gpu_choice_var)
     gpulayers_var.trace("w", changed_gpulayers)
 
+    def togglectxshift(a,b,c):
+        if contextshift.get()==0:
+            smartcontextbox.grid(row=1, column=0, padx=8, pady=1,  stick="nw")
+        else:
+            smartcontextbox.grid_forget()
+
+
     def changerunmode(a,b,c):
         global runmode_untouched
         runmode_untouched = False
@@ -1668,11 +1675,9 @@ def show_new_gui():
     # Tokens Tab
     tokens_tab = tabcontent["Tokens"]
     # tokens checkboxes
-    token_boxes = {"Use SmartContext":smartcontext, "Use ContextShift":contextshift}
-    token_boxes_tip = {"Use SmartContext":"Uses SmartContext. Now considered outdated and not recommended.\nCheck the wiki for more info.",
-    "Use ContextShift":"Uses Context Shifting to reduce reprocessing.\nRecommended. Check the wiki for more info."}
-    for idx, name, in enumerate(token_boxes):
-        makecheckbox(tokens_tab, name, token_boxes[name], idx + 1,tooltiptxt=token_boxes_tip[name])
+    smartcontextbox = makecheckbox(tokens_tab, "Use SmartContext", smartcontext, 1,tooltiptxt="Uses SmartContext. Now considered outdated and not recommended.\nCheck the wiki for more info.")
+    makecheckbox(tokens_tab, "Use ContextShift", contextshift, 2,tooltiptxt="Uses Context Shifting to reduce reprocessing.\nRecommended. Check the wiki for more info.", command=togglectxshift)
+    togglectxshift(1,1,1)
 
     # context size
     makeslider(tokens_tab, "Context Size:",contextsize_text, context_var, 0, len(contextsize_text)-1, 20, set=3,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
