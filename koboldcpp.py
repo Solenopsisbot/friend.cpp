@@ -2216,10 +2216,10 @@ def setuptunnel():
             tunnelrawlog = ""
             time.sleep(0.2)
             if os.name == 'nt':
-                print("Starting Cloudflare Tunnel for Windows, please wait...")
+                print("Starting Cloudflare Tunnel for Windows, please wait...", flush=True)
                 tunnelproc = subprocess.Popen(f"cloudflared.exe tunnel --url localhost:{args.port}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             else:
-                print("Starting Cloudflare Tunnel for Linux, please wait...")
+                print("Starting Cloudflare Tunnel for Linux, please wait...", flush=True)
                 tunnelproc = subprocess.Popen(f"./cloudflared-linux-amd64 tunnel --url http://localhost:{args.port}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             time.sleep(10)
             def tunnel_reader():
@@ -2237,14 +2237,14 @@ def setuptunnel():
                         print(f"Your remote Kobold API can be found at {tunneloutput}/api")
                         print(f"Your remote OpenAI Compatible API can be found at {tunneloutput}/v1")
                         print("======\n")
-                        print(f"Your remote tunnel is ready, please connect to {tunneloutput}")
+                        print(f"Your remote tunnel is ready, please connect to {tunneloutput}", flush=True)
                         return
 
             tunnel_reader_thread = threading.Thread(target=tunnel_reader)
             tunnel_reader_thread.start()
             time.sleep(5)
             if tunneloutput=="":
-                print(f"Error: Could not create cloudflare tunnel!\nMore Info:\n{tunnelrawlog}")
+                print(f"Error: Could not create cloudflare tunnel!\nMore Info:\n{tunnelrawlog}", flush=True)
             time.sleep(0.5)
             tunnelproc.wait()
 
@@ -2261,6 +2261,7 @@ def setuptunnel():
                 print("Downloading Cloudflare Tunnel for Linux...")
                 subprocess.run("curl -fL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared-linux-amd64", shell=True, capture_output=True, text=True, check=True, encoding='utf-8')
                 subprocess.run("chmod +x 'cloudflared-linux-amd64'", shell=True)
+        print("Attempting to start tunnel thread...", flush=True)
         tunnel_thread = threading.Thread(target=run_tunnel)
         tunnel_thread.start()
     except Exception as ex:
