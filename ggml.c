@@ -2081,13 +2081,13 @@ void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
     // figure out which node we're on
     uint current_cpu;
     int getcpu_ret = 0;
-#if __GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ > 28)
-    getcpu_ret = getcpu(&current_cpu, &g_state.numa.current_node);
-#else
-    // old glibc doesn't have a wrapper for this call. Fall back on direct syscall
-    // getcpu_ret = syscall(SYS_getcpu,&current_cpu,&g_state.numa.current_node);
-   // koboldcpp fix: we don't use numa and this thing breaks runpod
-#endif
+// #if __GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ > 28)
+//     getcpu_ret = getcpu(&current_cpu, &g_state.numa.current_node);
+// #else
+//     // old glibc doesn't have a wrapper for this call. Fall back on direct syscall
+//     // getcpu_ret = syscall(SYS_getcpu,&current_cpu,&g_state.numa.current_node);
+//    // koboldcpp fix: we don't use numa and this thing breaks runpod
+// #endif
 
     if (g_state.numa.n_nodes < 1 || g_state.numa.total_cpus < 1 || getcpu_ret != 0) {
         g_state.numa.n_nodes = 0;
