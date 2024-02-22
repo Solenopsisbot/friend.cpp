@@ -2026,7 +2026,7 @@ inline static void ggml_critical_section_end(void) {
     atomic_fetch_sub(&g_state_barrier, 1);
 }
 
-#if defined(__gnu_linux__)
+#if defined(__gnu_linux__) && !defined(__BIONIC__)
 static cpu_set_t ggml_get_numa_affinity(void) {
     cpu_set_t cpuset;
     pthread_t thread;
@@ -2048,7 +2048,7 @@ void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
         return;
     }
 
-#if defined(__gnu_linux__)
+#if defined(__gnu_linux__) && !defined(__BIONIC__)
     struct stat st;
     char path[256];
     int rv;
@@ -2085,7 +2085,8 @@ void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
     getcpu_ret = getcpu(&current_cpu, &g_state.numa.current_node);
 #else
     // old glibc doesn't have a wrapper for this call. Fall back on direct syscall
-    getcpu_ret = syscall(SYS_getcpu,&current_cpu,&g_state.numa.current_node);
+    // getcpu_ret = syscall(SYS_getcpu,&current_cpu,&g_state.numa.current_node);
+   // koboldcpp fix: we don't use numa and this thing breaks runpod
 #endif
 
     if (g_state.numa.n_nodes < 1 || g_state.numa.total_cpus < 1 || getcpu_ret != 0) {
