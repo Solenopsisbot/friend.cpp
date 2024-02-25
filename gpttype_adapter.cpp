@@ -683,7 +683,14 @@ void PurgeMissingTokens(llama_context * ctx, std::vector<int> &current_context_t
 
 static int GetBatchSize(int desiredBlasBatchSize,FileFormat in_file_format)
 {
-    if(desiredBlasBatchSize<=0)
+    //check if approved to use BLAS
+    bool approved_format = !(file_format == FileFormat::BADFORMAT ||
+                            file_format == FileFormat::GPT2_1 ||
+                            file_format == FileFormat::GPTJ_1 ||
+                            file_format == FileFormat::GPTJ_2 ||
+                            file_format == FileFormat::RWKV_1 ||
+                            file_format==FileFormat::RWKV_2);
+    if(!approved_format || desiredBlasBatchSize<=0)
     {
         desiredBlasBatchSize = 16;
     }
@@ -1684,14 +1691,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs, generation_o
         }
     }
 
-    //if using BLAS and prompt is big enough, switch to single thread and use a huge batch
-    bool approved_format = !(file_format == FileFormat::BADFORMAT ||
-                            file_format == FileFormat::GPT2_1 ||
-                            file_format == FileFormat::GPTJ_1 ||
-                            file_format == FileFormat::GPTJ_2 ||
-                            file_format == FileFormat::RWKV_1 ||
-                            file_format==FileFormat::RWKV_2);
-    bool blasmode = (approved_format && embd_inp.size() >= 32 && ggml_cpu_has_blas() && kcpp_params->n_batch>=32);
+    bool blasmode = (embd_inp.size() >= 32 && ggml_cpu_has_blas() && kcpp_params->n_batch>=32);
 
     current_context_tokens.resize(n_past);
 
