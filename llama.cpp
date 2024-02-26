@@ -2863,7 +2863,7 @@ struct llama_model_loader {
                 bool shouldoffload = (layernum>=0 && clblast_offload_fallback_layers>layernum);
                 if(shouldoffload)
                 {
-                    cur->backend = GGML_BACKEND_GPU;
+                    cur->backend = GGML_BACKEND_TYPE_GPU;
                     ggml_cl_transform_tensor(cur->data, cur);
                 }
             }
