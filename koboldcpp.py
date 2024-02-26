@@ -1167,6 +1167,30 @@ def show_new_gui():
     gtooltip_box = None
     gtooltip_label = None
 
+    # trigger empty tooltip then remove it
+    def show_tooltip(event, tooltip_text=None):
+        nonlocal gtooltip_box, gtooltip_label
+        if not gtooltip_box and not gtooltip_label:
+            gtooltip_box = ctk.CTkToplevel(root)
+            gtooltip_box.configure(fg_color="#ffffe0")
+            gtooltip_box.withdraw()
+            gtooltip_box.overrideredirect(True)
+            gtooltip_label = ctk.CTkLabel(gtooltip_box, text=tooltip_text, text_color="#000000", fg_color="#ffffe0")
+            gtooltip_label.pack(expand=True, padx=2, pady=1)
+        else:
+            gtooltip_label.configure(text=tooltip_text)
+
+        x, y = root.winfo_pointerxy()
+        gtooltip_box.wm_geometry(f"+{x + 10}+{y + 10}")
+        gtooltip_box.deiconify()
+
+    def hide_tooltip(event):
+        nonlocal gtooltip_box
+        if gtooltip_box:
+            gtooltip_box.withdraw()
+    show_tooltip(None,"") #initialize tooltip objects
+    hide_tooltip(None)
+
     tabs = ctk.CTkFrame(root, corner_radius = 0, width=windowwidth, height=windowheight-50)
     tabs.grid(row=0, stick="nsew")
     tabnames= ["Quick Launch", "Hardware", "Tokens", "Model", "Network"]
@@ -1469,27 +1493,6 @@ def show_new_gui():
                         gui_layers_untouched = True
         except Exception as ex:
             pass
-
-    def show_tooltip(event, tooltip_text=None):
-        nonlocal gtooltip_box, gtooltip_label
-        if not gtooltip_box:
-            gtooltip_box = ctk.CTkToplevel(root)
-            gtooltip_box.configure(fg_color="#ffffe0")
-            gtooltip_box.withdraw()
-            gtooltip_box.overrideredirect(True)
-            gtooltip_label = ctk.CTkLabel(gtooltip_box, text=tooltip_text, text_color="#000000", fg_color="#ffffe0")
-            gtooltip_label.pack(expand=True, padx=2, pady=1)
-        else:
-            gtooltip_label.configure(text=tooltip_text)
-
-        x, y = root.winfo_pointerxy()
-        gtooltip_box.wm_geometry(f"+{x + 10}+{y + 10}")
-        gtooltip_box.deiconify()
-
-    def hide_tooltip(event):
-        nonlocal gtooltip_box
-        if gtooltip_box:
-            gtooltip_box.withdraw()
 
     def setup_backend_tooltip(parent):
         # backend count label with the tooltip function
