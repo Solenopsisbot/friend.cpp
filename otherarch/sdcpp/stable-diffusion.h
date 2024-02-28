@@ -94,7 +94,7 @@ enum sd_log_level_t {
 typedef void (*sd_log_cb_t)(enum sd_log_level_t level, const char* text, void* data);
 
 SD_API void sd_set_log_callback(sd_log_cb_t sd_log_cb, void* data);
-SD_API int32_t get_num_physical_cores();
+SD_API int32_t sd_get_num_physical_cores();
 SD_API const char* sd_get_system_info();
 
 typedef struct {

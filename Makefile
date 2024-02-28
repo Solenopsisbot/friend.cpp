@@ -479,7 +479,7 @@ expose.o: expose.cpp expose.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # sd.cpp objects
-sdcpp_default.o: otherarch/sdcpp/util.cpp otherarch/sdcpp/sd_adapter.cpp otherarch/sdcpp/stable-diffusion.cpp otherarch/sdcpp/upscaler.cpp otherarch/sdcpp/model.cpp otherarch/sdcpp/thirdparty/zip.c
+sdcpp_default.o: otherarch/sdcpp/sd_adapter.cpp otherarch/sdcpp/stable-diffusion.h otherarch/sdcpp/stable-diffusion.cpp otherarch/sdcpp/util.cpp otherarch/sdcpp/upscaler.cpp otherarch/sdcpp/model.cpp otherarch/sdcpp/thirdparty/zip.c
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # idiotic "for easier compilation"
@@ -607,7 +607,6 @@ quantize_mpt: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o otherarch
 #window simple clinfo
 simpleclinfo: simpleclinfo.cpp
 	$(CXX) $(CXXFLAGS) $^ lib/OpenCL.lib lib/clblast.lib -o $@ $(LDFLAGS)
-
 
 build-info.h:
 	$(DONOTHING)

@@ -87,7 +87,7 @@ class generation_inputs(ctypes.Structure):
 
 class generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
-                ("text", ctypes.c_char * 32768)]
+                ("text", ctypes.c_char * 24576)]
 
 class token_count_outputs(ctypes.Structure):
     _fields_ = [("count", ctypes.c_int),

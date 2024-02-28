@@ -20,7 +20,7 @@ enum stop_reason
 {
     INVALID=-1,
     OUT_OF_TOKENS=0,
-    EOS_TOKEN=1,
+    EOS_TOKEN_HIT=1,
     CUSTOM_STOPPER=2,
 };
 struct logit_bias {
@@ -92,12 +92,30 @@ struct generation_inputs
 struct generation_outputs
 {
     int status = -1;
-    char text[32768]; //32kb should be enough for any response
+    char text[24576]; //24kb should be enough for any response
 };
 struct token_count_outputs
 {
     int count = 0;
     int * ids; //we'll just use shared memory for this one, bit of a hack
+};
+struct load_sd_model_inputs
+{
+    const char * model_filename;
+};
+struct sd_generation_inputs
+{
+    const char * prompt;
+    const char * negative_prompt;
+    const float cfg_scale;
+    const int sample_steps;
+    const int seed;
+    const char * sample_method;
+};
+struct sd_generation_outputs
+{
+    int status = -1;
+    char data[24576];
 };
 
 extern std::string executable_path;

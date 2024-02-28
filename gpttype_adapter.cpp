@@ -949,7 +949,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         #if defined(GGML_USE_CLBLAST)
         if(file_format==FileFormat::GGUF_GENERIC && model_params.n_gpu_layers>0)
         {
-            if(file_format_meta.model_architecture == GGUFArch::FALCON)
+            if(file_format_meta.model_architecture == GGUFArch::ARCH_FALCON)
             {
                 printf("\nOpenCL does not support GPU Layer offloading for this model architecture! GPU Offload has been disabled.\n");
                 model_params.n_gpu_layers = 0;
@@ -2032,7 +2032,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs, generation_o
                     printf("\n(EOS token triggered!)");
                 }
                 remaining_tokens = 0;
-                last_stop_reason = stop_reason::EOS_TOKEN;
+                last_stop_reason = stop_reason::EOS_TOKEN_HIT;
             }
 
             for (const auto &matched : stop_sequence)
