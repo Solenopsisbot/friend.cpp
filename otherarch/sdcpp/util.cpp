@@ -22,7 +22,7 @@
 #include <unistd.h>
 #endif
 
-#include "ggml/ggml.h"
+#include "ggml.h"
 #include "stable-diffusion.h"
 
 bool ends_with(const std::string& str, const std::string& ending) {
