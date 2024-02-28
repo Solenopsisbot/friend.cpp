@@ -666,7 +666,7 @@ void PurgeMissingTokens(llama_context * ctx, std::vector<int> &current_context_t
             //extract the unwanted tokens out from context and KV
             int diff = found - trimstart;
             llama_kv_cache_seq_rm(llama_ctx_v4, 0, trimstart, trimstart + diff);
-            llama_kv_cache_seq_shift(llama_ctx_v4, 0, trimstart + diff, -1, -diff);
+            llama_kv_cache_seq_add(llama_ctx_v4, 0, trimstart + diff, -1, -diff);
 
             for (size_t i = trimstart + diff; i < current_context_tokens.size() - 1; i++)
             {
