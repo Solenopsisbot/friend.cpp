@@ -94,7 +94,8 @@ static int remaining_tokens = 0;
 static int stopper_unused_tokens = 0;
 static std::mutex concat_output_mtx;
 static std::string concat_output = "";
-static std::string concat_output_reader_copy = "";
+static std::string concat_output_reader_copy_poll = ""; //for streaming
+static std::string concat_output_reader_copy_res = ""; //for gen response
 static std::vector<logit_bias> logit_biases;
 
 const int extra_context_handle_fragmentation = 80;
@@ -1469,12 +1470,12 @@ const std::string & gpttype_get_pending_output()
     if(kcpp_params==nullptr)
     {
         printf("\nWarning: KCPP not initialized!\n");
-        return concat_output_reader_copy;
+        return concat_output_reader_copy_poll;
     }
     concat_output_mtx.lock();
-    concat_output_reader_copy = concat_output;
+    concat_output_reader_copy_poll = concat_output;
     concat_output_mtx.unlock();
-    return concat_output_reader_copy;
+    return concat_output_reader_copy_poll;
 }
 
 int GetThreadsToUse(bool blasmode)
@@ -1493,12 +1494,14 @@ int GetThreadsToUse(bool blasmode)
     return kcpp_params->n_threads;
 }
 
-generation_outputs gpttype_generate(const generation_inputs inputs, generation_outputs &output)
+generation_outputs gpttype_generate(const generation_inputs inputs)
 {
+    generation_outputs output;
+
     if(kcpp_params==nullptr)
     {
         printf("\nWarning: KCPP not initialized!\n");
-        snprintf(output.text, sizeof(output.text), "%s", "");
+        output.text = nullptr;
         output.status = 0;
         generation_finished = true;
         return output;
@@ -1511,7 +1514,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs, generation_o
 
     concat_output_mtx.lock();
     concat_output = "";
-    concat_output_reader_copy = "";
+    concat_output_reader_copy_poll = "";
+    concat_output_reader_copy_res = "";
     concat_output_mtx.unlock();
     last_stop_reason = stop_reason::OUT_OF_TOKENS;
     stop_sequence.clear();
@@ -1897,7 +1901,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs, generation_o
             if (!evalres)
             {
                 fprintf(stderr, "\nFailed to predict at %d! Check your context buffer sizes!\n",n_past);
-                snprintf(output.text, sizeof(output.text), "%s", "");
+                output.text = nullptr;
                 output.status = 0;
                 generation_finished = true;
                 return output;
@@ -2092,7 +2096,9 @@ generation_outputs gpttype_generate(const generation_inputs inputs, generation_o
     last_token_count = realnpredict;
     last_seed = kcpp_params->seed;
     total_gens += 1;
-    snprintf(output.text, sizeof(output.text), "%s", concat_output.c_str());
-
+    concat_output_mtx.lock();
+    concat_output_reader_copy_res = concat_output;
+    concat_output_mtx.unlock();
+    output.text = concat_output_reader_copy_res.c_str();
     return output;
 }

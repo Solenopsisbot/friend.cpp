@@ -144,12 +144,13 @@ bool sdtype_load_model(const load_sd_model_inputs inputs) {
 
 }
 
-sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs, sd_generation_outputs &output)
+sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 {
+    sd_generation_outputs output;
     if(sd_ctx == nullptr || sd_params == nullptr)
     {
         printf("\nError: KCPP SD is not initialized!\n");
-        snprintf(output.data, sizeof(output.data), "%s", "");
+        output.data = nullptr;
         output.status = 0;
         return output;
     }
@@ -208,7 +209,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs, sd_gene
 
     if (results == NULL) {
         printf("\nKCPP SD generate failed!\n");
-        snprintf(output.data, sizeof(output.data), "%s", "");
+        output.data = nullptr;
         output.status = 0;
         return output;
     }
@@ -230,7 +231,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs, sd_gene
 
     free(results);
 
-    snprintf(output.data, sizeof(output.data), "%s", "");
+    output.data = nullptr;
     output.status = 1;
     return output;
 }

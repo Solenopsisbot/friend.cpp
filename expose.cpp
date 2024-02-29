@@ -206,18 +206,18 @@ extern "C"
         }
     }
 
-    generation_outputs generate(const generation_inputs inputs, generation_outputs &output)
+    generation_outputs generate(const generation_inputs inputs)
     {
-        return gpttype_generate(inputs, output);
+        return gpttype_generate(inputs);
     }
 
     bool load_model_sd(const load_sd_model_inputs inputs)
     {
         return sdtype_load_model(inputs);
     }
-    sd_generation_outputs generate_sd(const sd_generation_inputs inputs, sd_generation_outputs &output)
+    sd_generation_outputs generate_sd(const sd_generation_inputs inputs)
     {
-        return sdtype_generate(inputs, output);
+        return sdtype_generate(inputs);
     }
 
     const char * new_token(int idx) {

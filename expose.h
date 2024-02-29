@@ -92,7 +92,7 @@ struct generation_inputs
 struct generation_outputs
 {
     int status = -1;
-    char text[24576]; //24kb should be enough for any response
+    const char * text; //response will now be stored in c++ allocated memory
 };
 struct token_count_outputs
 {
@@ -115,7 +115,7 @@ struct sd_generation_inputs
 struct sd_generation_outputs
 {
     int status = -1;
-    char data[24576];
+    const char * data;
 };
 
 extern std::string executable_path;
