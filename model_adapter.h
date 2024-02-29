@@ -78,7 +78,7 @@ bool gpttype_generate_abort();
 const std::string & gpttype_get_pending_output();
 std::vector<int> gpttype_get_token_arr(const std::string & input);
 
-bool sdtype_load_model(const load_sd_model_inputs inputs);
+bool sdtype_load_model(const sd_load_model_inputs inputs);
 sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs);
 
 void timer_start();

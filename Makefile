@@ -43,6 +43,7 @@ CFLAGS   = -I.            -I./include -I./include/CL -I./otherarch -I./otherarch
 CXXFLAGS = -I. -I./common -I./include -I./include/CL -I./otherarch -I./otherarch/tools -I./otherarch/sdcpp -I./otherarch/sdcpp/thirdparty -I./include/vulkan -O3 -DNDEBUG -std=c++11 -fPIC -DLOG_DISABLE_LOGS -D_GNU_SOURCE
 LDFLAGS  =
 FASTCFLAGS = $(subst -O3,-Ofast,$(CFLAGS))
+FASTCXXFLAGS = $(subst -O3,-Ofast,$(CXXFLAGS))
 
 # these are used on windows, to build some libraries with extra old device compatibility
 SIMPLECFLAGS =
@@ -54,7 +55,7 @@ CLBLAST_FLAGS = -DGGML_USE_CLBLAST
 FAILSAFE_FLAGS = -DUSE_FAILSAFE
 VULKAN_FLAGS = -DGGML_USE_VULKAN
 ifdef LLAMA_CUBLAS
-	CUBLAS_FLAGS = -DGGML_USE_CUBLAS
+	CUBLAS_FLAGS = -DGGML_USE_CUBLAS -DSD_USE_CUBLAS
 else
 	CUBLAS_FLAGS =
 endif
@@ -141,7 +142,7 @@ endif
 
 # it is recommended to use the CMAKE file to build for cublas if you can - will likely work better
 ifdef LLAMA_CUBLAS
-	CUBLAS_FLAGS = -DGGML_USE_CUBLAS -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include
+	CUBLAS_FLAGS = -DGGML_USE_CUBLAS -DSD_USE_CUBLAS -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include
 	CUBLASLD_FLAGS = -lcuda -lcublas -lcudart -lcublasLt -lpthread -ldl -lrt -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L$(CUDA_PATH)/targets/x86_64-linux/lib -L/usr/local/cuda/targets/aarch64-linux/lib -L/usr/lib/wsl/lib
 	CUBLAS_OBJS = ggml-cuda.o ggml_v3-cuda.o ggml_v2-cuda.o ggml_v2-cuda-legacy.o
 	NVCC      = nvcc
@@ -225,7 +226,7 @@ ifdef LLAMA_HIPBLAS
 	LLAMA_CUDA_DMMV_X ?= 32
 	LLAMA_CUDA_MMV_Y ?= 1
 	LLAMA_CUDA_KQUANTS_ITER ?= 2
-	HIPFLAGS   += -DGGML_USE_HIPBLAS -DGGML_USE_CUBLAS $(shell $(ROCM_PATH)/bin/hipconfig -C)
+	HIPFLAGS   += -DGGML_USE_HIPBLAS -DGGML_USE_CUBLAS -DSD_USE_CUBLAS $(shell $(ROCM_PATH)/bin/hipconfig -C)
 	HIPLDFLAGS    += -L$(ROCM_PATH)/lib -Wl,-rpath=$(ROCM_PATH)/lib -lhipblas -lamdhip64 -lrocblas
 	HIP_OBJS       += ggml-cuda.o ggml_v3-cuda.o ggml_v2-cuda.o ggml_v2-cuda-legacy.o
 ggml-cuda.o: HIPFLAGS += $(addprefix --offload-arch=,$(GPU_TARGETS)) \
@@ -256,8 +257,8 @@ endif # LLAMA_HIPBLAS
 
 
 ifdef LLAMA_METAL
-	CFLAGS   += -DGGML_USE_METAL -DGGML_METAL_NDEBUG
-	CXXFLAGS += -DGGML_USE_METAL
+	CFLAGS   += -DGGML_USE_METAL -DGGML_METAL_NDEBUG -DSD_USE_METAL
+	CXXFLAGS += -DGGML_USE_METAL -DSD_USE_METAL
 	LDFLAGS  += -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders
 	OBJS     += ggml-metal.o
 
@@ -479,8 +480,10 @@ expose.o: expose.cpp expose.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # sd.cpp objects
-sdcpp_default.o: otherarch/sdcpp/sd_adapter.cpp otherarch/sdcpp/stable-diffusion.h otherarch/sdcpp/stable-diffusion.cpp otherarch/sdcpp/util.cpp otherarch/sdcpp/upscaler.cpp otherarch/sdcpp/model.cpp otherarch/sdcpp/thirdparty/zip.c
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+sdcpp_default.o: otherarch/sdcpp/sdtype_adapter.cpp otherarch/sdcpp/stable-diffusion.h otherarch/sdcpp/stable-diffusion.cpp otherarch/sdcpp/util.cpp otherarch/sdcpp/upscaler.cpp otherarch/sdcpp/model.cpp otherarch/sdcpp/thirdparty/zip.c
+	$(CXX) $(FASTCXXFLAGS) -c $< -o $@
+sdcpp_cublas.o: otherarch/sdcpp/sdtype_adapter.cpp otherarch/sdcpp/stable-diffusion.h otherarch/sdcpp/stable-diffusion.cpp otherarch/sdcpp/util.cpp otherarch/sdcpp/upscaler.cpp otherarch/sdcpp/model.cpp otherarch/sdcpp/thirdparty/zip.c
+	$(CXX) $(FASTCXXFLAGS) $(CUBLAS_FLAGS) $(HIPFLAGS) -c $< -o $@
 
 # idiotic "for easier compilation"
 GPTTYPE_ADAPTER = gpttype_adapter.cpp otherarch/llama_v2.cpp otherarch/llama_v3.cpp llama.cpp otherarch/utils.cpp otherarch/gptj_v1.cpp otherarch/gptj_v2.cpp otherarch/gptj_v3.cpp otherarch/gpt2_v1.cpp otherarch/gpt2_v2.cpp otherarch/gpt2_v3.cpp otherarch/rwkv_v2.cpp otherarch/rwkv_v3.cpp otherarch/neox_v2.cpp otherarch/neox_v3.cpp otherarch/mpt_v3.cpp ggml.h ggml-cuda.h llama.h otherarch/llama-util.h

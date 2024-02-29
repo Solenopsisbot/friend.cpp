@@ -99,7 +99,7 @@ struct token_count_outputs
     int count = 0;
     int * ids; //we'll just use shared memory for this one, bit of a hack
 };
-struct load_sd_model_inputs
+struct sd_load_model_inputs
 {
     const char * model_filename;
     const int debugmode = 0;
@@ -116,6 +116,7 @@ struct sd_generation_inputs
 struct sd_generation_outputs
 {
     int status = -1;
+    unsigned int data_length = 0;
     const char * data;
 };
 

@@ -125,7 +125,7 @@ static void sd_logger_callback(enum sd_log_level_t level, const char* log, void*
     }
 }
 
-bool sdtype_load_model(const load_sd_model_inputs inputs) {
+bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
     printf("\nSelected Image Model: %s\n",inputs.model_filename);
 
@@ -174,6 +174,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         printf("\nError: KCPP SD is not initialized!\n");
         output.data = nullptr;
         output.status = 0;
+        output.data_length = 0;
         return output;
     }
     uint8_t * input_image_buffer = NULL;
@@ -233,6 +234,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         printf("\nKCPP SD generate failed!\n");
         output.data = nullptr;
         output.status = 0;
+        output.data_length = 0;
         return output;
     }
 
@@ -255,5 +257,6 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
     output.data = nullptr;
     output.status = 1;
+    output.data_length = 0;
     return output;
 }
