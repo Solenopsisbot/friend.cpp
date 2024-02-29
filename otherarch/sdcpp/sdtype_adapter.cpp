@@ -127,7 +127,7 @@ static void sd_logger_callback(enum sd_log_level_t level, const char* log, void*
 
 bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
-    printf("\nSelected Image Model: %s\n",inputs.model_filename);
+    printf("\nImage Gen - Load Safetensors Image Model: %s\n",inputs.model_filename);
 
     sd_params = new SDParams();
     sd_params->model_path = inputs.model_filename;
@@ -187,9 +187,28 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     sd_params->sample_steps = inputs.sample_steps;
     sd_params->seed = inputs.seed;
 
-    if(inputs.sample_method=="euler a") //all lowercase
+    printf("\nGenerating Image (%d steps)\n",inputs.sample_steps);
+    std::string sampler = inputs.sample_method;
+
+    if(sampler=="euler a") //all lowercase
     {
         sd_params->sample_method = sample_method_t::EULER_A;
+    }
+    else if(sampler=="euler")
+    {
+        sd_params->sample_method = sample_method_t::EULER;
+    }
+    else if(sampler=="heun")
+    {
+        sd_params->sample_method = sample_method_t::HEUN;
+    }
+    else if(sampler=="dpm2")
+    {
+        sd_params->sample_method = sample_method_t::DPM2;
+    }
+    else if(sampler=="dpm++ 2m karras" || sampler=="dpm++ 2m")
+    {
+        sd_params->sample_method = sample_method_t::DPMPP2M;
     }
     else
     {
