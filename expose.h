@@ -102,6 +102,7 @@ struct token_count_outputs
 struct load_sd_model_inputs
 {
     const char * model_filename;
+    const int debugmode = 0;
 };
 struct sd_generation_inputs
 {

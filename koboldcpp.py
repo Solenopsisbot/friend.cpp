@@ -89,6 +89,22 @@ class generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
                 ("text", ctypes.c_char_p)]
 
+class sd_load_model_inputs(ctypes.Structure):
+    _fields_ = [("model_filename", ctypes.c_char_p),
+                ("debugmode", ctypes.c_int)]
+
+class sd_generation_inputs(ctypes.Structure):
+    _fields_ = [("prompt", ctypes.c_char_p),
+                ("negative_prompt", ctypes.c_char_p),
+                ("cfg_scale", ctypes.c_float),
+                ("sample_steps", ctypes.c_int),
+                ("seed", ctypes.c_int),
+                ("sample_method", ctypes.c_char_p)]
+
+class sd_generation_outputs(ctypes.Structure):
+    _fields_ = [("status", ctypes.c_int),
+                ("data", ctypes.c_char_p)]
+
 class token_count_outputs(ctypes.Structure):
     _fields_ = [("count", ctypes.c_int),
                 ("ids", ctypes.POINTER(ctypes.c_int))]
@@ -257,6 +273,10 @@ def init_library():
     handle.abort_generate.restype = ctypes.c_bool
     handle.token_count.restype = token_count_outputs
     handle.get_pending_output.restype = ctypes.c_char_p
+    handle.load_model_sd.argtypes = [sd_load_model_inputs]
+    handle.load_model_sd.restype = ctypes.c_bool
+    handle.generate_sd.argtypes = [sd_generation_inputs]
+    handle.generate_sd.restype = sd_generation_outputs
 
 def load_model(model_filename):
     global args
@@ -447,6 +467,15 @@ def generate(prompt, memory="", max_length=32, max_context_length=512, temperatu
                 if sindex != -1 and trim_str!="":
                     outstr = outstr[:sindex]
         return outstr
+
+
+def load_model_sd(model_filename):
+    global args
+    inputs = sd_load_model_inputs()
+    inputs.debugmode = args.debugmode
+    inputs.model_filename = model_filename.encode("UTF-8")
+    ret = handle.load_model_sd(inputs)
+    return ret
 
 def utfprint(str):
     try:
@@ -1146,7 +1175,7 @@ def show_new_gui():
         root.destroy()
         if args.model_param and args.model_param!="" and args.model_param.lower().endswith('.kcpps'):
             loadconfigfile(args.model_param)
-        if not args.model_param:
+        if not args.model_param and not args.sdconfig:
             global exitcounter
             exitcounter = 999
             print("\nNo ggml model or kcpps file was selected. Exiting.")
@@ -1192,7 +1221,7 @@ def show_new_gui():
 
     tabs = ctk.CTkFrame(root, corner_radius = 0, width=windowwidth, height=windowheight-50)
     tabs.grid(row=0, stick="nsew")
-    tabnames= ["Quick Launch", "Hardware", "Tokens", "Model", "Network"]
+    tabnames= ["Quick Launch", "Hardware", "Tokens", "Model", "Network","Image Gen"]
     navbuttons = {}
     navbuttonframe = ctk.CTkFrame(tabs, width=100, height=int(tabs.cget("height")))
     navbuttonframe.grid(row=0, column=0, padx=2,pady=2)
@@ -1282,6 +1311,9 @@ def show_new_gui():
     usehorde_var = ctk.IntVar()
     ssl_cert_var = ctk.StringVar()
     ssl_key_var = ctk.StringVar()
+
+    sd_model_var = ctk.StringVar()
+    sd_quick_var = ctk.IntVar(value=0)
 
     def tabbuttonaction(name):
         for t in tabcontent:
@@ -1755,9 +1787,14 @@ def show_new_gui():
     makecheckbox(network_tab, "Configure for Horde", usehorde_var, 19, command=togglehorde,tooltiptxt="Enable the embedded AI Horde worker.")
     togglehorde(1,1,1)
 
+    # Image Gen Tab
+    images_tab = tabcontent["Image Gen"]
+    makefileentry(images_tab, "Stable Diffusion Model (f16):", "Select Stable Diffusion Model File", sd_model_var, 1, filetypes=[("*.safetensors","*.safetensors")], tooltiptxt="Select a .safetensors Stable Diffusion model file on disk to be loaded.")
+    makecheckbox(images_tab, "Quick Mode (Low Quality)", sd_quick_var, 4,tooltiptxt="Force optimal generation settings for speed.")
+
     # launch
     def guilaunch():
-        if model_var.get() == "":
+        if model_var.get() == "" and sd_model_var.get() == "":
             tmp = askopenfilename(title="Select ggml model .bin or .gguf file")
             model_var.set(tmp)
         nonlocal nextstate
@@ -1840,6 +1877,8 @@ def show_new_gui():
             args.hordeconfig = None if usehorde_var.get() == 0 else [horde_name_var.get(), horde_gen_var.get(), horde_context_var.get()]
         else:
             args.hordeconfig = None if usehorde_var.get() == 0 else [horde_name_var.get(), horde_gen_var.get(), horde_context_var.get(), horde_apikey_var.get(), horde_workername_var.get()]
+
+        args.sdconfig = None if sd_model_var.get() == "" else [sd_model_var.get(), ("quick" if sd_quick_var.get()==1 else "normal")]
 
     def import_vars(dict):
         if "threads" in dict:
@@ -1968,6 +2007,11 @@ def show_new_gui():
                 horde_workername_var.set(dict["hordeconfig"][4])
                 usehorde_var.set("1")
 
+        if "sdconfig" in dict and dict["sdconfig"] and len(dict["sdconfig"]) > 1:
+            sd_model_var.set(dict["sdconfig"][0])
+            if len(dict["sdconfig"]) > 2:
+                sd_quick_var.set(1 if dict["sdconfig"][1]=="quick" else 0)
+
     def save_config():
         file_type = [("KoboldCpp Settings", "*.kcpps")]
         filename = asksaveasfile(filetypes=file_type, defaultextension=file_type)
@@ -2026,9 +2070,9 @@ def show_new_gui():
         # processing vars
         export_vars()
 
-        if not args.model_param:
+        if not args.model_param and not args.sdconfig:
             exitcounter = 999
-            print("\nNo ggml model file was selected. Exiting.")
+            print("\nNo text or image model file was selected. Exiting.")
             time.sleep(3)
             sys.exit(2)
 
@@ -2394,7 +2438,7 @@ def main(launch_args,start_server=True):
     if not args.model_param:
         args.model_param = args.model
 
-    if not args.model_param:
+    if not args.model_param and not args.sdconfig:
         #give them a chance to pick a file
         print("For command line arguments, please refer to --help")
         print("***")
@@ -2419,7 +2463,7 @@ def main(launch_args,start_server=True):
             print(f"Warning: Saved story file {args.preloadstory} invalid or not found. No story will be preloaded into server.")
 
     # sanitize and replace the default vanity name. remember me....
-    if args.model_param!="":
+    if args.model_param and args.model_param!="":
         newmdldisplayname = os.path.basename(args.model_param)
         newmdldisplayname = os.path.splitext(newmdldisplayname)[0]
         friendlymodelname = "koboldcpp/" + sanitize_string(newmdldisplayname)
@@ -2471,45 +2515,67 @@ def main(launch_args,start_server=True):
     init_library() # Note: if blas does not exist and is enabled, program will crash.
     print("==========")
     time.sleep(1)
-    if not os.path.exists(args.model_param):
-        exitcounter = 999
-        print(f"Cannot find model file: {args.model_param}")
-        time.sleep(3)
-        sys.exit(2)
 
-    if args.lora and args.lora[0]!="":
-        if not os.path.exists(args.lora[0]):
+    #handle loading text model
+    if args.model_param:
+        if not os.path.exists(args.model_param):
             exitcounter = 999
-            print(f"Cannot find lora file: {args.lora[0]}")
+            print(f"Cannot find text model file: {args.model_param}")
             time.sleep(3)
             sys.exit(2)
-        else:
-            args.lora[0] = os.path.abspath(args.lora[0])
-            if len(args.lora) > 1:
-                if not os.path.exists(args.lora[1]):
-                    exitcounter = 999
-                    print(f"Cannot find lora base: {args.lora[1]}")
-                    time.sleep(3)
-                    sys.exit(2)
-                else:
-                    args.lora[1] = os.path.abspath(args.lora[1])
 
-    if not args.blasthreads or args.blasthreads <= 0:
-        args.blasthreads = args.threads
+        if args.lora and args.lora[0]!="":
+            if not os.path.exists(args.lora[0]):
+                exitcounter = 999
+                print(f"Cannot find lora file: {args.lora[0]}")
+                time.sleep(3)
+                sys.exit(2)
+            else:
+                args.lora[0] = os.path.abspath(args.lora[0])
+                if len(args.lora) > 1:
+                    if not os.path.exists(args.lora[1]):
+                        exitcounter = 999
+                        print(f"Cannot find lora base: {args.lora[1]}")
+                        time.sleep(3)
+                        sys.exit(2)
+                    else:
+                        args.lora[1] = os.path.abspath(args.lora[1])
 
-    modelname = os.path.abspath(args.model_param)
-    print(args)
-    # Flush stdout for win32 issue with regards to piping in terminals,
-    # especially before handing over to C++ context.
-    print(f"==========\nLoading model: {modelname} \n[Threads: {args.threads}, BlasThreads: {args.blasthreads}, SmartContext: {args.smartcontext}, ContextShift: {not (args.noshift)}]", flush=True)
-    loadok = load_model(modelname)
-    print("Load Model OK: " + str(loadok))
+        if not args.blasthreads or args.blasthreads <= 0:
+            args.blasthreads = args.threads
 
-    if not loadok:
-        exitcounter = 999
-        print("Could not load model: " + modelname)
-        time.sleep(3)
-        sys.exit(3)
+        modelname = os.path.abspath(args.model_param)
+        print(args)
+        # Flush stdout for win32 issue with regards to piping in terminals,
+        # especially before handing over to C++ context.
+        print(f"==========\nLoading model: {modelname} \n[Threads: {args.threads}, BlasThreads: {args.blasthreads}, SmartContext: {args.smartcontext}, ContextShift: {not (args.noshift)}]", flush=True)
+        loadok = load_model(modelname)
+        print("Load Text Model OK: " + str(loadok))
+
+        if not loadok:
+            exitcounter = 999
+            print("Could not load text model: " + modelname)
+            time.sleep(3)
+            sys.exit(3)
+
+    #handle loading image model
+    if args.sdconfig:
+        imgmodel = args.sdconfig[0]
+        if not imgmodel or not os.path.exists(imgmodel):
+            exitcounter = 999
+            print(f"Cannot find image model file: {imgmodel}")
+            time.sleep(3)
+            sys.exit(2)
+        imgmodel = os.path.abspath(imgmodel)
+        loadok = load_model_sd(imgmodel)
+        print("Load Image Model OK: " + str(loadok))
+        if not loadok:
+            exitcounter = 999
+            print("Could not load image model: " + imgmodel)
+            time.sleep(3)
+            sys.exit(3)
+
+    #load embedded lite
     try:
         basepath = os.path.abspath(os.path.dirname(__file__))
         with open(os.path.join(basepath, "klite.embd"), mode='rb') as f:
@@ -2572,7 +2638,7 @@ def main(launch_args,start_server=True):
         timer_thread = threading.Timer(1, onready_subprocess) #1 second delay
         timer_thread.start()
 
-    if args.benchmark is not None:
+    if args.model_param and args.benchmark is not None:
         from datetime import datetime, timezone
         global libname
         start_server = False
@@ -2678,18 +2744,25 @@ if __name__ == '__main__':
     portgroup.add_argument("port_param", help="Port to listen on (positional)", default=defaultport, nargs="?", type=int, action='store')
     parser.add_argument("--host", help="Host IP to listen on. If empty, all routable interfaces are accepted.", default="")
     parser.add_argument("--launch", help="Launches a web browser when load is completed.", action='store_true')
-    parser.add_argument("--lora", help="LLAMA models only, applies a lora file on top of model. Experimental.", metavar=('[lora_filename]', '[lora_base]'), nargs='+')
     parser.add_argument("--config", help="Load settings from a .kcpps file. Other arguments will be ignored", type=str, nargs=1)
     physical_core_limit = 1
     if os.cpu_count()!=None and os.cpu_count()>1:
         physical_core_limit = int(os.cpu_count()/2)
     default_threads = (physical_core_limit if physical_core_limit<=3 else max(3,physical_core_limit-1))
     parser.add_argument("--threads", help="Use a custom number of threads if specified. Otherwise, uses an amount based on CPU cores", type=int, default=default_threads)
-    parser.add_argument("--blasthreads", help="Use a different number of threads during BLAS if specified. Otherwise, has the same value as --threads",metavar=('[threads]'), type=int, default=0)
-    parser.add_argument("--highpriority", help="Experimental flag. If set, increases the process CPU priority, potentially speeding up generation. Use caution.", action='store_true')
+    compatgroup = parser.add_mutually_exclusive_group()
+    compatgroup.add_argument("--usecublas", help="Use CuBLAS for GPU Acceleration. Requires CUDA. Select lowvram to not allocate VRAM scratch buffer. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs. For hipBLAS binaries, please check YellowRoseCx rocm fork.", nargs='*',metavar=('[lowvram|normal] [main GPU ID] [mmq] [rowsplit]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'mmq', 'rowsplit'])
+    compatgroup.add_argument("--usevulkan", help="Use Vulkan for GPU Acceleration. Can optionally specify GPU Device ID (e.g. --usevulkan 0).", metavar=('[Device ID]'), nargs='*', type=int, default=None)
+    compatgroup.add_argument("--useclblast", help="Use CLBlast for GPU Acceleration. Must specify exactly 2 arguments, platform ID and device ID (e.g. --useclblast 1 0).", type=int, choices=range(0,9), nargs=2)
+    compatgroup.add_argument("--noblas", help="Do not use OpenBLAS for accelerated prompt ingestion", action='store_true')
+    parser.add_argument("--gpulayers", help="Set number of layers to offload to GPU when using GPU. Requires GPU.",metavar=('[GPU layers]'), nargs='?', const=1, type=int, default=0)
+    parser.add_argument("--tensor_split", help="For CUDA and Vulkan only, ratio to split tensors across multiple GPUs, space-separated list of proportions, e.g. 7 3", metavar=('[Ratios]'), type=float, nargs='+')
     parser.add_argument("--contextsize", help="Controls the memory allocated for maximum context size, only change if you need more RAM for big contexts. (default 2048). Supported values are [256,512,1024,2048,3072,4096,6144,8192,12288,16384,24576,32768,49152,65536]. IF YOU USE ANYTHING ELSE YOU ARE ON YOUR OWN.",metavar=('[256,512,1024,2048,3072,4096,6144,8192,12288,16384,24576,32768,49152,65536]'), type=check_range(int,256,262144), default=2048)
-    parser.add_argument("--blasbatchsize", help="Sets the batch size used in BLAS processing (default 512). Setting it to -1 disables BLAS mode, but keeps other benefits like GPU offload.", type=int,choices=[-1,32,64,128,256,512,1024,2048], default=512)
     parser.add_argument("--ropeconfig", help="If set, uses customized RoPE scaling from configured frequency scale and frequency base (e.g. --ropeconfig 0.25 10000). Otherwise, uses NTK-Aware scaling set automatically based on context size. For linear rope, simply set the freq-scale and ignore the freq-base",metavar=('[rope-freq-scale]', '[rope-freq-base]'), default=[0.0, 10000.0], type=float, nargs='+')
+    #more advanced params
+    parser.add_argument("--blasbatchsize", help="Sets the batch size used in BLAS processing (default 512). Setting it to -1 disables BLAS mode, but keeps other benefits like GPU offload.", type=int,choices=[-1,32,64,128,256,512,1024,2048], default=512)
+    parser.add_argument("--blasthreads", help="Use a different number of threads during BLAS if specified. Otherwise, has the same value as --threads",metavar=('[threads]'), type=int, default=0)
+    parser.add_argument("--lora", help="LLAMA models only, applies a lora file on top of model. Experimental.", metavar=('[lora_filename]', '[lora_base]'), nargs='+')
     parser.add_argument("--smartcontext", help="Reserving a portion of context to try processing less frequently.", action='store_true')
     parser.add_argument("--noshift", help="If set, do not attempt to Trim and Shift the GGUF context.", action='store_true')
     parser.add_argument("--bantokens", help="You can manually specify a list of token SUBSTRINGS that the AI cannot use. This bans ALL instances of that substring.", metavar=('[token_substrings]'), nargs='+')
@@ -2700,27 +2773,16 @@ if __name__ == '__main__':
     parser.add_argument("--debugmode", help="Shows additional debug info in the terminal.", nargs='?', const=1, type=int, default=0)
     parser.add_argument("--skiplauncher", help="Doesn't display or use the GUI launcher.", action='store_true')
     parser.add_argument("--hordeconfig", help="Sets the display model name to something else, for easy use on AI Horde. Optional additional parameters set the horde max genlength, max ctxlen, API key and worker name.",metavar=('[hordemodelname]', '[hordegenlength] [hordemaxctx] [hordeapikey] [hordeworkername]'), nargs='+')
-    compatgroup = parser.add_mutually_exclusive_group()
-    compatgroup.add_argument("--noblas", help="Do not use OpenBLAS for accelerated prompt ingestion", action='store_true')
-    compatgroup.add_argument("--useclblast", help="Use CLBlast for GPU Acceleration. Must specify exactly 2 arguments, platform ID and device ID (e.g. --useclblast 1 0).", type=int, choices=range(0,9), nargs=2)
-    compatgroup.add_argument("--usecublas", help="Use CuBLAS for GPU Acceleration. Requires CUDA. Select lowvram to not allocate VRAM scratch buffer. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs. For hipBLAS binaries, please check YellowRoseCx rocm fork.", nargs='*',metavar=('[lowvram|normal] [main GPU ID] [mmq] [rowsplit]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'mmq', 'rowsplit'])
-    compatgroup.add_argument("--usevulkan", help="Use Vulkan for GPU Acceleration. Can optionally specify GPU Device ID (e.g. --usevulkan 0).", metavar=('[Device ID]'), nargs='*', type=int, default=None)
-    parser.add_argument("--gpulayers", help="Set number of layers to offload to GPU when using GPU. Requires GPU.",metavar=('[GPU layers]'), nargs='?', const=1, type=int, default=0)
-    parser.add_argument("--tensor_split", help="For CUDA and Vulkan only, ratio to split tensors across multiple GPUs, space-separated list of proportions, e.g. 7 3", metavar=('[Ratios]'), type=float, nargs='+')
     parser.add_argument("--onready", help="An optional shell command to execute after the model has been loaded.", metavar=('[shell command]'), type=str, default="",nargs=1)
     parser.add_argument("--benchmark", help="Do not start server, instead run benchmarks. If filename is provided, appends results to provided file.", metavar=('[filename]'), nargs='?', const="stdout", type=str, default=None)
     parser.add_argument("--multiuser", help="Runs in multiuser mode, which queues incoming requests instead of blocking them.", metavar=('limit'), nargs='?', const=1, type=int, default=0)
     parser.add_argument("--remotetunnel", help="Uses Cloudflare to create a remote tunnel, allowing you to access koboldcpp remotely over the internet even behind a firewall.", action='store_true')
+    parser.add_argument("--highpriority", help="Experimental flag. If set, increases the process CPU priority, potentially speeding up generation. Use caution.", action='store_true')
     parser.add_argument("--foreground", help="Windows only. Sends the terminal to the foreground every time a new prompt is generated. This helps avoid some idle slowdown issues.", action='store_true')
     parser.add_argument("--preloadstory", help="Configures a prepared story json save file to be hosted on the server, which frontends (such as Kobold Lite) can access over the API.", default="")
     parser.add_argument("--quiet", help="Enable quiet mode, which hides generation inputs and outputs in the terminal. Quiet mode is automatically enabled when running --hordeconfig.", action='store_true')
     parser.add_argument("--ssl", help="Allows all content to be served over SSL instead. A valid UNENCRYPTED SSL cert and key .pem files must be provided", metavar=('[cert_pem]', '[key_pem]'), nargs='+')
     parser.add_argument("--nocertify", help="Allows insecure SSL connections. Use this if you have cert errors and need to bypass certificate restrictions.", action='store_true')
-
-    # #deprecated hidden args. they do nothing. do not use
-    # parser.add_argument("--psutil_set_threads", action='store_true', help=argparse.SUPPRESS)
-    # parser.add_argument("--stream", action='store_true', help=argparse.SUPPRESS)
-    # parser.add_argument("--unbantokens", action='store_true', help=argparse.SUPPRESS)
-    # parser.add_argument("--usemirostat", action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument("--sdconfig", help="Specify a stable diffusion safetensors model to enable image generation. If quick is specified, force optimal generation settings for speed.",metavar=('[sd_filename]', '[normal|quick]'), nargs='+')
 
     main(parser.parse_args(),start_server=True)

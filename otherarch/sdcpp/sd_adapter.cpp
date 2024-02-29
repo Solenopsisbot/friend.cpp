@@ -111,12 +111,34 @@ struct SDParams {
 static SDParams * sd_params = nullptr;
 static sd_ctx_t * sd_ctx = nullptr;
 
+static void sd_logger_callback(enum sd_log_level_t level, const char* log, void* data) {
+    SDParams* params = (SDParams*)data;
+    if (!params->verbose && level <= SD_LOG_DEBUG) {
+        return;
+    }
+    if (level <= SD_LOG_INFO) {
+        fputs(log, stdout);
+        fflush(stdout);
+    } else {
+        fputs(log, stderr);
+        fflush(stderr);
+    }
+}
+
 bool sdtype_load_model(const load_sd_model_inputs inputs) {
+
+    printf("\nSelected Image Model: %s\n",inputs.model_filename);
+
     sd_params = new SDParams();
     sd_params->model_path = inputs.model_filename;
     sd_params->wtype = SD_TYPE_F16;
     sd_params->n_threads = -1; //use physical cores
     sd_params->input_path = ""; //unused
+
+    if(inputs.debugmode==1)
+    {
+        sd_set_log_callback(sd_logger_callback, (void*)sd_params);
+    }
 
     bool vae_decode_only = false;
 
