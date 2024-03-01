@@ -102,6 +102,10 @@ struct token_count_outputs
 struct sd_load_model_inputs
 {
     const char * model_filename;
+    const int clblast_info = 0;
+    const int cublas_info = 0;
+    const char * vulkan_info;
+    const int threads;
     const int debugmode = 0;
 };
 struct sd_generation_inputs
@@ -116,8 +120,7 @@ struct sd_generation_inputs
 struct sd_generation_outputs
 {
     int status = -1;
-    unsigned int data_length = 0;
-    const char * data;
+    const char * data = "";
 };
 
 extern std::string executable_path;
