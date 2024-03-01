@@ -2379,7 +2379,7 @@ def setuptunnel():
                 tunnelproc = subprocess.Popen(f"cloudflared.exe tunnel --url localhost:{args.port}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             elif sys.platform=="darwin":
                 print("Starting Cloudflare Tunnel for MacOS, please wait...", flush=True)
-                tunnelproc = subprocess.Popen(f"./cloudflared-darwin tunnel --url http://localhost:{args.port}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                tunnelproc = subprocess.Popen(f"./cloudflared tunnel --url http://localhost:{args.port}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             else:
                 print("Starting Cloudflare Tunnel for Linux, please wait...", flush=True)
                 tunnelproc = subprocess.Popen(f"./cloudflared-linux-amd64 tunnel --url http://localhost:{args.port}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -2417,13 +2417,13 @@ def setuptunnel():
                 print("Downloading Cloudflare Tunnel for Windows...")
                 subprocess.run("curl -fL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -o cloudflared.exe", shell=True, capture_output=True, text=True, check=True, encoding='utf-8')
         elif sys.platform=="darwin":
-            if os.path.exists("cloudflared-darwin") and os.path.getsize("cloudflared-darwin") > 1000000:
+            if os.path.exists("cloudflared") and os.path.getsize("cloudflared") > 1000000:
                 print("Cloudflared file exists, reusing it...")
             else:
                 print("Downloading Cloudflare Tunnel for MacOS...")
                 subprocess.run("curl -fL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz -o cloudflared-darwin-amd64.tgz", shell=True, capture_output=True, text=True, check=True, encoding='utf-8')
-                subprocess.run("tar -xzf cloudflared-darwin-amd64.tgz > cloudflared-darwin", shell=True)
-                subprocess.run("chmod +x 'cloudflared-darwin'", shell=True)
+                subprocess.run("tar -xzf cloudflared-darwin-amd64.tgz", shell=True)
+                subprocess.run("chmod +x 'cloudflared'", shell=True)
         else:
             if os.path.exists("cloudflared-linux-amd64") and os.path.getsize("cloudflared-linux-amd64") > 1000000:
                 print("Cloudflared file exists, reusing it...")
