@@ -2754,7 +2754,7 @@ def main(launch_args,start_server=True):
         benchprompt = "11111111"
         for i in range(0,10): #generate massive prompt
             benchprompt += benchprompt
-        result = generate(benchprompt,memory="",max_length=benchlen,max_context_length=benchmaxctx,use_default_badwordsids=True)
+        result = generate(benchprompt,memory="",max_length=benchlen,max_context_length=benchmaxctx,temperature=0.1,top_k=1,rep_pen=1,use_default_badwordsids=True)
         result = (result[:5] if len(result)>5 else "")
         resultok = (result=="11111")
         t_pp = float(handle.get_last_process_time())*float(benchmaxctx-benchlen)*0.001
