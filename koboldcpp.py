@@ -1163,6 +1163,7 @@ Enter Prompt:<br>
                         print("Generate Image: The response could not be sent, maybe connection was terminated?")
                         time.sleep(0.2) #short delay
                     return
+
         finally:
             modelbusy.release()
 
@@ -1201,7 +1202,7 @@ def RunServerMultiThreaded(addr, port, embedded_kailite = None, embedded_kcpp_do
         sock = context.wrap_socket(sock, server_side=True)
 
     sock.bind((addr, port))
-    numThreads = 12
+    numThreads = 20
     sock.listen(numThreads)
 
     class Thread(threading.Thread):

@@ -427,12 +427,12 @@ void sample_temperature(llama_token_data_array * candidates_p, float temp, float
     {
         // Imitate greedy sampling
         temp = 0.00390625f; //cannot be zero else div0, this is 1/256
-        llama_sample_temperature(nullptr, candidates_p, temp, 0);
+        llama_sample_temp(nullptr, candidates_p, temp, 0);
         llama_sample_top_k(nullptr, candidates_p, 1, 1); //only want first candidate
     }
     else
     {
-        llama_sample_temperature(nullptr, candidates_p, temp, smoothing_factor);
+        llama_sample_temp(nullptr, candidates_p, temp, smoothing_factor);
     }
 }
 
@@ -1043,11 +1043,11 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
                 lora_base_arg = lora_base.c_str();
             }
 
-            int err = llama_apply_lora_from_file(llama_ctx_v4,
-                                                 lora_filename.c_str(),
-                                                 1.0f,
-                                                 lora_base_arg,
-                                                 kcpp_params->n_threads);
+            int err = llama_model_apply_lora_from_file(llamamodel,
+                                                       lora_filename.c_str(),
+                                                       1.0f,
+                                                       lora_base_arg,
+                                                       kcpp_params->n_threads);
             if (err != 0)
             {
                 fprintf(stderr, "%s: error: failed to apply lora adapter\n", __func__);
