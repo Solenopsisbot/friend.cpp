@@ -182,7 +182,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
     sd_params = new SDParams();
     sd_params->model_path = inputs.model_filename;
-    sd_params->wtype = SD_TYPE_F16;
+    sd_params->wtype = (inputs.quant==0?SD_TYPE_F16:SD_TYPE_Q4_0);
     sd_params->n_threads = inputs.threads; //if -1 use physical cores
     sd_params->input_path = ""; //unused
     sd_params->batch_count = 1;

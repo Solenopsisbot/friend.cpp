@@ -106,6 +106,7 @@ struct sd_load_model_inputs
     const int cublas_info = 0;
     const char * vulkan_info;
     const int threads;
+    const int quant = 0;
     const int debugmode = 0;
 };
 struct sd_generation_inputs
