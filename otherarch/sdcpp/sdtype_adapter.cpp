@@ -6,6 +6,9 @@
 #include <string>
 #include <vector>
 
+#include <inttypes.h>
+#include <cinttypes>
+
 #include "model_adapter.h"
 
 #include "stable-diffusion.cpp"
@@ -135,24 +138,10 @@ std::string base64_encode(const unsigned char* data, unsigned int data_length) {
     return encoded;
 }
 
-static void sd_logger_callback(enum sd_log_level_t level, const char* log, void* data) {
-    SDParams* params = (SDParams*)data;
-    if (!params->verbose && level <= SD_LOG_DEBUG) {
-        return;
-    }
-    if (level <= SD_LOG_INFO) {
-        fputs(log, stdout);
-        fflush(stdout);
-    } else {
-        fputs(log, stderr);
-        fflush(stderr);
-    }
-}
-
 static std::string sdplatformenv, sddeviceenv, sdvulkandeviceenv;
 bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
-    printf("\nImage Gen - Load Safetensors Image Model: %s\n",inputs.model_filename);
+    printf("\nImage Generation Init - Load Safetensors Model: %s\n",inputs.model_filename);
 
     //duplicated from expose.cpp
     int cl_parseinfo = inputs.clblast_info; //first digit is whether configured, second is platform, third is devices
@@ -189,10 +178,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
     sddebugmode = inputs.debugmode;
 
-    if(sddebugmode==1)
-    {
-        sd_set_log_callback(sd_logger_callback, (void*)sd_params);
-    }
+    set_log_message(sddebugmode==1);
 
     bool vae_decode_only = false;
     bool free_param = false;
@@ -245,7 +231,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
     if(sd_ctx == nullptr || sd_params == nullptr)
     {
-        printf("\nError: KCPP SD is not initialized!\n");
+        printf("\nWarning: KCPP image generation not initialized!\n");
         output.data = "";
         output.status = 0;
         return output;

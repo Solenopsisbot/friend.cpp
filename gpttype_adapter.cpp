@@ -1437,7 +1437,7 @@ bool gpttype_generate_abort()
 {
     if(kcpp_params==nullptr)
     {
-        printf("\nWarning: KCPP not initialized!\n");
+        printf("\nWarning: KCPP text generation not initialized!\n");
     }
     stopper_unused_tokens = remaining_tokens;
     remaining_tokens = 0;
@@ -1449,7 +1449,7 @@ std::vector<int> gpttype_get_token_arr(const std::string & input)
     std::vector<int> toks;
     if(kcpp_params==nullptr)
     {
-        printf("\nWarning: KCPP not initialized!\n");
+        printf("\nWarning: KCPP text generation not initialized!\n");
         return toks;
     }
     if(debugmode==1)
@@ -1469,7 +1469,7 @@ const std::string & gpttype_get_pending_output()
 {
     if(kcpp_params==nullptr)
     {
-        printf("\nWarning: KCPP not initialized!\n");
+        printf("\nWarning: KCPP text generation not initialized!\n");
         return concat_output_reader_copy_poll;
     }
     concat_output_mtx.lock();
@@ -1500,7 +1500,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     if(kcpp_params==nullptr)
     {
-        printf("\nWarning: KCPP not initialized!\n");
+        printf("\nWarning: KCPP text generation not initialized!\n");
         output.text = nullptr;
         output.status = 0;
         generation_finished = true;
