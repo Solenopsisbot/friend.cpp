@@ -509,8 +509,8 @@ def sd_generate(genparams):
     sample_method = genparams.get("sampler_name", "euler a")
 
     #clean vars
-    cfg_scale = (1 if cfg_scale < 1 else (20 if cfg_scale > 20 else cfg_scale))
-    sample_steps = (1 if sample_steps < 1 else (50 if sample_steps > 50 else sample_steps))
+    cfg_scale = (1 if cfg_scale < 1 else (25 if cfg_scale > 25 else cfg_scale))
+    sample_steps = (1 if sample_steps < 1 else (80 if sample_steps > 80 else sample_steps))
 
     #quick mode
     if args.sdconfig and len(args.sdconfig)>1 and args.sdconfig[1]=="quick":
