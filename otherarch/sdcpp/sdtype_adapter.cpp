@@ -8,6 +8,7 @@
 
 #include <inttypes.h>
 #include <cinttypes>
+#include <algorithm>
 
 #include "model_adapter.h"
 
@@ -225,6 +226,20 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
 }
 
+std::string clean_input_prompt(const std::string& input) {
+    std::string result;
+    result.reserve(input.size());
+    for (char ch : input) {
+        // Check if the character is an ASCII or extended ASCII character
+        if (static_cast<unsigned char>(ch) <= 0x7F || (ch >= 0xC2 && ch <= 0xF4)) {
+            result.push_back(ch);
+        }
+    }
+    //limit to max 800 chars
+    result = result.substr(0, 800);
+    return result;
+}
+
 sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 {
     sd_generation_outputs output;
@@ -240,8 +255,12 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     sd_image_t * results;
     sd_image_t* control_image = NULL;
 
-    sd_params->prompt = inputs.prompt;
-    sd_params->negative_prompt = inputs.negative_prompt;
+    //sanitize prompts, remove quotes and limit lengths
+    std::string cleanprompt = clean_input_prompt(inputs.prompt);
+    std::string cleannegprompt = clean_input_prompt(inputs.negative_prompt);
+
+    sd_params->prompt = cleanprompt;
+    sd_params->negative_prompt = cleannegprompt;
     sd_params->cfg_scale = inputs.cfg_scale;
     sd_params->sample_steps = inputs.sample_steps;
     sd_params->seed = inputs.seed;
