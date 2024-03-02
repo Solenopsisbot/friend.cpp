@@ -1879,7 +1879,7 @@ def show_new_gui():
 
     # Image Gen Tab
     images_tab = tabcontent["Image Gen"]
-    makefileentry(images_tab, "Stable Diffusion Model (f16):", "Select Stable Diffusion Model File", sd_model_var, 1, filetypes=[("*.safetensors","*.safetensors")], tooltiptxt="Select a .safetensors Stable Diffusion model file on disk to be loaded.")
+    makefileentry(images_tab, "Stable Diffusion Model (f16 safetensors):", "Select Stable Diffusion Model File", sd_model_var, 1, filetypes=[("*.safetensors","*.safetensors")], tooltiptxt="Select a .safetensors Stable Diffusion model file on disk to be loaded.")
     makecheckbox(images_tab, "Quick Mode (Low Quality)", sd_quick_var, 4,tooltiptxt="Force optimal generation settings for speed.")
     makelabelentry(images_tab, "Image threads:" , sd_threads_var, 6, 50,"How many threads to use during image generation.\nIf left blank, uses same value as threads.")
     makecheckbox(images_tab, "Compress Weights (Slight Memory Saved)", sd_quant_var, 8,tooltiptxt="Quantizes the SD model weights to save memory. May degrade quality.")
