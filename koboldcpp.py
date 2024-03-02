@@ -2107,7 +2107,7 @@ def show_new_gui():
             if len(dict["sdconfig"]) > 2:
                 sd_threads_var.set(str(dict["sdconfig"][2]))
             if len(dict["sdconfig"]) > 3:
-                sd_quant_var.set(str(dict["sdconfig"][3]))
+                sd_quant_var.set(str(dict["sdconfig"][3])=="quant")
 
     def save_config():
         file_type = [("KoboldCpp Settings", "*.kcpps")]
