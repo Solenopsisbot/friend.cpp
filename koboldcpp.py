@@ -513,6 +513,8 @@ def sd_generate(genparams):
     sample_method = genparams.get("sampler_name", "euler a")
 
     #clean vars
+    width = width - (width%64)
+    height = height - (height%64)
     cfg_scale = (1 if cfg_scale < 1 else (25 if cfg_scale > 25 else cfg_scale))
     sample_steps = (1 if sample_steps < 1 else (80 if sample_steps > 80 else sample_steps))
     width = (128 if width < 128 else (1024 if width > 1024 else width))
