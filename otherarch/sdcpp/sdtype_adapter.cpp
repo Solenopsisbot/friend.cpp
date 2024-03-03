@@ -264,6 +264,8 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     sd_params->cfg_scale = inputs.cfg_scale;
     sd_params->sample_steps = inputs.sample_steps;
     sd_params->seed = inputs.seed;
+    sd_params->width = inputs.width;
+    sd_params->height = inputs.height;
 
     printf("\nGenerating Image (%d steps)\n",inputs.sample_steps);
     fflush(stdout);

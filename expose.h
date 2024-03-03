@@ -115,6 +115,8 @@ struct sd_generation_inputs
     const char * negative_prompt;
     const float cfg_scale;
     const int sample_steps;
+    const int width;
+    const int height;
     const int seed;
     const char * sample_method;
 };

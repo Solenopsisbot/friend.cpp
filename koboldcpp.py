@@ -107,6 +107,8 @@ class sd_generation_inputs(ctypes.Structure):
                 ("negative_prompt", ctypes.c_char_p),
                 ("cfg_scale", ctypes.c_float),
                 ("sample_steps", ctypes.c_int),
+                ("width", ctypes.c_int),
+                ("height", ctypes.c_int),
                 ("seed", ctypes.c_int),
                 ("sample_method", ctypes.c_char_p)]
 
@@ -505,12 +507,16 @@ def sd_generate(genparams):
     negative_prompt = genparams.get("negative_prompt", "")
     cfg_scale = genparams.get("cfg_scale", 5)
     sample_steps = genparams.get("steps", 20)
+    width = genparams.get("width", 512)
+    height = genparams.get("height", 512)
     seed = genparams.get("seed", -1)
     sample_method = genparams.get("sampler_name", "euler a")
 
     #clean vars
     cfg_scale = (1 if cfg_scale < 1 else (25 if cfg_scale > 25 else cfg_scale))
     sample_steps = (1 if sample_steps < 1 else (80 if sample_steps > 80 else sample_steps))
+    width = (128 if width < 128 else (1024 if width > 1024 else width))
+    height = (128 if height < 128 else (1024 if height > 1024 else height))
 
     #quick mode
     if args.sdconfig and len(args.sdconfig)>1 and args.sdconfig[1]=="quick":
@@ -524,6 +530,8 @@ def sd_generate(genparams):
     inputs.negative_prompt = negative_prompt.encode("UTF-8")
     inputs.cfg_scale = cfg_scale
     inputs.sample_steps = sample_steps
+    inputs.width = width
+    inputs.height = height
     inputs.seed = seed
     inputs.sample_method = sample_method.lower().encode("UTF-8")
     ret = handle.sd_generate(inputs)
@@ -1882,7 +1890,7 @@ def show_new_gui():
     makefileentry(images_tab, "Stable Diffusion Model (f16 safetensors):", "Select Stable Diffusion Model File", sd_model_var, 1, filetypes=[("*.safetensors","*.safetensors")], tooltiptxt="Select a .safetensors Stable Diffusion model file on disk to be loaded.")
     makecheckbox(images_tab, "Quick Mode (Low Quality)", sd_quick_var, 4,tooltiptxt="Force optimal generation settings for speed.")
     makelabelentry(images_tab, "Image threads:" , sd_threads_var, 6, 50,"How many threads to use during image generation.\nIf left blank, uses same value as threads.")
-    makecheckbox(images_tab, "Compress Weights (Slight Memory Saved)", sd_quant_var, 8,tooltiptxt="Quantizes the SD model weights to save memory. May degrade quality.")
+    makecheckbox(images_tab, "Compress Weights (Saves Memory)", sd_quant_var, 8,tooltiptxt="Quantizes the SD model weights to save memory. May degrade quality.")
 
 
     # launch
