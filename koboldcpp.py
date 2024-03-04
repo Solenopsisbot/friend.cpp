@@ -978,6 +978,12 @@ Enter Prompt:<br>
                 response_body = (json.dumps([{"title":friendlysdmodelname,"model_name":friendlysdmodelname,"hash":"8888888888","sha256":"8888888888888888888888888888888888888888888888888888888888888888","filename":fullsdmodelpath,"config": None}]).encode())
         elif self.path.endswith('/sdapi/v1/options'):
            response_body = (json.dumps({"samples_format":"png","sd_model_checkpoint":friendlysdmodelname}).encode())
+        elif self.path.endswith('/sdapi/v1/samplers'):
+            if friendlysdmodelname=="inactive" or fullsdmodelpath=="":
+                response_body = (json.dumps([]).encode())
+            else:
+                response_body = (json.dumps([{"name":"Euler a","aliases":["k_euler_a","k_euler_ancestral"],"options":{}},{"name":"Euler","aliases":["k_euler"],"options":{}},{"name":"Heun","aliases":["k_heun"],"options":{}},{"name":"DPM2","aliases":["k_dpm_2"],"options":{}},{"name":"DPM++ 2M","aliases":["k_dpmpp_2m"],"options":{}}]).encode())
+
 
         elif self.path=="/api":
             content_type = 'text/html'
