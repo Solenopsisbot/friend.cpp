@@ -941,7 +941,6 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
 
         llama_ctx_params.seed = -1;
         llama_ctx_params.offload_kqv = !inputs.low_vram;
-        llama_ctx_params.mul_mat_q = inputs.use_mmq;
         llama_ctx_params.logits_all = false;
         model_params.use_mmap = inputs.use_mmap;
         model_params.use_mlock = inputs.use_mlock;
@@ -967,6 +966,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         {
             printf("CUBLAS: Set main device to %d\n",cu_parseinfo_maindevice);
         }
+        ggml_cuda_set_mul_mat_q(inputs.use_mmq);
         #endif
         model_params.main_gpu = cu_parseinfo_maindevice;
 
