@@ -521,11 +521,19 @@ def sd_generate(genparams):
     height = (128 if height < 128 else (1024 if height > 1024 else height))
 
     #quick mode
-    if args.sdconfig and len(args.sdconfig)>1 and args.sdconfig[1]=="quick":
-        cfg_scale = 1
-        sample_steps = 7
-        sample_method = "dpm++ 2m karras"
-        print("Image generation set to Quick Mode (Low Quality). Step counts, sampler, and cfg scale are fixed.")
+    if args.sdconfig and len(args.sdconfig)>1:
+        if args.sdconfig[1]=="quick":
+            cfg_scale = 1
+            sample_steps = 7
+            sample_method = "dpm++ 2m karras"
+            width = (512 if width > 512 else width)
+            height = (512 if height > 512 else height)
+            print("Image generation set to Quick Mode (Low Quality). Step counts, resolution, sampler, and cfg scale are fixed.")
+        elif args.sdconfig[1]=="clamped":
+            sample_steps = (40 if sample_steps > 40 else sample_steps)
+            width = (512 if width > 512 else width)
+            height = (512 if height > 512 else height)
+            print("Image generation set to Clamped Mode (For Shared Use). Step counts and resolution are clamped.")
 
     inputs = sd_generation_inputs()
     inputs.prompt = prompt.encode("UTF-8")
@@ -2915,6 +2923,6 @@ if __name__ == '__main__':
     parser.add_argument("--quiet", help="Enable quiet mode, which hides generation inputs and outputs in the terminal. Quiet mode is automatically enabled when running --hordeconfig.", action='store_true')
     parser.add_argument("--ssl", help="Allows all content to be served over SSL instead. A valid UNENCRYPTED SSL cert and key .pem files must be provided", metavar=('[cert_pem]', '[key_pem]'), nargs='+')
     parser.add_argument("--nocertify", help="Allows insecure SSL connections. Use this if you have cert errors and need to bypass certificate restrictions.", action='store_true')
-    parser.add_argument("--sdconfig", help="Specify a stable diffusion safetensors model to enable image generation. If quick is specified, force optimal generation settings for speed.",metavar=('[sd_filename]', '[normal|quick] [sd_threads] [quant|noquant]'), nargs='+')
+    parser.add_argument("--sdconfig", help="Specify a stable diffusion safetensors model to enable image generation. If quick is specified, force optimal generation settings for speed.",metavar=('[sd_filename]', '[normal|quick|clamped] [threads] [quant|noquant]'), nargs='+')
 
     main(parser.parse_args(),start_server=True)
