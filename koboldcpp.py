@@ -510,7 +510,7 @@ def sd_generate(genparams):
     width = genparams.get("width", 512)
     height = genparams.get("height", 512)
     seed = genparams.get("seed", -1)
-    sample_method = genparams.get("sampler_name", "euler a")
+    sample_method = genparams.get("sampler_name", "k_euler_a")
 
     #clean vars
     width = width - (width%64)

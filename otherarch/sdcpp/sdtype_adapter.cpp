@@ -271,27 +271,27 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     fflush(stdout);
     std::string sampler = inputs.sample_method;
 
-    if(sampler=="euler a") //all lowercase
+    if(sampler=="euler a"||sampler=="k_euler_a"||sampler=="euler_a") //all lowercase
     {
         sd_params->sample_method = sample_method_t::EULER_A;
     }
-    else if(sampler=="euler")
+    else if(sampler=="euler"||sampler=="k_euler")
     {
         sd_params->sample_method = sample_method_t::EULER;
     }
-    else if(sampler=="heun")
+    else if(sampler=="heun"||sampler=="k_heun")
     {
         sd_params->sample_method = sample_method_t::HEUN;
     }
-    else if(sampler=="dpm2")
+    else if(sampler=="dpm2"||sampler=="k_dpm_2")
     {
         sd_params->sample_method = sample_method_t::DPM2;
     }
-    else if(sampler=="lcm")
+    else if(sampler=="lcm"||sampler=="k_lcm")
     {
         sd_params->sample_method = sample_method_t::LCM;
     }
-    else if(sampler=="dpm++ 2m karras" || sampler=="dpm++ 2m")
+    else if(sampler=="dpm++ 2m karras" || sampler=="dpm++ 2m" || sampler=="k_dpmpp_2m")
     {
         sd_params->sample_method = sample_method_t::DPMPP2M;
     }
