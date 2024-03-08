@@ -119,6 +119,7 @@ struct sd_generation_inputs
     const int height;
     const int seed;
     const char * sample_method;
+    const bool quiet = false;
 };
 struct sd_generation_outputs
 {

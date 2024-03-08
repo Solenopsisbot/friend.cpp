@@ -110,7 +110,8 @@ class sd_generation_inputs(ctypes.Structure):
                 ("width", ctypes.c_int),
                 ("height", ctypes.c_int),
                 ("seed", ctypes.c_int),
-                ("sample_method", ctypes.c_char_p)]
+                ("sample_method", ctypes.c_char_p),
+                ("quiet", ctypes.c_bool)]
 
 class sd_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -511,6 +512,7 @@ def sd_generate(genparams):
     height = genparams.get("height", 512)
     seed = genparams.get("seed", -1)
     sample_method = genparams.get("sampler_name", "k_euler_a")
+    is_quiet = True if args.quiet else False
 
     #clean vars
     width = width - (width%64)
@@ -544,6 +546,7 @@ def sd_generate(genparams):
     inputs.height = height
     inputs.seed = seed
     inputs.sample_method = sample_method.lower().encode("UTF-8")
+    inputs.quiet = is_quiet
     ret = handle.sd_generate(inputs)
     outstr = ""
     if ret.status==1:

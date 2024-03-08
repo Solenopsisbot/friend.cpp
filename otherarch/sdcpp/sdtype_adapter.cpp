@@ -255,6 +255,8 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     sd_image_t * results;
     sd_image_t* control_image = NULL;
 
+    bool is_quiet = inputs.quiet;
+
     //sanitize prompts, remove quotes and limit lengths
     std::string cleanprompt = clean_input_prompt(inputs.prompt);
     std::string cleannegprompt = clean_input_prompt(inputs.negative_prompt);
@@ -267,7 +269,10 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     sd_params->width = inputs.width;
     sd_params->height = inputs.height;
 
-    printf("\nGenerating Image (%d steps)\n",inputs.sample_steps);
+    if(!is_quiet)
+    {
+        printf("\nGenerating Image (%d steps)\n",inputs.sample_steps);
+    }
     fflush(stdout);
     std::string sampler = inputs.sample_method;
 
@@ -302,7 +307,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
     if (sd_params->mode == TXT2IMG) {
 
-         if(sddebugmode==1)
+         if(!is_quiet && sddebugmode==1)
         {
             printf("\nPROMPT:%s\nNPROMPT:%s\nCLPSKP:%d\nCFGSCLE:%f\nW:%d\nH:%d\nSM:%d\nSTEP:%d\nSEED:%d\nBATCH:%d\nCIMG:%d\nCSTR:%f\n\n",
             sd_params->prompt.c_str(),
