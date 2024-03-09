@@ -514,13 +514,15 @@ def sd_generate(genparams):
     sample_method = genparams.get("sampler_name", "k_euler_a")
     is_quiet = True if args.quiet else False
 
+
     #clean vars
     width = width - (width%64)
     height = height - (height%64)
     cfg_scale = (1 if cfg_scale < 1 else (25 if cfg_scale > 25 else cfg_scale))
     sample_steps = (1 if sample_steps < 1 else (80 if sample_steps > 80 else sample_steps))
-    width = (128 if width < 128 else (1024 if width > 1024 else width))
-    height = (128 if height < 128 else (1024 if height > 1024 else height))
+    reslimit = 1024
+    width = (64 if width < 64 else width)
+    height = (64 if height < 64 else height)
 
     #quick mode
     if args.sdconfig and len(args.sdconfig)>1:
@@ -528,14 +530,20 @@ def sd_generate(genparams):
             cfg_scale = 1
             sample_steps = 7
             sample_method = "dpm++ 2m karras"
-            width = (512 if width > 512 else width)
-            height = (512 if height > 512 else height)
+            reslimit = 512
             print("Image generation set to Quick Mode (Low Quality). Step counts, resolution, sampler, and cfg scale are fixed.")
         elif args.sdconfig[1]=="clamped":
             sample_steps = (40 if sample_steps > 40 else sample_steps)
-            width = (512 if width > 512 else width)
-            height = (512 if height > 512 else height)
+            reslimit = 512
             print("Image generation set to Clamped Mode (For Shared Use). Step counts and resolution are clamped.")
+
+    biggest = max(width,height)
+    if biggest > reslimit:
+        scaler = biggest / reslimit
+        width = width / scaler
+        height = height / scaler
+        width = width - (width%64)
+        height = height - (height%64)
 
     inputs = sd_generation_inputs()
     inputs.prompt = prompt.encode("UTF-8")
