@@ -46,6 +46,7 @@ std::string trim(const std::string& s);
 
 void log_message(const char* format, ...);
 void set_log_message(bool log);
+bool get_log_message();
 #define LOG_DEBUG(...)  log_message(__VA_ARGS__)
 #define LOG_INFO(...)  log_message(__VA_ARGS__)
 #define LOG_WARN(...)  log_message(__VA_ARGS__)

@@ -211,6 +211,10 @@ void pretty_progress(int step, int steps, float time) {
     if (step == 0) {
         return;
     }
+    if(!do_log)
+    {
+        return;
+    }
     std::string progress = "  |";
     int max_progress     = 50;
     int32_t current      = (int32_t)(step * 1.f * max_progress / steps);
@@ -270,6 +274,10 @@ void log_message(const char* format, ...) {
 void set_log_message(bool log)
 {
     do_log = log;
+}
+bool get_log_message()
+{
+    return do_log;
 }
 
 void log_printf(sd_log_level_t level, const char* file, int line, const char* format, ...) {

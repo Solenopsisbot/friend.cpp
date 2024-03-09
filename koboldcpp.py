@@ -540,8 +540,8 @@ def sd_generate(genparams):
     biggest = max(width,height)
     if biggest > reslimit:
         scaler = biggest / reslimit
-        width = width / scaler
-        height = height / scaler
+        width = int(width / scaler)
+        height = int(height / scaler)
         width = width - (width%64)
         height = height - (height%64)
 

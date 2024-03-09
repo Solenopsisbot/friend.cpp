@@ -142,7 +142,7 @@ std::string base64_encode(const unsigned char* data, unsigned int data_length) {
 static std::string sdplatformenv, sddeviceenv, sdvulkandeviceenv;
 bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
-    printf("\nImage Generation Init - Load Safetensors Model: %s\n",inputs.model_filename);
+    printf("\nImageGen Init - Load Model: %s\n",inputs.model_filename);
 
     //duplicated from expose.cpp
     int cl_parseinfo = inputs.clblast_info; //first digit is whether configured, second is platform, third is devices
@@ -273,6 +273,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     {
         printf("\nGenerating Image (%d steps)\n",inputs.sample_steps);
     }
+
     fflush(stdout);
     std::string sampler = inputs.sample_method;
 
