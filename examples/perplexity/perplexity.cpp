@@ -810,7 +810,7 @@ static void hellaswag_score(llama_context * ctx, const gpt_params & params) {
     const int n_batch = params.n_batch;
 
     const int max_tasks_per_batch = 32;
-    const int max_seq = 4*max_tasks_per_batch;
+    const int max_seq = std::min(4*max_tasks_per_batch, (int) llama_n_max_seq(ctx));
 
     llama_batch batch = llama_batch_init(n_ctx, 0, max_seq);
 
@@ -1087,7 +1087,7 @@ static void winogrande_score(llama_context * ctx, const gpt_params & params) {
     const int n_batch = params.n_batch;
 
     const int max_tasks_per_batch = 128;
-    const int max_seq = 2*max_tasks_per_batch;
+    const int max_seq = std::min(2*max_tasks_per_batch, (int) llama_n_max_seq(ctx));
 
     llama_batch batch = llama_batch_init(n_ctx, 0, max_seq);
 
@@ -1439,7 +1439,7 @@ static void multiple_choice_score(llama_context * ctx, const gpt_params & params
     const int n_batch = params.n_batch;
 
     const int max_tasks_per_batch = 32;
-    const int max_seq = 4*max_tasks_per_batch;
+    const int max_seq = std::min(4*max_tasks_per_batch, (int) llama_n_max_seq(ctx));
 
     llama_batch batch = llama_batch_init(n_ctx, 0, max_seq);
 
@@ -1815,6 +1815,9 @@ int main(int argc, char ** argv) {
 
     llama_model * model;
     llama_context * ctx;
+
+    // ensure there's at least enough seq_ids for HellaSwag
+    params.n_parallel = std::max(4, params.n_parallel);
 
     // load the model and apply lora adapter, if any
     std::tie(model, ctx) = llama_init_from_gpt_params(params);
