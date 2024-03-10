@@ -179,7 +179,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
     sddebugmode = inputs.debugmode;
 
-    set_log_message(sddebugmode==1);
+    set_sd_log_level(sddebugmode);
 
     bool vae_decode_only = false;
     bool free_param = false;
