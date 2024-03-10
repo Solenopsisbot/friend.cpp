@@ -618,6 +618,24 @@ static void load_grammar(const std::string & gammarstr)
     }
 }
 
+static bool kcpp_eval_image(llama_context * ctx_llama, float * img_embd, int num_img_tokens, int n_batch, int * n_past) {
+    int n_embd  = llama_n_embd(llama_get_model(ctx_llama));
+
+    for (int i = 0; i < num_img_tokens; i += n_batch) {
+        int n_eval = num_img_tokens - i;
+        if (n_eval > n_batch) {
+            n_eval = n_batch;
+        }
+        llama_batch batch = {int32_t(n_eval), nullptr, (img_embd+i*n_embd), nullptr, nullptr, nullptr, nullptr, *n_past, 1, 0, };
+        if (llama_decode(ctx_llama, batch)) {
+            fprintf(stderr, "\n%s : failed to eval image\n", __func__);
+            return false;
+        }
+        *n_past += n_eval;
+    }
+    return true;
+}
+
 //given an old GGUF context and a new context that has some middle portion removed,
 //find and remove the middle portion from the old context from the KV. Does not fast forward after this destructive action
 void PurgeMissingTokens(llama_context * ctx, std::vector<int> &current_context_tokens, std::vector<int> &new_context_tokens, const int genamt, const int nctx)
@@ -1064,6 +1082,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
 
         if(mmproj_filename != "")
         {
+            printf("\nAttempting to apply Multimodal Projector: %s\n", mmproj_filename.c_str());
             clp_ctx = clip_model_load(mmproj_filename.c_str(), /*verbosity=*/ 1);
             if(clp_ctx == nullptr) {
                 fprintf(stderr, "%s: error: failed to load mmproj model!\n", __func__);
@@ -1671,34 +1690,6 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             }
         }
     }
-
-    //  for (int i = 0; i < img.image_tokens; i += n_batch)
-    //         {
-    //             int n_eval = img.image_tokens - i;
-    //             if (n_eval > n_batch)
-    //             {
-    //                 n_eval = n_batch;
-    //             }
-
-    //             const int n_embd = llama_n_embd(model);
-    //             llama_batch batch_img = {
-    //                 n_eval,
-    //                 nullptr,
-    //                 (img.image_embedding + i * n_embd),
-    //                 nullptr,
-    //                 nullptr,
-    //                 nullptr,
-    //                 nullptr,
-    //                 slot.n_past,
-    //                 1, 0
-    //             };
-    //             if (llama_decode(ctx, batch_img))
-    //             {
-    //                 LOG_TEE("%s : failed to eval image\n", __func__);
-    //                 return false;
-    //             }
-    //             slot.n_past += n_eval;
-    //         }
 
     if(addedmemory!="")
     {

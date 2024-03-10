@@ -41,6 +41,7 @@ struct load_model_inputs
     const char * model_filename;
     const char * lora_filename;
     const char * lora_base;
+    const char * mmproj_filename;
     const bool use_mmap;
     const bool use_mlock;
     const bool use_smartcontext;
@@ -133,6 +134,7 @@ struct sd_generation_outputs
 extern std::string executable_path;
 extern std::string lora_filename;
 extern std::string lora_base;
+extern std::string mmproj_filename;
 extern std::vector<std::string> generated_tokens;
 extern bool generation_finished;
 extern float last_eval_time;

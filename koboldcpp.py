@@ -42,6 +42,7 @@ class load_model_inputs(ctypes.Structure):
                 ("model_filename", ctypes.c_char_p),
                 ("lora_filename", ctypes.c_char_p),
                 ("lora_base", ctypes.c_char_p),
+                ("mmproj_filename", ctypes.c_char_p),
                 ("use_mmap", ctypes.c_bool),
                 ("use_mlock", ctypes.c_bool),
                 ("use_smartcontext", ctypes.c_bool),
@@ -352,6 +353,8 @@ def load_model(model_filename):
         inputs.use_mmap = False
         if len(args.lora) > 1:
             inputs.lora_base = args.lora[1].encode("UTF-8")
+
+    inputs.mmproj_filename = args.mmproj.encode("UTF-8") if args.mmproj else "".encode("UTF-8")
     inputs.use_smartcontext = args.smartcontext
     inputs.use_contextshift = (0 if args.noshift else 1)
     inputs.blasbatchsize = args.blasbatchsize
@@ -590,6 +593,7 @@ def bring_terminal_to_foreground():
 friendlymodelname = "inactive"
 friendlysdmodelname = "inactive"
 fullsdmodelpath = ""  #if empty, it's not initialized
+mmprojpath = "" #if empty, it's not initialized
 maxctx = 2048
 maxhordectx = 2048
 maxhordelen = 256
@@ -938,7 +942,7 @@ Enter Prompt:<br>
         self.wfile.write(finalhtml)
 
     def do_GET(self):
-        global maxctx, maxhordelen, friendlymodelname, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath
+        global maxctx, maxhordelen, friendlymodelname, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath
         self.path = self.path.rstrip('/')
         response_body = None
         content_type = 'application/json'
@@ -976,7 +980,9 @@ Enter Prompt:<br>
             response_body = (json.dumps({"value": maxctx}).encode())
 
         elif self.path.endswith(('/api/extra/version')):
-            response_body = (json.dumps({"result":"KoboldCpp","version":KcppVersion}).encode())
+            has_txt2img = not (friendlysdmodelname=="inactive" or fullsdmodelpath=="")
+            has_vision = (mmprojpath!="")
+            response_body = (json.dumps({"result":"KoboldCpp","version":KcppVersion,"txt2img":has_txt2img,"vision":has_vision}).encode())
 
         elif self.path.endswith(('/api/extra/perf')):
             lastp = handle.get_last_process_time()
@@ -1434,6 +1440,7 @@ def show_new_gui():
     lora_var = ctk.StringVar()
     lora_base_var = ctk.StringVar()
     preloadstory_var = ctk.StringVar()
+    mmproj_var = ctk.StringVar()
 
     port_var = ctk.StringVar(value=defaultport)
     host_var = ctk.StringVar(value="")
@@ -1882,7 +1889,8 @@ def show_new_gui():
     makefileentry(model_tab, "Model:", "Select GGML Model File", model_var, 1, onchoosefile=on_picked_model_file,tooltiptxt="Select a GGUF or GGML model file on disk to be loaded.")
     makefileentry(model_tab, "Lora:", "Select Lora File",lora_var, 3,tooltiptxt="Select an optional GGML LoRA adapter to use.\nLeave blank to skip.")
     makefileentry(model_tab, "Lora Base:", "Select Lora Base File", lora_base_var, 5,tooltiptxt="Select an optional F16 GGML LoRA base file to use.\nLeave blank to skip.")
-    makefileentry(model_tab, "Preloaded Story:", "Select Preloaded Story File", preloadstory_var, 7,tooltiptxt="Select an optional KoboldAI JSON savefile \nto be served on launch to any client.")
+    makefileentry(model_tab, "LLaVA mmproj:", "Select LLaVA mmproj File", mmproj_var, 7,tooltiptxt="Select a mmproj file to use for LLaVA.\nLeave blank to skip.")
+    makefileentry(model_tab, "Preloaded Story:", "Select Preloaded Story File", preloadstory_var, 9,tooltiptxt="Select an optional KoboldAI JSON savefile \nto be served on launch to any client.")
 
     # Network Tab
     network_tab = tabcontent["Network"]
@@ -2006,6 +2014,7 @@ def show_new_gui():
         args.model_param = None if model_var.get() == "" else model_var.get()
         args.lora = None if lora_var.get() == "" else ([lora_var.get()] if lora_base_var.get()=="" else [lora_var.get(), lora_base_var.get()])
         args.preloadstory = None if preloadstory_var.get() == "" else preloadstory_var.get()
+        args.mmproj = None if mmproj_var.get() == "" else mmproj_var.get()
 
         args.ssl = None if (ssl_cert_var.get() == "" or ssl_key_var.get() == "") else ([ssl_cert_var.get(), ssl_key_var.get()])
 
@@ -2120,6 +2129,9 @@ def show_new_gui():
                 lora_base_var.set(dict["lora"][1])
             else:
                 lora_var.set(dict["lora"][0])
+
+        if "mmproj" in dict and dict["mmproj"]:
+            mmproj_var.set(dict["mmproj"])
 
         if "ssl" in dict and dict["ssl"]:
             if len(dict["ssl"]) == 2:
@@ -2572,7 +2584,7 @@ def sanitize_string(input_string):
     return sanitized_string
 
 def main(launch_args,start_server=True):
-    global args, friendlymodelname, friendlysdmodelname, fullsdmodelpath
+    global args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath
     args = launch_args
     embedded_kailite = None
     embedded_kcpp_docs = None
@@ -2695,6 +2707,17 @@ def main(launch_args,start_server=True):
                         sys.exit(2)
                     else:
                         args.lora[1] = os.path.abspath(args.lora[1])
+
+        if args.mmproj and args.mmproj!="":
+            if not os.path.exists(args.mmproj):
+                exitcounter = 999
+                print(f"Cannot find mmproj file: {args.mmproj}")
+                time.sleep(3)
+                sys.exit(2)
+            else:
+                global mmprojpath
+                args.mmproj = os.path.abspath(args.mmproj)
+                mmprojpath = args.mmproj
 
         if not args.blasthreads or args.blasthreads <= 0:
             args.blasthreads = args.threads
@@ -2943,5 +2966,6 @@ if __name__ == '__main__':
     parser.add_argument("--ssl", help="Allows all content to be served over SSL instead. A valid UNENCRYPTED SSL cert and key .pem files must be provided", metavar=('[cert_pem]', '[key_pem]'), nargs='+')
     parser.add_argument("--nocertify", help="Allows insecure SSL connections. Use this if you have cert errors and need to bypass certificate restrictions.", action='store_true')
     parser.add_argument("--sdconfig", help="Specify a stable diffusion safetensors model to enable image generation. If quick is specified, force optimal generation settings for speed.",metavar=('[sd_filename]', '[normal|quick|clamped] [threads] [quant|noquant]'), nargs='+')
+    parser.add_argument("--mmproj", help="Select a multimodal projector file for LLaVA.", default="")
 
     main(parser.parse_args(),start_server=True)
