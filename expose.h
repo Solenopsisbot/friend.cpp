@@ -4,6 +4,8 @@ const int stop_token_max = 16;
 const int ban_token_max = 16;
 const int tensor_split_max = 16;
 const int logit_bias_max = 16;
+const int images_max = 4;
+
 // match kobold's sampler list and order
 enum samplers
 {
@@ -60,6 +62,7 @@ struct generation_inputs
     const int seed;
     const char * prompt;
     const char * memory;
+    const char * images[images_max];
     const int max_context_length;
     const int max_length;
     const float temperature;

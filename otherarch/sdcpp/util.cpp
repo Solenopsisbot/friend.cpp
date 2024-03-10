@@ -207,6 +207,7 @@ std::string path_join(const std::string& p1, const std::string& p2) {
     return p1 + "/" + p2;
 }
 
+static bool do_log = true;
 void pretty_progress(int step, int steps, float time) {
     if (step == 0) {
         return;
@@ -260,7 +261,6 @@ void* sd_log_cb_data         = NULL;
 
 #define LOG_BUFFER_SIZE 1024
 
-static bool do_log = true;
 void log_message(const char* format, ...) {
     if (do_log) {
         printf("\n");

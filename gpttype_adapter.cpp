@@ -30,11 +30,14 @@
 #include "neox_v2.cpp"
 #include "neox_v3.cpp"
 #include "mpt_v3.cpp"
+#include "examples/llava/clip.h"
+#include "examples/llava/llava.h"
 
 //shared
 std::string executable_path = "";
 std::string lora_filename = "";
 std::string lora_base = "";
+std::string mmproj_filename = "";
 bool generation_finished;
 float last_process_time = 0;
 float last_eval_time = 0;
@@ -73,6 +76,10 @@ static rwkv_context * rwkv_ctx_v3;
 static llama_v2_context * llama_ctx_v2;
 static llama_v3_context * llama_ctx_v3;
 static llama_context * llama_ctx_v4;
+
+static clip_ctx * clp_ctx = nullptr; //for llava
+static clip_image_u8 * clp_img_data = nullptr; //most recent image
+static std::vector<llava_image> llava_images;
 
 static gpt_params * kcpp_params = nullptr;
 static int max_context_limit_at_load = 0;
@@ -1055,6 +1062,22 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             }
         }
 
+        if(mmproj_filename != "")
+        {
+            clp_ctx = clip_model_load(mmproj_filename.c_str(), /*verbosity=*/ 1);
+            if(clp_ctx == nullptr) {
+                fprintf(stderr, "%s: error: failed to load mmproj model!\n", __func__);
+                return ModelLoadResult::FAIL;
+            }
+            const int n_embd_clip = clip_n_mmproj_embd(clp_ctx);
+            const int n_embd_llm  = llama_n_embd(llamamodel);
+            if (n_embd_clip != n_embd_llm) {
+                fprintf(stderr, "%s: mmproj embedding mismatch (%d and %d)! Make sure you use the correct mmproj file!\n", __func__,n_embd_clip, n_embd_llm);
+                return ModelLoadResult::FAIL;
+            }
+            clp_img_data = clip_image_u8_init();
+        }
+
         n_vocab = llama_n_vocab(llamamodel);
 
         //determine mem per token
@@ -1541,6 +1564,27 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     std::string addedmemory = inputs.memory;
 
+    //clear previous run llava embd memory, just-in-time free
+    for(int i=0;i<llava_images.size();++i)
+    {
+        if(llava_images[i].b64data!="" && llava_images[i].clp_img_embd!=nullptr)
+        {
+            free(llava_images[i].clp_img_embd);
+            llava_images[i].clp_img_embd = nullptr;
+        }
+    }
+    llava_images.clear();
+    for(int x=0;x<images_max;++x)
+    {
+        std::string item = inputs.images[x];
+        if(item!="")
+        {
+            llava_image lv;
+            lv.b64data = item;
+            llava_images.push_back(lv);
+        }
+    }
+
     kcpp_params->prompt = inputs.prompt;
     kcpp_params->seed = inputs.seed;
     kcpp_params->n_predict = inputs.max_length;
@@ -1605,6 +1649,57 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     std::vector<int> embd_inp;
     std::vector<int> embd_inp_mem; //for storing added memory
     TokenizeString(kcpp_params->prompt, embd_inp, file_format);
+
+    if(clp_ctx!=nullptr && clp_img_data!=nullptr)
+    {
+        for(int i=0;i<llava_images.size();++i)
+        {
+            std::string llava_image = llava_images[i].b64data;
+            const std::vector<uint8_t> image_buffer = kcpp_base64_decode(llava_image);
+            if (!clip_image_load_from_bytes(image_buffer.data(), image_buffer.size(), clp_img_data))
+            {
+                //failed to load image
+                printf("\nError: Clip image %d failed to load!",i);
+            }
+            else
+            {
+                llava_images[i].clp_image_tokens = 0;
+                if (!llava_image_embed_make_with_clip_img(clp_ctx, kcpp_params->n_threads, clp_img_data, &llava_images[i].clp_img_embd, &llava_images[i].clp_image_tokens)) {
+                    printf("\nError: Clip image %d failed to create embd!",i);
+                }
+                printf("\nLLAVA Clip Embed %i used Tokens: %d",i,llava_images[i].clp_image_tokens);
+            }
+        }
+    }
+
+    //  for (int i = 0; i < img.image_tokens; i += n_batch)
+    //         {
+    //             int n_eval = img.image_tokens - i;
+    //             if (n_eval > n_batch)
+    //             {
+    //                 n_eval = n_batch;
+    //             }
+
+    //             const int n_embd = llama_n_embd(model);
+    //             llama_batch batch_img = {
+    //                 n_eval,
+    //                 nullptr,
+    //                 (img.image_embedding + i * n_embd),
+    //                 nullptr,
+    //                 nullptr,
+    //                 nullptr,
+    //                 nullptr,
+    //                 slot.n_past,
+    //                 1, 0
+    //             };
+    //             if (llama_decode(ctx, batch_img))
+    //             {
+    //                 LOG_TEE("%s : failed to eval image\n", __func__);
+    //                 return false;
+    //             }
+    //             slot.n_past += n_eval;
+    //         }
+
     if(addedmemory!="")
     {
         TokenizeString(addedmemory, embd_inp_mem, file_format);

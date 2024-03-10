@@ -21,7 +21,7 @@
 // #include "preprocessing.hpp"
 #include "stable-diffusion.h"
 
-#define STB_IMAGE_IMPLEMENTATION
+//#define STB_IMAGE_IMPLEMENTATION //already defined in llava
 #include "stb_image.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
