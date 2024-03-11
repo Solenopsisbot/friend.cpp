@@ -10521,7 +10521,7 @@ Current version: 123
 					gametext_arr.push(nimgtag);
 					image_db[data.id] = { done: false, queue: "Starting", result: "", prompt:sentence, local:false };
 					image_db[data.id].aspect = (iwidth>iheight?2:(iwidth<iheight?1:0));
-					image_db[imgid].imsource = 0; //0=generated,1=uploaded
+					image_db[data.id].imsource = 0; //0=generated,1=uploaded
 					console.log("New image queued " + nimgtag);
 				}
 				else {

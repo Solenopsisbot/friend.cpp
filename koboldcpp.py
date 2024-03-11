@@ -1573,8 +1573,8 @@ def show_new_gui():
     def makefileentry(parent, text, searchtext, var, row=0, width=200, filetypes=[], onchoosefile=None, singlerow=False, tooltiptxt=""):
         makelabel(parent, text, row,0,tooltiptxt)
         def getfilename(var, text):
-            initialDir = os.path.dirname(var.get()) 
-            initialDir = initialDir if os.path.isdir(initialDir) else os.getcwd()
+            initialDir = os.path.dirname(var.get())
+            initialDir = initialDir if os.path.isdir(initialDir) else None
             fnam = askopenfilename(title=text,filetypes=filetypes, initialdir=initialDir)
             if fnam:
                 var.set(fnam)
@@ -2232,7 +2232,7 @@ def show_new_gui():
         file_type = [("KoboldCpp Settings", "*.kcpps")]
         global runmode_untouched
         runmode_untouched = False
-        filename = askopenfilename(filetypes=file_type, defaultextension=file_type, initialdir=os.getcwd())
+        filename = askopenfilename(filetypes=file_type, defaultextension=file_type, initialdir=None)
         if not filename or filename=="":
             return
         with open(filename, 'r') as f:
