@@ -572,6 +572,10 @@ def sd_generate(genparams):
     return outstr
 
 def utfprint(str):
+    maxlen = 99999
+    strlength = len(str)
+    if strlength > maxlen: #limit max output len
+        str = str[:maxlen] + f"... (+{strlength-maxlen} chars)"
     try:
         print(str)
     except UnicodeEncodeError:
@@ -682,6 +686,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     user_message_end = adapter_obj.get("user_end", "")
                     assistant_message_start = adapter_obj.get("assistant_start", "\n### Response:\n")
                     assistant_message_end = adapter_obj.get("assistant_end", "")
+                    images_added = []
 
                     for message in messages_array:
                         if message['role'] == "system":
@@ -691,7 +696,17 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                         elif message['role'] == "assistant":
                             messages_string += assistant_message_start
 
-                        messages_string += message['content']
+                        # content can be a string or an array of objects
+                        curr_content = message['content']
+                        if isinstance(curr_content, str):
+                             messages_string += curr_content
+                        elif isinstance(curr_content, list): #is an array
+                            for item in curr_content:
+                                if item['type']=="text":
+                                     messages_string += item['text']
+                                elif item['type']=="image_url":
+                                    if item['image_url'] and item['image_url']['url'] and item['image_url']['url'].startswith("data:image"):
+                                        images_added.append(item['image_url']['url'].split(",", 1)[1])
 
                         if message['role'] == "system":
                             messages_string += system_message_end
@@ -702,6 +717,8 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
                     messages_string += assistant_message_start
                     genparams["prompt"] = messages_string
+                    if len(images_added)>0:
+                        genparams["images"] = images_added
 
             return generate(
                 prompt=genparams.get('prompt', ""),
