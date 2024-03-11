@@ -333,6 +333,17 @@ def set_backend_props(inputs):
         inputs.vulkan_info = "0".encode("UTF-8")
     return inputs
 
+def end_trim_to_sentence(input_text):
+    enders = ['.', '!', '?', '*', '"', ')', '}', '`', ']', ';', '…']
+    last = -1
+    for ender in enders:
+        last = max(last, input_text.rfind(ender))
+    nl = input_text.rfind("\n")
+    last = max(last, nl)
+    if last > 0:
+        return input_text[:last + 1].strip()
+    return input_text.strip()
+
 def load_model(model_filename):
     global args
     inputs = load_model_inputs()
@@ -720,6 +731,12 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     if len(images_added)>0:
                         genparams["images"] = images_added
 
+            elif api_format==5:
+                    firstimg = genparams.get('image', "")
+                    genparams["images"] = [firstimg]
+                    genparams["max_length"] = 32
+                    genparams["prompt"] = "### Instruction: In one sentence, write a descriptive caption for this image.\n### Response:"
+
             return generate(
                 prompt=genparams.get('prompt', ""),
                 memory=genparams.get('memory', ""),
@@ -776,6 +793,8 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             res = {"id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": friendlymodelname,
             "usage": {"prompt_tokens": 100,"completion_tokens": 100,"total_tokens": 200},
             "choices": [{"index": 0, "message":{"role": "assistant", "content": recvtxt,}, "finish_reason": "length"}]}
+        elif api_format==5:
+            res = {"caption": end_trim_to_sentence(recvtxt)}
         else:
             res = {"results": [{"text": recvtxt}]}
 
@@ -1162,7 +1181,7 @@ Enter Prompt:<br>
         try:
             sse_stream_flag = False
 
-            api_format = 0 #1=basic,2=kai,3=oai,4=oai-chat
+            api_format = 0 #1=basic,2=kai,3=oai,4=oai-chat,5=interrogate
             is_txt2img = False
 
             if self.path.endswith('/request'):
@@ -1180,6 +1199,18 @@ Enter Prompt:<br>
 
             if self.path.endswith('/v1/chat/completions'):
                 api_format = 4
+
+            if self.path.endswith('/sdapi/v1/interrogate'):
+                has_vision = (mmprojpath!="")
+                if not has_vision:
+                    self.send_response(503)
+                    self.end_headers(content_type='application/json')
+                    self.wfile.write(json.dumps({"detail": {
+                            "msg": "No LLaVA model loaded",
+                            "type": "service_unavailable",
+                        }}).encode())
+                    return
+                api_format = 5
 
             if self.path.endswith('/sdapi/v1/txt2img'):
                 is_txt2img = True
