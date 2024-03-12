@@ -552,11 +552,11 @@ def sd_generate(genparams):
             sample_steps = 7
             sample_method = "dpm++ 2m karras"
             reslimit = 512
-            print("Image generation set to Quick Mode (Low Quality). Step counts, resolution, sampler, and cfg scale are fixed.")
+            print("\nSDConfig: Quick Mode (Low Quality). Step counts, resolution, sampler, and cfg scale are fixed.")
         elif args.sdconfig[1]=="clamped":
             sample_steps = (40 if sample_steps > 40 else sample_steps)
             reslimit = 512
-            print("Image generation set to Clamped Mode (For Shared Use). Step counts and resolution are clamped.")
+            print("\nSDConfig: Clamped Mode (For Shared Use). Step counts and resolution are clamped.")
 
     biggest = max(width,height)
     if biggest > reslimit:
