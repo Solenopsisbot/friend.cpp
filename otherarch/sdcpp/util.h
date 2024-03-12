@@ -47,6 +47,7 @@ std::string trim(const std::string& s);
 void log_message(const char* format, ...);
 void set_sd_log_level(int log);
 bool get_sd_log_level();
+void set_sd_quiet(bool quiet);
 #define LOG_DEBUG(...)  log_message(__VA_ARGS__)
 #define LOG_INFO(...)  log_message(__VA_ARGS__)
 #define LOG_WARN(...)  log_message(__VA_ARGS__)

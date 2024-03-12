@@ -256,6 +256,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     sd_image_t* control_image = NULL;
 
     bool is_quiet = inputs.quiet;
+    set_sd_quiet(is_quiet);
 
     //sanitize prompts, remove quotes and limit lengths
     std::string cleanprompt = clean_input_prompt(inputs.prompt);
@@ -272,6 +273,8 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     if(!is_quiet)
     {
         printf("\nGenerating Image (%d steps)\n",inputs.sample_steps);
+    }else{
+        printf("\nGenerating (%d st.)\n",inputs.sample_steps);
     }
 
     fflush(stdout);

@@ -208,11 +208,12 @@ std::string path_join(const std::string& p1, const std::string& p2) {
 }
 
 static int sdloglevel = 0; //-1 = hide all, 0 = normal, 1 = showall
+static bool sdquiet = false;
 void pretty_progress(int step, int steps, float time) {
     if (step == 0) {
         return;
     }
-    if(sdloglevel<0)
+    if(sdloglevel<0 || sdquiet)
     {
         return;
     }
@@ -278,6 +279,10 @@ void set_sd_log_level(int log)
 bool get_sd_log_level()
 {
     return sdloglevel;
+}
+void set_sd_quiet(bool quiet)
+{
+    sdquiet = quiet;
 }
 
 void log_printf(sd_log_level_t level, const char* file, int line, const char* format, ...) {
