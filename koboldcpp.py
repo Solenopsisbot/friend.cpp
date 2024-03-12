@@ -2870,7 +2870,7 @@ def main(launch_args,start_server=True):
         timer_thread = threading.Timer(1, onready_subprocess) #1 second delay
         timer_thread.start()
 
-    if args.model_param and args.benchmark is not None:
+    if args.model_param and args.benchmark:
         from datetime import datetime, timezone
         global libname
         start_server = False
