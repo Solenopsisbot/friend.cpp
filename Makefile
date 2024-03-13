@@ -381,31 +381,31 @@ $(info )
 # Build library
 #
 
-ggml.o: ggml.c ggml.h ggml-cuda.h
+ggml.o: ggml.c ggml.h ggml-cuda.h ggml-common.h
 	$(CC)  $(FASTCFLAGS) $(FULLCFLAGS) -c $< -o $@
-ggml_v4_openblas.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_openblas.o: ggml.c ggml.h ggml-cuda.h ggml-common.h
 	$(CC)  $(FASTCFLAGS) $(FULLCFLAGS) $(OPENBLAS_FLAGS) -c $< -o $@
-ggml_v4_failsafe.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_failsafe.o: ggml.c ggml.h ggml-cuda.h ggml-common.h
 	$(CC)  $(FASTCFLAGS) $(NONECFLAGS) -c $< -o $@
-ggml_v4_noavx2.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_noavx2.o: ggml.c ggml.h ggml-cuda.h ggml-common.h
 	$(CC)  $(FASTCFLAGS) $(SIMPLECFLAGS) -c $< -o $@
-ggml_v4_clblast.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_clblast.o: ggml.c ggml.h ggml-cuda.h ggml-common.h
 	$(CC)  $(FASTCFLAGS) $(FULLCFLAGS) $(CLBLAST_FLAGS) -c $< -o $@
-ggml_v4_cublas.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_cublas.o: ggml.c ggml.h ggml-cuda.h ggml-common.h
 	$(CC)  $(FASTCFLAGS) $(FULLCFLAGS) $(CUBLAS_FLAGS) $(HIPFLAGS) -c $< -o $@
-ggml_v4_clblast_noavx2.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_clblast_noavx2.o: ggml.c ggml.h ggml-cuda.h ggml-common.h
 	$(CC)  $(FASTCFLAGS) $(SIMPLECFLAGS) $(CLBLAST_FLAGS) -c $< -o $@
-ggml_v4_vulkan.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_vulkan.o: ggml.c ggml.h ggml-cuda.h ggml-common.h
 	$(CC)  $(FASTCFLAGS) $(FULLCFLAGS) $(VULKAN_FLAGS) -c $< -o $@
-ggml_v4_vulkan_noavx2.o: ggml.c ggml.h ggml-cuda.h
+ggml_v4_vulkan_noavx2.o: ggml.c ggml.h ggml-cuda.h ggml-common.h
 	$(CC)  $(FASTCFLAGS) $(SIMPLECFLAGS) $(VULKAN_FLAGS) -c $< -o $@
 
 #quants
-ggml-quants.o: ggml-quants.c ggml.h ggml-quants.h ggml-cuda.h
+ggml-quants.o: ggml-quants.c ggml.h ggml-quants.h ggml-cuda.h ggml-common.h
 	$(CC)  $(CFLAGS) $(FULLCFLAGS) -c $< -o $@
-ggml-quants_noavx2.o: ggml-quants.c ggml.h ggml-quants.h ggml-cuda.h
+ggml-quants_noavx2.o: ggml-quants.c ggml.h ggml-quants.h ggml-cuda.h ggml-common.h
 	$(CC)  $(CFLAGS) $(SIMPLECFLAGS) -c $< -o $@
-ggml-quants_failsafe.o: ggml-quants.c ggml.h ggml-quants.h ggml-cuda.h
+ggml-quants_failsafe.o: ggml-quants.c ggml.h ggml-quants.h ggml-cuda.h ggml-common.h
 	$(CC)  $(CFLAGS) $(NONECFLAGS) -c $< -o $@
 
 
