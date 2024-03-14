@@ -263,6 +263,8 @@ ifdef LLAMA_METAL
 	OBJS     += ggml-metal.o
 
 ggml-metal.o: ggml-metal.m ggml-metal.h
+	@echo "== Preparing merged Metal file =="
+	@sed -e '/#include "ggml-common.h"/r ggml-common.h' -e '/#include "ggml-common.h"/d' < ggml-metal.metal > ggml-metal-merged.metal
 	$(CC) $(CFLAGS) -c $< -o $@
 endif # LLAMA_METAL
 
@@ -512,14 +514,14 @@ clean:
 	rm -vf *.o main sdmain quantize_gguf quantize_clip quantize_gpt2 quantize_gptj quantize_neox quantize_mpt quantize-stats perplexity embedding benchmark-matmult save-load-state gguf imatrix imatrix.exe gguf.exe main.exe quantize_clip.exe quantize_gguf.exe quantize_gptj.exe quantize_gpt2.exe quantize_neox.exe quantize_mpt.exe koboldcpp_default.dll koboldcpp_openblas.dll koboldcpp_failsafe.dll koboldcpp_noavx2.dll koboldcpp_clblast.dll koboldcpp_clblast_noavx2.dll koboldcpp_cublas.dll koboldcpp_hipblas.dll koboldcpp_vulkan.dll koboldcpp_vulkan_noavx2.dll koboldcpp_default.so koboldcpp_openblas.so koboldcpp_failsafe.so koboldcpp_noavx2.so koboldcpp_clblast.so koboldcpp_clblast_noavx2.so koboldcpp_cublas.so koboldcpp_hipblas.so koboldcpp_vulkan.so koboldcpp_vulkan_noavx2.so
 
 # useful tools
-main: examples/main/main.cpp common/sampling.cpp build-info.h ggml.o ggml-quants.o ggml-alloc.o ggml-backend.o llama.o common.o console.o grammar-parser.o $(OBJS)
+main: examples/main/main.cpp common/sampling.cpp build-info.h ggml.o ggml-quants.o ggml-alloc.o unicode.o ggml-backend.o llama.o common.o console.o grammar-parser.o $(OBJS)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 	@echo '====  Run ./main -h for help.  ===='
-sdmain: otherarch/sdcpp/util.cpp otherarch/sdcpp/main.cpp otherarch/sdcpp/stable-diffusion.cpp otherarch/sdcpp/upscaler.cpp otherarch/sdcpp/model.cpp otherarch/sdcpp/thirdparty/zip.c build-info.h ggml.o ggml-quants.o ggml-alloc.o ggml-backend.o llama.o common.o console.o grammar-parser.o $(OBJS)
+sdmain: otherarch/sdcpp/util.cpp otherarch/sdcpp/main.cpp otherarch/sdcpp/stable-diffusion.cpp otherarch/sdcpp/upscaler.cpp otherarch/sdcpp/model.cpp otherarch/sdcpp/thirdparty/zip.c build-info.h ggml.o ggml-quants.o ggml-alloc.o unicode.o ggml-backend.o llama.o common.o console.o grammar-parser.o $(OBJS)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
-imatrix: examples/imatrix/imatrix.cpp common/sampling.cpp build-info.h ggml.o ggml-quants.o ggml-alloc.o ggml-backend.o llama.o common.o console.o grammar-parser.o $(OBJS)
+imatrix: examples/imatrix/imatrix.cpp common/sampling.cpp build-info.h ggml.o ggml-quants.o ggml-alloc.o unicode.o ggml-backend.o llama.o common.o console.o grammar-parser.o $(OBJS)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
-gguf: examples/gguf/gguf.cpp build-info.h ggml.o llama.o $(OBJS)
+gguf: examples/gguf/gguf.cpp build-info.h ggml.o llama.o unicode.o $(OBJS)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 
 
@@ -602,17 +604,17 @@ koboldcpp_vulkan_noavx2:
 endif
 
 # tools
-quantize_gguf: examples/quantize/quantize.cpp ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o
+quantize_gguf: examples/quantize/quantize.cpp ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
-quantize_gptj: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o otherarch/tools/gptj_quantize.cpp otherarch/tools/common-ggml.cpp
+quantize_gptj: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o otherarch/tools/gptj_quantize.cpp otherarch/tools/common-ggml.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
-quantize_gpt2: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o otherarch/tools/gpt2_quantize.cpp otherarch/tools/common-ggml.cpp
+quantize_gpt2: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o otherarch/tools/gpt2_quantize.cpp otherarch/tools/common-ggml.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
-quantize_neox: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o otherarch/tools/neox_quantize.cpp otherarch/tools/common-ggml.cpp
+quantize_neox: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o otherarch/tools/neox_quantize.cpp otherarch/tools/common-ggml.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
-quantize_mpt: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o otherarch/tools/mpt_quantize.cpp otherarch/tools/common-ggml.cpp
+quantize_mpt: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o otherarch/tools/mpt_quantize.cpp otherarch/tools/common-ggml.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
-quantize_clip: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o examples/llava/clip.cpp examples/llava/clip.h examples/llava/quantclip.cpp
+quantize_clip: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o examples/llava/clip.cpp examples/llava/clip.h examples/llava/quantclip.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
 
 #window simple clinfo
