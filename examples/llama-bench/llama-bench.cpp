@@ -104,6 +104,7 @@ static std::string get_cpu_info() {
                 }
             }
         }
+        fclose(f);
     }
 #endif
     // TODO: other platforms
