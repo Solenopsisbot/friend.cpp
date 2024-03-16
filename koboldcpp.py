@@ -3003,8 +3003,9 @@ def main(launch_args,start_server=True):
     if start_server:
         if args.remotetunnel:
             setuptunnel()
-        # Flush stdout for previous win32 issue so the client can see output.
-        print(f"======\nPlease connect to custom endpoint at {epurl}", flush=True)
+        else:
+            # Flush stdout for previous win32 issue so the client can see output.
+            print(f"======\nPlease connect to custom endpoint at {epurl}", flush=True)
         asyncio.run(RunServerMultiThreaded(args.host, args.port, embedded_kailite, embedded_kcpp_docs))
     else:
         # Flush stdout for previous win32 issue so the client can see output.
