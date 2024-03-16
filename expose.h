@@ -142,4 +142,5 @@ extern float last_process_time;
 extern int last_token_count;
 extern int last_seed;
 extern int total_gens;
+extern int total_img_gens;
 extern stop_reason last_stop_reason;

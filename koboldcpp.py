@@ -636,6 +636,7 @@ preloaded_story = None
 sslvalid = False
 nocertify = False
 start_time = time.time()
+last_req_time = time.time()
 
 class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
     sys_version = ""
@@ -1047,14 +1048,17 @@ Enter Prompt:<br>
             response_body = (json.dumps({"result":"KoboldCpp","version":KcppVersion, "protected":has_password ,"txt2img":has_txt2img,"vision":has_vision}).encode())
 
         elif self.path.endswith(('/api/extra/perf')):
+            global last_req_time, start_time
             lastp = handle.get_last_process_time()
             laste = handle.get_last_eval_time()
             lastc = handle.get_last_token_count()
             totalgens = handle.get_total_gens()
+            totalimggens = handle.get_total_img_gens()
             stopreason = handle.get_last_stop_reason()
             lastseed = handle.get_last_seed()
             uptime = time.time() - start_time
-            response_body = (json.dumps({"last_process":lastp,"last_eval":laste,"last_token_count":lastc, "last_seed":lastseed, "total_gens":totalgens, "stop_reason":stopreason, "queue":requestsinqueue, "idle":(0 if modelbusy.locked() else 1), "hordeexitcounter":exitcounter, "uptime":uptime}).encode())
+            idletime = time.time() - last_req_time
+            response_body = (json.dumps({"last_process":lastp,"last_eval":laste,"last_token_count":lastc, "last_seed":lastseed, "total_gens":totalgens, "stop_reason":stopreason, "total_img_gens":totalimggens, "queue":requestsinqueue, "idle":(0 if modelbusy.locked() else 1), "hordeexitcounter":exitcounter, "uptime":uptime, "idletime":idletime}).encode())
 
         elif self.path.endswith('/api/extra/generate/check'):
             if not self.secure_endpoint():
@@ -1249,6 +1253,8 @@ Enter Prompt:<br>
                 is_txt2img = True
 
             if is_txt2img or api_format > 0:
+                global last_req_time
+                last_req_time = time.time()
 
                 if not is_txt2img and api_format<5:
                     if not self.secure_endpoint():

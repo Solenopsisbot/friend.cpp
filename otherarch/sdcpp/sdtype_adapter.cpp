@@ -111,6 +111,9 @@ struct SDParams {
     int upscale_repeats           = 1;
 };
 
+//shared
+int total_img_gens = 0;
+
 //global static vars for SD
 static SDParams * sd_params = nullptr;
 static sd_ctx_t * sd_ctx = nullptr;
@@ -388,5 +391,6 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     free(results);
     output.data = recent_data.c_str();
     output.status = 1;
+    total_img_gens += 1;
     return output;
 }
