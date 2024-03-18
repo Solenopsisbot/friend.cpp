@@ -2427,9 +2427,9 @@ def run_horde_worker(args, api_key, worker_name):
     session_starttime = datetime.now()
     sleepy_counter = 0 #if this exceeds a value, worker becomes sleepy (slower)
     exitcounter = 0
-    print(f"===\nEmbedded Horde Worker '{worker_name}' Starting...\n(To use your own KAI Bridge/Scribe worker instead, don't set your API key)")
+    print(f"===\nEmbedded Horde Worker '{worker_name}' Starting...\n(To use your own Horde Bridge/Scribe worker instead, don't set your API key)")
     BRIDGE_AGENT = f"KoboldCppEmbedWorker:2:https://github.com/LostRuins/koboldcpp"
-    cluster = "https://horde.koboldai.net"
+    cluster = "https://aihorde.net"
     while exitcounter < 10:
         time.sleep(3)
         readygo = make_url_request_horde(f'{epurl}/api/v1/info/version', None,'GET')
