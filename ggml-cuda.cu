@@ -268,6 +268,8 @@ static int ggml_cuda_get_device() {
     return id;
 }
 
+static bool g_mul_mat_q = false;
+
 struct ggml_cuda_device_info {
     int device_count;
 
@@ -401,43 +403,46 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
     }
 
     void * alloc(size_t size, size_t * actual_size) override {
-#ifdef DEBUG_CUDA_MALLOC
-        int nnz = 0;
-        size_t max_size = 0;
-#endif
-        size_t best_diff = 1ull << 36;
-        int ibest = -1;
+
+        int best_i = -1;
+        size_t best_size = std::numeric_limits<size_t>::max(); //smallest unused buffer that fits our needs
+        int worst_i = -1;
+        size_t worst_size = 0; //largest unused buffer seen so far
+
         for (int i = 0; i < MAX_BUFFERS; ++i) {
             ggml_cuda_buffer& b = buffer_pool[i];
-            if (b.ptr != nullptr) {
-#ifdef DEBUG_CUDA_MALLOC
-                ++nnz;
-                if (b.size > max_size) max_size = b.size;
-#endif
-                if (b.size >= size) {
-                    size_t diff = b.size - size;
-                    if (diff < best_diff) {
-                        best_diff = diff;
-                        ibest = i;
-                        if (!best_diff) {
-                            void * ptr = b.ptr;
-                            *actual_size = b.size;
-                            b.ptr = nullptr;
-                            b.size = 0;
-                            return ptr;
-                        }
-                    }
-                }
+            if (b.size > 0 && b.size >= size && b.size < best_size)
+            {
+                best_i = i;
+                best_size = b.size;
+            }
+            if (b.size > 0 && b.size > worst_size)
+            {
+                worst_i = i;
+                worst_size = b.size;
             }
         }
-        if (ibest >= 0) {
-            ggml_cuda_buffer& b = buffer_pool[ibest];
+
+        if(best_i!=-1) //found the smallest buffer that fits our needs
+        {
+            ggml_cuda_buffer& b = buffer_pool[best_i];
             void * ptr = b.ptr;
             *actual_size = b.size;
             b.ptr = nullptr;
             b.size = 0;
             return ptr;
         }
+        if(worst_i!=-1 && !g_mul_mat_q) //no buffer that fits our needs, resize largest one to save memory (non mmq only)
+        {
+            ggml_cuda_buffer& b = buffer_pool[worst_i];
+            b.size = 0;
+            void * ptr = b.ptr;
+            ggml_cuda_set_device(device);
+            cudaFree(ptr);
+            pool_size -= size;
+            b.ptr = ptr = nullptr;
+        }
+
         void * ptr;
         size_t look_ahead_size = (size_t) (1.05 * size);
         look_ahead_size = 256 * ((look_ahead_size + 255)/256);
@@ -445,10 +450,6 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
         CUDA_CHECK(cudaMalloc((void **) &ptr, look_ahead_size));
         *actual_size = look_ahead_size;
         pool_size += look_ahead_size;
-#ifdef DEBUG_CUDA_MALLOC
-        fprintf(stderr, "%s[%d]: %d buffers, max_size = %u MB, pool_size = %u MB, requested %u MB\n", __func__, device, nnz,
-                (uint32_t)(max_size/1024/1024), (uint32_t)(pool_size/1024/1024), (uint32_t)(size/1024/1024));
-#endif
         return ptr;
     }
 
@@ -1580,7 +1581,6 @@ static_assert(K_QUANTS_PER_ITERATION == 1 || K_QUANTS_PER_ITERATION == 2, "K_QUA
 
 #define MUL_MAT_SRC1_COL_STRIDE 128
 
-static bool g_mul_mat_q = false;
 [[noreturn]]
 static __device__ void no_device_code(
     const char * file_name, const int line, const char * function_name, const int arch, const char * arch_list) {
