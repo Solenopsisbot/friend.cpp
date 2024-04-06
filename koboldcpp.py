@@ -108,6 +108,8 @@ class sd_load_model_inputs(ctypes.Structure):
 class sd_generation_inputs(ctypes.Structure):
     _fields_ = [("prompt", ctypes.c_char_p),
                 ("negative_prompt", ctypes.c_char_p),
+                ("init_images", ctypes.c_char_p),
+                ("denoising_strength", ctypes.c_float),
                 ("cfg_scale", ctypes.c_float),
                 ("sample_steps", ctypes.c_int),
                 ("width", ctypes.c_int),
@@ -527,6 +529,9 @@ def sd_generate(genparams):
     global maxctx, args, currentusergenkey, totalgens, pendingabortkey
     prompt = genparams.get("prompt", "high quality")
     negative_prompt = genparams.get("negative_prompt", "")
+    init_images_arr = genparams.get("init_images", [])
+    init_images = ("" if (not init_images_arr or len(init_images_arr)==0 or not init_images_arr[0]) else init_images_arr[0])
+    denoising_strength = genparams.get("denoising_strength", 0.6)
     cfg_scale = genparams.get("cfg_scale", 5)
     sample_steps = genparams.get("steps", 20)
     width = genparams.get("width", 512)
@@ -534,7 +539,6 @@ def sd_generate(genparams):
     seed = genparams.get("seed", -1)
     sample_method = genparams.get("sampler_name", "k_euler_a")
     is_quiet = True if args.quiet else False
-
 
     #clean vars
     width = width - (width%64)
@@ -569,7 +573,9 @@ def sd_generate(genparams):
     inputs = sd_generation_inputs()
     inputs.prompt = prompt.encode("UTF-8")
     inputs.negative_prompt = negative_prompt.encode("UTF-8")
+    inputs.init_images = init_images.encode("UTF-8")
     inputs.cfg_scale = cfg_scale
+    inputs.denoising_strength = denoising_strength
     inputs.sample_steps = sample_steps
     inputs.width = width
     inputs.height = height
@@ -1219,7 +1225,7 @@ Enter Prompt:<br>
             sse_stream_flag = False
 
             api_format = 0 #1=basic,2=kai,3=oai,4=oai-chat,5=interrogate
-            is_txt2img = False
+            is_imggen = False
 
             if self.path.endswith('/request'):
                 api_format = 1
@@ -1249,14 +1255,14 @@ Enter Prompt:<br>
                     return
                 api_format = 5
 
-            if self.path.endswith('/sdapi/v1/txt2img'):
-                is_txt2img = True
+            if self.path.endswith('/sdapi/v1/txt2img') or self.path.endswith('/sdapi/v1/img2img'):
+                is_imggen = True
 
-            if is_txt2img or api_format > 0:
+            if is_imggen or api_format > 0:
                 global last_req_time
                 last_req_time = time.time()
 
-                if not is_txt2img and api_format<5:
+                if not is_imggen and api_format<5:
                     if not self.secure_endpoint():
                         return
 
@@ -1297,7 +1303,7 @@ Enter Prompt:<br>
                         time.sleep(0.2) #short delay
                     return
 
-                elif is_txt2img: #image gen
+                elif is_imggen: #image gen
                     try:
                         gen = sd_generate(genparams)
                         genresp = (json.dumps({"images":[gen],"parameters":{},"info":""}).encode())

@@ -18,6 +18,8 @@
 #include "model.cpp"
 #include "zip.c"
 
+#include "otherarch/utils.h"
+
 // #include "preprocessing.hpp"
 #include "stable-diffusion.h"
 
@@ -264,6 +266,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     //sanitize prompts, remove quotes and limit lengths
     std::string cleanprompt = clean_input_prompt(inputs.prompt);
     std::string cleannegprompt = clean_input_prompt(inputs.negative_prompt);
+    std::string img2img_data = std::string(inputs.init_images);
 
     sd_params->prompt = cleanprompt;
     sd_params->negative_prompt = cleannegprompt;
@@ -272,6 +275,13 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     sd_params->seed = inputs.seed;
     sd_params->width = inputs.width;
     sd_params->height = inputs.height;
+    sd_params->strength = inputs.denoising_strength;
+    sd_params->mode = (img2img_data==""?SDMode::TXT2IMG:SDMode::IMG2IMG);
+
+    //for img2img
+    sd_image_t input_image = {0,0,0,nullptr};
+    std::vector<uint8_t> image_buffer;
+    int nx, ny, nc;
 
     if(!is_quiet)
     {
@@ -314,9 +324,9 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
     if (sd_params->mode == TXT2IMG) {
 
-         if(!is_quiet && sddebugmode==1)
+        if(!is_quiet && sddebugmode==1)
         {
-            printf("\nPROMPT:%s\nNPROMPT:%s\nCLPSKP:%d\nCFGSCLE:%f\nW:%d\nH:%d\nSM:%d\nSTEP:%d\nSEED:%d\nBATCH:%d\nCIMG:%d\nCSTR:%f\n\n",
+            printf("\nTXT2IMG PROMPT:%s\nNPROMPT:%s\nCLPSKP:%d\nCFGSCLE:%f\nW:%d\nH:%d\nSM:%d\nSTEP:%d\nSEED:%d\nBATCH:%d\nCIMG:%d\nCSTR:%f\n\n",
             sd_params->prompt.c_str(),
             sd_params->negative_prompt.c_str(),
             sd_params->clip_skip,
@@ -344,10 +354,59 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                           control_image,
                           sd_params->control_strength);
     } else {
-        sd_image_t input_image = {(uint32_t)sd_params->width,
-                                  (uint32_t)sd_params->height,
-                                  3,
-                                  input_image_buffer};
+
+        if (sd_params->width <= 0 || sd_params->width % 64 != 0 || sd_params->height <= 0 || sd_params->height % 64 != 0) {
+            printf("\nKCPP SD: bad request image dimensions!\n");
+            output.data = "";
+            output.status = 0;
+            return output;
+        }
+
+        image_buffer = kcpp_base64_decode(img2img_data);
+
+        if(input_image_buffer!=nullptr) //just in time free old buffer
+        {
+             stbi_image_free(input_image_buffer);
+             input_image_buffer = nullptr;
+        }
+
+        input_image_buffer = stbi_load_from_memory(image_buffer.data(), image_buffer.size(), &nx, &ny, &nc, 3);
+
+        if (nx <= 0 || nx % 64 != 0 || ny <= 0 || ny % 64 != 0 || nc!= 3) {
+            printf("\nKCPP SD: bad input image dimensions!\n");
+            output.data = "";
+            output.status = 0;
+            return output;
+        }
+        if (!input_image_buffer) {
+            printf("\nKCPP SD: load image from memory failed!\n");
+            output.data = "";
+            output.status = 0;
+            return output;
+        }
+
+        input_image.width = nx;
+        input_image.height = ny;
+        input_image.channel = nc;
+        input_image.data = input_image_buffer;
+
+        if(!is_quiet && sddebugmode==1)
+        {
+            printf("\nIMG2IMG PROMPT:%s\nNPROMPT:%s\nCLPSKP:%d\nCFGSCLE:%f\nW:%d\nH:%d\nSM:%d\nSTEP:%d\nSEED:%d\nBATCH:%d\nCIMG:%d\nSTR:%f\n\n",
+            sd_params->prompt.c_str(),
+            sd_params->negative_prompt.c_str(),
+            sd_params->clip_skip,
+            sd_params->cfg_scale,
+            sd_params->width,
+            sd_params->height,
+            sd_params->sample_method,
+            sd_params->sample_steps,
+            sd_params->seed,
+            sd_params->batch_count,
+            control_image,
+            sd_params->strength);
+        }
+
         results = img2img(sd_ctx,
                             input_image,
                             sd_params->prompt.c_str(),

@@ -7,7 +7,7 @@ Just copy this single static HTML file anywhere and open it in a browser, or fro
 Please go to https://github.com/LostRuins/lite.koboldai.net for updates on Kobold Lite.
 If you are submitting a pull request for Lite, PLEASE use the above repo, not the KoboldCpp one.
 Kobold Lite is under the AGPL v3.0 License unless otherwise exempted. Please do not remove this line.
-Current version: 126
+Current version: 127
 -Concedo
 -->
 
@@ -197,8 +197,10 @@ Current version: 126
 			margin-top: 6px;
 		}
 
-		#actionmenuitems button {
-			width: 80px;
+		#actionmenuitems button,#actionmenuitems2 button {
+			width: 60px;
+			padding: 4px 4px;
+			font-size: 12px;
 		}
 
 		#messagefield {
@@ -1873,13 +1875,13 @@ Current version: 126
 	{
 		height: calc(98vh - 240px);
 	}
-	@media (max-width: 720px) {
+	@media (max-width: 598px) {
 		.normal_viewport_height
 		{
 			height: calc(98vh - 270px);
 		}
 	}
-	@media (max-width: 406px) {
+	@media (max-width: 342px) {
 		.normal_viewport_height
 		{
 			height: calc(98vh - 300px);
@@ -1903,7 +1905,7 @@ Current version: 126
 	}
 	.aesthetic_viewport_height.withmenu
 	{
-		height: calc(98vh - 206px);
+		height: calc(98vh - 198px);
 	}
 	.aesthetic_viewport_height.withtyping
 	{
@@ -1911,7 +1913,7 @@ Current version: 126
 	}
 	.aesthetic_viewport_height.withmenu.withtyping
 	{
-		height: calc(98vh - 256px);
+		height: calc(98vh - 248px);
 	}
 
 	/**
@@ -4263,7 +4265,7 @@ Current version: 126
 		}
 
 		let ep = a1111_txt2img_endpoint;
-		if(req_payload.source_image!="")
+		if(req_payload.source_image && req_payload.source_image!="")
 		{
 			ep = a1111_img2img_endpoint;
 			a1111_t2i_payload.init_images = [req_payload.source_image];
@@ -7475,6 +7477,8 @@ Current version: 126
 		});
 	}
 
+	var cached_model_list = null;
+	var stale_cached_model_time = performance.now();
 	function fetch_models(onDoneCallback)
 	{
 		if(localflag)
@@ -7482,6 +7486,14 @@ Current version: 126
 			onDoneCallback(selected_models);
 			return;
 		}
+
+		if(cached_model_list!=null && cached_model_list.length>1 && performance.now() < stale_cached_model_time)
+		{
+			console.log("Reuse cached model list");
+			onDoneCallback(cached_model_list);
+			return;
+		}
+
 		//fetch the model list
 		multifetch(models_endpoints,(resArr,errArr)=>{
 			if(resArr && resArr.length>0)
@@ -7500,6 +7512,8 @@ Current version: 126
 					}
 				}
 
+				cached_model_list = mdls;
+				stale_cached_model_time = performance.now() + 30000; //cache model list for 1m
 				onDoneCallback(mdls);
 			}
 			else
@@ -10524,7 +10538,7 @@ Current version: 126
 			"replacement_filter": true,
 			"r2": false
 		}
-		if(base64img!="")
+		if(base64img!=null && base64img!="")
 		{
 			genimg_payload["source_image"] = base64img;
 			genimg_payload["params"]["denoising_strength"] = localsettings.img_img2imgstr;
