@@ -606,15 +606,15 @@ endif
 # tools
 quantize_gguf: examples/quantize/quantize.cpp ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
-quantize_gptj: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o otherarch/tools/gptj_quantize.cpp otherarch/tools/common-ggml.cpp
+quantize_gptj: ggml_v3.o ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o otherarch/tools/gptj_quantize.cpp otherarch/tools/common-ggml.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
-quantize_gpt2: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o otherarch/tools/gpt2_quantize.cpp otherarch/tools/common-ggml.cpp
+quantize_gpt2: ggml_v3.o ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o otherarch/tools/gpt2_quantize.cpp otherarch/tools/common-ggml.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
-quantize_neox: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o otherarch/tools/neox_quantize.cpp otherarch/tools/common-ggml.cpp
+quantize_neox: ggml_v3.o ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o otherarch/tools/neox_quantize.cpp otherarch/tools/common-ggml.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
-quantize_mpt: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o otherarch/tools/mpt_quantize.cpp otherarch/tools/common-ggml.cpp
+quantize_mpt: ggml_v3.o ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o otherarch/tools/mpt_quantize.cpp otherarch/tools/common-ggml.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
-quantize_clip: ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o examples/llava/clip.cpp examples/llava/clip.h examples/llava/quantclip.cpp
+quantize_clip: ggml_v3.o ggml.o llama.o ggml-quants.o ggml-alloc.o ggml-backend.o unicode.o examples/llava/clip.cpp examples/llava/clip.h examples/llava/quantclip.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
 
 #window simple clinfo
