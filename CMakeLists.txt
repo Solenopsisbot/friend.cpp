@@ -80,7 +80,7 @@ if (LLAMA_CUBLAS)
 
         enable_language(CUDA)
 
-        add_compile_definitions(GGML_USE_CUBLAS)
+        add_compile_definitions(GGML_USE_CUDA)
         add_compile_definitions(SD_USE_CUBLAS)
         add_compile_definitions(GGML_CUDA_MMQ_Y=${LLAMA_CUDA_MMQ_Y})
 
@@ -152,7 +152,7 @@ if (LLAMA_HIPBLAS)
         message(STATUS "HIP and hipBLAS found")
         file(GLOB GGML_SOURCES_ROCM "ggml-cuda/*.cu")
         list(APPEND GGML_SOURCES_ROCM "ggml-cuda.cu")
-        add_compile_definitions(GGML_USE_HIPBLAS GGML_USE_CUBLAS SD_USE_CUBLAS)
+        add_compile_definitions(GGML_USE_HIPBLAS GGML_USE_CUDA SD_USE_CUBLAS)
         add_library(ggml-rocm OBJECT ${GGML_SOURCES_CUDA})
         if (LLAMA_CUDA_FORCE_DMMV)
             target_compile_definitions(ggml-rocm PUBLIC GGML_CUDA_FORCE_DMMV)

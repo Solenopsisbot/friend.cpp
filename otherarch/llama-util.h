@@ -504,7 +504,7 @@ struct llama_v3_buffer {
     llama_v3_buffer& operator=(llama_v3_buffer&&) = delete;
 };
 
-#ifdef GGML_USE_CUBLAS
+#ifdef GGML_USE_CUDA
 #include "ggml_v3-cuda.h"
 struct llama_v3_ctx_buffer {
     uint8_t * addr = NULL;

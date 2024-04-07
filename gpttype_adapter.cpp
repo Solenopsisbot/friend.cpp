@@ -829,7 +829,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     int cu_parseinfo_maindevice = inputs.cublas_info<=0?0:inputs.cublas_info;
 
     printf("System Info: %s\n", llama_print_system_info());
-    #if defined(GGML_USE_CUBLAS)
+    #if defined(GGML_USE_CUDA)
     if(file_format!=FileFormat::GGUF_GENERIC)
     {
         if(ggml_v3_cpu_has_gpublas() && cu_parseinfo_maindevice>0)
@@ -909,7 +909,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         llama_ctx_params.rope_freq_scale = rope_freq_scale;
         llama_ctx_params.n_batch = kcpp_params->n_batch;
 
-        #if defined(GGML_USE_CUBLAS) || defined(GGML_USE_VULKAN)
+        #if defined(GGML_USE_CUDA) || defined(GGML_USE_VULKAN)
         bool ts_all_zero = true;
         for (int i = 0; i < tensor_split_max; ++i) {
             if (inputs.tensor_split[i] != 0.0f) {
@@ -997,7 +997,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             }
         }
         #endif
-        #if defined(GGML_USE_CUBLAS)
+        #if defined(GGML_USE_CUDA)
         if(ggml_cpu_has_gpublas() && cu_parseinfo_maindevice>0)
         {
             printf("CUBLAS: Set main device to %d\n",cu_parseinfo_maindevice);
@@ -1006,7 +1006,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         #endif
         model_params.main_gpu = cu_parseinfo_maindevice;
 
-        #if defined(GGML_USE_CUBLAS)
+        #if defined(GGML_USE_CUDA)
         model_params.split_mode = (inputs.use_rowsplit?llama_split_mode::LLAMA_SPLIT_MODE_ROW:llama_split_mode::LLAMA_SPLIT_MODE_LAYER);
         #else
         model_params.split_mode = llama_split_mode::LLAMA_SPLIT_MODE_LAYER;
@@ -1016,7 +1016,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         llama_ctx_params.n_threads = kcpp_params->n_threads;
         llama_ctx_params.n_threads_batch = kcpp_params->n_threads_batch;
 
-        #if defined(GGML_USE_CUBLAS) || defined(GGML_USE_VULKAN)
+        #if defined(GGML_USE_CUDA) || defined(GGML_USE_VULKAN)
         bool ts_all_zero = true;
         for (int i = 0; i < tensor_split_max; ++i) {
             if (inputs.tensor_split[i] != 0.0f) {
