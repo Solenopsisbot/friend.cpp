@@ -65,7 +65,8 @@ find_package(Threads REQUIRED)
 
 add_compile_definitions(LOG_DISABLE_LOGS)
 
-set(GGML_SOURCES_CUDA ggml-cuda.cu ggml-cuda.h)
+file(GLOB GGML_SOURCES_CUDA "ggml-cuda/*.cu")
+list(APPEND GGML_SOURCES_CUDA "ggml-cuda.cu")
 set(GGML_V3_CUDA_SOURCES otherarch/ggml_v3-cuda.cu otherarch/ggml_v3-cuda.h)
 set(GGML_V2_CUDA_SOURCES otherarch/ggml_v2-cuda.cu otherarch/ggml_v2-cuda.h)
 set(GGML_V2_LEGACY_CUDA_SOURCES otherarch/ggml_v2-cuda-legacy.cu otherarch/ggml_v2-cuda-legacy.h)
@@ -149,6 +150,8 @@ if (LLAMA_HIPBLAS)
 
     if (${hipblas_FOUND} AND ${hip_FOUND})
         message(STATUS "HIP and hipBLAS found")
+        file(GLOB GGML_SOURCES_ROCM "ggml-cuda/*.cu")
+        list(APPEND GGML_SOURCES_ROCM "ggml-cuda.cu")
         add_compile_definitions(GGML_USE_HIPBLAS GGML_USE_CUBLAS SD_USE_CUBLAS)
         add_library(ggml-rocm OBJECT ${GGML_SOURCES_CUDA})
         if (LLAMA_CUDA_FORCE_DMMV)
@@ -157,7 +160,7 @@ if (LLAMA_HIPBLAS)
         target_compile_definitions(ggml-rocm PUBLIC GGML_CUDA_DMMV_X=${LLAMA_CUDA_DMMV_X})
         target_compile_definitions(ggml-rocm PUBLIC GGML_CUDA_MMV_Y=${LLAMA_CUDA_MMV_Y})
         target_compile_definitions(ggml-rocm PUBLIC K_QUANTS_PER_ITERATION=${LLAMA_CUDA_KQUANTS_ITER})
-        set_source_files_properties(ggml-cuda.cu PROPERTIES LANGUAGE CXX)
+        set_source_files_properties(${GGML_SOURCES_ROCM} PROPERTIES LANGUAGE CXX)
         target_link_libraries(ggml-rocm PUBLIC hip::device hip::host roc::rocblas roc::hipblas)
 
 

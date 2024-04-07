@@ -201,7 +201,7 @@ ifdef LLAMA_CUDA_CCBIN
 	NVCCFLAGS += -ccbin $(LLAMA_CUDA_CCBIN)
 endif
 
-ggml-cuda.o: ggml-cuda.cu ggml-cuda.h
+ggml-cuda.o: ggml-cuda.cu ggml-cuda.h $(wildcard ggml-cuda/*.cu) $(wildcard ggml-cuda/*.cuh)
 	$(NVCC) $(NVCCFLAGS) $(subst -Ofast,-O3,$(CXXFLAGS)) $(CUBLAS_FLAGS) $(CUBLAS_CXXFLAGS) -Wno-pedantic -c $< -o $@
 ggml_v2-cuda.o: otherarch/ggml_v2-cuda.cu otherarch/ggml_v2-cuda.h
 	$(NVCC) $(NVCCFLAGS) $(subst -Ofast,-O3,$(CXXFLAGS)) $(CUBLAS_FLAGS) $(CUBLAS_CXXFLAGS) -Wno-pedantic -c $< -o $@
@@ -245,7 +245,7 @@ ggml_v3-cuda.o: HIPFLAGS += $(addprefix --offload-arch=,$(GPU_TARGETS)) \
 						-DGGML_CUDA_DMMV_X=$(LLAMA_CUDA_DMMV_X) \
                         -DGGML_CUDA_MMV_Y=$(LLAMA_CUDA_MMV_Y) \
                         -DK_QUANTS_PER_ITERATION=$(LLAMA_CUDA_KQUANTS_ITER)
-ggml-cuda.o: ggml-cuda.cu ggml-cuda.h
+ggml-cuda.o: ggml-cuda.cu ggml-cuda.h $(wildcard ggml-cuda/*.cu) $(wildcard ggml-cuda/*.cuh)
 	$(HCXX) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
 ggml_v2-cuda.o: otherarch/ggml_v2-cuda.cu otherarch/ggml_v2-cuda.h
 	$(HCXX) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
