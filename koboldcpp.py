@@ -644,6 +644,7 @@ sslvalid = False
 nocertify = False
 start_time = time.time()
 last_req_time = time.time()
+last_non_horde_req_time = time.time()
 
 class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
     sys_version = ""
@@ -665,6 +666,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
     async def generate_text(self, genparams, api_format, stream_flag):
+        from datetime import datetime
         global friendlymodelname, chatcompl_adapter
         is_quiet = args.quiet
         def run_blocking(): #api format 1=basic,2=kai,3=oai,4=oai-chat
@@ -749,6 +751,12 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     genparams["max_length"] = 32
                     genparams["prompt"] = "### Instruction: In one sentence, write a descriptive caption for this image.\n### Response:"
 
+            #flag instance as non-idle for a while
+            washordereq = genparams.get('genkey', '').startswith('HORDEREQ_')
+            if not washordereq:
+                global last_non_horde_req_time
+                last_non_horde_req_time = time.time()
+
             return generate(
                 prompt=genparams.get('prompt', ""),
                 memory=genparams.get('memory', ""),
@@ -791,6 +799,12 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             recvtxt = await loop.run_in_executor(executor, run_blocking)
         else:
             recvtxt = run_blocking()
+
+        #flag instance as non-idle for a while
+        washordereq = genparams.get('genkey', '').startswith('HORDEREQ_')
+        if not washordereq:
+            global last_non_horde_req_time
+            last_non_horde_req_time = time.time()
 
         if (args.debugmode != -1 and not is_quiet) or args.debugmode >= 1:
             utfprint("\nOutput: " + recvtxt)
@@ -2469,6 +2483,14 @@ def run_horde_worker(args, api_key, worker_name):
             else:
                  print_with_time(f"Horde Worker Exit limit reached, too many errors.")
 
+        global last_non_horde_req_time
+        sec_since_non_horde = time.time() - last_non_horde_req_time
+        no_recent_local_usage = sec_since_non_horde>20
+        if not no_recent_local_usage:
+            #print_with_time(f"Recent Local Usage - Horde Worker Waiting...")
+            time.sleep(1)
+            continue
+
         #first, make sure we are not generating
         if modelbusy.locked():
             time.sleep(0.2)
@@ -2516,6 +2538,7 @@ def run_horde_worker(args, api_key, worker_name):
                     currentjob_attempts += 1
                     if currentjob_attempts>5:
                         break
+
             print_with_time(f"Server Busy - Not ready to generate...")
             time.sleep(5)
 
