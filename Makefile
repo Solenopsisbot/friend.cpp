@@ -77,7 +77,7 @@ ifeq ($(UNAME_S),Darwin)
 	CFLAGS   += -pthread
 	CXXFLAGS += -pthread
 	CLANG_VER = $(shell clang -v 2>&1 | head -n 1 | awk 'BEGIN {FS="[. ]"};{print $$1 $$2 $$4}')
-    ifeq ($(CLANG_VER),Appleclang15)
+	ifeq ($(CLANG_VER),Appleclang15)
 		LDFLAGS += -ld_classic
 	endif
 endif
@@ -109,7 +109,7 @@ endif
 
 # Architecture specific
 # TODO: probably these flags need to be tweaked on some architectures
-#       feel free to update the Makefile for your architecture and send a pull request or issue
+# feel free to update the Makefile for your architecture and send a pull request or issue
 ifeq ($(UNAME_M),$(filter $(UNAME_M),x86_64 i686))
 	# Use all CPU extensions that are available:
 # old library NEEDS mf16c to work. so we must build with it. new one doesnt
@@ -203,9 +203,9 @@ ifdef LLAMA_CUDA_CCBIN
 endif
 
 ggml-cuda/%.o: ggml-cuda/%.cu ggml-cuda/%.cuh ggml.h ggml-common.h ggml-cuda/common.cuh
-    $(NVCC) $(NVCCFLAGS) $(subst -Ofast,-O3,$(CXXFLAGS)) $(CUBLAS_FLAGS) $(CUBLAS_CXXFLAGS) -Wno-pedantic -c $< -o $@
+	$(NVCC) $(NVCCFLAGS) $(subst -Ofast,-O3,$(CXXFLAGS)) $(CUBLAS_FLAGS) $(CUBLAS_CXXFLAGS) -Wno-pedantic -c $< -o $@
 ggml-cuda.o: ggml-cuda.cu ggml-cuda.h ggml.h ggml-backend.h ggml-backend-impl.h ggml-common.h $(wildcard ggml-cuda/*.cuh)
-    $(NVCC) $(NVCCFLAGS) $(subst -Ofast,-O3,$(CXXFLAGS)) $(CUBLAS_FLAGS) $(CUBLAS_CXXFLAGS) -Wno-pedantic -c $< -o $@
+	$(NVCC) $(NVCCFLAGS) $(subst -Ofast,-O3,$(CXXFLAGS)) $(CUBLAS_FLAGS) $(CUBLAS_CXXFLAGS) -Wno-pedantic -c $< -o $@
 ggml_v2-cuda.o: otherarch/ggml_v2-cuda.cu otherarch/ggml_v2-cuda.h
 	$(NVCC) $(NVCCFLAGS) $(subst -Ofast,-O3,$(CXXFLAGS)) $(CUBLAS_FLAGS) $(CUBLAS_CXXFLAGS) -Wno-pedantic -c $< -o $@
 ggml_v2-cuda-legacy.o: otherarch/ggml_v2-cuda-legacy.cu otherarch/ggml_v2-cuda-legacy.h
@@ -239,9 +239,9 @@ ifdef LLAMA_HIPBLAS
 	HIPFLAGS    += -DK_QUANTS_PER_ITERATION=$(LLAMA_CUDA_KQUANTS_ITER)
 
 ggml-cuda/%.o: ggml-cuda/%.cu ggml-cuda/%.cuh ggml.h ggml-common.h ggml-cuda/common.cuh
-    $(HCXX) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
+	$(HCXX) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
 ggml-cuda.o: ggml-cuda.cu ggml-cuda.h ggml.h ggml-backend.h ggml-backend-impl.h ggml-common.h $(wildcard ggml-cuda/*.cuh)
-    $(HCXX) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
+	$(HCXX) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
 ggml_v2-cuda.o: otherarch/ggml_v2-cuda.cu otherarch/ggml_v2-cuda.h
 	$(HCXX) $(CXXFLAGS) $(HIPFLAGS) -x hip -c -o $@ $<
 ggml_v2-cuda-legacy.o: otherarch/ggml_v2-cuda-legacy.cu otherarch/ggml_v2-cuda-legacy.h
