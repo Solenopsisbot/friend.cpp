@@ -2737,7 +2737,7 @@ def delete_old_pyinstaller():
     for dirname in os.listdir(temp_parentdir_path):
         absdirpath = os.path.abspath(os.path.join(temp_parentdir_path, dirname))
         if os.path.isdir(absdirpath) and os.path.basename(absdirpath).startswith('_MEI'): #only delete kobold pyinstallers
-            if absdirpath!=selfdirpath and (time.time() - os.path.getctime(absdirpath)) > 3600: # remove if older than 1 hour
+            if absdirpath!=selfdirpath and (time.time() - os.path.getctime(absdirpath)) > 14400: # remove if older than 4 hours
                 kobold_itemcheck1 = os.path.join(absdirpath, 'koboldcpp_default.dll')
                 kobold_itemcheck2 = os.path.join(absdirpath, 'koboldcpp_default.so')
                 if os.path.exists(kobold_itemcheck1) or os.path.exists(kobold_itemcheck2):
@@ -2760,7 +2760,11 @@ def main(launch_args,start_server=True):
     embedded_kcpp_docs = None
 
     #perform some basic cleanup of old temporary directories
-    delete_old_pyinstaller()
+    try:
+        delete_old_pyinstaller()
+    except Exception as e:
+        print(f"Error cleaning up orphaned pyinstaller dirs: {e}")
+
 
     if args.config and len(args.config)==1:
         if isinstance(args.config[0], str) and os.path.exists(args.config[0]):
