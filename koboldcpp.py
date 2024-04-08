@@ -742,7 +742,8 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     genparams["prompt"] = messages_string
                     if len(images_added)>0:
                         genparams["images"] = images_added
-                    genparams["stop_sequence"] = [user_message_start.strip(),assistant_message_start.strip()]
+                    if len(genparams.get('stop_sequence', []))==0: #only set stop seq if it wont overwrite existing
+                        genparams["stop_sequence"] = [user_message_start.strip(),assistant_message_start.strip()]
                     genparams["trim_stop"] = True
 
             elif api_format==5:
