@@ -326,7 +326,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
         if(!is_quiet && sddebugmode==1)
         {
-            printf("\nTXT2IMG PROMPT:%s\nNPROMPT:%s\nCLPSKP:%d\nCFGSCLE:%f\nW:%d\nH:%d\nSM:%d\nSTEP:%d\nSEED:%d\nBATCH:%d\nCIMG:%d\nCSTR:%f\n\n",
+            printf("\nTXT2IMG PROMPT:%s\nNPROMPT:%s\nCLPSKP:%d\nCFGSCLE:%f\nW:%d\nH:%d\nSM:%d\nSTEP:%d\nSEED:%d\nBATCH:%d\nCIMG:%p\nCSTR:%f\n\n",
             sd_params->prompt.c_str(),
             sd_params->negative_prompt.c_str(),
             sd_params->clip_skip,
@@ -335,7 +335,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             sd_params->height,
             sd_params->sample_method,
             sd_params->sample_steps,
-            sd_params->seed,
+            (int)sd_params->seed,
             sd_params->batch_count,
             control_image,
             sd_params->control_strength);
@@ -392,7 +392,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
         if(!is_quiet && sddebugmode==1)
         {
-            printf("\nIMG2IMG PROMPT:%s\nNPROMPT:%s\nCLPSKP:%d\nCFGSCLE:%f\nW:%d\nH:%d\nSM:%d\nSTEP:%d\nSEED:%d\nBATCH:%d\nCIMG:%d\nSTR:%f\n\n",
+            printf("\nIMG2IMG PROMPT:%s\nNPROMPT:%s\nCLPSKP:%d\nCFGSCLE:%f\nW:%d\nH:%d\nSM:%d\nSTEP:%d\nSEED:%d\nBATCH:%d\nCIMG:%p\nSTR:%f\n\n",
             sd_params->prompt.c_str(),
             sd_params->negative_prompt.c_str(),
             sd_params->clip_skip,
@@ -401,7 +401,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             sd_params->height,
             sd_params->sample_method,
             sd_params->sample_steps,
-            sd_params->seed,
+            (int)sd_params->seed,
             sd_params->batch_count,
             control_image,
             sd_params->strength);
