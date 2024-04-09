@@ -1115,7 +1115,7 @@ Enter Prompt:<br>
            response_body = (json.dumps([]).encode())
 
 
-        elif self.path=="/api" or self.path=="/docs":
+        elif self.path=="/api" or self.path=="/docs" or self.path.startswith(('/api/?json=','/api?json=','/docs/?json=','/docs?json=')):
             content_type = 'text/html'
             if self.embedded_kcpp_docs is None:
                 response_body = (f"KoboldCpp API is running!\n\nAPI usage reference can be found at the wiki: https://github.com/LostRuins/koboldcpp/wiki").encode()
