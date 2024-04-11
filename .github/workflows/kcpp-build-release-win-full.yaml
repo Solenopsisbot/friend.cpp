@@ -33,6 +33,7 @@ jobs:
         run: |
           $env:Path += ";$(Get-Location)\w64devkit-1.22.0\w64devkit\bin"
           echo $env:Path
+          ls
 
       - name: Build Non-CUDA
         id: make_build
