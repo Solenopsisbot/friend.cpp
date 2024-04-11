@@ -31,14 +31,17 @@ jobs:
 
       - name: Add w64devkit to PATH
         run: |
-          $env:Path += ";$(Get-Location)\w64devkit-1.22.0\w64devkit\bin"
-          echo $env:Path
-          ls
+          echo "$(Get-Location)\w64devkit\bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
 
       - name: Build Non-CUDA
         id: make_build
         run: |
           make -j ${env:NUMBER_OF_PROCESSORS}
+
+      - name: Package PyInstaller
+        id: make_pyinstaller
+        run: |
+          ./make_pyinstaller.bat
           ls
 
       # - uses: Jimver/cuda-toolkit@v0.2.11
@@ -59,3 +62,9 @@ jobs:
       #   with:
       #     name: kcpp_windows_cuda_binary
       #     path: build/bin/Release/
+
+      - name: Save artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kcpp_windows_pyinstallers
+          path: dist/
