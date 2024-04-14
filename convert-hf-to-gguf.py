@@ -43,17 +43,18 @@ AnyModel = TypeVar("AnyModel", bound="type[Model]")
 class Model(ABC):
     _model_classes: dict[str, type[Model]] = {}
 
-    def __init__(self, dir_model: Path, ftype: int, fname_out: Path, is_big_endian: bool):
+    def __init__(self, dir_model: Path, ftype: int, fname_out: Path, is_big_endian: bool, use_temp_file: bool):
         self.dir_model = dir_model
         self.ftype = ftype
         self.fname_out = fname_out
         self.is_big_endian = is_big_endian
         self.endianess = gguf.GGUFEndian.BIG if is_big_endian else gguf.GGUFEndian.LITTLE
+        self.use_temp_file = use_temp_file
         self.is_safetensors = self._is_model_safetensors()
         self.num_parts = Model.count_model_parts(self.dir_model, ".safetensors" if self.is_safetensors else ".bin")
         self.part_names = self._get_part_names()
         self.hparams = Model.load_hparams(self.dir_model)
-        self.gguf_writer = gguf.GGUFWriter(fname_out, gguf.MODEL_ARCH_NAMES[self.model_arch], endianess=self.endianess, use_temp_file=False)
+        self.gguf_writer = gguf.GGUFWriter(fname_out, gguf.MODEL_ARCH_NAMES[self.model_arch], endianess=self.endianess, use_temp_file=self.use_temp_file)
         self.block_count = self.find_hparam(["n_layers", "num_hidden_layers", "n_layer"])
 
     @property
@@ -227,15 +228,14 @@ class Model(ABC):
             return ("pytorch_model.bin",)
         return (f"pytorch_model-{n:05}-of-{self.num_parts:05}.bin" for n in range(1, self.num_parts + 1))
 
-    def _set_vocab_gpt2(self):
-        dir_model = self.dir_model
-        hparams = self.hparams
+    # used for GPT-2 BPE and WordPiece vocabs
+    def get_basic_vocab(self) -> tuple[list[str], list[int]]:
         tokens: list[str] = []
         toktypes: list[int] = []
 
         from transformers import AutoTokenizer
-        tokenizer = AutoTokenizer.from_pretrained(dir_model)
-        vocab_size = hparams.get("vocab_size", len(tokenizer.vocab))
+        tokenizer = AutoTokenizer.from_pretrained(self.dir_model)
+        vocab_size = self.hparams.get("vocab_size", len(tokenizer.vocab))
         assert max(tokenizer.vocab.values()) < vocab_size
 
         reverse_vocab = {id_: encoded_tok for encoded_tok, id_ in tokenizer.vocab.items()}
@@ -255,11 +255,15 @@ class Model(ABC):
                 tokens.append(reverse_vocab[i])
                 toktypes.append(gguf.TokenType.NORMAL)
 
+        return tokens, toktypes
+
+    def _set_vocab_gpt2(self) -> None:
+        tokens, toktypes = self.get_basic_vocab()
         self.gguf_writer.add_tokenizer_model("gpt2")
         self.gguf_writer.add_token_list(tokens)
         self.gguf_writer.add_token_types(toktypes)
 
-        special_vocab = gguf.SpecialVocab(dir_model, load_merges=True)
+        special_vocab = gguf.SpecialVocab(self.dir_model, load_merges=True)
         special_vocab.add_to_gguf(self.gguf_writer)
 
     def _set_vocab_qwen(self):
@@ -1424,6 +1428,102 @@ class GrokModel(Model):
             self.gguf_writer.add_tensor(new_name, data)
 
 
+@Model.register("DbrxForCausalLM")
+class DbrxModel(Model):
+    model_arch = gguf.MODEL_ARCH.DBRX
+
+    def set_gguf_parameters(self):
+        ffn_config = self.hparams["ffn_config"]
+        attn_config = self.hparams["attn_config"]
+        self.gguf_writer.add_name(self.hparams["model_type"])
+        self.gguf_writer.add_block_count(self.hparams["n_layers"])
+
+        self.gguf_writer.add_context_length(self.hparams["max_seq_len"])
+        self.gguf_writer.add_embedding_length(self.hparams["d_model"])
+        self.gguf_writer.add_feed_forward_length(ffn_config["ffn_hidden_size"])
+
+        self.gguf_writer.add_head_count(self.hparams["n_heads"])
+        self.gguf_writer.add_head_count_kv(attn_config["kv_n_heads"])
+
+        self.gguf_writer.add_rope_freq_base(attn_config["rope_theta"])
+
+        self.gguf_writer.add_clamp_kqv(attn_config["clip_qkv"])
+        self.gguf_writer.add_file_type(self.ftype)
+
+        self.gguf_writer.add_expert_count(ffn_config["moe_num_experts"])
+        self.gguf_writer.add_expert_used_count(ffn_config["moe_top_k"])
+
+        self.gguf_writer.add_layer_norm_eps(1e-5)
+
+        self.gguf_writer.add_file_type(self.ftype)
+        print(f"gguf: file type = {self.ftype}")
+
+    def write_tensors(self):
+        block_count = self.hparams.get("n_layers")
+        tensor_map = gguf.get_tensor_name_map(self.model_arch, block_count)
+        for name, data_torch in self.get_tensors():
+            n_expert = self.hparams["ffn_config"]["moe_num_experts"]
+            n_ff = self.hparams["ffn_config"]["ffn_hidden_size"]
+            n_embd = self.hparams["d_model"]
+
+            # Specific behavior for experts tensors: suffix .weight, view as 3D and transpose
+            # original implementation expects (n_expert, n_ff, n_embd) for all experts weights
+            # But llama.cpp moe graph works differently
+            # AND the dimensions in ggml are typically in the reverse order of the pytorch dimensions
+            # so (n_expert, n_ff, n_embd) in pytorch is {n_embd, n_ff, n_expert} in ggml_tensor
+            exp_tensor_names = {"ffn.experts.mlp.w1": None,       # LLM_TENSOR_FFN_GATE_EXPS ggml_tensor->ne{n_embd, n_ff,   n_expert}
+                                "ffn.experts.mlp.w2": (0, 2, 1),  # LLM_TENSOR_FFN_DOWN_EXPS ggml_tensor->ne{n_ff,   n_embd, n_expert}
+                                "ffn.experts.mlp.v1": None}       # LLM_TENSOR_FFN_UP_EXPS   ggml_tensor->ne{n_embd, n_ff,   n_expert}
+            experts = False
+            for exp_tensor_name in exp_tensor_names.keys():
+                if name.find(exp_tensor_name) != -1 and name.find(".weight") == -1:
+                    experts = True
+                    data_torch = data_torch.view(n_expert, n_ff, n_embd)
+                    if (permute_tensor := exp_tensor_names[exp_tensor_name]) is not None:
+                        data_torch = data_torch.permute(*permute_tensor)
+                    break
+
+            old_dtype = data_torch.dtype
+
+            # convert any unsupported data types to float32
+            if data_torch.dtype not in (torch.float16, torch.float32):
+                data_torch = data_torch.to(torch.float32)
+
+            data = data_torch.squeeze().numpy()
+
+            # map tensor names
+            # In MoE models the ffn tensors are typically most of the model weights,
+            # and need to be quantizable. Quantize expects tensor names to be suffixed by .weight.
+            # Every other model has the weight names ending in .weight,
+            # let's assume that is the convention which is not the case for dbrx:
+            # https://huggingface.co/databricks/dbrx-instruct/blob/main/model.safetensors.index.json#L15
+            new_name = tensor_map.get_name(name if not experts else name + ".weight", try_suffixes=(".weight",))
+            if new_name is None:
+                print(f"Can not map tensor {name!r}")
+                sys.exit()
+
+            n_dims = len(data.shape)
+            data_dtype = data.dtype
+
+            # Most of the codebase that takes in 1D tensors only handles F32 tensors
+            # and most of the outputs tensors are F32.
+            if data_dtype != np.float32 and n_dims == 1:
+                print(f"Can not map tensor {name!r}: all 1D tensors must be F32")
+                sys.exit()
+
+            # if f32 desired, convert any float16 to float32
+            if self.ftype == 0 and data_dtype == np.float16:
+                data = data.astype(np.float32)
+
+            # if f16 desired, convert any float32 2-dim weight tensors to float16
+            if self.ftype == 1 and data_dtype == np.float32 and n_dims > 1:
+                data = data.astype(np.float16)
+
+            print(f"{new_name}, n_dims = {n_dims}, shape = {data.shape}, {old_dtype} --> {data.dtype}")
+
+            self.gguf_writer.add_tensor(new_name, data)
+
+
 @Model.register("MiniCPMForCausalLM")
 class MiniCPMModel(Model):
     model_arch = gguf.MODEL_ARCH.MINICPM
@@ -2043,34 +2143,25 @@ class BertModel(Model):
             self.gguf_writer.add_pooling_type(pooling_type)
 
     def set_vocab(self):
-        # use huggingface vocab to get all tokens
-        vocab = LlamaHfVocab(self.dir_model, ignore_nonllama=True)
-        tokens, scores, toktypes = zip(*vocab.all_tokens())
-        assert len(tokens) == vocab.vocab_size
-        self.vocab_size = vocab.vocab_size
+        tokens, toktypes = self.get_basic_vocab()
+        self.vocab_size = len(tokens)
 
         # we need this to validate the size of the token_type embeddings
         # though currently we are passing all zeros to the token_type embeddings
-        n_token_types = len(set(toktypes))
-        self.gguf_writer.add_token_type_count(n_token_types)
+        self.gguf_writer.add_token_type_count(2)  # "Sequence A" or "Sequence B"
 
         # convert to phantom space vocab
-        def phantom(tok, typ):
-            if tok.startswith(b"[") and tok.endswith(b"]"):
+        def phantom(tok):
+            if tok.startswith("[") and tok.endswith("]"):
                 return tok
-            if tok.startswith(b"##"):
+            if tok.startswith("##"):
                 return tok[2:]
-            return b"\xe2\x96\x81" + tok
-        tokens = tuple(phantom(t, y) for t, y in zip(tokens, toktypes))
-
-        # set up bos and eos tokens (cls and sep)
-        self.gguf_writer.add_bos_token_id(vocab.tokenizer.cls_token_id)
-        self.gguf_writer.add_eos_token_id(vocab.tokenizer.sep_token_id)
+            return "\u2581" + tok
+        tokens = list(map(phantom, tokens))
 
         # add vocab to gguf
         self.gguf_writer.add_tokenizer_model("bert")
         self.gguf_writer.add_token_list(tokens)
-        self.gguf_writer.add_token_scores(scores)
         self.gguf_writer.add_token_types(toktypes)
 
         # handle special tokens
@@ -2141,16 +2232,6 @@ class NomicBertModel(BertModel):
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
         self.gguf_writer.add_rope_freq_base(self.hparams["rotary_emb_base"])
-
-    def get_tensors(self):
-        assert self.vocab_size is not None
-        for name, data in super().get_tensors():
-            # Nomic Embed's token embeddings tensor is padded, but llama.cpp wants tensor sizes to match exactly.
-            if name == 'embeddings.word_embeddings.weight' and data.shape[1] != self.vocab_size:
-                rounded_vocab_size = (self.vocab_size + 63) // 64 * 64
-                assert data.shape == (rounded_vocab_size, self.hparams["n_embd"])
-                data = data[:self.vocab_size, :]
-            yield name, data
 
 
 @Model.register("GemmaForCausalLM")
@@ -2327,7 +2408,8 @@ class MambaModel(Model):
                 data = data.astype(np.float32)
 
             # if f16 desired, convert big float32 2-dim weight tensors to float16
-            if self.ftype == 1 and data_dtype == np.float32 and new_name.removesuffix(".weight").endswith((".ssm_in", ".ssm_out", "token_embd", "output")) and n_dims == 2:
+            new_weight_name = new_name[:-len(".weight")] if new_name.endswith(".weight") else ""
+            if self.ftype == 1 and data_dtype == np.float32 and new_weight_name.endswith((".ssm_in", ".ssm_out", "token_embd", "output")) and n_dims == 2:
                 data = data.astype(np.float16)
 
             print(f"{new_name}, n_dims = {n_dims}, {old_dtype} --> {data.dtype}")
@@ -2378,6 +2460,7 @@ def parse_args() -> argparse.Namespace:
         "model", type=Path,
         help="directory containing model file",
     )
+    parser.add_argument("--use-temp-file", action="store_true", help="use the tempfile library while processing (helpful when running out of memory, process killed)")
 
     return parser.parse_args()
 
@@ -2421,7 +2504,7 @@ def main() -> None:
 
     with torch.inference_mode():
         model_class = Model.from_model_architecture(hparams["architectures"][0])
-        model_instance = model_class(dir_model, ftype_map[args.outtype], fname_out, args.bigendian)
+        model_instance = model_class(dir_model, ftype_map[args.outtype], fname_out, args.bigendian, args.use_temp_file)
 
         print("Set model parameters")
         model_instance.set_gguf_parameters()
