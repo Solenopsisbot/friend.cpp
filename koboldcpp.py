@@ -622,7 +622,7 @@ maxhordelen = 256
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.62.2"
+KcppVersion = "1.63"
 showdebug = True
 showsamplerwarning = True
 showmaxctxwarning = True
@@ -1155,8 +1155,12 @@ Enter Prompt:<br>
 
     def do_POST(self):
         global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey
-        content_length = int(self.headers['content-length'])
-        body = self.rfile.read(content_length)
+        contlenstr = self.headers['content-length']
+        content_length = 0
+        body = None
+        if contlenstr:
+            content_length = int(contlenstr)
+            body = self.rfile.read(content_length)
         self.path = self.path.rstrip('/')
         response_body = None
         response_code = 200
@@ -1293,7 +1297,13 @@ Enter Prompt:<br>
                     genparams = json.loads(body)
                 except Exception as e:
                     utfprint("Body Err: " + str(body))
-                    return self.send_response(503)
+                    self.send_response(500)
+                    self.end_headers(content_type='application/json')
+                    self.wfile.write(json.dumps({"detail": {
+                    "msg": "Error parsing input.",
+                    "type": "bad_input",
+                    }}).encode())
+                    return
 
                 is_quiet = args.quiet
                 if (args.debugmode != -1 and not is_quiet) or args.debugmode >= 1:
