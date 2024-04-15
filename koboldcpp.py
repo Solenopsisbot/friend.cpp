@@ -1374,9 +1374,18 @@ Enter Prompt:<br>
             self.send_header('content-type', content_type)
         return super(ServerRequestHandler, self).end_headers()
 
+def is_port_in_use(portNum):
+    try:
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex(('localhost', portNum)) == 0
+    except Exception as ex:
+        return True
 
 def RunServerMultiThreaded(addr, port, embedded_kailite = None, embedded_kcpp_docs = None):
     global exitcounter, sslvalid
+    if is_port_in_use(port):
+        print(f"Warning: Port {port} already appears to be in use by another program.")
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     if args.ssl and sslvalid:
