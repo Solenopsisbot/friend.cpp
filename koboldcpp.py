@@ -2764,7 +2764,10 @@ def delete_old_pyinstaller():
                 kobold_itemcheck1 = os.path.join(absdirpath, 'koboldcpp_default.dll')
                 kobold_itemcheck2 = os.path.join(absdirpath, 'koboldcpp_default.so')
                 kobold_itemcheck3 = os.path.join(absdirpath, 'klite.embd')
-                if os.path.exists(kobold_itemcheck1) or os.path.exists(kobold_itemcheck2) or os.path.exists(kobold_itemcheck3):
+                kobold_itemcheck4 = os.path.join(absdirpath, 'cublasLt64_11.dll')
+                kobold_itemcheck5 = os.path.join(absdirpath, 'cublas64_11.dll')
+                kobold_itemcheck6 = os.path.join(absdirpath, 'clblast.dll')
+                if os.path.exists(kobold_itemcheck1) or os.path.exists(kobold_itemcheck2) or os.path.exists(kobold_itemcheck3) or (os.path.exists(kobold_itemcheck4) and os.path.exists(kobold_itemcheck5) and os.path.exists(kobold_itemcheck6)):
                     try:
                         shutil.rmtree(absdirpath)
                         print(f"Deleted orphaned pyinstaller dir: {absdirpath}")

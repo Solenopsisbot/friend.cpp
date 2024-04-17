@@ -53,16 +53,17 @@ jobs:
           mv bin/Release/koboldcpp_cublas.dll ../koboldcpp_cublas.dll
           cd ..
 
-      # - name: Download CuBLAS Libraries
-      #   run: |
-      #     curl -L https://github.com/LostRuins/koboldcpp/releases/download/cuda11_cublas_libraries/cublas64_11.dll --output cublas64_11.dll
-      #     curl -L https://github.com/LostRuins/koboldcpp/releases/download/cuda11_cublas_libraries/cublasLt64_11.dll --output cublasLt64_11.dll
-      #     ls
-      - name: Copy CuBLAS Libraries
+      # note: The libraries that come from the github cuda directory seem to be larger, so they are not recommended
+      - name: Download CuBLAS Libraries
         run: |
-          copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\bin\cublasLt64_11.dll" .
-          copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\bin\cublas64_11.dll" .
+          curl -L https://github.com/LostRuins/koboldcpp/releases/download/cuda11_cublas_libraries/cublas64_11.dll --output cublas64_11.dll
+          curl -L https://github.com/LostRuins/koboldcpp/releases/download/cuda11_cublas_libraries/cublasLt64_11.dll --output cublasLt64_11.dll
           ls
+      # - name: Copy CuBLAS Libraries
+      #   run: |
+      #     copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\bin\cublasLt64_11.dll" .
+      #     copy "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.4\bin\cublas64_11.dll" .
+      #     ls
 
       - name: Package PyInstallers
         id: make_pyinstaller
