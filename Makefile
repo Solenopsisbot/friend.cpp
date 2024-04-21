@@ -62,7 +62,8 @@ endif
 CUBLASLD_FLAGS =
 CUBLAS_OBJS =
 
-OBJS_FULL += ggml-alloc.o ggml-backend.o ggml-quants.o unicode.o unicode-data.o sgemm.o llava.o llavaclip.o common.o grammar-parser.o
+OBJS_PARTIAL += ggml-alloc.o ggml-backend.o ggml-quants.o unicode.o unicode-data.o sgemm.o common.o grammar-parser.o
+OBJS_FULL += $(OBJS_PARTIAL) llava.o llavaclip.o
 OBJS_SIMPLE += ggml-alloc.o ggml-backend.o ggml-quants_noavx2.o unicode.o unicode-data.o sgemm_noavx2.o llava.o llavaclip.o common.o grammar-parser.o
 OBJS_FAILSAFE += ggml-alloc.o ggml-backend.o ggml-quants_failsafe.o unicode.o unicode-data.o sgemm_failsafe.o llava.o llavaclip.o common.o grammar-parser.o
 
@@ -527,7 +528,7 @@ clean:
 main: examples/main/main.cpp common/sampling.cpp build-info.h ggml.o llama.o console.o $(OBJS_FULL) $(OBJS)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 	@echo '====  Run ./main -h for help.  ===='
-sdmain: otherarch/sdcpp/util.cpp otherarch/sdcpp/main.cpp otherarch/sdcpp/stable-diffusion.cpp otherarch/sdcpp/upscaler.cpp otherarch/sdcpp/model.cpp otherarch/sdcpp/thirdparty/zip.c build-info.h ggml.o llama.o console.o $(OBJS_FULL) $(OBJS)
+sdmain: otherarch/sdcpp/util.cpp otherarch/sdcpp/main.cpp otherarch/sdcpp/stable-diffusion.cpp otherarch/sdcpp/upscaler.cpp otherarch/sdcpp/model.cpp otherarch/sdcpp/thirdparty/zip.c build-info.h ggml.o llama.o console.o $(OBJS_PARTIAL) $(OBJS)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 imatrix: examples/imatrix/imatrix.cpp common/sampling.cpp build-info.h ggml.o llama.o console.o $(OBJS_FULL) $(OBJS)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
@@ -626,7 +627,7 @@ quantize_neox: otherarch/tools/neox_quantize.cpp otherarch/tools/common-ggml.cpp
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
 quantize_mpt: otherarch/tools/mpt_quantize.cpp otherarch/tools/common-ggml.cpp ggml_v3.o ggml.o llama.o $(OBJS_FULL)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
-quantize_clip: examples/llava/clip.cpp examples/llava/clip.h examples/llava/quantclip.cpp ggml_v3.o ggml.o llama.o $(OBJS_FULL)
+quantize_clip: examples/llava/clip.cpp examples/llava/clip.h examples/llava/quantclip.cpp ggml_v3.o ggml.o llama.o $(OBJS_PARTIAL)
 	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
 
 #window simple clinfo
