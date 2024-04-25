@@ -1876,6 +1876,14 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     std::fill(last_n_tokens.begin(), last_n_tokens.end(), 0);
     n_past = 0;
 
+    if (debugmode==1)
+    {
+        std::string outstr = "";
+        printf("\n\n[Debug: Dump Raw Input Tokens, format: %d]\n", file_format);
+        outstr += get_tok_vec_str(embd_inp);
+        printf("%s\n", RemoveBell(outstr).c_str());
+    }
+
     bool is_mamba = (file_format == FileFormat::GGUF_GENERIC && file_format_meta.model_architecture==GGUFArch::ARCH_MAMBA);
 
     if (file_format == FileFormat::RWKV_1 || file_format==FileFormat::RWKV_2 || is_mamba)
@@ -2011,7 +2019,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     if (debugmode==1)
     {
         std::string outstr = "";
-        printf("\n[Debug: Dump Input Tokens, format: %d]\n", file_format);
+        printf("\n[Debug: Dump Forwarded Input Tokens, format: %d]\n", file_format);
         outstr += get_tok_vec_str(embd_inp);
         outstr += "\n\n[Debug: n_past="+std::to_string(n_past)+" Context Size = " + std::to_string(current_context_tokens.size()) + "]\n";
         outstr += get_tok_vec_str(current_context_tokens);
