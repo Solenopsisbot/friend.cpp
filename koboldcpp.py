@@ -1593,15 +1593,15 @@ def show_new_gui():
 
     tabcontent = {}
     lib_option_pairs = [
-        (lib_openblas, "Use OpenBLAS"),
+        (lib_default, "Use CPU"),
         (lib_clblast, "Use CLBlast"),
         (lib_cublas, "Use CuBLAS"),
         (lib_hipblas, "Use hipBLAS (ROCm)"),
         (lib_vulkan, "Use Vulkan"),
-        (lib_default, "Use No BLAS"),
+        (lib_openblas, "Use OpenBLAS (Deprecated)"),
         (lib_clblast_noavx2, "CLBlast NoAVX2 (Old CPU)"),
         (lib_vulkan_noavx2, "Vulkan NoAVX2 (Old CPU)"),
-        (lib_noavx2, "NoAVX2 Mode (Old CPU)"),
+        (lib_noavx2, "CPU NoAVX2 (Old CPU)"),
         (lib_failsafe, "Failsafe Mode (Old CPU)")]
     openblas_option, clblast_option, cublas_option, hipblas_option, vulkan_option, default_option, clblast_noavx2_option, vulkan_noavx2_option, noavx2_option, failsafe_option = (opt if file_exists(lib) or (os.name == 'nt' and file_exists(opt + ".dll")) else None for lib, opt in lib_option_pairs)
     # slider data
@@ -1613,7 +1613,7 @@ def show_new_gui():
 
     if not any(runopts):
         exitcounter = 999
-        show_gui_msgbox("No Backends Available!","KoboldCPP couldn't locate any backends to use (i.e Default, OpenBLAS, CLBlast, CuBLAS).\n\nTo use the program, please run the 'make' command from the directory.")
+        show_gui_msgbox("No Backends Available!","KoboldCPP couldn't locate any backends to use (i.e CPU, CLBlast, CuBLAS).\n\nTo use the program, please run the 'make' command from the directory.")
         time.sleep(3)
         sys.exit(2)
 
@@ -1990,7 +1990,7 @@ def show_new_gui():
 
 
     # presets selector
-    makelabel(quick_tab, "Presets:", 1,0,"Select a backend to use.\nOpenBLAS and NoBLAS runs purely on CPU only.\nCuBLAS runs on Nvidia GPUs, and is much faster.\nCLBlast works on all GPUs but is somewhat slower.\nNoAVX2 and Failsafe modes support older PCs.")
+    makelabel(quick_tab, "Presets:", 1,0,"Select a backend to use.\nCPU runs purely on CPU only.\nCuBLAS runs on Nvidia GPUs, and is much faster.\nCLBlast works on all GPUs but is somewhat slower.\nNoAVX2 and Failsafe modes support older PCs.")
 
     runoptbox = ctk.CTkComboBox(quick_tab, values=runopts, width=180,variable=runopts_var, state="readonly")
     runoptbox.grid(row=1, column=1,padx=8, stick="nw")
@@ -2029,7 +2029,7 @@ def show_new_gui():
     hardware_tab = tabcontent["Hardware"]
 
     # presets selector
-    makelabel(hardware_tab, "Presets:", 1,0,"Select a backend to use.\nOpenBLAS and NoBLAS runs purely on CPU only.\nCuBLAS runs on Nvidia GPUs, and is much faster.\nCLBlast works on all GPUs but is somewhat slower.\nNoAVX2 and Failsafe modes support older PCs.")
+    makelabel(hardware_tab, "Presets:", 1,0,"Select a backend to use.\nCPU runs purely on CPU only.\nCuBLAS runs on Nvidia GPUs, and is much faster.\nCLBlast works on all GPUs but is somewhat slower.\nNoAVX2 and Failsafe modes support older PCs.")
     runoptbox = ctk.CTkComboBox(hardware_tab, values=runopts,  width=180,variable=runopts_var, state="readonly")
     runoptbox.grid(row=1, column=1,padx=8, stick="nw")
     runoptbox.set(runopts[0]) # Set to first available option
@@ -2206,9 +2206,9 @@ def show_new_gui():
                 args.noavx2 = True
         if gpulayers_var.get():
             args.gpulayers = int(gpulayers_var.get())
-        if runopts_var.get()=="Use No BLAS":
+        if runopts_var.get()=="Use CPU":
             args.noblas = True
-        if runopts_var.get()=="NoAVX2 Mode (Old CPU)":
+        if runopts_var.get()=="CPU NoAVX2 (Old CPU)":
             args.noavx2 = True
         if runopts_var.get()=="Failsafe Mode (Old CPU)":
             args.noavx2 = True
@@ -3257,7 +3257,7 @@ if __name__ == '__main__':
     compatgroup.add_argument("--usecublas", help="Use CuBLAS for GPU Acceleration. Requires CUDA. Select lowvram to not allocate VRAM scratch buffer. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs. For hipBLAS binaries, please check YellowRoseCx rocm fork.", nargs='*',metavar=('[lowvram|normal] [main GPU ID] [mmq] [rowsplit]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'mmq', 'rowsplit'])
     compatgroup.add_argument("--usevulkan", help="Use Vulkan for GPU Acceleration. Can optionally specify GPU Device ID (e.g. --usevulkan 0).", metavar=('[Device ID]'), nargs='*', type=int, default=None)
     compatgroup.add_argument("--useclblast", help="Use CLBlast for GPU Acceleration. Must specify exactly 2 arguments, platform ID and device ID (e.g. --useclblast 1 0).", type=int, choices=range(0,9), nargs=2)
-    compatgroup.add_argument("--noblas", help="Do not use OpenBLAS for accelerated prompt ingestion", action='store_true')
+    compatgroup.add_argument("--noblas", help="((THIS COMMAND IS DEPRECATED AND WILL BE REMOVED SOON))", action='store_true')
     parser.add_argument("--gpulayers", help="Set number of layers to offload to GPU when using GPU. Requires GPU.",metavar=('[GPU layers]'), nargs='?', const=1, type=int, default=0)
     parser.add_argument("--tensor_split", help="For CUDA and Vulkan only, ratio to split tensors across multiple GPUs, space-separated list of proportions, e.g. 7 3", metavar=('[Ratios]'), type=float, nargs='+')
     parser.add_argument("--contextsize", help="Controls the memory allocated for maximum context size, only change if you need more RAM for big contexts. (default 2048). Supported values are [256,512,1024,2048,3072,4096,6144,8192,12288,16384,24576,32768,49152,65536,98304,131072]. IF YOU USE ANYTHING ELSE YOU ARE ON YOUR OWN.",metavar=('[256,512,1024,2048,3072,4096,6144,8192,12288,16384,24576,32768,49152,65536,98304,131072]'), type=check_range(int,256,262144), default=2048)
