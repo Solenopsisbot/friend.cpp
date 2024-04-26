@@ -53,14 +53,15 @@ when you can't use the precompiled binary directly, we provide an automated buil
 
 ## OSX and Linux Manual Compiling
 - Otherwise, you will have to compile your binaries from source. A makefile is provided, simply run `make`.
+- If you want you can also link your own install of OpenBLAS manually with `make LLAMA_OPENBLAS=1`
 - If you want you can also link your own install of CLBlast manually with `make LLAMA_CLBLAST=1`, for this you will need to obtain and link OpenCL and CLBlast libraries.
-  - For Arch Linux: Install `cblas` and `clblast`.
-  - For Debian: Install `libclblast-dev`.
+  - For Arch Linux: Install `cblas` `openblas` and `clblast`.
+  - For Debian: Install `libclblast-dev` and `libopenblas-dev`.
 - You can attempt a CuBLAS build with `LLAMA_CUBLAS=1`. You will need CUDA Toolkit installed. Some have also reported success with the CMake file, though that is more for windows.
-- For a full featured build (all backends), do `make LLAMA_CLBLAST=1 LLAMA_CUBLAS=1 LLAMA_VULKAN=1`
+- For a full featured build (all backends), do `make LLAMA_OPENBLAS=1 LLAMA_CLBLAST=1 LLAMA_CUBLAS=1 LLAMA_VULKAN=1`
 - After all binaries are built, you can run the python script with the command `koboldcpp.py [ggml_model.bin] [port]`
 
-- Note: OpenBLAS backend is now deprecated and will be removed, as pure CPU is now almost always faster.
+- Note: Many OSX users have found that the using Accelerate is actually faster than OpenBLAS. To try, you may wish to run with `--noblas` and compare speeds.
 
 ### Arch Linux Packages
 There are 4 community made AUR packages (Maintained by @AlpinDale) available: [CPU-only](https://aur.archlinux.org/packages/koboldcpp-cpu), [CLBlast](https://aur.archlinux.org/packages/koboldcpp-clblast), [CUBLAS](https://aur.archlinux.org/packages/koboldcpp-cuda), and [HIPBLAS](https://aur.archlinux.org/packages/koboldcpp-hipblas). They are, respectively, for users with no GPU, users with a GPU (vendor-agnostic), users with NVIDIA GPUs, and users with a supported AMD GPU.
@@ -88,12 +89,12 @@ You can then run koboldcpp anywhere from the terminal by running `koboldcpp` to 
   - If you want to generate the .exe file, make sure you have the python module PyInstaller installed with pip ('pip install PyInstaller').
   - Run the script make_pyinstaller.bat at a regular terminal (or Windows Explorer).
   - The koboldcpp.exe file will be at your dist folder.
-- If you wish to use your own version of the additional Windows libraries (OpenCL, CLBlast), you can do it with:
+- If you wish to use your own version of the additional Windows libraries (OpenCL, CLBlast and OpenBLAS), you can do it with:
   - OpenCL - tested with https://github.com/KhronosGroup/OpenCL-SDK . If you wish to compile it, follow the repository instructions. You will need vcpkg.
   - CLBlast - tested with https://github.com/CNugteren/CLBlast . If you wish to compile it you will need to reference the OpenCL files. It will only generate the ".lib" file if you compile using MSVC.
-  - Move the respective .lib files to the /lib folder of your project, overwriting the older files.
-  - Also, replace the existing versions of the corresponding .dll files located in the project directory root
-  - Make the KoboldCPP project using the instructions above.
+  - OpenBLAS - tested with https://github.com/xianyi/OpenBLAS .
+  - Move the respectives .lib files to the /lib folder of your project, overwriting the older files.
+  - Also, replace the existing versions of the corresponding .dll files located in the project directory root (e.g. libopenblas.dll).
   - You can attempt a CuBLAS build with using the provided CMake file with visual studio. If you use the CMake file to build, copy the `koboldcpp_cublas.dll` generated into the same directory as the `koboldcpp.py` file. If you are bundling executables, you may need to include CUDA dynamic libraries (such as `cublasLt64_11.dll` and `cublas64_11.dll`) in order for the executable to work correctly on a different PC.
   - Make the KoboldCPP project using the instructions above.
 
@@ -127,7 +128,7 @@ You can then run koboldcpp anywhere from the terminal by running `koboldcpp` to 
 
 ## Considerations
 - For Windows: No installation, single file executable, (It Just Works)
-- Since v1.0.6, required libopenblas, however, it was later removed.
+- Since v1.0.6, requires libopenblas, the prebuilt windows binaries are included in this repo. If not found, it will fall back to a mode without BLAS.
 - Since v1.15, requires CLBlast if enabled, the prebuilt windows binaries are included in this repo. If not found, it will fall back to a mode without CLBlast.
 - Since v1.33, you can set the context size to be above what the model supports officially. It does increases perplexity but should still work well below 4096 even on untuned models. (For GPT-NeoX, GPT-J, and LLAMA models) Customize this with `--ropeconfig`.
 - Since v1.42, supports GGUF models for LLAMA and Falcon
@@ -141,7 +142,7 @@ You can then run koboldcpp anywhere from the terminal by running `koboldcpp` to 
 - The other files are also under the AGPL v3.0 License unless otherwise stated
 
 ## Notes
-- Generation delay scales linearly with original prompt length. If CLBlast is enabled then prompt ingestion becomes a few times faster. This is automatic on windows, but will require linking on OSX and Linux. Set `--gpulayers` + `--useclblast` or `--usecublas`.
+- Generation delay scales linearly with original prompt length. If OpenBLAS is enabled then prompt ingestion becomes about 2-3x faster. This is automatic on windows, but will require linking on OSX and Linux. CLBlast speeds this up even further, and `--gpulayers` + `--useclblast` or `--usecublas` more so.
 - I have heard of someone claiming a false AV positive report. The exe is a simple pyinstaller bundle that includes the necessary python scripts and dlls to run. If this still concerns you, you might wish to rebuild everything from source code using the makefile, and you can rebuild the exe yourself with pyinstaller by using `make_pyinstaller.bat`
 - API documentation available at `/api` and https://lite.koboldai.net/koboldcpp_api
 - Supported GGML models (Includes backward compatibility for older versions/legacy GGML models, though some newer features might be unavailable):
