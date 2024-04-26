@@ -1584,6 +1584,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         printf("\nWarning: KCPP text generation not initialized!\n");
         output.text = nullptr;
         output.status = 0;
+        output.stopreason = stop_reason::INVALID;
         generation_finished = true;
         return output;
     }
@@ -2125,6 +2126,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 fprintf(stderr, "\nFailed to predict at %d! Check your context buffer sizes!\n",n_past);
                 output.text = nullptr;
                 output.status = 0;
+                output.stopreason = stop_reason::INVALID;
                 generation_finished = true;
                 return output;
             }
@@ -2334,6 +2336,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                                 fprintf(stderr, "\nFailed to eval llava image at %d!\n",n_past);
                                 output.text = nullptr;
                                 output.status = 0;
+                                output.stopreason = stop_reason::INVALID;
                                 generation_finished = true;
                                 return output;
                             }
@@ -2344,6 +2347,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                             fprintf(stderr, "\nLLAVA image tokens mismatch at %d! (%d vs %d tokens)\n",n_past,llavatokenscounted,llavatokensevaled);
                             output.text = nullptr;
                             output.status = 0;
+                            output.stopreason = stop_reason::INVALID;
                             generation_finished = true;
                             return output;
                         }
@@ -2381,6 +2385,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     printf("\nCtxLimit: %d/%d, Process:%.2fs (%.1fms/T = %.2fT/s), Generate:%.2fs (%.1fms/T = %.2fT/s), Total:%.2fs (%.2fT/s)",(int)current_context_tokens.size(),(int)nctx, time1, pt1, ts1, time2, pt2, ts2, (time1 + time2), tokens_per_second);
     fflush(stdout);
     output.status = 1;
+    output.stopreason = last_stop_reason;
     generation_finished = true;
     last_eval_time = pt2;
     last_process_time = pt1;

@@ -97,6 +97,7 @@ struct generation_inputs
 struct generation_outputs
 {
     int status = -1;
+    int stopreason = stop_reason::INVALID;
     const char * text; //response will now be stored in c++ allocated memory
 };
 struct token_count_outputs
