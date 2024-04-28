@@ -658,6 +658,7 @@ start_time = time.time()
 last_req_time = time.time()
 last_non_horde_req_time = time.time()
 currfinishreason = "null"
+using_gui_launcher = False
 
 def transform_genparams(genparams, api_format):
     #alias all nonstandard alternative names for rep pen.
@@ -1499,6 +1500,9 @@ def show_new_gui():
     from tkinter.filedialog import askopenfilename
     from tkinter.filedialog import asksaveasfile
 
+    global using_gui_launcher
+    using_gui_launcher = True
+
     # if args received, launch
     if len(sys.argv) != 1:
         import tkinter as tk
@@ -1946,6 +1950,10 @@ def show_new_gui():
         else:
             smartcontextbox.grid_forget()
 
+    def guibench():
+        args.benchmark = "stdout"
+        launchbrowser.set(0)
+        guilaunch()
 
     def changerunmode(a,b,c):
         global runmode_untouched
@@ -2086,6 +2094,8 @@ def show_new_gui():
     makeslider(hardware_tab, "BLAS Batch Size:", blasbatchsize_text, blas_size_var, 0, 7, 16, set=5,tooltip="How many tokens to process at once per batch.\nLarger values use more memory.")
     # force version
     makelabelentry(hardware_tab, "Force Version:" , version_var, 100, 50,"If the autodetected version is wrong, you can change it here.\nLeave as 0 for default.")
+    ctk.CTkButton(hardware_tab , text = "Run Benchmark", command = guibench ).grid(row=110,column=0, stick="se", padx= 0, pady=2)
+
 
     runopts_var.trace('w', changerunmode)
     changerunmode(1,1,1)
@@ -2173,7 +2183,6 @@ def show_new_gui():
     makecheckbox(images_tab, "Quick Mode (Low Quality)", sd_quick_var, 4,tooltiptxt="Force optimal generation settings for speed.")
     makelabelentry(images_tab, "Image threads:" , sd_threads_var, 6, 50,"How many threads to use during image generation.\nIf left blank, uses same value as threads.")
     makecheckbox(images_tab, "Compress Weights (Saves Memory)", sd_quant_var, 8,tooltiptxt="Quantizes the SD model weights to save memory. May degrade quality.")
-
 
     # launch
     def guilaunch():
@@ -3218,6 +3227,11 @@ def main(launch_args,start_server=True):
     else:
         # Flush stdout for previous win32 issue so the client can see output.
         print(f"Server was not started, main function complete. Idling.", flush=True)
+        global using_gui_launcher
+        if using_gui_launcher:
+            print("===")
+            print("Press a key to exit", flush=True)
+            input()
 
 def run_in_queue(launch_args, input_queue, output_queue):
     main(launch_args, start_server=False)
