@@ -64,23 +64,7 @@ when you can't use the precompiled binary directly, we provide an automated buil
 - Note: Many OSX users have found that the using Accelerate is actually faster than OpenBLAS. To try, you may wish to run with `--noblas` and compare speeds.
 
 ### Arch Linux Packages
-There are 4 community made AUR packages (Maintained by @AlpinDale) available: [CPU-only](https://aur.archlinux.org/packages/koboldcpp-cpu), [CLBlast](https://aur.archlinux.org/packages/koboldcpp-clblast), [CUBLAS](https://aur.archlinux.org/packages/koboldcpp-cuda), and [HIPBLAS](https://aur.archlinux.org/packages/koboldcpp-hipblas). They are, respectively, for users with no GPU, users with a GPU (vendor-agnostic), users with NVIDIA GPUs, and users with a supported AMD GPU.
-
-The recommended installation method is through an AUR helper such as [paru](https://aur.archlinux.org/packages/paru) or [yay](https://aur.archlinux.org/packages/yay):
-
-```sh
-paru -S koboldcpp-cpu
-```
-
-Alternatively, you can manually install, though it's not recommended (since the build depends on [customtkinter](https://aur.archlinux.org/packages/customtkinter)):
-
-```sh
-git clone https://aur.archlinux.org/koboldcpp-cpu.git && cd koboldcpp-cpu
-
-makepkg -si
-```
-
-You can then run koboldcpp anywhere from the terminal by running `koboldcpp` to spawn the GUI, or `koboldcpp --help` to view the list of commands for commandline execution (in case the GUI does not work).
+There are some community made AUR packages (Maintained by @AlpinDale) available: [CUBLAS](https://aur.archlinux.org/packages/koboldcpp-cuda), and [HIPBLAS](https://aur.archlinux.org/packages/koboldcpp-hipblas). They are intended for users with NVIDIA GPUs, and users with a supported AMD GPU. Note that these packages may be outdated, and it's probably better to use official KoboldCpp binaries.
 
 ## Compiling on Windows
 - You're encouraged to use the .exe released, but if you want to compile your binaries from source at Windows, the easiest way is:
