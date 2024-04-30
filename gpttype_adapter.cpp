@@ -177,7 +177,7 @@ static void TokenizeString(const std::string & str_to_tokenize, std::vector<int>
         }
         else
         {
-            output_tokens = ::llama_tokenize(llama_ctx_v4, str_to_tokenize, true, true);
+            output_tokens = ::llama_tokenize(llama_ctx_v4, str_to_tokenize, add_bos, true);
             if(add_bos)
             {
                 llama_token bostoadd = llama_token_bos(&(llama_ctx_v4->model));
@@ -256,6 +256,15 @@ static int GetEosID(FileFormat file_format, int32_t n_vocab)
     }
     return eosID;
 }
+static int GetEotID(FileFormat file_format)
+{
+    if(file_format == FileFormat::GGUF_GENERIC)
+    {
+        return llama_token_eot(&(llama_ctx_v4->model));
+    }
+    return -1;
+}
+
 static float LowestLogit(const std::vector<float> & logits)
 {
     int topid = std::min_element(logits.begin(), logits.end()) - logits.begin();
@@ -484,6 +493,7 @@ void sample_grammar(FileFormat file_format, int32_t n_vocab, llama_token_data_ar
     }
 
     const llama_token eos = GetEosID(file_format,n_vocab);
+    const llama_token eot = GetEotID(file_format);
 
     std::vector<std::pair<std::vector<uint32_t>, llama_partial_utf8>> candidates_decoded;
     std::vector<llama_grammar_candidate>                              candidates_grammar;
@@ -491,7 +501,7 @@ void sample_grammar(FileFormat file_format, int32_t n_vocab, llama_token_data_ar
     for (size_t i = 0; i < candidates->size; ++i) {
         const llama_token id    = candidates->data[i].id;
         const std::string piece = FileFormatTokenizeID(id,file_format);
-        if (id == eos) {
+        if (id == eos || (id==eot && id!=-1)) {
             if (!allow_eos) {
                 candidates->data[i].logit = -INFINITY;
             }
@@ -602,7 +612,7 @@ int mirostat, float mirostat_tau, float mirostat_eta, const std::vector<samplers
 
 static void grammar_accept_token(FileFormat file_format, int32_t n_vocab, struct llama_grammar * grammar, llama_token token)
 {
-    if (token == GetEosID(file_format,n_vocab)) {
+    if (token == GetEosID(file_format,n_vocab) || (token!=-1 && token == GetEotID(file_format))) {
         for (const auto & stack : grammar->stacks) {
             if (stack.empty()) {
                 return;
@@ -1601,12 +1611,16 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             //if it tokenizes to a single token, AND it's a single non-printable special token, use that
             std::vector<int> tmp;
             TokenizeString(stopper, tmp, file_format, false);
+            printf("\nPRINT TOK VEC:");
+            print_tok_vec_str(tmp);
             if(tmp.size()==1) //tokenizes to exactly 1 special token
             {
                 int specialid = tmp[0];
                 std::string tokenizedstr = FileFormatTokenizeID(specialid, file_format);
+                printf("\nTest %s",tokenizedstr.c_str());
                 if(tokenizedstr=="") //must NOT have a text representation
                 {
+                    printf("\nAdded %d",specialid);
                     special_stop_sequence.push_back(specialid);
                 }
             }
@@ -2167,6 +2181,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             }
 
             unsigned int eosID = GetEosID(file_format, n_vocab);
+            unsigned int eotID = GetEotID(file_format);
             float * logitsPtr;
             float lowestLogit = 0;
             int btsize = banned_token_ids.size();
@@ -2196,6 +2211,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             {
                 // set the logit of the eos token to very low to avoid sampling it
                 logitsPtr[eosID] = lowestLogit;
+                if(eotID!=-1)
+                {
+                    logitsPtr[eotID] = lowestLogit;
+                }
             }
             if(btsize>0)
             {
@@ -2257,7 +2276,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 printf("]\n");
             }
 
-            if(inputs.allow_eos_token && id==eosID)
+            if(inputs.allow_eos_token && (id==eosID || (id==eotID && id!=-1)))
             {
                 stopper_unused_tokens = remaining_tokens;
                 if(allow_regular_prints)
