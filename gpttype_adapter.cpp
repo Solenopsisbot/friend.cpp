@@ -785,11 +785,11 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     {
         kcpp_params->n_ubatch = (kcpp_params->n_batch>1024?1024:kcpp_params->n_batch);
     }
+    kcpp_params->flash_attn = inputs.flash_attention;
     modelname = kcpp_params->model = inputs.model_filename;
     useSmartContext = inputs.use_smartcontext;
     useContextShift = inputs.use_contextshift;
     debugmode = inputs.debugmode;
-
 
     auto clamped_max_context_length = inputs.max_context_length;
 
@@ -1089,6 +1089,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             }
         }
 
+        llama_ctx_params.flash_attn = kcpp_params->flash_attn;
         llama_ctx_v4 = llama_new_context_with_model(llamamodel, llama_ctx_params);
 
         if (llama_ctx_v4 == NULL)
