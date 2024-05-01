@@ -1524,8 +1524,8 @@ def show_new_gui():
 
     import customtkinter as ctk
     nextstate = 0 #0=exit, 1=launch
-    original_windowwidth = 540
-    original_windowheight = 500
+    original_windowwidth = 550
+    original_windowheight = 550
     windowwidth = original_windowwidth
     windowheight = original_windowheight
     ctk.set_appearance_mode("dark")
