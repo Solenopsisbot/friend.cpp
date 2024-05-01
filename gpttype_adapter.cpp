@@ -1612,16 +1612,13 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             //if it tokenizes to a single token, AND it's a single non-printable special token, use that
             std::vector<int> tmp;
             TokenizeString(stopper, tmp, file_format, false);
-            printf("\nPRINT TOK VEC:");
-            print_tok_vec_str(tmp);
+
             if(tmp.size()==1) //tokenizes to exactly 1 special token
             {
                 int specialid = tmp[0];
                 std::string tokenizedstr = FileFormatTokenizeID(specialid, file_format);
-                printf("\nTest %s",tokenizedstr.c_str());
                 if(tokenizedstr=="") //must NOT have a text representation
                 {
-                    printf("\nAdded %d",specialid);
                     special_stop_sequence.push_back(specialid);
                 }
             }
