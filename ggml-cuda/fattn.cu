@@ -11,29 +11,6 @@
 #define HALF_MAX_HALF         __float2half(65504.0f/2) // Use neg. of this instead of -INFINITY to initialize KQ max vals to avoid NaN upon subtraction.
 #define SOFTMAX_FTZ_THRESHOLD -20.0f                   // Softmax exp. of values smaller than this are flushed to zero to avoid NaNs.
 
-//hack: polyfill hmax and hmax2 for older cuda version
-#if CUDART_VERSION < CUDART_HMAX
-__device__ __inline__ __half hmax(const __half a, const __half b) {
-    const float fa = __half2float(a);
-    const float fb = __half2float(b);
-    return __float2half(fa > fb ? fa : fb);
-}
-__device__ __inline__ __half2 hmax2(const __half2 a, const __half2 b) {
-    __half2 result;
-    result.x = hmax(a.x, b.x);
-    result.y = hmax(a.y, b.y);
-    return result;
-}
-#else
-__device__ __inline__ __half hmax(const __half a, const __half b) {
-    return __hmax(a,b);
-}
-__device__ __inline__ __half2 hmax2(const __half2 a, const __half2 b) {
-    return __hmax2(a,b);
-}
-#endif
-
-
 template<int D, int parallel_blocks> // D == head size
 __launch_bounds__(((D + WARP_SIZE - 1) / WARP_SIZE)*WARP_SIZE, 1)
 static __global__ void flash_attn_vec_ext_f16(
