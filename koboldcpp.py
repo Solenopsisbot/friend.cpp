@@ -1502,9 +1502,6 @@ def show_new_gui():
     from tkinter.filedialog import askopenfilename
     from tkinter.filedialog import asksaveasfile
 
-    global using_gui_launcher
-    using_gui_launcher = True
-
     # if args received, launch
     if len(sys.argv) != 1:
         import tkinter as tk
@@ -1568,6 +1565,8 @@ def show_new_gui():
                     ctk.set_widget_scaling(smallratio)
 
     root.bind("<Configure>", on_resize)
+    global using_gui_launcher
+    using_gui_launcher = True
 
     # trigger empty tooltip then remove it
     def show_tooltip(event, tooltip_text=None):
@@ -3217,7 +3216,11 @@ def main(launch_args,start_server=True):
                     file.write(f"\n{datetimestamp},{libname},{args.gpulayers},{benchmodel},{benchmaxctx},{benchlen},{t_pp:.2f},{s_pp:.2f},{t_gen:.2f},{s_gen:.2f},{(t_pp+t_gen):.2f},{resultok},{result}")
             except Exception as e:
                 print(f"Error writing benchmark to file: {e}")
-
+        global using_gui_launcher
+        if using_gui_launcher and not save_to_file:
+            print("===")
+            print("Press ENTER key to exit.", flush=True)
+            input()
 
     if start_server:
         if args.remotetunnel:
@@ -3229,11 +3232,6 @@ def main(launch_args,start_server=True):
     else:
         # Flush stdout for previous win32 issue so the client can see output.
         print(f"Server was not started, main function complete. Idling.", flush=True)
-        global using_gui_launcher
-        if using_gui_launcher:
-            print("===")
-            print("Press a key to exit", flush=True)
-            input()
 
 def run_in_queue(launch_args, input_queue, output_queue):
     main(launch_args, start_server=False)
