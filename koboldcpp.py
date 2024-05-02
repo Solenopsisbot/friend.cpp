@@ -3197,7 +3197,7 @@ def main(launch_args,start_server=True):
         s_pp = float(benchmaxctx-benchlen)/t_pp
         s_gen = float(benchlen)/t_gen
         datetimestamp = datetime.now(timezone.utc)
-        print(f"\nBenchmark Completed - Results:\n======")
+        print(f"\nBenchmark Completed - v{KcppVersion} Results:\n======")
         print(f"Timestamp: {datetimestamp}")
         print(f"Backend: {libname}")
         print(f"Layers: {args.gpulayers}")
