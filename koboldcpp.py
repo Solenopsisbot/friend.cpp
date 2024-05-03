@@ -1508,7 +1508,8 @@ def show_new_gui():
         root = tk.Tk() #we dont want the useless window to be visible, but we want it in taskbar
         root.attributes("-alpha", 0)
         args.model_param = askopenfilename(title="Select ggml model .bin or .gguf file or .kcpps config")
-        root.destroy()
+        root.withdraw()
+        root.quit()
         if args.model_param and args.model_param!="" and args.model_param.lower().endswith('.kcpps'):
             loadconfigfile(args.model_param)
         if not args.model_param and not args.sdconfig:
@@ -2190,7 +2191,8 @@ def show_new_gui():
             model_var.set(tmp)
         nonlocal nextstate
         nextstate = 1
-        root.destroy()
+        root.withdraw()
+        root.quit()
         pass
 
     def export_vars():
@@ -2496,7 +2498,8 @@ def show_gui_msgbox(title,message):
         root = tk.Tk()
         root.attributes("-alpha", 0)
         messagebox.showerror(title=title, message=message)
-        root.destroy()
+        root.withdraw()
+        root.quit()
     except Exception as ex2:
         pass
 
@@ -3181,8 +3184,8 @@ def main(launch_args,start_server=True):
         else:
             print(f"\nRunning benchmark (Not Saved)...")
 
-        benchprompt = "11111111"
-        for i in range(0,10): #generate massive prompt
+        benchprompt = "1111111111111111"
+        for i in range(0,12): #generate massive prompt
             benchprompt += benchprompt
         genout = generate(benchprompt,memory="",images=[],max_length=benchlen,max_context_length=benchmaxctx,temperature=0.1,top_k=1,rep_pen=1,use_default_badwordsids=True)
         result = genout['text']
