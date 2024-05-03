@@ -90,8 +90,8 @@ There are some community made AUR packages (Maintained by @AlpinDale) available:
 - Clone the repo `git clone https://github.com/LostRuins/koboldcpp.git`
 - Navigate to the koboldcpp folder `cd koboldcpp`
 - Build the project `make`
-- Grab a small GGUF model, such as `wget https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q2_K.gguf`
-- Start the python server `python koboldcpp.py --model phi-2.Q2_K.gguf`
+- Grab a small GGUF model, such as `wget https://huggingface.co/concedo/KobbleTinyV2-1.1B-GGUF/resolve/main/KobbleTiny-Q4_K.gguf`
+- Start the python server `python koboldcpp.py --model KobbleTiny-Q4_K.gguf`
 - Connect to `http://localhost:5001` on your mobile browser
 - If you encounter any errors, make sure your packages are up-to-date with `pkg up`
 - GPU acceleration for Termux may be possible but I have not explored it. If you find a good cross-device solution, do share or PR it.
