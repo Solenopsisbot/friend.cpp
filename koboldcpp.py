@@ -748,7 +748,7 @@ def transform_genparams(genparams, api_format):
     elif api_format==5:
         firstimg = genparams.get('image', "")
         genparams["images"] = [firstimg]
-        genparams["max_length"] = 32
+        genparams["max_length"] = 42
         genparams["prompt"] = "### Instruction: In one sentence, write a descriptive caption for this image.\n### Response:"
 
     return genparams
