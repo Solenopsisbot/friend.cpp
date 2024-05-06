@@ -82,6 +82,7 @@ class generation_inputs(ctypes.Structure):
                 ("sampler_order", ctypes.c_int * sampler_order_max),
                 ("sampler_len", ctypes.c_int),
                 ("allow_eos_token", ctypes.c_bool),
+                ("bypass_eos_token", ctypes.c_bool),
                 ("render_special", ctypes.c_bool),
                 ("stop_sequence", ctypes.c_char_p * stop_token_max),
                 ("stream_sse", ctypes.c_bool),
@@ -396,7 +397,7 @@ def load_model(model_filename):
     ret = handle.load_model(inputs)
     return ret
 
-def generate(prompt, memory="", images=[], max_length=32, max_context_length=512, temperature=0.7, top_k=100, top_a=0.0, top_p=0.92, min_p=0.0, typical_p=1.0, tfs=1.0, rep_pen=1.0, rep_pen_range=128, presence_penalty=0.0, mirostat=0, mirostat_tau=5.0, mirostat_eta=0.1, sampler_order=[6,0,1,3,4,2,5], seed=-1, stop_sequence=[], use_default_badwordsids=False, stream_sse=False, grammar='', grammar_retain_state=False, genkey='', trimstop=False, quiet=False, dynatemp_range=0.0, dynatemp_exponent=1.0, smoothing_factor=0.0, logit_biases={}, render_special=False, banned_tokens=[]):
+def generate(prompt, memory="", images=[], max_length=32, max_context_length=512, temperature=0.7, top_k=100, top_a=0.0, top_p=0.92, min_p=0.0, typical_p=1.0, tfs=1.0, rep_pen=1.0, rep_pen_range=128, presence_penalty=0.0, mirostat=0, mirostat_tau=5.0, mirostat_eta=0.1, sampler_order=[6,0,1,3,4,2,5], seed=-1, stop_sequence=[], use_default_badwordsids=False, stream_sse=False, grammar='', grammar_retain_state=False, genkey='', trimstop=False, quiet=False, dynatemp_range=0.0, dynatemp_exponent=1.0, smoothing_factor=0.0, logit_biases={}, render_special=False, banned_tokens=[], bypass_eos_token=False):
     global maxctx, args, currentusergenkey, totalgens, pendingabortkey
     inputs = generation_inputs()
     inputs.prompt = prompt.encode("UTF-8")
@@ -435,6 +436,7 @@ def generate(prompt, memory="", images=[], max_length=32, max_context_length=512
     inputs.grammar = grammar.encode("UTF-8")
     inputs.grammar_retain_state = grammar_retain_state
     inputs.allow_eos_token = not use_default_badwordsids
+    inputs.bypass_eos_token = bypass_eos_token
     inputs.render_special = render_special
     if mirostat in (1, 2):
         inputs.mirostat = mirostat
@@ -823,6 +825,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 logit_biases=genparams.get('logit_bias', {}),
                 render_special=genparams.get('render_special', False),
                 banned_tokens=genparams.get('banned_tokens', []),
+                bypass_eos_token=genparams.get('bypass_eos', False),
                 )
 
         genout = {"text":"","status":-1,"stopreason":-1}

@@ -7,7 +7,7 @@ Just copy this single static HTML file anywhere and open it in a browser, or fro
 Please go to https://github.com/LostRuins/lite.koboldai.net for updates on Kobold Lite.
 If you are submitting a pull request for Lite, PLEASE use the above repo, not the KoboldCpp one.
 Kobold Lite is under the AGPL v3.0 License unless otherwise exempted. Please do not remove this line.
-Current version: 137
+Current version: 138
 -Concedo
 -->
 
@@ -2081,6 +2081,7 @@ Current version: 137
 		const instructmodels1 = ["gpt4all","supercot","hermes","airoboros","chrono","wizard","mantis","vicuna","manticore","alpaca","myth","xwin","spicyboros","mlewd","mxlewd","mistral","maid","mixtral","estopia","fighter","fimbul"];
 		const instructmodels2 = ["erebus","nerys","nerybus","janeway","opt","llama"];
 		const defaultmodels = ["gpt4all","supercot","hermes","airoboros","chrono","wizard","mantis","vicuna","manticore","alpaca","myth","xwin","spicyboros","mlewd","mxlewd","llama","mistral","maid","mixtral","estopia","fighter","fimbul"];
+		const ignoredmodels = ["tinyllama"];
 
 		const instructstartplaceholder = "\n{{[INPUT]}}\n";
 		const instructendplaceholder = "\n{{[OUTPUT]}}\n";
@@ -3705,7 +3706,7 @@ Current version: 137
 		trimsentences: true, //trim to last punctuation
 		trimwhitespace: false, //trim trailing whitespace
 		compressnewlines: false, //compress multiple newlines
-		eos_ban_mode: 0, //allow the EOS token when using locally 0=auto,1=unban,2=ban
+		eos_ban_mode: 0, //allow the EOS token when using locally 0=auto,1=unban,2=ban,3=bypass
 		opmode: 4, //what mode are we in? 1=story, 2=adventure, 3=chat, 4=instruct
 		adventure_is_action: false, //in adventure mode, determine story or action
 		adventure_context_mod: true, //extra injection for adventure mode
@@ -3995,10 +3996,21 @@ Current version: 137
 				if (mdls.length > 0)
 				{
 					for (var i = 0; i < mdls.length; ++i) {
-						for (var j = 0; j < defaultmodels.length; ++j) {
-							if (mdls[i].name.trim().toLowerCase().includes(defaultmodels[j].trim().toLowerCase()) ||
-								defaultmodels[j].trim().toLowerCase().includes(mdls[i].name.trim().toLowerCase())) {
-								selected_models.push(mdls[i]);
+						let skipignored = false;
+						for(let k=0;k<ignoredmodels.length;++k)
+						{
+							if(mdls[i].name.trim().toLowerCase().includes(ignoredmodels[k].trim().toLowerCase()))
+							{
+								skipignored = true;
+								break;
+							}
+						}
+						if (!skipignored) {
+							for (var j = 0; j < defaultmodels.length; ++j) {
+								if (mdls[i].name.trim().toLowerCase().includes(defaultmodels[j].trim().toLowerCase()) ||
+									defaultmodels[j].trim().toLowerCase().includes(mdls[i].name.trim().toLowerCase())) {
+									selected_models.push(mdls[i]);
+								}
 							}
 						}
 					}
@@ -4665,6 +4677,11 @@ Current version: 137
 	}
 
 	function determine_if_ban_eos(input_was_empty) {
+		if(localsettings.eos_ban_mode == 3)
+		{
+			return false;
+		}
+
 		if (localsettings.eos_ban_mode == 0) {
 			if (localsettings.opmode == 1) {
 				return true; //story mode always ban
@@ -4826,10 +4843,21 @@ Current version: 137
 					selected_models = [];
 
 					for (var i = 0; i < mdls.length; ++i) {
-						for (var j = 0; j < defaultmodels.length; ++j) {
-							if (mdls[i].name.trim().toLowerCase().includes(defaultmodels[j].trim().toLowerCase()) ||
-								defaultmodels[j].trim().toLowerCase().includes(mdls[i].name.trim().toLowerCase())) {
-								selected_models.push(mdls[i]);
+						let skipignored = false;
+						for(let k=0;k<ignoredmodels.length;++k)
+						{
+							if(mdls[i].name.trim().toLowerCase().includes(ignoredmodels[k].trim().toLowerCase()))
+							{
+								skipignored = true;
+								break;
+							}
+						}
+						if (!skipignored) {
+							for (var j = 0; j < defaultmodels.length; ++j) {
+								if (mdls[i].name.trim().toLowerCase().includes(defaultmodels[j].trim().toLowerCase()) ||
+									defaultmodels[j].trim().toLowerCase().includes(mdls[i].name.trim().toLowerCase())) {
+									selected_models.push(mdls[i]);
+								}
 							}
 						}
 					}
@@ -4887,10 +4915,22 @@ Current version: 137
 							if(selected_models.length==0)
 							{
 								for (var i = 0; i < mdls.length; ++i) {
-									for (var j = 0; j < defaultmodels.length; ++j) {
-										if (mdls[i].name.trim().toLowerCase().includes(defaultmodels[j].trim().toLowerCase()) ||
-											defaultmodels[j].trim().toLowerCase().includes(mdls[i].name.trim().toLowerCase())) {
-											selected_models.push(mdls[i]);
+									let skipignored = false;
+									for(let k=0;k<ignoredmodels.length;++k)
+									{
+										if(mdls[i].name.trim().toLowerCase().includes(ignoredmodels[k].trim().toLowerCase()))
+										{
+											skipignored = true;
+											break;
+										}
+									}
+									if(!skipignored)
+									{
+										for (var j = 0; j < defaultmodels.length; ++j) {
+											if (mdls[i].name.trim().toLowerCase().includes(defaultmodels[j].trim().toLowerCase()) ||
+												defaultmodels[j].trim().toLowerCase().includes(mdls[i].name.trim().toLowerCase())) {
+												selected_models.push(mdls[i]);
+											}
 										}
 									}
 								}
@@ -6291,25 +6331,32 @@ Current version: 137
 						let nsfwmodels = ["erebus","shinen","horni","litv2","lit-6b","spicyboros","mlewd","mxlewd"];
 						selected_models = [];
 						for (var i = 0; i < mdls.length; ++i) {
-							for (var j = 0; j < temp_scenario.prefmodel1.length; ++j) {
-								if (mdls[i].name.trim().toLowerCase().includes(temp_scenario.prefmodel1[j].trim().toLowerCase()) ||
-									temp_scenario.prefmodel1[j].trim().toLowerCase().includes(mdls[i].name.trim().toLowerCase())) {
+							let skipignored = false;
+							for(let k=0;k<ignoredmodels.length;++k)
+							{
+								if(mdls[i].name.trim().toLowerCase().includes(ignoredmodels[k].trim().toLowerCase()))
+								{
+									skipignored = true;
+									break;
+								}
+							}
+							if (!skipignored) {
+								for (var j = 0; j < temp_scenario.prefmodel1.length; ++j) {
+									if (mdls[i].name.trim().toLowerCase().includes(temp_scenario.prefmodel1[j].trim().toLowerCase()) ||
+										temp_scenario.prefmodel1[j].trim().toLowerCase().includes(mdls[i].name.trim().toLowerCase())) {
 
-									let allow = true;
-									if (!scenarioallownsfw)
-									{
-										for(var k=0;k<nsfwmodels.length;++k)
-										{
-											if(mdls[i].name.trim().toLowerCase().includes(nsfwmodels[k]))
-											{
-												allow = false;
-												break;
+										let allow = true;
+										if (!scenarioallownsfw) {
+											for (var k = 0; k < nsfwmodels.length; ++k) {
+												if (mdls[i].name.trim().toLowerCase().includes(nsfwmodels[k])) {
+													allow = false;
+													break;
+												}
 											}
 										}
-									}
-									if(allow)
-									{
-										selected_models.push(mdls[i]);
+										if (allow) {
+											selected_models.push(mdls[i]);
+										}
 									}
 								}
 							}
@@ -6320,24 +6367,31 @@ Current version: 137
 						{
 							for (var i = 0; i < mdls.length; ++i)
 							{
-								for (var j = 0; j < temp_scenario.prefmodel2.length; ++j) {
-									if (mdls[i].name.trim().toLowerCase().includes(temp_scenario.prefmodel2[j].trim().toLowerCase()) ||
-										temp_scenario.prefmodel2[j].trim().toLowerCase().includes(mdls[i].name.trim().toLowerCase())) {
-										let allow = true;
-										if (!scenarioallownsfw)
-										{
-											for(var k=0;k<nsfwmodels.length;++k)
-											{
-												if(mdls[i].name.trim().toLowerCase().includes(nsfwmodels[k]))
-												{
-													allow = false;
-													break;
+								let skipignored = false;
+								for(let k=0;k<ignoredmodels.length;++k)
+								{
+									if(mdls[i].name.trim().toLowerCase().includes(ignoredmodels[k].trim().toLowerCase()))
+									{
+										skipignored = true;
+										break;
+									}
+								}
+								if (!skipignored) {
+									for (var j = 0; j < temp_scenario.prefmodel2.length; ++j) {
+										if (mdls[i].name.trim().toLowerCase().includes(temp_scenario.prefmodel2[j].trim().toLowerCase()) ||
+											temp_scenario.prefmodel2[j].trim().toLowerCase().includes(mdls[i].name.trim().toLowerCase())) {
+											let allow = true;
+											if (!scenarioallownsfw) {
+												for (var k = 0; k < nsfwmodels.length; ++k) {
+													if (mdls[i].name.trim().toLowerCase().includes(nsfwmodels[k])) {
+														allow = false;
+														break;
+													}
 												}
 											}
-										}
-										if(allow)
-										{
-											selected_models.push(mdls[i]);
+											if (allow) {
+												selected_models.push(mdls[i]);
+											}
 										}
 									}
 								}
@@ -10588,6 +10642,10 @@ Current version: 137
 				if (kobold_endpoint_version && kobold_endpoint_version != "" && compare_version_str(kobold_endpoint_version, "1.2.4") >= 0)
 				{
 					submit_payload.use_default_badwordsids = determine_if_ban_eos(input_was_empty);
+					if(is_using_kcpp_with_added_memory())
+					{
+						submit_payload.bypass_eos = (localsettings.eos_ban_mode == 3?true:false);
+					}
 				}
 
 				let pseudostreaming = (determine_streaming_type()==1);
@@ -15447,6 +15505,7 @@ Current version: 137
 								<option value="0">Auto</option>
 								<option value="1">Unban</option>
 								<option value="2">Ban</option>
+								<option value="3">Bypass</option>
 							</select>
 						</div>
 						<div class="settinglabel">
