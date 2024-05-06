@@ -3175,6 +3175,8 @@ def main(launch_args,start_server=True):
     if not args.remotetunnel:
         print(f"Starting Kobold API on port {args.port} at {epurl}/api/")
         print(f"Starting OpenAI Compatible API on port {args.port} at {epurl}/v1/")
+        if args.sdconfig:
+            print(f"StableUI is available at {epurl}/sdui/")
 
     if args.launch:
         try:
