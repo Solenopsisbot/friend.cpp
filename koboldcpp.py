@@ -519,12 +519,20 @@ def sd_load_model(model_filename):
     inputs.model_filename = model_filename.encode("UTF-8")
     thds = args.threads
     quant = 0
-    if len(args.sdconfig) > 2:
+    #todo: remove this
+    if args.sdconfig and len(args.sdconfig) > 2:
         sdt = int(args.sdconfig[2])
         if sdt > 0:
             thds = sdt
-    if len(args.sdconfig) > 3:
+    if args.sdconfig and len(args.sdconfig) > 3:
         quant = (1 if args.sdconfig[3]=="quant" else 0)
+
+    if args.sdthreads and args.sdthreads > 0:
+        sdt = int(args.sdthreads)
+        if sdt > 0:
+            thds = sdt
+    if args.sdquant:
+        quant = 1
 
     inputs.threads = thds
     inputs.quant = quant
@@ -556,7 +564,7 @@ def sd_generate(genparams):
     width = (64 if width < 64 else width)
     height = (64 if height < 64 else height)
 
-    #quick mode
+    #todo: remove this
     if args.sdconfig and len(args.sdconfig)>1:
         if args.sdconfig[1]=="quick":
             cfg_scale = 1
@@ -568,6 +576,12 @@ def sd_generate(genparams):
             sample_steps = (40 if sample_steps > 40 else sample_steps)
             reslimit = 512
             print("\nSDConfig: Clamped Mode (For Shared Use). Step counts and resolution are clamped.")
+
+    if args.sdclamped:
+        sample_steps = (40 if sample_steps > 40 else sample_steps)
+        reslimit = 512
+        print("\nSDConfig: Clamped Mode (For Shared Use). Step counts and resolution are clamped.")
+
 
     biggest = max(width,height)
     if biggest > reslimit:
@@ -1526,7 +1540,7 @@ def show_new_gui():
         root.quit()
         if args.model_param and args.model_param!="" and args.model_param.lower().endswith('.kcpps'):
             loadconfigfile(args.model_param)
-        if not args.model_param and not args.sdconfig:
+        if not args.model_param and not args.sdconfig and not args.sdmodel:
             global exitcounter
             exitcounter = 999
             print("\nNo ggml model or kcpps file was selected. Exiting.")
@@ -1707,7 +1721,7 @@ def show_new_gui():
     password_var = ctk.StringVar()
 
     sd_model_var = ctk.StringVar()
-    sd_quick_var = ctk.IntVar(value=0)
+    sd_clamped_var = ctk.IntVar(value=0)
     sd_threads_var = ctk.StringVar(value=str(default_threads))
     sd_quant_var = ctk.IntVar(value=0)
 
@@ -1795,7 +1809,6 @@ def show_new_gui():
         return
 
     # decided to follow yellowrose's and kalomaze's suggestions, this function will automatically try to determine GPU identifiers
-    # todo: autopick the right number of layers when a model is selected.
     # run in new thread so it doesnt block. does not return anything, instead overwrites specific values and redraws GUI
     def auto_gpu_heuristics():
         from subprocess import run, CalledProcessError
@@ -2196,7 +2209,7 @@ def show_new_gui():
     # Image Gen Tab
     images_tab = tabcontent["Image Gen"]
     makefileentry(images_tab, "Stable Diffusion Model (safetensors/gguf):", "Select Stable Diffusion Model File", sd_model_var, 1, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")], tooltiptxt="Select a .safetensors or .gguf Stable Diffusion model file on disk to be loaded.")
-    makecheckbox(images_tab, "Quick Mode (Low Quality)", sd_quick_var, 4,tooltiptxt="Force optimal generation settings for speed.")
+    makecheckbox(images_tab, "Clamped Mode (Limit Resolution)", sd_clamped_var, 4,tooltiptxt="Limit generation steps and resolution settings for shared use.")
     makelabelentry(images_tab, "Image threads:" , sd_threads_var, 6, 50,"How many threads to use during image generation.\nIf left blank, uses same value as threads.")
     makecheckbox(images_tab, "Compress Weights (Saves Memory)", sd_quant_var, 8,tooltiptxt="Quantizes the SD model weights to save memory. May degrade quality.")
 
@@ -2287,12 +2300,21 @@ def show_new_gui():
         args.host = host_var.get()
         args.multiuser = multiuser_var.get()
 
-        if horde_apikey_var.get()=="" or horde_workername_var.get()=="":
-            args.hordeconfig = None if usehorde_var.get() == 0 else [horde_name_var.get(), horde_gen_var.get(), horde_context_var.get()]
-        else:
-            args.hordeconfig = None if usehorde_var.get() == 0 else [horde_name_var.get(), horde_gen_var.get(), horde_context_var.get(), horde_apikey_var.get(), horde_workername_var.get()]
+        if usehorde_var.get() != 0:
+            args.hordemodelname = horde_name_var.get()
+            args.hordegenlen = int(horde_gen_var.get())
+            args.hordemaxctx = int(horde_context_var.get())
+            if horde_apikey_var.get()!="" and horde_workername_var.get()!="":
+                args.hordekey = horde_apikey_var.get()
+                args.hordeworkername = horde_workername_var.get()
 
-        args.sdconfig = None if sd_model_var.get() == "" else [sd_model_var.get(), ("quick" if sd_quick_var.get()==1 else "normal"),(int(threads_var.get()) if sd_threads_var.get()=="" else int(sd_threads_var.get())),("quant" if sd_quant_var.get()==1 else "noquant")]
+        if sd_model_var.get() != "":
+            args.sdmodel = sd_model_var.get()
+        if sd_clamped_var.get()==1:
+            args.sdclamped = True
+        args.sdthreads = (0 if sd_threads_var.get()=="" else int(sd_threads_var.get()))
+        if sd_quant_var.get()==1:
+            args.sdquant = True
 
     def import_vars(dict):
         if "threads" in dict:
@@ -2424,6 +2446,7 @@ def show_new_gui():
         if "multiuser" in dict:
             multiuser_var.set(dict["multiuser"])
 
+        # todo: remove these
         if "hordeconfig" in dict and dict["hordeconfig"] and len(dict["hordeconfig"]) > 1:
             horde_name_var.set(dict["hordeconfig"][0])
             horde_gen_var.set(dict["hordeconfig"][1])
@@ -2432,15 +2455,36 @@ def show_new_gui():
                 horde_apikey_var.set(dict["hordeconfig"][3])
                 horde_workername_var.set(dict["hordeconfig"][4])
                 usehorde_var.set("1")
-
         if "sdconfig" in dict and dict["sdconfig"] and len(dict["sdconfig"]) > 0:
             sd_model_var.set(dict["sdconfig"][0])
             if len(dict["sdconfig"]) > 1:
-                sd_quick_var.set(1 if dict["sdconfig"][1]=="quick" else 0)
+                sd_clamped_var.set(1 if dict["sdconfig"][1]=="quick" else 0)
             if len(dict["sdconfig"]) > 2:
                 sd_threads_var.set(str(dict["sdconfig"][2]))
             if len(dict["sdconfig"]) > 3:
                 sd_quant_var.set(str(dict["sdconfig"][3])=="quant")
+
+        if "hordemodelname" in dict and dict["hordemodelname"]:
+            horde_name_var.set(dict["hordemodelname"])
+        if "hordemaxctx" in dict and dict["hordemaxctx"]:
+            horde_context_var.set(dict["hordemaxctx"])
+        if "hordegenlen" in dict and dict["hordegenlen"]:
+            horde_gen_var.set(dict["hordegenlen"])
+        if "hordekey" in dict and dict["hordekey"]:
+            horde_apikey_var.set(dict["hordekey"])
+            usehorde_var.set(1)
+        if "hordeworkername" in dict and dict["hordeworkername"]:
+            horde_workername_var.set(dict["hordeworkername"])
+
+        if "sdmodel" in dict and dict["sdmodel"]:
+            sd_model_var.set(dict["sdmodel"])
+        if "sdclamped" in dict and dict["sdclamped"]:
+            sd_clamped_var.set(1)
+        if "sdthreads" in dict and dict["sdthreads"]:
+            sd_threads_var.set(str(dict["sdthreads"]))
+        if "sdquant" in dict and dict["sdquant"]:
+            sd_quant_var.set(1)
+
 
     def save_config():
         file_type = [("KoboldCpp Settings", "*.kcpps")]
@@ -2500,7 +2544,7 @@ def show_new_gui():
         # processing vars
         export_vars()
 
-        if not args.model_param and not args.sdconfig:
+        if not args.model_param and not args.sdconfig and not args.sdmodel:
             exitcounter = 999
             print("\nNo text or image model file was selected. Exiting.")
             time.sleep(3)
@@ -2930,7 +2974,7 @@ def main(launch_args,start_server=True):
     if not args.model_param:
         args.model_param = args.model
 
-    if not args.model_param and not args.sdconfig:
+    if not args.model_param and not args.sdconfig and not args.sdmodel:
         #give them a chance to pick a file
         print("For command line arguments, please refer to --help")
         print("***")
@@ -2974,8 +3018,9 @@ def main(launch_args,start_server=True):
         newmdldisplayname = os.path.splitext(newmdldisplayname)[0]
         friendlymodelname = "koboldcpp/" + sanitize_string(newmdldisplayname)
 
+    # todo: remove these
+    global maxhordelen, maxhordectx, showdebug
     if args.hordeconfig and args.hordeconfig[0]!="":
-        global maxhordelen, maxhordectx, showdebug
         friendlymodelname = args.hordeconfig[0]
         if args.debugmode == 1:
             friendlymodelname = "debug-" + friendlymodelname
@@ -2985,6 +3030,19 @@ def main(launch_args,start_server=True):
             maxhordelen = int(args.hordeconfig[1])
         if len(args.hordeconfig) > 2:
             maxhordectx = int(args.hordeconfig[2])
+        if args.debugmode == 0:
+            args.debugmode = -1
+
+    if args.hordemodelname and args.hordemodelname!="":
+        friendlymodelname = args.hordemodelname
+        if args.debugmode == 1:
+            friendlymodelname = "debug-" + friendlymodelname
+        if not friendlymodelname.startswith("koboldcpp/"):
+            friendlymodelname = "koboldcpp/" + friendlymodelname
+        if args.hordegenlen and args.hordegenlen > 0:
+            maxhordelen = int(args.hordegenlen)
+        if args.hordemaxctx and args.hordemaxctx > 0:
+            maxhordectx = int(args.hordemaxctx)
         if args.debugmode == 0:
             args.debugmode = -1
 
@@ -3102,6 +3160,7 @@ def main(launch_args,start_server=True):
             sys.exit(3)
 
     #handle loading image model
+    #todo: remove this
     if args.sdconfig:
         imgmodel = args.sdconfig[0]
         if not imgmodel or not os.path.exists(imgmodel):
@@ -3109,6 +3168,31 @@ def main(launch_args,start_server=True):
             if args.ignoremissing:
                 print(f"Ignoring missing sdconfig img model file...")
                 args.sdconfig = None
+            else:
+                exitcounter = 999
+                time.sleep(3)
+                sys.exit(2)
+        else:
+            imgmodel = os.path.abspath(imgmodel)
+            fullsdmodelpath = imgmodel
+            friendlysdmodelname = os.path.basename(imgmodel)
+            friendlysdmodelname = os.path.splitext(friendlysdmodelname)[0]
+            friendlysdmodelname = sanitize_string(friendlysdmodelname)
+            loadok = sd_load_model(imgmodel)
+            print("Load Image Model OK: " + str(loadok))
+            if not loadok:
+                exitcounter = 999
+                print("Could not load image model: " + imgmodel)
+                time.sleep(3)
+                sys.exit(3)
+
+    if args.sdmodel and args.sdmodel!="":
+        imgmodel = args.sdmodel
+        if not imgmodel or not os.path.exists(imgmodel):
+            print(f"Cannot find image model file: {imgmodel}")
+            if args.ignoremissing:
+                print(f"Ignoring missing img model file...")
+                args.sdmodel = None
             else:
                 exitcounter = 999
                 time.sleep(3)
@@ -3177,7 +3261,7 @@ def main(launch_args,start_server=True):
     if not args.remotetunnel:
         print(f"Starting Kobold API on port {args.port} at {epurl}/api/")
         print(f"Starting OpenAI Compatible API on port {args.port} at {epurl}/v1/")
-        if args.sdconfig:
+        if args.sdconfig or args.sdmodel:
             print(f"StableUI is available at {epurl}/sdui/")
 
     if args.launch:
@@ -3187,8 +3271,13 @@ def main(launch_args,start_server=True):
         except:
             print("--launch was set, but could not launch web browser automatically.")
 
+    #todo: remove this
     if args.hordeconfig and len(args.hordeconfig)>4:
         horde_thread = threading.Thread(target=run_horde_worker,args=(args,args.hordeconfig[3],args.hordeconfig[4]))
+        horde_thread.daemon = True
+        horde_thread.start()
+    elif args.hordekey and args.hordekey!="" and args.hordeworkername and args.hordeworkername!="":
+        horde_thread = threading.Thread(target=run_horde_worker,args=(args,args.hordekey,args.hordeworkername))
         horde_thread.daemon = True
         horde_thread.start()
 
@@ -3258,6 +3347,14 @@ def main(launch_args,start_server=True):
             input()
 
     if start_server:
+        #todo: remove in next version
+        if args.hordeconfig or args.sdconfig:
+            print("\n=== !!! IMPORTANT WARNING !!! ===")
+            print("The multi-positional flags --hordeconfig and --sdconfig have been DEPRECATED and will be REMOVED soon.")
+            print("Please use the single-parameter flags instead, e.g. --hordekey, --hordemodelname, --hordemaxctx, --sdmodel, --sdquant, etc")
+            print("For more information on these flags, please check --help")
+            print("=== !!! IMPORTANT WARNING !!! ===")
+
         if args.remotetunnel:
             setuptunnel()
         else:
@@ -3341,7 +3438,6 @@ if __name__ == '__main__':
     parser.add_argument("--noavx2", help="Do not use AVX2 instructions, a slower compatibility mode for older devices.", action='store_true')
     parser.add_argument("--debugmode", help="Shows additional debug info in the terminal.", nargs='?', const=1, type=int, default=0)
     parser.add_argument("--skiplauncher", help="Doesn't display or use the GUI launcher.", action='store_true')
-    parser.add_argument("--hordeconfig", help="Sets the display model name to something else, for easy use on AI Horde. Optional additional parameters set the horde max genlength, max ctxlen, API key and worker name.",metavar=('[hordemodelname]', '[hordegenlength] [hordemaxctx] [hordeapikey] [hordeworkername]'), nargs='+')
     parser.add_argument("--onready", help="An optional shell command to execute after the model has been loaded.", metavar=('[shell command]'), type=str, default="",nargs=1)
     parser.add_argument("--benchmark", help="Do not start server, instead run benchmarks. If filename is provided, appends results to provided file.", metavar=('[filename]'), nargs='?', const="stdout", type=str, default=None)
     parser.add_argument("--multiuser", help="Runs in multiuser mode, which queues incoming requests instead of blocking them.", metavar=('limit'), nargs='?', const=1, type=int, default=0)
@@ -3352,11 +3448,24 @@ if __name__ == '__main__':
     parser.add_argument("--quiet", help="Enable quiet mode, which hides generation inputs and outputs in the terminal. Quiet mode is automatically enabled when running --hordeconfig.", action='store_true')
     parser.add_argument("--ssl", help="Allows all content to be served over SSL instead. A valid UNENCRYPTED SSL cert and key .pem files must be provided", metavar=('[cert_pem]', '[key_pem]'), nargs='+')
     parser.add_argument("--nocertify", help="Allows insecure SSL connections. Use this if you have cert errors and need to bypass certificate restrictions.", action='store_true')
-    parser.add_argument("--sdconfig", help="Specify a stable diffusion safetensors model to enable image generation. If quick is specified, force optimal generation settings for speed.",metavar=('[sd_filename]', '[normal|quick|clamped] [threads] [quant|noquant]'), nargs='+')
     parser.add_argument("--mmproj", help="Select a multimodal projector file for LLaVA.", default="")
     parser.add_argument("--password", help="Enter a password required to use this instance. This key will be required for all text endpoints. Image endpoints are not secured.", default=None)
     parser.add_argument("--ignoremissing", help="Ignores all missing non-essential files, just skipping them instead.", action='store_true')
     parser.add_argument("--chatcompletionsadapter", help="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.", default="")
     parser.add_argument("--flashattention", help="Enables flash attention (Experimental).", action='store_true')
+
+    parser.add_argument("--hordemodelname", help="Sets your AI Horde display model name.", default="")
+    parser.add_argument("--hordeworkername", help="Sets your AI Horde worker name.", default="")
+    parser.add_argument("--hordekey", help="Sets your AI Horde API key.", default="")
+    parser.add_argument("--hordemaxctx", help="Sets the maximum context length your worker will accept from an AI Horde job.", type=int, default=0)
+    parser.add_argument("--hordegenlen", help="Sets the maximum number of tokens your worker will generate from an AI horde job.", type=int, default=0)
+
+    parser.add_argument("--sdmodel", help="Specify a stable diffusion safetensors or gguf model to enable image generation.", default="")
+    parser.add_argument("--sdthreads", help="Use a different number of threads for image generation if specified. Otherwise, has the same value as --threads.", type=int, default=0)
+    parser.add_argument("--sdquant", help="If specified, loads the model quantized to save memory.", action='store_true')
+    parser.add_argument("--sdclamped", help="If specified, limit generation steps and resolution settings for shared use.", action='store_true')
+
+    parser.add_argument("--hordeconfig", help="!!! THIS COMMAND IS DEPRECATED AND WILL BE REMOVED !!!", nargs='+')
+    parser.add_argument("--sdconfig", help="!!! THIS COMMAND IS DEPRECATED AND WILL BE REMOVED !!!", nargs='+')
 
     main(parser.parse_args(),start_server=True)
