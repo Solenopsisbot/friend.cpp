@@ -1183,6 +1183,8 @@ Enter Prompt:<br>
             content_type = 'text/html'
             if embedded_kcpp_sdui is None:
                 response_body = (f"KoboldCpp API is running, but KCPP SDUI is not loaded").encode()
+            elif not args.sdmodel:
+                response_body = (f"No SD model was loaded. You can load one with --sdmodel").encode()
             else:
                 response_body = embedded_kcpp_sdui
 
@@ -2737,7 +2739,7 @@ def check_deprecation_warning():
 
 
 
-def setuptunnel():
+def setuptunnel(has_sd):
     # This script will help setup a cloudflared tunnel for accessing KoboldCpp over the internet
     # It should work out of the box on both linux and windows
     try:
@@ -2769,9 +2771,10 @@ def setuptunnel():
                     found = re.findall(pattern, line)
                     for x in found:
                         tunneloutput = x
-
                         print(f"Your remote Kobold API can be found at {tunneloutput}/api")
                         print(f"Your remote OpenAI Compatible API can be found at {tunneloutput}/v1")
+                        if has_sd:
+                            print(f"StableUI is available at {tunneloutput}/sdui/")
                         print("======\n")
                         print(f"Your remote tunnel is ready, please connect to {tunneloutput}", flush=True)
                         return
@@ -3285,7 +3288,7 @@ def main(launch_args,start_server=True):
     check_deprecation_warning()
     if start_server:
         if args.remotetunnel:
-            setuptunnel()
+            setuptunnel(True if args.sdmodel else False)
         else:
             # Flush stdout for previous win32 issue so the client can see output.
             print(f"======\nPlease connect to custom endpoint at {epurl}", flush=True)
@@ -3384,6 +3387,11 @@ if __name__ == '__main__':
     advparser.add_argument("--flashattention", help="Enables flash attention (Experimental).", action='store_true')
     advparser.add_argument("--forceversion", help="If the model file format detection fails (e.g. rogue modified model) you can set this to override the detected format (enter desired version, e.g. 401 for GPTNeoX-Type2).",metavar=('[version]'), type=int, default=0)
 
+    deprecatedgroup = parser.add_argument_group('Deprecated Commands, DO NOT USE!')
+    deprecatedgroup.add_argument("--smartcontext", help="Command is DEPRECATED and should NOT be used! Instead, use --noshift instead to toggle smartcontext off on old GGML models.", action='store_true')
+    deprecatedgroup.add_argument("--hordeconfig", help="Command is DEPRECATED and should NOT be used! Instead, use non-positional flags --hordemodelname --hordeworkername --hordekey --hordemaxctx --hordegenlen instead.", nargs='+')
+    deprecatedgroup.add_argument("--sdconfig", help="Command is DEPRECATED and should NOT be used! Instead, use non-positional flags --sdmodel --sdthreads --sdquant --sdclamped instead.", nargs='+')
+
     hordeparsergroup = parser.add_argument_group('Horde Worker Commands')
     hordeparsergroup.add_argument("--hordemodelname", metavar=('[name]'), help="Sets your AI Horde display model name.", default="")
     hordeparsergroup.add_argument("--hordeworkername", metavar=('[name]'), help="Sets your AI Horde worker name.", default="")
@@ -3396,10 +3404,5 @@ if __name__ == '__main__':
     sdparsergroup.add_argument("--sdthreads", metavar=('[threads]'), help="Use a different number of threads for image generation if specified. Otherwise, has the same value as --threads.", type=int, default=0)
     sdparsergroup.add_argument("--sdquant", help="If specified, loads the model quantized to save memory.", action='store_true')
     sdparsergroup.add_argument("--sdclamped", help="If specified, limit generation steps and resolution settings for shared use.", action='store_true')
-
-    deprecatedgroup = parser.add_argument_group('Deprecated Commands, DO NOT USE!')
-    deprecatedgroup.add_argument("--smartcontext", help="Command is DEPRECATED and should NOT be used! Instead, use --noshift instead to toggle smartcontext off on old GGML models.", action='store_true')
-    deprecatedgroup.add_argument("--hordeconfig", help="Command is DEPRECATED and should NOT be used! Instead, use non-positional flags --hordemodelname --hordeworkername --hordekey --hordemaxctx --hordegenlen instead.", nargs='+')
-    deprecatedgroup.add_argument("--sdconfig", help="Command is DEPRECATED and should NOT be used! Instead, use non-positional flags --sdmodel --sdthreads --sdquant --sdclamped instead.", nargs='+')
 
     main(parser.parse_args(),start_server=True)
