@@ -521,6 +521,7 @@ def sd_load_model(model_filename):
     quant = 0
     #todo: remove this
     if args.sdconfig and len(args.sdconfig) > 2:
+        show_deprecated_warning()
         sdt = int(args.sdconfig[2])
         if sdt > 0:
             thds = sdt
@@ -566,6 +567,7 @@ def sd_generate(genparams):
 
     #todo: remove this
     if args.sdconfig and len(args.sdconfig)>1:
+        show_deprecated_warning()
         if args.sdconfig[1]=="quick":
             cfg_scale = 1
             sample_steps = 7
@@ -2455,6 +2457,7 @@ def show_new_gui():
                 horde_apikey_var.set(dict["hordeconfig"][3])
                 horde_workername_var.set(dict["hordeconfig"][4])
                 usehorde_var.set("1")
+            show_deprecated_warning()
         if "sdconfig" in dict and dict["sdconfig"] and len(dict["sdconfig"]) > 0:
             sd_model_var.set(dict["sdconfig"][0])
             if len(dict["sdconfig"]) > 1:
@@ -2463,6 +2466,7 @@ def show_new_gui():
                 sd_threads_var.set(str(dict["sdconfig"][2]))
             if len(dict["sdconfig"]) > 3:
                 sd_quant_var.set(str(dict["sdconfig"][3])=="quant")
+            show_deprecated_warning()
 
         if "hordemodelname" in dict and dict["hordemodelname"]:
             horde_name_var.set(dict["hordemodelname"])
@@ -2756,6 +2760,16 @@ def run_horde_worker(args, api_key, worker_name):
     time.sleep(3)
     sys.exit(2)
 
+# todo: remove this
+def show_deprecated_warning():
+    print("\n=== !!! IMPORTANT WARNING !!! ===")
+    print("The flags --smartcontext, --hordeconfig and --sdconfig have been DEPRECATED and will be REMOVED soon.")
+    print("Please use the single-parameter flags instead, e.g. --hordekey, --hordemodelname, --hordemaxctx, --sdmodel, --sdquant, etc")
+    print("SmartContext will only be applied when contextshift is selected on a model that does not support it.")
+    print("For more information on these flags, please check --help")
+    print("If you are using the GUI launcher, simply re-saving your config again will solve this warning.")
+    print("=== !!! IMPORTANT WARNING !!! ===")
+
 def setuptunnel():
     # This script will help setup a cloudflared tunnel for accessing KoboldCpp over the internet
     # It should work out of the box on both linux and windows
@@ -3021,6 +3035,7 @@ def main(launch_args,start_server=True):
     # todo: remove these
     global maxhordelen, maxhordectx, showdebug
     if args.hordeconfig and args.hordeconfig[0]!="":
+        show_deprecated_warning()
         friendlymodelname = args.hordeconfig[0]
         if args.debugmode == 1:
             friendlymodelname = "debug-" + friendlymodelname
@@ -3162,6 +3177,7 @@ def main(launch_args,start_server=True):
     #handle loading image model
     #todo: remove this
     if args.sdconfig:
+        show_deprecated_warning()
         imgmodel = args.sdconfig[0]
         if not imgmodel or not os.path.exists(imgmodel):
             print(f"Cannot find image model file: {imgmodel}")
@@ -3273,6 +3289,7 @@ def main(launch_args,start_server=True):
 
     #todo: remove this
     if args.hordeconfig and len(args.hordeconfig)>4:
+        show_deprecated_warning()
         horde_thread = threading.Thread(target=run_horde_worker,args=(args,args.hordeconfig[3],args.hordeconfig[4]))
         horde_thread.daemon = True
         horde_thread.start()
@@ -3349,11 +3366,7 @@ def main(launch_args,start_server=True):
     if start_server:
         #todo: remove in next version
         if args.hordeconfig or args.sdconfig:
-            print("\n=== !!! IMPORTANT WARNING !!! ===")
-            print("The multi-positional flags --hordeconfig and --sdconfig have been DEPRECATED and will be REMOVED soon.")
-            print("Please use the single-parameter flags instead, e.g. --hordekey, --hordemodelname, --hordemaxctx, --sdmodel, --sdquant, etc")
-            print("For more information on these flags, please check --help")
-            print("=== !!! IMPORTANT WARNING !!! ===")
+            show_deprecated_warning()
 
         if args.remotetunnel:
             setuptunnel()
