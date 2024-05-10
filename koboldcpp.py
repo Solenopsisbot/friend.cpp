@@ -3009,12 +3009,15 @@ def main(launch_args,start_server=True):
             friendlymodelname = "debug-" + friendlymodelname
         if not friendlymodelname.startswith("koboldcpp/"):
             friendlymodelname = "koboldcpp/" + friendlymodelname
-        if args.hordegenlen and args.hordegenlen > 0:
-            maxhordelen = int(args.hordegenlen)
-        if args.hordemaxctx and args.hordemaxctx > 0:
-            maxhordectx = int(args.hordemaxctx)
+
+    if (args.hordemodelname and args.hordemodelname!="") or (args.hordeworkername and args.hordeworkername!="") or (args.hordekey and args.hordekey!=""):
         if args.debugmode == 0:
             args.debugmode = -1
+
+    if args.hordegenlen and args.hordegenlen > 0:
+        maxhordelen = int(args.hordegenlen)
+    if args.hordemaxctx and args.hordemaxctx > 0:
+        maxhordectx = int(args.hordemaxctx)
 
     if args.debugmode != 1:
         showdebug = False
@@ -3215,10 +3218,13 @@ def main(launch_args,start_server=True):
         except:
             print("--launch was set, but could not launch web browser automatically.")
 
-    if args.hordekey and args.hordekey!="" and args.hordemodelname and args.hordemodelname!="" and args.hordeworkername and args.hordeworkername!="":
-        horde_thread = threading.Thread(target=run_horde_worker,args=(args,args.hordekey,args.hordeworkername))
-        horde_thread.daemon = True
-        horde_thread.start()
+    if args.hordekey and args.hordekey!="":
+        if args.hordeworkername and args.hordeworkername!="":
+            horde_thread = threading.Thread(target=run_horde_worker,args=(args,args.hordekey,args.hordeworkername))
+            horde_thread.daemon = True
+            horde_thread.start()
+        else:
+            print("Horde worker could not start. You need to specify a horde worker name with --hordeworkername")
 
     #if post-ready script specified, execute it
     if args.onready:
