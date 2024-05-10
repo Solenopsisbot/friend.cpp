@@ -3293,7 +3293,7 @@ def main(launch_args,start_server=True):
         horde_thread = threading.Thread(target=run_horde_worker,args=(args,args.hordeconfig[3],args.hordeconfig[4]))
         horde_thread.daemon = True
         horde_thread.start()
-    elif args.hordekey and args.hordekey!="" and args.hordeworkername and args.hordeworkername!="":
+    elif args.hordekey and args.hordekey!="" and args.hordemodelname and args.hordemodelname!="" and args.hordeworkername and args.hordeworkername!="":
         horde_thread = threading.Thread(target=run_horde_worker,args=(args,args.hordekey,args.hordeworkername))
         horde_thread.daemon = True
         horde_thread.start()
@@ -3365,7 +3365,7 @@ def main(launch_args,start_server=True):
 
     if start_server:
         #todo: remove in next version
-        if args.hordeconfig or args.sdconfig:
+        if args.hordeconfig or args.sdconfig or args.smartcontext:
             show_deprecated_warning()
 
         if args.remotetunnel:
@@ -3443,7 +3443,6 @@ if __name__ == '__main__':
     parser.add_argument("--blasbatchsize", help="Sets the batch size used in BLAS processing (default 512). Setting it to -1 disables BLAS mode, but keeps other benefits like GPU offload.", type=int,choices=[-1,32,64,128,256,512,1024,2048], default=512)
     parser.add_argument("--blasthreads", help="Use a different number of threads during BLAS if specified. Otherwise, has the same value as --threads",metavar=('[threads]'), type=int, default=0)
     parser.add_argument("--lora", help="LLAMA models only, applies a lora file on top of model. Experimental.", metavar=('[lora_filename]', '[lora_base]'), nargs='+')
-    parser.add_argument("--smartcontext", help="Reserving a portion of context to try processing less frequently.", action='store_true')
     parser.add_argument("--noshift", help="If set, do not attempt to Trim and Shift the GGUF context.", action='store_true')
     parser.add_argument("--forceversion", help="If the model file format detection fails (e.g. rogue modified model) you can set this to override the detected format (enter desired version, e.g. 401 for GPTNeoX-Type2).",metavar=('[version]'), type=int, default=0)
     parser.add_argument("--nommap", help="If set, do not use mmap to load newer models", action='store_true')
@@ -3478,6 +3477,7 @@ if __name__ == '__main__':
     parser.add_argument("--sdquant", help="If specified, loads the model quantized to save memory.", action='store_true')
     parser.add_argument("--sdclamped", help="If specified, limit generation steps and resolution settings for shared use.", action='store_true')
 
+    parser.add_argument("--smartcontext", help="!!! THIS COMMAND IS DEPRECATED AND WILL BE REMOVED !!!", action='store_true')
     parser.add_argument("--hordeconfig", help="!!! THIS COMMAND IS DEPRECATED AND WILL BE REMOVED !!!", nargs='+')
     parser.add_argument("--sdconfig", help="!!! THIS COMMAND IS DEPRECATED AND WILL BE REMOVED !!!", nargs='+')
 
