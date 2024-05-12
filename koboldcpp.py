@@ -1181,7 +1181,7 @@ Enter Prompt:<br>
             else:
                 response_body = embedded_kcpp_docs
 
-        elif self.path=="/sdui":
+        elif self.path.startswith(("/sdui")):
             content_type = 'text/html'
             if embedded_kcpp_sdui is None:
                 response_body = (f"KoboldCpp API is running, but KCPP SDUI is not loaded").encode()
