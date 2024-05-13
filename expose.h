@@ -114,6 +114,10 @@ struct sd_load_model_inputs
     const char * vulkan_info;
     const int threads;
     const int quant = 0;
+    const bool taesd = false;
+    const char * vae_filename;
+    const char * lora_filename;
+    const float lora_multiplier = 1.0f;
     const int debugmode = 0;
 };
 struct sd_generation_inputs
@@ -128,6 +132,7 @@ struct sd_generation_inputs
     const int height;
     const int seed;
     const char * sample_method;
+    const int clip_skip = -1;
     const bool quiet = false;
 };
 struct sd_generation_outputs

@@ -279,6 +279,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     sd_params->width = inputs.width;
     sd_params->height = inputs.height;
     sd_params->strength = inputs.denoising_strength;
+    sd_params->clip_skip = inputs.clip_skip;
     sd_params->mode = (img2img_data==""?SDMode::TXT2IMG:SDMode::IMG2IMG);
 
     //for img2img
