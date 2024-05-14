@@ -109,6 +109,7 @@ struct token_count_outputs
 struct sd_load_model_inputs
 {
     const char * model_filename;
+    const char * executable_path;
     const int clblast_info = 0;
     const int cublas_info = 0;
     const char * vulkan_info;
