@@ -2215,6 +2215,7 @@ def show_new_gui():
     makecheckbox(images_tab, "Clamped Mode (Limit Resolution)", sd_clamped_var, 4,tooltiptxt="Limit generation steps and resolution settings for shared use.")
     makelabelentry(images_tab, "Image Threads:" , sd_threads_var, 6, 50,"How many threads to use during image generation.\nIf left blank, uses same value as threads.")
     makecheckbox(images_tab, "Compress Weights (Saves Memory)", sd_quant_var, 8,tooltiptxt="Quantizes the SD model weights to save memory. May degrade quality.")
+
     makefileentry(images_tab, "Image LoRA:", "Select SD lora file",sd_lora_var, 10 ,filetypes=[("*.safetensors *.gguf", "*.safetensors *.gguf")],tooltiptxt="Select a .safetensors or .gguf SD LoRA model file to be loaded.")
     makelabelentry(images_tab, "Image LoRA Multiplier:" , sd_loramult_var, 12, 50,"What mutiplier value to apply the SD LoRA with.")
 
@@ -3478,11 +3479,12 @@ if __name__ == '__main__':
     sdparsergroup.add_argument("--sdmodel", metavar=('[filename]'), help="Specify a stable diffusion safetensors or gguf model to enable image generation.", default="")
     sdparsergroup.add_argument("--sdthreads", metavar=('[threads]'), help="Use a different number of threads for image generation if specified. Otherwise, has the same value as --threads.", type=int, default=0)
     sdparsergroup.add_argument("--sdquant", help="If specified, loads the model quantized to save memory.", action='store_true')
-    sdparsergroup.add_argument("--sdclamped", help="If specified, limit generation steps and resolution settings for shared use.", action='store_true')
+    sdparsergrouplora = sdparsergroup.add_mutually_exclusive_group()
+    sdparsergrouplora.add_argument("--sdclamped", help="If specified, limit generation steps and resolution settings for shared use.", action='store_true')
     sdparsergroupvae = sdparsergroup.add_mutually_exclusive_group()
     sdparsergroupvae.add_argument("--sdvae", metavar=('[filename]'), help="Specify a stable diffusion safetensors VAE which replaces the one in the model.", default="")
     sdparsergroupvae.add_argument("--sdvaeauto", help="Uses a built-in VAE via TAE SD, which is very fast, and fixed bad VAEs.", action='store_true')
-    sdparsergroup.add_argument("--sdlora", metavar=('[filename]'), help="Specify a stable diffusion LORA safetensors model to be applied.", default="")
+    sdparsergrouplora.add_argument("--sdlora", metavar=('[filename]'), help="Specify a stable diffusion LORA safetensors model to be applied. Cannot be used with quant models.", default="")
     sdparsergroup.add_argument("--sdloramult", metavar=('[amount]'), help="Multiplier for the LORA model to be applied.", type=float, default=1.0)
 
     deprecatedgroup = parser.add_argument_group('Deprecated Commands, DO NOT USE!')
