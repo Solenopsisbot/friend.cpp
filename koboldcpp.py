@@ -1556,7 +1556,6 @@ def show_new_gui():
     root = ctk.CTk()
     root.geometry(str(windowwidth) + "x" + str(windowheight))
     root.title("KoboldCpp v"+KcppVersion)
-    root.resizable(True,True)
 
     gtooltip_box = None
     gtooltip_label = None
@@ -1593,7 +1592,11 @@ def show_new_gui():
                     root.geometry(str(windowwidth) + "x" + str(windowheight) + str(lastpos))
                     ctk.set_widget_scaling(smallratio)
 
-    root.bind("<Configure>", on_resize)
+    if sys.platform=="darwin":
+        root.resizable(False,False)
+    else:
+        root.resizable(True,True)
+        root.bind("<Configure>", on_resize)
     global using_gui_launcher
     using_gui_launcher = True
 
