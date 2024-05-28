@@ -315,6 +315,9 @@ static ggml_fp16_t ggml_table_gelu_f16[1 << 16];
 // precomputed quick gelu table for f16 (128 KB)
 static ggml_fp16_t ggml_table_gelu_quick_f16[1 << 16];
 
+// precomputed silu table for f16 (128 KB)
+static ggml_fp16_t ggml_table_silu_f16[1 << 16];
+
 // precomputed f32 table for f16 (256 KB) (ggml-impl.h)
 float ggml_table_f32_f16[1 << 16];
 
@@ -2457,6 +2460,15 @@ inline static __m128 ggml_v_silu(__m128 x) {
 
 static void ggml_vec_silu_f32(const int n, float * y, const float * x) {
     int i = 0;
+#if TRUE //todo: this reverts a working SILU FOR STABLE DIFFUSION CPP CPU
+    uint16_t t;
+    for (int i = 0; i < n; ++i) {
+        ggml_fp16_t fp16 = GGML_FP32_TO_FP16(x[i]);
+        memcpy(&t, &fp16, sizeof(uint16_t));
+        y[i] = GGML_FP16_TO_FP32(ggml_table_silu_f16[t]);
+    }
+    return;
+#endif
 #if defined(__AVX512F__) && defined(__AVX512DQ__)
     for (; i + 15 < n; i += 16) {
         _mm512_storeu_ps(y + i, ggml_v_silu(_mm512_loadu_ps(x + i)));
@@ -3332,6 +3344,7 @@ struct ggml_context * ggml_init(struct ggml_init_params params) {
                 float f = ggml_table_f32_f16[i] = GGML_COMPUTE_FP16_TO_FP32(u.fp16);
                 ggml_table_gelu_f16[i] = GGML_FP32_TO_FP16(ggml_gelu_f32(f));
                 ggml_table_gelu_quick_f16[i] = GGML_FP32_TO_FP16(ggml_gelu_quick_f32(f));
+                ggml_table_silu_f16[i] = GGML_FP32_TO_FP16(ggml_silu_f32(f));
             }
 
             const uint64_t t_end = ggml_time_us(); UNUSED(t_end);
