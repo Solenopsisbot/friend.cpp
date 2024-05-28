@@ -2076,11 +2076,13 @@ def show_new_gui():
 
 
     # quick boxes
-    quick_boxes = {"Launch Browser": launchbrowser , "Disable MMAP":disablemmap,"Use ContextShift":contextshift,"Remote Tunnel":remotetunnel}
+    quick_boxes = {"Launch Browser": launchbrowser , "Disable MMAP":disablemmap,"Use ContextShift":contextshift,"Remote Tunnel":remotetunnel,"Use FlashAttention":flashattention,"Quiet Mode":quietmode}
     quick_boxes_desc = {"Launch Browser": "Launches your default browser after model loading is complete",
     "Disable MMAP":"Avoids using mmap to load models if enabled",
     "Use ContextShift":"Uses Context Shifting to reduce reprocessing.\nRecommended. Check the wiki for more info.",
-    "Remote Tunnel":"Creates a trycloudflare tunnel.\nAllows you to access koboldcpp from other devices over an internet URL."}
+    "Remote Tunnel":"Creates a trycloudflare tunnel.\nAllows you to access koboldcpp from other devices over an internet URL.",
+    "Use FlashAttention":"Enable flash attention for GGUF models.",
+    "Quiet Mode":"Prevents all generation related terminal output from being displayed."}
     for idx, name, in enumerate(quick_boxes):
         makecheckbox(quick_tab, name, quick_boxes[name], int(idx/2) +20, idx%2,tooltiptxt=quick_boxes_desc[name])
     # context size
