@@ -660,7 +660,7 @@ def whisper_generate(genparams):
     return outstr
 
 def utfprint(str):
-    maxlen = 99999
+    maxlen = 30000
     strlength = len(str)
     if strlength > maxlen: #limit max output len
         str = str[:maxlen] + f"... (+{strlength-maxlen} chars)"
@@ -696,6 +696,7 @@ friendlysdmodelname = "inactive"
 fullsdmodelpath = ""  #if empty, it's not initialized
 mmprojpath = "" #if empty, it's not initialized
 password = "" #if empty, no auth key required
+fullwhispermodelpath = "" #if empty, it's not initialized
 maxctx = 2048
 maxhordectx = 2048
 maxhordelen = 256
@@ -1160,7 +1161,7 @@ Enter Prompt:<br>
 
     def do_GET(self):
         global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
-        global maxctx, maxhordelen, friendlymodelname, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password
+        global maxctx, maxhordelen, friendlymodelname, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath
         self.path = self.path.rstrip('/')
         response_body = None
         content_type = 'application/json'
@@ -1201,7 +1202,8 @@ Enter Prompt:<br>
             has_txt2img = not (friendlysdmodelname=="inactive" or fullsdmodelpath=="")
             has_vision = (mmprojpath!="")
             has_password = (password!="")
-            response_body = (json.dumps({"result":"KoboldCpp","version":KcppVersion, "protected":has_password ,"txt2img":has_txt2img,"vision":has_vision}).encode())
+            has_whisper = (fullwhispermodelpath!="")
+            response_body = (json.dumps({"result":"KoboldCpp","version":KcppVersion, "protected":has_password ,"txt2img":has_txt2img,"vision":has_vision,"transcribe":has_whisper}).encode())
 
         elif self.path.endswith(('/api/extra/perf')):
             global last_req_time, start_time
@@ -1244,7 +1246,6 @@ Enter Prompt:<br>
            response_body = (json.dumps([]).encode())
         elif self.path.endswith('/sdapi/v1/upscalers'):
            response_body = (json.dumps([]).encode())
-
 
         elif self.path=="/api" or self.path=="/docs" or self.path.startswith(('/api/?json=','/api?json=','/docs/?json=','/docs?json=')):
             content_type = 'text/html'
@@ -1389,6 +1390,7 @@ Enter Prompt:<br>
 
             api_format = 0 #1=basic,2=kai,3=oai,4=oai-chat,5=interrogate
             is_imggen = False
+            is_transcribe = False
 
             if self.path.endswith('/request'):
                 api_format = 1
@@ -1421,11 +1423,14 @@ Enter Prompt:<br>
             if self.path.endswith('/sdapi/v1/txt2img') or self.path.endswith('/sdapi/v1/img2img'):
                 is_imggen = True
 
-            if is_imggen or api_format > 0:
+            if self.path.endswith('/api/extra/transcribe'):
+                is_transcribe = True
+
+            if is_imggen or is_transcribe or api_format > 0:
                 global last_req_time
                 last_req_time = time.time()
 
-                if not is_imggen and api_format<5:
+                if not is_imggen and not is_transcribe and api_format<5:
                     if not self.secure_endpoint():
                         return
 
@@ -1484,6 +1489,20 @@ Enter Prompt:<br>
                         if args.debugmode:
                             print(ex)
                         print("Generate Image: The response could not be sent, maybe connection was terminated?")
+                        time.sleep(0.2) #short delay
+                    return
+                elif is_transcribe:
+                    try:
+                        gen = whisper_generate(genparams)
+                        genresp = (json.dumps({"text":gen}).encode())
+                        self.send_response(200)
+                        self.send_header('content-length', str(len(genresp)))
+                        self.end_headers(content_type='application/json')
+                        self.wfile.write(genresp)
+                    except Exception as ex:
+                        if args.debugmode:
+                            print(ex)
+                        print("Transcribe: The response could not be sent, maybe connection was terminated?")
                         time.sleep(0.2) #short delay
                     return
 
@@ -3068,7 +3087,7 @@ def sanitize_string(input_string):
 
 def main(launch_args,start_server=True):
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
-    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password
+    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath
 
     #perform some basic cleanup of old temporary directories
     try:
@@ -3341,6 +3360,7 @@ def main(launch_args,start_server=True):
                 sys.exit(2)
         else:
             whispermodel = os.path.abspath(whispermodel)
+            fullwhispermodelpath = whispermodel
             loadok = whisper_load_model(whispermodel)
             print("Load Whisper Model OK: " + str(loadok))
             if not loadok:
