@@ -40,6 +40,34 @@ static bool is_wav_buffer(const std::string buf) {
     return true;
 }
 
+static std::vector<float> resample_wav(const std::vector<float>& input, uint32_t input_rate, uint32_t output_rate) {
+
+    size_t input_size = input.size();
+
+    double ratio = static_cast<double>(output_rate) / input_rate;
+    size_t newLength = static_cast<size_t>(input.size() * ratio);
+    std::vector<float> output(newLength);
+
+    if(whisperdebugmode==1)
+    {
+        printf("\nResample wav from %d to %d (in size: %d, out size: %d)", input_rate,output_rate,input_size,output.size());
+    }
+
+    // Perform simple linear interpolation resampling
+    for (size_t i = 0; i < newLength; ++i) {
+        double srcIndex = i / ratio;
+        size_t srcIndexInt = static_cast<size_t>(srcIndex);
+        double frac = srcIndex - srcIndexInt;
+        if (srcIndexInt + 1 < input_size) {
+            output[i] = static_cast<float>(input[srcIndexInt] * (1 - frac) + input[srcIndexInt + 1] * frac);
+        } else {
+            output[i] = input[srcIndexInt];
+        }
+    }
+
+    return output;
+}
+
 static bool read_wav(const std::string & b64data, std::vector<float>& pcmf32, std::vector<std::vector<float>>& pcmf32s, bool stereo)
 {
     drwav wav;
@@ -52,12 +80,6 @@ static bool read_wav(const std::string & b64data, std::vector<float>& pcmf32, st
 
     if (wav.channels != 1 && wav.channels != 2) {
         printf("WAV file must be mono or stereo\n");
-        drwav_uninit(&wav);
-        return false;
-    }
-
-    if (wav.sampleRate != COMMON_SAMPLE_RATE) {
-        printf("WAV file must be %i kHz\n", COMMON_SAMPLE_RATE/1000);
         drwav_uninit(&wav);
         return false;
     }
@@ -75,16 +97,28 @@ static bool read_wav(const std::string & b64data, std::vector<float>& pcmf32, st
     drwav_read_pcm_frames_s16(&wav, n, pcm16.data());
     drwav_uninit(&wav);
 
+    std::vector<float> raw_pcm;
+    raw_pcm.resize(n);
+
     // convert to mono, float
-    pcmf32.resize(n);
     if (wav.channels == 1) {
         for (uint64_t i = 0; i < n; i++) {
-            pcmf32[i] = float(pcm16[i])/32768.0f;
+            raw_pcm[i] = float(pcm16[i])/32768.0f;
         }
     } else {
         for (uint64_t i = 0; i < n; i++) {
-            pcmf32[i] = float(pcm16[2*i] + pcm16[2*i + 1])/65536.0f;
+            raw_pcm[i] = float(pcm16[2*i] + pcm16[2*i + 1])/65536.0f;
         }
+    }
+
+    if (wav.sampleRate != COMMON_SAMPLE_RATE) {
+        raw_pcm = resample_wav(raw_pcm, wav.sampleRate, COMMON_SAMPLE_RATE);
+    }
+
+    uint64_t finalsize = raw_pcm.size();
+    pcmf32.resize(finalsize);
+    for (uint64_t i = 0; i < finalsize; i++) {
+        pcmf32[i] = raw_pcm[i];
     }
 
     return true;

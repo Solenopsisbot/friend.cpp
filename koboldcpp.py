@@ -649,6 +649,8 @@ def whisper_generate(genparams):
     is_quiet = True if args.quiet else False
     prompt = genparams.get("prompt", "")
     audio_data = genparams.get("audio_data", "")
+    if audio_data.startswith("data:audio"):
+        audio_data = audio_data.split(",", 1)[1]
     inputs = whisper_generation_inputs()
     inputs.prompt = prompt.encode("UTF-8")
     inputs.audio_data = audio_data.encode("UTF-8")
@@ -660,7 +662,7 @@ def whisper_generate(genparams):
     return outstr
 
 def utfprint(str):
-    maxlen = 30000
+    maxlen = 25000
     strlength = len(str)
     if strlength > maxlen: #limit max output len
         str = str[:maxlen] + f"... (+{strlength-maxlen} chars)"
