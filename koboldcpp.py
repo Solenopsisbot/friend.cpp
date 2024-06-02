@@ -1321,11 +1321,11 @@ Enter Prompt:<br>
         body = None
         if contlenstr:
             content_length = int(contlenstr)
-            if content_length > (1024*1024*24): #24mb payload limit
+            if content_length > (1024*1024*32): #32mb payload limit
                 self.send_response(500)
                 self.end_headers(content_type='application/json')
                 self.wfile.write(json.dumps({"detail": {
-                "msg": "Payload is too big. Max payload size is 24MB.",
+                "msg": "Payload is too big. Max payload size is 32MB.",
                 "type": "bad_input",
                 }}).encode())
                 return
