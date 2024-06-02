@@ -1,5 +1,5 @@
-#include <cstdint>
 #pragma once
+#include <cstdint>
 
 const int stop_token_max = 16;
 const int ban_token_max = 16;
