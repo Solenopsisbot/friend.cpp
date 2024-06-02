@@ -10214,11 +10214,11 @@ Current version: 143
 		{
 			if(aesthetic_ui)
 			{
-				submit_generation();
+				chat_submit_generation();
 			}
 			else
 			{
-				chat_submit_generation();
+				submit_generation();
 			}
 		}
 	}
