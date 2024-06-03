@@ -2432,7 +2432,10 @@ def show_new_gui():
         args.foreground = keepforeground.get()==1
         args.quiet = quietmode.get()==1
         args.nocertify = nocertifymode.get()==1
-        args.quantkv = quantkv_var.get()
+        if contextshift.get()==0 and flashattention.get()==1:
+            args.quantkv = quantkv_var.get()
+        else:
+            args.quantkv = 0
 
         gpuchoiceidx = 0
         if gpu_choice_var.get()!="All":
