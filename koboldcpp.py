@@ -418,8 +418,12 @@ def load_model(model_filename):
     inputs.use_smartcontext = args.smartcontext
     inputs.use_contextshift = (0 if args.noshift else 1)
     inputs.flash_attention = args.flashattention
-    inputs.quant_k = 0
-    inputs.quant_v = 0
+    if args.quantkv>0:
+        inputs.quant_k = inputs.quant_v = args.quantkv
+        inputs.flash_attention = True
+        inputs.use_contextshift = 0
+    else:
+        inputs.quant_k = inputs.quant_v = 0
     inputs.blasbatchsize = args.blasbatchsize
     inputs.forceversion = args.forceversion
     inputs.gpulayers = args.gpulayers
@@ -1783,6 +1787,7 @@ def show_new_gui():
     contextsize_text = ["256", "512", "1024", "2048", "3072", "4096", "6144", "8192", "12288", "16384", "24576", "32768", "49152", "65536", "98304", "131072"]
     runopts = [opt for lib, opt in lib_option_pairs if file_exists(lib)]
     antirunopts = [opt.replace("Use ", "") for lib, opt in lib_option_pairs if not (opt in runopts)]
+    quantkv_text = ["F16 (Off)","8-Bit","4-Bit"]
 
     if not any(runopts):
         exitcounter = 999
@@ -1807,6 +1812,7 @@ def show_new_gui():
 
     lowvram_var = ctk.IntVar()
     mmq_var = ctk.IntVar(value=1)
+    quantkv_var = ctk.IntVar(value=0)
     blas_threads_var = ctk.StringVar()
     blas_size_var = ctk.IntVar()
     version_var = ctk.StringVar(value="0")
@@ -1859,7 +1865,7 @@ def show_new_gui():
                 tabcontent[t].grid(row=0, column=0)
                 navbuttons[t].configure(fg_color="#6f727b")
             else:
-                tabcontent[t].grid_forget()
+                tabcontent[t].grid_remove()
                 navbuttons[t].configure(fg_color="transparent")
 
     # Dynamically create tabs + buttons based on values of [tabnames]
@@ -1898,7 +1904,7 @@ def show_new_gui():
 
     def makeslider(parent, label, options, var, from_ , to,  row=0, width=160, height=10, set=0, tooltip=""):
         sliderLabel = makelabel(parent, options[set], row + 1, 1)
-        makelabel(parent, label, row,0,tooltip)
+        titleLabel = makelabel(parent, label, row,0,tooltip)
 
         def sliderUpdate(a,b,c):
             sliderLabel.configure(text = options[int(var.get())])
@@ -1906,7 +1912,7 @@ def show_new_gui():
         slider = ctk.CTkSlider(parent, from_=from_, to=to, variable = var, width = width, height=height, border_width=5,number_of_steps=len(options) - 1)
         slider.grid(row=row+1,  column=0, padx = 8, stick="w")
         slider.set(set)
-        return slider
+        return slider, sliderLabel, titleLabel
 
 
     def makelabelentry(parent, text, var, row=0, width= 50,tooltip=""):
@@ -2106,9 +2112,29 @@ def show_new_gui():
 
     def togglectxshift(a,b,c):
         if contextshift.get()==0:
-            smartcontextbox.grid(row=1, column=0, padx=8, pady=1,  stick="nw")
+            smartcontextbox.grid()
         else:
-            smartcontextbox.grid_forget()
+            smartcontextbox.grid_remove()
+
+        if contextshift.get()==0 and flashattention.get()==1:
+            qkvslider.grid()
+            qkvlabel.grid()
+            noqkvlabel.grid_remove()
+        else:
+            qkvslider.grid_remove()
+            qkvlabel.grid_remove()
+            noqkvlabel.grid()
+
+    def toggleflashattn(a,b,c):
+        if contextshift.get()==0 and flashattention.get()==1:
+            qkvslider.grid()
+            qkvlabel.grid()
+            noqkvlabel.grid_remove()
+        else:
+            qkvslider.grid_remove()
+            qkvlabel.grid_remove()
+            noqkvlabel.grid()
+
 
     def guibench():
         args.benchmark = "stdout"
@@ -2133,14 +2159,14 @@ def show_new_gui():
                 CUDA_gpu_selector_box.grid(row=3, column=1, padx=8, pady=1, stick="nw")
                 CUDA_quick_gpu_selector_box.grid(row=3, column=1, padx=8, pady=1, stick="nw")
         else:
-            quick_gpuname_label.grid_forget()
-            gpuname_label.grid_forget()
-            gpu_selector_label.grid_forget()
-            gpu_selector_box.grid_forget()
-            CUDA_gpu_selector_box.grid_forget()
-            quick_gpu_selector_label.grid_forget()
-            quick_gpu_selector_box.grid_forget()
-            CUDA_quick_gpu_selector_box.grid_forget()
+            quick_gpuname_label.grid_remove()
+            gpuname_label.grid_remove()
+            gpu_selector_label.grid_remove()
+            gpu_selector_box.grid_remove()
+            CUDA_gpu_selector_box.grid_remove()
+            quick_gpu_selector_label.grid_remove()
+            quick_gpu_selector_box.grid_remove()
+            CUDA_quick_gpu_selector_box.grid_remove()
 
         if index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
             lowvram_box.grid(row=4, column=0, padx=8, pady=1,  stick="nw")
@@ -2150,12 +2176,12 @@ def show_new_gui():
             tensor_split_label.grid(row=8, column=0, padx = 8, pady=1, stick="nw")
             tensor_split_entry.grid(row=8, column=1, padx=8, pady=1, stick="nw")
         else:
-            lowvram_box.grid_forget()
-            mmq_box.grid_forget()
-            quick_mmq_box.grid_forget()
-            tensor_split_label.grid_forget()
-            tensor_split_entry.grid_forget()
-            splitmode_box.grid_forget()
+            lowvram_box.grid_remove()
+            mmq_box.grid_remove()
+            quick_mmq_box.grid_remove()
+            tensor_split_label.grid_remove()
+            tensor_split_entry.grid_remove()
+            splitmode_box.grid_remove()
 
         if index == "Use Vulkan" or index == "Vulkan NoAVX2 (Old CPU)" or index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
             gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
@@ -2163,10 +2189,10 @@ def show_new_gui():
             quick_gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
             quick_gpu_layers_entry.grid(row=6, column=1, padx=8, pady=1, stick="nw")
         else:
-            gpu_layers_label.grid_forget()
-            gpu_layers_entry.grid_forget()
-            quick_gpu_layers_label.grid_forget()
-            quick_gpu_layers_entry.grid_forget()
+            gpu_layers_label.grid_remove()
+            gpu_layers_entry.grid_remove()
+            quick_gpu_layers_label.grid_remove()
+            quick_gpu_layers_entry.grid_remove()
         changed_gpu_choice_var()
 
 
@@ -2189,7 +2215,6 @@ def show_new_gui():
     quick_gpuname_label.configure(text_color="#ffff00")
     quick_gpu_layers_entry,quick_gpu_layers_label = makelabelentry(quick_tab,"GPU Layers:", gpulayers_var, 6, 50,"How many layers to offload onto the GPU.\nVRAM intensive, usage increases with model and context size.\nRequires some trial and error to find the best fit value.\n\nCommon values for total layers, accuracy not guaranteed.\n\nLlama/Mistral 7b/8b: 33\nSolar 10.7b/11b: 49\nLlama 13b: 41\nLlama 20b(stack): 63\nLlama/Yi 34b: 61\nMixtral 8x7b: 33\nLlama 70b: 81")
     quick_mmq_box = makecheckbox(quick_tab,  "Use QuantMatMul (mmq)", mmq_var, 4,1,tooltiptxt="Enable MMQ mode instead of CuBLAS for prompt processing. Read the wiki. Speed may vary.")
-
 
     # quick boxes
     quick_boxes = {"Launch Browser": launchbrowser , "Disable MMAP":disablemmap,"Use ContextShift":contextshift,"Remote Tunnel":remotetunnel,"Use FlashAttention":flashattention,"Quiet Mode":quietmode}
@@ -2266,7 +2291,7 @@ def show_new_gui():
     # tokens checkboxes
     smartcontextbox = makecheckbox(tokens_tab, "Use SmartContext", smartcontext, 1,tooltiptxt="Uses SmartContext. Now considered outdated and not recommended.\nCheck the wiki for more info.")
     makecheckbox(tokens_tab, "Use ContextShift", contextshift, 2,tooltiptxt="Uses Context Shifting to reduce reprocessing.\nRecommended. Check the wiki for more info.", command=togglectxshift)
-    togglectxshift(1,1,1)
+
 
     # context size
     makeslider(tokens_tab, "Context Size:",contextsize_text, context_var, 0, len(contextsize_text)-1, 20, set=3,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
@@ -2279,11 +2304,16 @@ def show_new_gui():
             if customrope_var.get() == 1:
                 item.grid(row=23 + int(idx/2), column=idx%2, padx=8, stick="nw")
             else:
-                item.grid_forget()
+                item.grid_remove()
     makecheckbox(tokens_tab,  "Custom RoPE Config", variable=customrope_var, row=22, command=togglerope,tooltiptxt="Override the default RoPE configuration with custom RoPE scaling.")
+    makecheckbox(tokens_tab, "Use FlashAttention", flashattention, 28, command=toggleflashattn,  tooltiptxt="Enable flash attention for GGUF models.")
+    noqkvlabel = makelabel(tokens_tab,"Requirments Not Met",31,0,"Requires FlashAttention ENABLED and ContextShift DISABLED.")
+    noqkvlabel.configure(text_color="#ff5555")
+    qkvslider,qkvlabel,qkvtitle = makeslider(tokens_tab, "Quantize KV Cache:", quantkv_text, quantkv_var, 0, 2, 30, set=0,tooltip="Enable quantization of KV cache.\nRequires FlashAttention and disables ContextShift.")
+    makefileentry(tokens_tab, "ChatCompletions Adapter:", "Select ChatCompletions Adapter File", chatcompletionsadapter_var, 32,tooltiptxt="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.")
     togglerope(1,1,1)
-    makecheckbox(tokens_tab, "Use FlashAttention", flashattention, 28,tooltiptxt="Enable flash attention for GGUF models.")
-    makefileentry(tokens_tab, "ChatCompletions Adapter:", "Select ChatCompletions Adapter File", chatcompletionsadapter_var, 30,tooltiptxt="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.")
+    toggleflashattn(1,1,1)
+    togglectxshift(1,1,1)
 
     # Model Tab
     model_tab = tabcontent["Model Files"]
@@ -2324,11 +2354,11 @@ def show_new_gui():
         labels = [horde_name_label, horde_gen_label, horde_context_label, horde_apikey_label, horde_workername_label]
         for idx, item in enumerate([horde_name_entry, horde_gen_entry, horde_context_entry, horde_apikey_entry, horde_workername_entry]):
             if usehorde_var.get() == 1:
-                item.grid(row=20 + idx, column = 1, padx=8, pady=1, stick="nw")
-                labels[idx].grid(row=20 + idx, padx=8, pady=1, stick="nw")
+                item.grid()
+                labels[idx].grid()
             else:
-                item.grid_forget()
-                labels[idx].grid_forget()
+                item.grid_remove()
+                labels[idx].grid_remove()
         if usehorde_var.get()==1 and (horde_name_var.get()=="koboldcpp" or horde_name_var.get()=="") and model_var.get()!="":
             basefile = os.path.basename(model_var.get())
             horde_name_var.set(sanitize_string(os.path.splitext(basefile)[0]))
@@ -2347,30 +2377,30 @@ def show_new_gui():
     sdloritem4,sdloritem5 = makelabelentry(images_tab, "Image LoRA Multiplier:" , sd_loramult_var, 12, 50,"What mutiplier value to apply the SD LoRA with.")
     def togglesdquant(a,b,c):
         if sd_quant_var.get()==1:
-            sdloritem1.grid_forget()
-            sdloritem2.grid_forget()
-            sdloritem3.grid_forget()
-            sdloritem4.grid_forget()
-            sdloritem5.grid_forget()
+            sdloritem1.grid_remove()
+            sdloritem2.grid_remove()
+            sdloritem3.grid_remove()
+            sdloritem4.grid_remove()
+            sdloritem5.grid_remove()
         else:
-            sdloritem1.grid(row=10,column=0,padx=8,stick="nw")
-            sdloritem2.grid(row=11,column=0,padx=8,stick="nw")
-            sdloritem3.grid(row=11,column=1,stick="nw")
-            sdloritem4.grid(row=12,column=1,stick="nw")
-            sdloritem5.grid(row=12,column=0,padx=8,stick="nw")
+            sdloritem1.grid()
+            sdloritem2.grid()
+            sdloritem3.grid()
+            sdloritem4.grid()
+            sdloritem5.grid()
     makecheckbox(images_tab, "Compress Weights (Saves Memory)", sd_quant_var, 8,command=togglesdquant,tooltiptxt="Quantizes the SD model weights to save memory. May degrade quality.")
 
 
     sdvaeitem1,sdvaeitem2,sdvaeitem3 = makefileentry(images_tab, "Image VAE:", "Select SD VAE file",sd_vae_var, 14, filetypes=[("*.safetensors *.gguf", "*.safetensors *.gguf")],tooltiptxt="Select a .safetensors or .gguf SD VAE file to be loaded.")
     def toggletaesd(a,b,c):
         if sd_vaeauto_var.get()==1:
-            sdvaeitem1.grid_forget()
-            sdvaeitem2.grid_forget()
-            sdvaeitem3.grid_forget()
+            sdvaeitem1.grid_remove()
+            sdvaeitem2.grid_remove()
+            sdvaeitem3.grid_remove()
         else:
-            sdvaeitem1.grid(row=14,column=0,padx=8,stick="nw")
-            sdvaeitem2.grid(row=15,column=0,padx=8,stick="nw")
-            sdvaeitem3.grid(row=15,column=1,stick="nw")
+            sdvaeitem1.grid()
+            sdvaeitem2.grid()
+            sdvaeitem3.grid()
     makecheckbox(images_tab, "Use TAE SD (AutoFix Broken VAE)", sd_vaeauto_var, 16,command=toggletaesd,tooltiptxt="Replace VAE with TAESD. May fix bad VAE.")
 
     # audio tab
@@ -2402,6 +2432,7 @@ def show_new_gui():
         args.foreground = keepforeground.get()==1
         args.quiet = quietmode.get()==1
         args.nocertify = nocertifymode.get()==1
+        args.quantkv = quantkv_var.get()
 
         gpuchoiceidx = 0
         if gpu_choice_var.get()!="All":
@@ -2517,6 +2548,8 @@ def show_new_gui():
         keepforeground.set(1 if "foreground" in dict and dict["foreground"] else 0)
         quietmode.set(1 if "quiet" in dict and dict["quiet"] else 0)
         nocertifymode.set(1 if "nocertify" in dict and dict["nocertify"] else 0)
+        if "quantkv" in dict:
+            quantkv_var.set(dict["quantkv"])
         if "useclblast" in dict and dict["useclblast"]:
             if "noavx2" in dict and dict["noavx2"]:
                 if clblast_noavx2_option is not None:
@@ -3169,6 +3202,11 @@ def main(launch_args,start_server=True):
     if args.model_param and args.model_param!="" and args.model_param.lower().endswith('.kcpps'):
         loadconfigfile(args.model_param)
 
+    #prevent quantkv from being used without flash attn
+    if args.quantkv and args.quantkv>0 and not args.flashattention:
+        print("Error: Using --quantkv requires --flashattention")
+        sys.exit(1)
+
     if not args.model_param:
         args.model_param = args.model
 
@@ -3659,9 +3697,10 @@ if __name__ == '__main__':
     advparser.add_argument("--password", help="Enter a password required to use this instance. This key will be required for all text endpoints. Image endpoints are not secured.", default=None)
     advparser.add_argument("--ignoremissing", help="Ignores all missing non-essential files, just skipping them instead.", action='store_true')
     advparser.add_argument("--chatcompletionsadapter", help="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.", default="")
-    advparser.add_argument("--flashattention", help="Enables flash attention (Experimental).", action='store_true')
+    advparser.add_argument("--flashattention", help="Enables flash attention.", action='store_true')
+    advparser.add_argument("--quantkv", help="Sets the KV cache data type quantization, 0=f16, 1=q8, 2=q4. Requires Flash Attention, and disables context shifting.",metavar=('[quantization level 0/1/2]'), type=int, choices=[0,1,2], default=0)
     advparser.add_argument("--forceversion", help="If the model file format detection fails (e.g. rogue modified model) you can set this to override the detected format (enter desired version, e.g. 401 for GPTNeoX-Type2).",metavar=('[version]'), type=int, default=0)
-    advparser.add_argument("--smartcontext", help="Reserving a portion of context to try processing less frequently. Not recommended.", action='store_true')
+    advparser.add_argument("--smartcontext", help="Reserving a portion of context to try processing less frequently. Outdated. Not recommended.", action='store_true')
 
     hordeparsergroup = parser.add_argument_group('Horde Worker Commands')
     hordeparsergroup.add_argument("--hordemodelname", metavar=('[name]'), help="Sets your AI Horde display model name.", default="")
