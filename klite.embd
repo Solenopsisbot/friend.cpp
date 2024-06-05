@@ -7022,7 +7022,7 @@ Current version: 145
 							{
 								key = parseInt(tokarr[x]);
 								val = parseInt(val);
-								if (!isNaN(key) && key!=1) {
+								if (!isNaN(key)) {
 									dict[key] = parseInt(val);
 								}
 							}
@@ -12839,7 +12839,8 @@ Current version: 145
 	function kcpp_tokenize(prompt,onDone)
 	{
 		let payload = {
-			"prompt": prompt
+			"prompt": prompt,
+			"special": false,
 		};
 		fetch(apply_proxy_url(custom_kobold_endpoint + koboldcpp_tokenize_endpoint), {
 			method: 'POST',
