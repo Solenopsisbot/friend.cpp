@@ -599,7 +599,7 @@ def sd_generate(genparams):
     height = tryparseint(genparams.get("height", 512))
     seed = tryparseint(genparams.get("seed", -1))
     sample_method = genparams.get("sampler_name", "k_euler_a")
-    is_quiet = True if args.quiet else False
+    is_quiet = True if (args.quiet or args.debugmode == -1) else False
     clip_skip = tryparseint(genparams.get("clip_skip", -1))
 
     #clean vars
@@ -656,7 +656,7 @@ def whisper_load_model(model_filename):
 
 def whisper_generate(genparams):
     global args
-    is_quiet = True if args.quiet else False
+    is_quiet = True if (args.quiet or args.debugmode == -1) else False
     prompt = genparams.get("prompt", "")
     audio_data = genparams.get("audio_data", "")
     if audio_data.startswith("data:audio"):
@@ -672,7 +672,7 @@ def whisper_generate(genparams):
     return outstr
 
 def utfprint(str):
-    maxlen = 20000
+    maxlen = 25000
     strlength = len(str)
     if strlength > maxlen: #limit max output len
         str = str[:maxlen] + f"... (+{strlength-maxlen} chars)"
