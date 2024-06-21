@@ -1053,6 +1053,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         #endif
 
         llama_ctx_params.n_batch = kcpp_params->n_batch;
+        llama_ctx_params.n_ubatch = kcpp_params->n_ubatch;
         llama_ctx_params.n_threads = kcpp_params->n_threads;
         llama_ctx_params.n_threads_batch = kcpp_params->n_threads_batch;
 
