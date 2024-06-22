@@ -1163,7 +1163,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         auto er = llama_decode(llama_ctx_v4, llama_batch_get_one(tmp.data(), tmp.size(), 0, 0));
         if(er!=0)
         {
-            printf("\nLLAMA EVAL returned nonzero!\n");
+            printf("\nLLAMA EVAL returned nonzero: %d\n",er);
         }
         return ModelLoadResult::SUCCESS;
     }
@@ -1806,6 +1806,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     std::vector<int> embd_inp;
     std::vector<int> embd_inp_mem; //for storing added memory
     std::vector<int> llava_mem; //for storing dummy tokens that will be consumed by llava
+    std::vector<int> llava_sep; //to separate between different llava images
 
     int32_t nctx = kcpp_params->n_ctx;
 
@@ -1813,6 +1814,9 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     if(clp_ctx!=nullptr && clp_img_data!=nullptr)
     {
+        TokenizeString("\n\n", llava_sep, file_format,false);
+        int sepsize = llava_sep.size();
+
         for(int i=0;i<llava_images.size();++i)
         {
             std::string llava_image = llava_images[i].b64data;
@@ -1834,11 +1838,13 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 }
                 if(llava_images[i].clp_image_tokens>0 && llava_images[i].clp_image_tokens < nctx)
                 {
-                    for(int n=0;n<llava_images[i].clp_image_tokens;++n)
+                    int tokcnt = (i==0?(llava_images[i].clp_image_tokens):(llava_images[i].clp_image_tokens+sepsize));
+                    for(int n=0;n<tokcnt;++n)
                     {
                         llava_mem.push_back(current_llava_identifier);
                     }
-                }else
+                }
+                else
                 {
                     printf("\nWarning: LLAVA Image excluded - Context size too low or not enough clip tokens!\n");
                 }
@@ -2387,6 +2393,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                         //batch is empty, do image processing
                         int llavatokenscounted = 0;
                         int llavatokensevaled = 0;
+                        int sepsize = llava_sep.size();
                         while(input_consumed < embd_inp.size() && (embd_inp[input_consumed]==LLAVA_TOKEN_IDENTIFIER_A || embd_inp[input_consumed]==LLAVA_TOKEN_IDENTIFIER_B))
                         {
                             last_n_tokens.erase(last_n_tokens.begin());
@@ -2397,6 +2404,22 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                         }
                         for(int i=0;i<llava_images.size();++i)
                         {
+                            if(i>0 && sepsize>0)
+                            {
+                                //add a separator between each image
+                                auto evr = llama_decode(llama_ctx_v4, llama_batch_get_one(llava_sep.data(), sepsize, n_past, 0));
+                                if(evr!=0)
+                                {
+                                    printf("\nError when appending llava separator: %d\n",evr);
+                                }
+                                else
+                                {
+                                    printf("\rProcessing LLaVa Separator (%d tokens)",sepsize);
+                                }
+                                n_past += sepsize;
+                                llavatokensevaled += sepsize;
+                            }
+
                             if(allow_regular_prints)
                             {
                                 printf("\rProcessing LLaVa Embedding %d (%d tokens)",(i+1), llava_images[i].clp_image_tokens);
