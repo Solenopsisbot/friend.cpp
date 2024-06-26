@@ -108,11 +108,6 @@ bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11) {
         return false;
     }
 
-    if(g_mul_mat_q)
-    {
-        return true;
-    }
-
     if (cc < CC_OFFSET_AMD) {
         return cc < CC_VOLTA || ne11 < MMQ_DP4A_MAX_BATCH_SIZE;
     }
