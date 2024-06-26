@@ -587,9 +587,19 @@ def sd_load_model(model_filename,vae_filename,lora_filename):
     return ret
 
 def sd_generate(genparams):
-    global maxctx, args, currentusergenkey, totalgens, pendingabortkey
+    global maxctx, args, currentusergenkey, totalgens, pendingabortkey, chatcompl_adapter
+
+    default_adapter = {} if chatcompl_adapter is None else chatcompl_adapter
+    adapter_obj = genparams.get('adapter', default_adapter)
+    forced_negprompt = adapter_obj.get("negative_prompt", "")
+
     prompt = genparams.get("prompt", "high quality")
     negative_prompt = genparams.get("negative_prompt", "")
+    if forced_negprompt!="":
+        if negative_prompt!="":
+            negative_prompt += " " + forced_negprompt
+        else:
+            negative_prompt = forced_negprompt
     init_images_arr = genparams.get("init_images", [])
     init_images = ("" if (not init_images_arr or len(init_images_arr)==0 or not init_images_arr[0]) else init_images_arr[0])
     denoising_strength = genparams.get("denoising_strength", 0.6)
