@@ -173,7 +173,7 @@ if (LLAMA_HIPBLAS)
         file(GLOB SRCS "ggml-cuda/template-instances/mmq*.cu")
         list(APPEND GGML_SOURCES_ROCM ${SRCS})
         add_compile_definitions(GGML_USE_HIPBLAS GGML_USE_CUDA SD_USE_CUBLAS)
-        add_library(ggml-rocm OBJECT ${GGML_SOURCES_CUDA})
+        add_library(ggml-rocm ${GGML_SOURCES_CUDA})
         if (LLAMA_CUDA_FORCE_DMMV)
             target_compile_definitions(ggml-rocm PUBLIC GGML_CUDA_FORCE_DMMV)
         endif()
@@ -192,7 +192,7 @@ if (LLAMA_HIPBLAS)
         set_source_files_properties(${GGML_SOURCES_ROCM} PROPERTIES LANGUAGE CXX)
         target_link_libraries(ggml-rocm PUBLIC hip::device hip::host roc::rocblas roc::hipblas)
 
-        add_library(ggml-v2-rocm OBJECT ${GGML_V2_CUDA_SOURCES})
+        add_library(ggml-v2-rocm ${GGML_V2_CUDA_SOURCES})
         if (LLAMA_CUDA_FORCE_DMMV)
             target_compile_definitions(ggml-v2-rocm PUBLIC GGML_CUDA_FORCE_DMMV)
         endif()
@@ -202,7 +202,7 @@ if (LLAMA_HIPBLAS)
         set_source_files_properties(otherarch/ggml_v2-cuda.cu PROPERTIES LANGUAGE CXX)
         target_link_libraries(ggml-v2-rocm PUBLIC hip::device hip::host roc::rocblas roc::hipblas)
 
-        add_library(ggml-v3-rocm OBJECT ${GGML_V3_CUDA_SOURCES})
+        add_library(ggml-v3-rocm ${GGML_V3_CUDA_SOURCES})
         if (LLAMA_CUDA_FORCE_DMMV)
             target_compile_definitions(ggml-v3-rocm PUBLIC GGML_CUDA_FORCE_DMMV)
         endif()
@@ -212,7 +212,7 @@ if (LLAMA_HIPBLAS)
         set_source_files_properties(otherarch/ggml_v3-cuda.cu PROPERTIES LANGUAGE CXX)
         target_link_libraries(ggml-v3-rocm PUBLIC hip::device hip::host roc::rocblas roc::hipblas)
 
-        add_library(ggml-v2-legacy-rocm OBJECT ${GGML_V2_LEGACY_CUDA_SOURCES})
+        add_library(ggml-v2-legacy-rocm ${GGML_V2_LEGACY_CUDA_SOURCES})
         if (LLAMA_CUDA_FORCE_DMMV)
             target_compile_definitions(ggml-v2-legacy-rocm PUBLIC GGML_CUDA_FORCE_DMMV)
         endif()
@@ -416,7 +416,7 @@ endif()
 # Build libraries
 #
 
-add_library(ggml OBJECT
+add_library(ggml
             ggml.c
             ggml.h
             ggml-alloc.c
@@ -433,7 +433,7 @@ target_compile_features(ggml PUBLIC c_std_11) # don't bump
 target_link_libraries(ggml PUBLIC Threads::Threads ${LLAMA_EXTRA_LIBS})
 set_target_properties(ggml PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_library(ggml_v1 OBJECT
+add_library(ggml_v1
             otherarch/ggml_v1.c
             otherarch/ggml_v1.h)
 target_include_directories(ggml_v1 PUBLIC . ./otherarch ./otherarch/tools)
@@ -441,7 +441,7 @@ target_compile_features(ggml_v1 PUBLIC c_std_11) # don't bump
 target_link_libraries(ggml_v1 PUBLIC Threads::Threads ${LLAMA_EXTRA_LIBS})
 set_target_properties(ggml_v1 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_library(ggml_v2 OBJECT
+add_library(ggml_v2
             otherarch/ggml_v2.c
             otherarch/ggml_v2.h
             ${GGML_V2_CUDA_SOURCES}
@@ -451,7 +451,7 @@ target_compile_features(ggml_v2 PUBLIC c_std_11) # don't bump
 target_link_libraries(ggml_v2 PUBLIC Threads::Threads ${LLAMA_EXTRA_LIBS})
 set_target_properties(ggml_v2 PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-add_library(ggml_v3 OBJECT
+add_library(ggml_v3
             otherarch/ggml_v3.c
             otherarch/ggml_v3.h
             ${GGML_V3_CUDA_SOURCES})
