@@ -697,7 +697,7 @@ def utfprint(str):
         print(str)
     except UnicodeEncodeError:
         # Replace or omit the problematic character
-        utf_string = str.encode('ascii', 'ignore').decode('ascii')
+        utf_string = str.encode('ascii', 'ignore').decode('ascii',"ignore")
         utf_string = utf_string.replace('\a', '') #remove bell characters
         print(utf_string)
 
@@ -882,7 +882,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                         if detected_upload_filename and len(detected_upload_filename)>0:
                             utfprint(f"Detected uploaded file: {detected_upload_filename[0]}")
                             file_data = fpart.split(b'\r\n\r\n')[1].rsplit(b'\r\n', 1)[0]
-                            file_data_base64 = base64.b64encode(file_data).decode('utf-8')
+                            file_data_base64 = base64.b64encode(file_data).decode('utf-8',"ignore")
                             base64_string = f"data:audio/wav;base64,{file_data_base64}"
                             return base64_string
             print("Uploaded file not found.")
@@ -2818,12 +2818,12 @@ def make_url_request(url, data, method='POST', headers={}):
             request = urllib.request.Request(url, headers=headers, method=method)
         response_data = ""
         with urllib.request.urlopen(request,context=ssl_context) as response:
-            response_data = response.read().decode('utf-8')
+            response_data = response.read().decode('utf-8',"ignore")
             json_response = json.loads(response_data)
             return json_response
     except urllib.error.HTTPError as e:
         try:
-            errmsg = e.read().decode('utf-8')
+            errmsg = e.read().decode('utf-8',"ignore")
             print_with_time(f"Error: {e} - {errmsg}")
         except Exception as e:
             print_with_time(f"Error: {e}")
