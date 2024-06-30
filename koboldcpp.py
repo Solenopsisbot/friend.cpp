@@ -732,7 +732,7 @@ maxhordelen = 256
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.68"
+KcppVersion = "1.69"
 showdebug = True
 showsamplerwarning = True
 showmaxctxwarning = True
@@ -2216,6 +2216,10 @@ def show_new_gui():
             tensor_split_label.grid_remove()
             tensor_split_entry.grid_remove()
             splitmode_box.grid_remove()
+
+        if index == "Use Vulkan":
+            tensor_split_label.grid(row=8, column=0, padx = 8, pady=1, stick="nw")
+            tensor_split_entry.grid(row=8, column=1, padx=8, pady=1, stick="nw")
 
         if index == "Use Vulkan" or index == "Vulkan NoAVX2 (Old CPU)" or index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
             gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
