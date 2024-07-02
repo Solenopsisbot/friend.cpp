@@ -274,6 +274,7 @@ ifdef LLAMA_METAL
 ggml-metal.o: ggml/src/ggml-metal.m ggml/include/ggml-metal.h
 	@echo "== Preparing merged Metal file =="
 	@sed -e '/#include "ggml-common.h"/r ggml/src/ggml-common.h' -e '/#include "ggml-common.h"/d' < ggml/src/ggml-metal.metal > ggml/src/ggml-metal-merged.metal
+	@cp ggml/src/ggml-metal-merged.metal ./ggml-metal-merged.metal
 	$(CC) $(CFLAGS) -c $< -o $@
 endif # LLAMA_METAL
 
