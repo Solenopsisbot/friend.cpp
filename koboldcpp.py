@@ -1775,7 +1775,7 @@ def show_new_gui():
 
     tabs = ctk.CTkFrame(root, corner_radius = 0, width=windowwidth, height=windowheight-50)
     tabs.grid(row=0, stick="nsew")
-    tabnames= ["Quick Launch", "Hardware", "Tokens", "Model Files", "Network", "Horde Worker","Image Gen","Audio"]
+    tabnames= ["Quick Launch", "Hardware", "Tokens", "Model Files", "Network", "Horde Worker","Image Gen","Audio","Extra"]
     navbuttons = {}
     navbuttonframe = ctk.CTkFrame(tabs, width=100, height=int(tabs.cget("height")))
     navbuttonframe.grid(row=0, column=0, padx=2,pady=2)
@@ -2464,7 +2464,37 @@ def show_new_gui():
 
     # audio tab
     audio_tab = tabcontent["Audio"]
-    makefileentry(audio_tab, "Whisper Model:", "Select Whisper .bin Model File", whisper_model_var, 1, width=280, filetypes=[("*.bin","*.bin")], tooltiptxt="Select a Whisper .bin model file on disk to be loaded.")
+    makefileentry(audio_tab, "Whisper Model (Speech-To-Text):", "Select Whisper .bin Model File", whisper_model_var, 1, width=280, filetypes=[("*.bin","*.bin")], tooltiptxt="Select a Whisper .bin model file on disk to be loaded.")
+
+    def unpack_to_dir():
+        from tkinter.filedialog import askdirectory
+        from tkinter import messagebox
+        import shutil
+        destpath = askdirectory(title='Select an empty folder to unpack KoboldCpp')
+        if not destpath:
+            return
+        srcpath = os.path.abspath(os.path.dirname(__file__))
+        if os.path.isdir(srcpath) and os.path.isdir(destpath) and not os.listdir(destpath):
+            try:
+                messagebox.showinfo("Unpack Starting", f"KoboldCpp will be extracted to {destpath}\nThis process may take several seconds to complete.")
+                for item in os.listdir(srcpath):
+                    s = os.path.join(srcpath, item)
+                    d = os.path.join(destpath, item)
+                    if os.path.isdir(s):
+                        shutil.copytree(s, d, False, None)
+                    else:
+                        shutil.copy2(s, d)
+                messagebox.showinfo("KoboldCpp Unpack Success", f"KoboldCpp extracted to {destpath}")
+            except Exception as e:
+                messagebox.showerror("Error", f"An error occurred while unpacking: {e}")
+        else:
+            messagebox.showwarning("Invalid Selection", "The folder is not empty or invalid. Please select an empty folder.")
+
+    # extra tab
+    extra_tab = tabcontent["Extra"]
+    makelabel(extra_tab, "Unpack KoboldCpp to a local directory to modify its files.", 1, 0)
+    makelabel(extra_tab, "You can also launch via koboldcpp.py for faster startup.", 2, 0)
+    ctk.CTkButton(extra_tab , text = "Unpack KoboldCpp To Folder", command = unpack_to_dir ).grid(row=3,column=0, stick="w", padx= 8, pady=2)
 
     # launch
     def guilaunch():
