@@ -39,7 +39,7 @@ After running this command you can launch Koboldcpp from the current directory u
 
 ## Obtaining a GGUF model
 - KoboldCpp uses GGUF models. They are not included here, but you can download GGUF files from other places such as [TheBloke's Huggingface](https://huggingface.co/TheBloke). Search for "GGUF" on huggingface.co for plenty of compatible models in the `.gguf` format.
-- For beginners, we recommend the models [MistRP Airoboros](https://huggingface.co/TheBloke/MistRP-Airoboros-7B-GGUF/resolve/main/mistrp-airoboros-7b.Q4_K_S.gguf) or [Tiefighter 13B](https://huggingface.co/KoboldAI/LLaMA2-13B-Tiefighter-GGUF/resolve/main/LLaMA2-13B-Tiefighter.Q4_K_S.gguf) (larger model).
+- For beginners, we recommend the models [Airoboros Mistral](https://huggingface.co/TheBloke/airoboros-mistral2.2-7B-GGUF/resolve/main/airoboros-mistral2.2-7b.Q4_K_S.gguf) or [Tiefighter 13B](https://huggingface.co/KoboldAI/LLaMA2-13B-Tiefighter-GGUF/resolve/main/LLaMA2-13B-Tiefighter.Q4_K_S.gguf) (larger model).
 - [Alternatively, you can download the tools to convert models to the GGUF format yourself here](https://github.com/LostRuins/koboldcpp/releases/download/v1.69.1/koboldcpp_tools_6jul.zip). Run `convert-hf-to-gguf.py` to convert them, then `quantize_gguf.exe` to quantize the result.
 
 ## Improving Performance
