@@ -391,6 +391,47 @@ def tryparseint(value):
     except ValueError:
         return value
 
+def unpack_to_dir(destpath = ""):
+    import shutil
+    srcpath = os.path.abspath(os.path.dirname(__file__))
+    cliunpack = False if destpath == "" else True
+    print("Attempt to unpack KoboldCpp into directory...")
+
+    if not cliunpack:
+        from tkinter.filedialog import askdirectory
+        from tkinter import messagebox
+        destpath = askdirectory(title='Select an empty folder to unpack KoboldCpp')
+        if not destpath:
+            return
+
+    if os.path.isdir(srcpath) and os.path.isdir(destpath) and not os.listdir(destpath):
+        try:
+            if cliunpack:
+                print(f"KoboldCpp will be extracted to {destpath}\nThis process may take several seconds to complete.")
+            else:
+                messagebox.showinfo("Unpack Starting", f"KoboldCpp will be extracted to {destpath}\nThis process may take several seconds to complete.")
+            for item in os.listdir(srcpath):
+                s = os.path.join(srcpath, item)
+                d = os.path.join(destpath, item)
+                if os.path.isdir(s):
+                    shutil.copytree(s, d, False, None)
+                else:
+                    shutil.copy2(s, d)
+            if cliunpack:
+                print(f"KoboldCpp successfully extracted to {destpath}")
+            else:
+                messagebox.showinfo("KoboldCpp Unpack Success", f"KoboldCpp successfully extracted to {destpath}")
+        except Exception as e:
+            if cliunpack:
+                print(f"An error occurred while unpacking: {e}")
+            else:
+                messagebox.showerror("Error", f"An error occurred while unpacking: {e}")
+    else:
+        if cliunpack:
+            print(f"The target folder is not empty or invalid. Please select an empty folder.")
+        else:
+            messagebox.showwarning("Invalid Selection", "The target folder is not empty or invalid. Please select an empty folder.")
+
 def load_model(model_filename):
     global args
     inputs = load_model_inputs()
@@ -2466,30 +2507,6 @@ def show_new_gui():
     audio_tab = tabcontent["Audio"]
     makefileentry(audio_tab, "Whisper Model (Speech-To-Text):", "Select Whisper .bin Model File", whisper_model_var, 1, width=280, filetypes=[("*.bin","*.bin")], tooltiptxt="Select a Whisper .bin model file on disk to be loaded.")
 
-    def unpack_to_dir():
-        from tkinter.filedialog import askdirectory
-        from tkinter import messagebox
-        import shutil
-        destpath = askdirectory(title='Select an empty folder to unpack KoboldCpp')
-        if not destpath:
-            return
-        srcpath = os.path.abspath(os.path.dirname(__file__))
-        if os.path.isdir(srcpath) and os.path.isdir(destpath) and not os.listdir(destpath):
-            try:
-                messagebox.showinfo("Unpack Starting", f"KoboldCpp will be extracted to {destpath}\nThis process may take several seconds to complete.")
-                for item in os.listdir(srcpath):
-                    s = os.path.join(srcpath, item)
-                    d = os.path.join(destpath, item)
-                    if os.path.isdir(s):
-                        shutil.copytree(s, d, False, None)
-                    else:
-                        shutil.copy2(s, d)
-                messagebox.showinfo("KoboldCpp Unpack Success", f"KoboldCpp extracted to {destpath}")
-            except Exception as e:
-                messagebox.showerror("Error", f"An error occurred while unpacking: {e}")
-        else:
-            messagebox.showwarning("Invalid Selection", "The folder is not empty or invalid. Please select an empty folder.")
-
     # extra tab
     extra_tab = tabcontent["Extra"]
     makelabel(extra_tab, "Unpack KoboldCpp to a local directory to modify its files.", 1, 0)
@@ -3279,6 +3296,10 @@ def main(launch_args,start_server=True):
         print(f"Error cleaning up orphaned pyinstaller dirs: {e}")
 
     args = launch_args
+    if args.unpack:
+        unpack_to_dir(args.unpack)
+        return
+
     if args.config and len(args.config)==1:
         if isinstance(args.config[0], str) and os.path.exists(args.config[0]):
            loadconfigfile(args.config[0])
@@ -3756,7 +3777,7 @@ if __name__ == '__main__':
     # print("Python version: " + sys.version)
     parser = argparse.ArgumentParser(description='KoboldCpp Server')
     modelgroup = parser.add_mutually_exclusive_group() #we want to be backwards compatible with the unnamed positional args
-    modelgroup.add_argument("--model", metavar=('filename'), help="Model file to load", nargs="?")
+    modelgroup.add_argument("--model", metavar=('[filename]'), help="Model file to load", type=str, default="")
     modelgroup.add_argument("model_param", help="Model file to load (positional)", nargs="?")
     portgroup = parser.add_mutually_exclusive_group() #we want to be backwards compatible with the unnamed positional args
     portgroup.add_argument("--port", metavar=('[portnumber]'), help="Port to listen on", default=defaultport, type=int, action='store')
@@ -3811,6 +3832,8 @@ if __name__ == '__main__':
     advparser.add_argument("--quantkv", help="Sets the KV cache data type quantization, 0=f16, 1=q8, 2=q4. Requires Flash Attention, and disables context shifting.",metavar=('[quantization level 0/1/2]'), type=int, choices=[0,1,2], default=0)
     advparser.add_argument("--forceversion", help="If the model file format detection fails (e.g. rogue modified model) you can set this to override the detected format (enter desired version, e.g. 401 for GPTNeoX-Type2).",metavar=('[version]'), type=int, default=0)
     advparser.add_argument("--smartcontext", help="Reserving a portion of context to try processing less frequently. Outdated. Not recommended.", action='store_true')
+    advparser.add_argument("--unpack", help="Extracts the file contents of the KoboldCpp binary into a target directory.", metavar=('destination'), type=str, default="")
+
 
     hordeparsergroup = parser.add_argument_group('Horde Worker Commands')
     hordeparsergroup.add_argument("--hordemodelname", metavar=('[name]'), help="Sets your AI Horde display model name.", default="")
