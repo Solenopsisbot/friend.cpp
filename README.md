@@ -114,6 +114,11 @@ when you can't use the precompiled binary directly, we provide an automated buil
 ## AMD Users
 - Please check out https://github.com/YellowRoseCx/koboldcpp-rocm
 
+## Third Party Resources
+- These unofficial resources have been contributed by the community, and may be outdated or unmaintained. No official support will be provided for them!
+  - Arch Linux Packages: [CUBLAS](https://aur.archlinux.org/packages/koboldcpp-cuda), and [HIPBLAS](https://aur.archlinux.org/packages/koboldcpp-hipblas).
+  - Unofficial Dockers: [korewaChino](https://github.com/korewaChino/koboldCppDocker) and [noneabove1182](https://github.com/noneabove1182/koboldcpp-docker)
+
 ## Questions and Help Wiki
 - **First, please check out [The KoboldCpp FAQ and Knowledgebase](https://github.com/LostRuins/koboldcpp/wiki) which may already have answers to your questions! Also please search through past issues and discussions.**
 - If you cannot find an answer, open an issue on this github, or find us on the [KoboldAI Discord](https://koboldai.org/discord).
