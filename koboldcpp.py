@@ -935,7 +935,6 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             return None
 
     async def generate_text(self, genparams, api_format, stream_flag):
-        from datetime import datetime
         global friendlymodelname, chatcompl_adapter, currfinishreason
         is_quiet = args.quiet
         currfinishreason = "null"
