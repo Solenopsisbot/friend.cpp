@@ -65,9 +65,9 @@ endif
 CUBLASLD_FLAGS =
 CUBLAS_OBJS =
 
-OBJS_FULL += ggml-alloc.o ggml-quants.o unicode.o unicode-data.o sgemm.o common.o sampling.o grammar-parser.o
-OBJS_SIMPLE += ggml-alloc.o ggml-quants_noavx2.o unicode.o unicode-data.o sgemm_noavx2.o common.o sampling.o grammar-parser.o
-OBJS_FAILSAFE += ggml-alloc.o ggml-quants_failsafe.o unicode.o unicode-data.o sgemm_failsafe.o common.o sampling.o grammar-parser.o
+OBJS_FULL += ggml-alloc.o ggml-aarch64.o ggml-quants.o unicode.o unicode-data.o sgemm.o common.o sampling.o grammar-parser.o
+OBJS_SIMPLE += ggml-alloc.o ggml-aarch64.o ggml-quants_noavx2.o unicode.o unicode-data.o sgemm_noavx2.o common.o sampling.o grammar-parser.o
+OBJS_FAILSAFE += ggml-alloc.o ggml-aarch64.o ggml-quants_failsafe.o unicode.o unicode-data.o sgemm_failsafe.o common.o sampling.o grammar-parser.o
 
 #lets try enabling everything
 CFLAGS   += -pthread -s -Wno-deprecated -Wno-deprecated-declarations
@@ -421,11 +421,11 @@ ggml-quants_failsafe.o: ggml/src/ggml-quants.c ggml/include/ggml.h ggml/src/ggml
 	$(CC)  $(CFLAGS) $(NONECFLAGS) -c $< -o $@
 
 #sgemm
-sgemm.o: ggml/src/sgemm.cpp ggml/src/sgemm.h ggml/include/ggml.h
+sgemm.o: ggml/src/llamafile/sgemm.cpp ggml/src/llamafile/sgemm.h ggml/include/ggml.h
 	$(CXX) $(CXXFLAGS) $(FULLCFLAGS) -c $< -o $@
-sgemm_noavx2.o: ggml/src/sgemm.cpp ggml/src/sgemm.h ggml/include/ggml.h
+sgemm_noavx2.o: ggml/src/llamafile/sgemm.cpp ggml/src/llamafile/sgemm.h ggml/include/ggml.h
 	$(CXX) $(CXXFLAGS) $(SIMPLECFLAGS) -c $< -o $@
-sgemm_failsafe.o: ggml/src/sgemm.cpp ggml/src/sgemm.h ggml/include/ggml.h
+sgemm_failsafe.o: ggml/src/llamafile/sgemm.cpp ggml/src/llamafile/sgemm.h ggml/include/ggml.h
 	$(CXX) $(CXXFLAGS) $(NONECFLAGS) -c $< -o $@
 
 #there's no intrinsics or special gpu ops used here, so we can have a universal object
@@ -437,6 +437,8 @@ unicode.o: src/unicode.cpp src/unicode.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 unicode-data.o: src/unicode-data.cpp src/unicode-data.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+ggml-aarch64.o: ggml/src/ggml-aarch64.c ggml/include/ggml.h ggml/src/ggml-aarch64.h ggml/src/ggml-common.h
+	$(CC)  $(CFLAGS) -c $< -o $@
 
 #these have special gpu defines
 ggml-backend_default.o: ggml/src/ggml-backend.c ggml/include/ggml.h ggml/include/ggml-backend.h

@@ -738,6 +738,8 @@ struct server_context {
             slot.ga_n = ga_n;
             slot.ga_w = ga_w;
 
+            slot.sparams = params.sparams;
+
             slot.reset();
 
             slots.push_back(slot);
@@ -885,7 +887,8 @@ struct server_context {
 
     bool launch_slot_with_task(server_slot & slot, const server_task & task) {
         slot_params default_params;
-        llama_sampling_params default_sparams;
+        // Sampling parameter defaults are loaded from the global server context (but individual requests can still override them)
+        llama_sampling_params default_sparams = params.sparams;
         auto & data = task.data;
 
         if (data.count("__oaicompat") != 0) {
@@ -2606,7 +2609,7 @@ int main(int argc, char ** argv) {
     // if a custom chat template is not supplied, we will use the one that comes with the model (if any)
     if (params.chat_template.empty()) {
         if (!ctx_server.validate_model_chat_template()) {
-            LOG_ERROR("The chat template that comes with this model is not yet supported, falling back to chatml. This may cause the model to output suboptimal responses", {});
+            LOG_WARNING("The chat template that comes with this model is not yet supported, falling back to chatml. This may cause the model to output suboptimal responses", {});
             params.chat_template = "chatml";
         }
     }
@@ -2968,11 +2971,20 @@ int main(int argc, char ** argv) {
     };
 
     const auto handle_props = [&ctx_server](const httplib::Request & req, httplib::Response & res) {
+        std::string template_key = "tokenizer.chat_template", curr_tmpl;
+        int32_t tlen = llama_model_meta_val_str(ctx_server.model, template_key.c_str(), nullptr, 0);
+        if (tlen > 0) {
+            std::vector<char> curr_tmpl_buf(tlen + 1, 0);
+            if (llama_model_meta_val_str(ctx_server.model, template_key.c_str(), curr_tmpl_buf.data(), curr_tmpl_buf.size()) == tlen) {
+                curr_tmpl = std::string(curr_tmpl_buf.data(), tlen);
+            }
+        }
         res.set_header("Access-Control-Allow-Origin", req.get_header_value("Origin"));
         json data = {
             { "system_prompt",               ctx_server.system_prompt.c_str() },
             { "default_generation_settings", ctx_server.default_generation_settings_for_props },
-            { "total_slots",                 ctx_server.params.n_parallel }
+            { "total_slots",                 ctx_server.params.n_parallel },
+            { "chat_template",               curr_tmpl.c_str() }
         };
 
         res.set_content(data.dump(), "application/json; charset=utf-8");

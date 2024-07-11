@@ -430,8 +430,10 @@ add_library(ggml
             ggml/include/ggml-backend.h
             ggml/src/ggml-quants.c
             ggml/src/ggml-quants.h
-            ggml/src/sgemm.cpp
-            ggml/src/sgemm.h
+            ggml/src/llamafile/sgemm.cpp
+            ggml/src/llamafile/sgemm.h
+            ggml/src/ggml-aarch64.c
+            ggml/src/ggml-aarch64.h
             ${GGML_SOURCES_CUDA})
 target_include_directories(ggml PUBLIC . ./ggml/include ./ggml/src ./include ./otherarch ./otherarch/tools)
 target_compile_features(ggml PUBLIC c_std_11) # don't bump
