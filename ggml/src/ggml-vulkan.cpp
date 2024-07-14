@@ -23,7 +23,7 @@
 #include "ggml.h"
 #include "ggml-backend-impl.h"
 
-#include "ggml-vulkan-shaders.hpp"
+#include "ggml-vulkan-shaders.cpp"
 
 #define VK_API_VERSION VK_API_VERSION_1_2
 
