@@ -3,6 +3,7 @@ name: Koboldcpp Linux
 on: workflow_dispatch
 env:
   BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+  NOAVX2: 1
 
 jobs:
   linux:
