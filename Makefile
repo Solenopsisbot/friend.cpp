@@ -124,7 +124,11 @@ ifeq ($(UNAME_M),$(filter $(UNAME_M),x86_64 i686))
 		CFLAGS +=
 		NONECFLAGS +=
 		SIMPLECFLAGS += -mavx -msse3
-		FULLCFLAGS += -mavx2 -msse3 -mfma -mf16c -mavx
+		ifdef LLAMA_NOAVX2
+			FULLCFLAGS += -msse3 -mavx
+		else
+			FULLCFLAGS += -mavx2 -msse3 -mfma -mf16c -mavx
+		endif
 	else
 # if not on windows, they are clearly building it themselves, so lets just use whatever is supported
 		ifdef LLAMA_PORTABLE
