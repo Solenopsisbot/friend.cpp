@@ -12,7 +12,7 @@ Current version indicated by LITEVER below.
 -->
 
 <script>
-	const LITEVER = 153;
+	const LITEVER = 154;
 	const urlParams = new URLSearchParams(window.location.search);
 	const localflag = true;
 	const STORAGE_PREFIX = (localflag?"e_":"")+"kaihordewebui_";
@@ -8235,10 +8235,10 @@ Current version indicated by LITEVER below.
 											{
 												document.getElementById("max_context_length_slide").max = ep_maxctx;
 												document.getElementById("max_context_length_slide_label").innerText = ep_maxctx;
-												if(localflag && localsettings.max_context_length==2048 && ep_maxctx>2048)
-												{
-													localsettings.max_context_length = ep_maxctx;
-												}
+											}
+											if(localflag && localsettings.max_context_length==2048 && ep_maxctx>2048)
+											{
+												localsettings.max_context_length = ep_maxctx;
 											}
 										}).catch(error => {
 											console.log("Failed to get true max ctx: " + error);
@@ -17527,7 +17527,7 @@ Current version indicated by LITEVER below.
 
 					<div class="settingitem">
 						<div class="settinglabel">
-							<div class="justifyleft settingsmall" style="width: 100%;">TTS <span class="helpicon">?<span class="helptext">Enable Text-To-Speech to have your story automatically read to you.</span></span></div>
+							<div class="justifyleft settingsmall" style="width: 100%;">Text To Speech <span class="helpicon">?<span class="helptext">Enable Text-To-Speech to have your story automatically read to you.</span></span></div>
 							<select title="Text To Speech" class="form-control" id="ttsselect" style="font-size:12px;height:20px;padding:0;margin:0px 0 0;width:calc(100% - 35px);" onchange="toggle_tts_mode()">
 							</select>
 							<button id="test_tts" type="button" class="bg_green btn btn-primary" style="height:20px; width:30px; padding:2px 3px;font-size:11px; margin-left: 2px;" onclick="test_tts()">Test</button>
@@ -17558,9 +17558,10 @@ Current version indicated by LITEVER below.
 						   <input title="Notify On Done" type="checkbox" id="notify_on" style="margin:0px 0px 0px auto;">
 						</div>
 
-						<div class="settinglabel" style="margin-top: 8px;">
-							<div class="justifyleft settingsmall">Speech Control <span class="helpicon">?<span class="helptext">Requires KoboldCpp with Whisper model loaded. Enables Speech-To-Text voice input. Automatically listens for speech in 'On' mode (Voice Detection), or use Push-To-Talk (PTT).</span></span></div>
-							<select title="Speech Control Mode" style="padding:1px; height:auto; font-size: 8pt;" class="form-control" id="voice_typing_mode">
+
+						<div class="settinglabel" style="border-top: 1px solid #12324f; margin-top: 4px;">
+							<div class="justifyleft settingsmall" style="margin-top: 4px;">Voice Input <span class="helpicon">?<span class="helptext">Requires KoboldCpp with Whisper model loaded. Enables Speech-To-Text voice input. Automatically listens for speech in 'On' mode (Voice Detection), or use Push-To-Talk (PTT).</span></span></div>
+							<select title="Speech To Text Mode" style="padding:1px; height:auto; font-size: 8pt;" class="form-control" id="voice_typing_mode">
 								<option value="0">Off</option>
 								<option value="1">Detect Voice</option>
 								<option value="2">Push-To-Talk</option>
