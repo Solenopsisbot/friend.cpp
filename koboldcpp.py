@@ -41,7 +41,7 @@ maxhordelen = 350
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.70.1"
+KcppVersion = "1.71"
 showdebug = True
 guimode = False
 showsamplerwarning = True
@@ -1999,14 +1999,14 @@ def show_gui():
     tabcontent = {}
     lib_option_pairs = [
         (lib_openblas, "Use OpenBLAS"),
+        (lib_default, "Use No BLAS"),
         (lib_clblast, "Use CLBlast"),
         (lib_cublas, "Use CuBLAS"),
         (lib_hipblas, "Use hipBLAS (ROCm)"),
         (lib_vulkan, "Use Vulkan"),
-        (lib_default, "Use No BLAS"),
+        (lib_noavx2, "NoAVX2 Mode (Old CPU)"),
         (lib_clblast_noavx2, "CLBlast NoAVX2 (Old CPU)"),
         (lib_vulkan_noavx2, "Vulkan NoAVX2 (Old CPU)"),
-        (lib_noavx2, "NoAVX2 Mode (Old CPU)"),
         (lib_failsafe, "Failsafe Mode (Old CPU)")]
     openblas_option, clblast_option, cublas_option, hipblas_option, vulkan_option, default_option, clblast_noavx2_option, vulkan_noavx2_option, noavx2_option, failsafe_option = (opt if file_exists(lib) or (os.name == 'nt' and file_exists(opt + ".dll")) else None for lib, opt in lib_option_pairs)
     # slider data
