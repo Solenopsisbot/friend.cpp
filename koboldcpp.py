@@ -523,6 +523,34 @@ def string_contains_sequence_substring(inputstr,sequences):
             return True
     return False
 
+import struct
+
+def read_gguf_layer_count(file_path):
+    fsize = os.path.getsize(file_path)
+    if fsize < 10000: #ignore files under 10kb
+        return 0
+    with open(file_path, 'rb') as f:
+        file_header = f.read(4)
+        if file_header != b'GGUF': #file is not GGUF
+            return 0
+        magic_key = b'.block_count'
+        magic_length = len(magic_key)
+        chunk_size = 4096  # read only first 4kb of file
+        data = f.read(chunk_size)
+        index = data.find(magic_key)  # Search for the magic number, Read 2 chunks of 4 byte numbers
+        if index != -1 and index + magic_length + 8 <= chunk_size:
+            start_index = index + magic_length
+            first_value_bytes = data[start_index:start_index + 4]
+            second_value_bytes = data[start_index + 4:start_index + 8]
+            # Unpack each 4 bytes as an unsigned int32 in little-endian format
+            value1 = struct.unpack('<I', first_value_bytes)[0]
+            value2 = struct.unpack('<I', second_value_bytes)[0]
+            if value1 == 4 and value2 > 0 and value2 <= 300:
+                return value2 #contains layer count
+            return 0
+        else:
+            return 0 #not found
+
 def load_model(model_filename):
     global args
     inputs = load_model_inputs()
@@ -576,7 +604,7 @@ def load_model(model_filename):
     ret = handle.load_model(inputs)
     return ret
 
-def generate(prompt, memory="", images=[], max_length=32, max_context_length=512, temperature=0.7, top_k=100, top_a=0.0, top_p=0.92, min_p=0.0, typical_p=1.0, tfs=1.0, rep_pen=1.0, rep_pen_range=128, rep_pen_slope=1.0, presence_penalty=0.0, mirostat=0, mirostat_tau=5.0, mirostat_eta=0.1, dry_multiplier=0.0, dry_base=1.75, dry_allowed_length=2, dry_penalty_last_n=0, dry_sequence_breakers=['\n', ':', '"', '*'], sampler_order=[6,0,1,3,4,2,5], seed=-1, stop_sequence=[], use_default_badwordsids=False, stream_sse=False, grammar='', grammar_retain_state=False, genkey='', trimstop=False, quiet=False, dynatemp_range=0.0, dynatemp_exponent=1.0, smoothing_factor=0.0, logit_biases={}, render_special=False, banned_tokens=[], bypass_eos_token=False):
+def generate(prompt, memory="", images=[], max_length=32, max_context_length=512, temperature=0.7, top_k=100, top_a=0.0, top_p=0.92, min_p=0.0, typical_p=1.0, tfs=1.0, rep_pen=1.0, rep_pen_range=128, rep_pen_slope=1.0, presence_penalty=0.0, mirostat=0, mirostat_tau=5.0, mirostat_eta=0.1, dry_multiplier=0.0, dry_base=1.75, dry_allowed_length=2, dry_penalty_last_n=0, dry_sequence_breakers=[], sampler_order=[6,0,1,3,4,2,5], seed=-1, stop_sequence=[], use_default_badwordsids=False, stream_sse=False, grammar='', grammar_retain_state=False, genkey='', trimstop=False, quiet=False, dynatemp_range=0.0, dynatemp_exponent=1.0, smoothing_factor=0.0, logit_biases={}, render_special=False, banned_tokens=[], bypass_eos_token=False):
     global maxctx, args, currentusergenkey, totalgens, pendingabortkey
     inputs = generation_inputs()
     inputs.prompt = prompt.encode("UTF-8")
@@ -631,17 +659,18 @@ def generate(prompt, memory="", images=[], max_length=32, max_context_length=512
     # Handle dry_sequence_breakers being passed as a json-encoded array of
     # strings, rather than as an array of strings itself. This is to support
     # SillyTavern, which passes sequence breakers to Oobabooga that way.
-    if isinstance(dry_sequence_breakers, str):
+    if dry_multiplier > 0 and isinstance(dry_sequence_breakers, str):
         try:
             dry_sequence_breakers = json.loads(dry_sequence_breakers)
         except ValueError as e:
             print(f"ERROR: dry_sequence_breakers must be an array of strings or a json encoded array of strings. Could not parse '{dry_sequence_breakers}': " + str(e))
             dry_sequence_breakers = []
     for n in range(dry_seq_break_max):
-        if n < len(dry_sequence_breakers):
+        if dry_multiplier > 0 and n < len(dry_sequence_breakers):
             inputs.dry_sequence_breakers[n] = dry_sequence_breakers[n].encode("UTF-8")
         else:
             inputs.dry_sequence_breakers[n] = "".encode("UTF-8")
+
     if sampler_order and 0 < len(sampler_order) <= sampler_order_max:
         try:
             for i, sampler in enumerate(sampler_order):
@@ -2266,15 +2295,18 @@ def show_gui():
                 cs = int(contextsize_text[context_var.get()])
                 mem = MaxMemory[0]
                 layerlimit = 0
-
                 if cs and cs > 4096:
                     fsize *= 1.2
                 elif cs and cs > 2048:
                     fsize *= 1.1
-
                 if mem < fsize*1.6:
-                    sizeperlayer = fsize*0.052
-                    layerlimit = int(min(200,mem/sizeperlayer))
+                    layers = read_gguf_layer_count(filepath)
+                    if layers == 0: #fail to read
+                        sizeperlayer = fsize*0.052
+                        layerlimit = int(min(200,mem/sizeperlayer))
+                    else:
+                        ratio = mem/(fsize*1.5)
+                        layerlimit = int(ratio*layers)
                 else:
                     layerlimit = 200 #assume full offload
                 old_gui_layers_untouched = gui_layers_untouched
