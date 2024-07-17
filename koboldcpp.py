@@ -2088,6 +2088,8 @@ def show_gui():
 
     whisper_model_var = ctk.StringVar()
 
+    kcpp_jsonembed_var = ctk.IntVar(value=0)
+
     def tabbuttonaction(name):
         for t in tabcontent:
             if name == t:
@@ -2678,6 +2680,8 @@ def show_gui():
     makelabel(extra_tab, "Unpack KoboldCpp to a local directory to modify its files.", 1, 0)
     makelabel(extra_tab, "You can also launch via koboldcpp.py for faster startup.", 2, 0)
     ctk.CTkButton(extra_tab , text = "Unpack KoboldCpp To Folder", command = unpack_to_dir ).grid(row=3,column=0, stick="w", padx= 8, pady=2)
+    makecheckbox(extra_tab, "Embed JSON files when saving KCPPS", kcpp_jsonembed_var, 5, tooltiptxt="Embeds any selected JSON files directly into kcpps setting files when saving.")
+
 
     # launch
     def guilaunch():
@@ -2760,10 +2764,24 @@ def show_gui():
             args.ropeconfig = [float(customrope_scale.get()),float(customrope_base.get())]
 
         args.chatcompletionsadapter = None if chatcompletionsadapter_var.get() == "" else chatcompletionsadapter_var.get()
+        try:
+            if kcpp_jsonembed_var.get()==1 and isinstance(args.chatcompletionsadapter, str) and args.chatcompletionsadapter!="" and os.path.exists(args.chatcompletionsadapter):
+                print(f"Embedding chat completions adapter...")   # parse and save embedded preload story
+                with open(args.chatcompletionsadapter, 'r') as f:
+                    args.chatcompletionsadapter = json.load(f)
+        except Exception as ex2:
+            pass
 
         args.model_param = None if model_var.get() == "" else model_var.get()
         args.lora = None if lora_var.get() == "" else ([lora_var.get()] if lora_base_var.get()=="" else [lora_var.get(), lora_base_var.get()])
         args.preloadstory = None if preloadstory_var.get() == "" else preloadstory_var.get()
+        try:
+            if kcpp_jsonembed_var.get()==1 and isinstance(args.preloadstory, str) and args.preloadstory!="" and os.path.exists(args.preloadstory):
+                print(f"Embedding preload story...")   # parse and save embedded preload story
+                with open(args.preloadstory, 'r') as f:
+                    args.preloadstory = json.load(f)
+        except Exception as ex2:
+            pass
         args.mmproj = None if mmproj_var.get() == "" else mmproj_var.get()
 
         args.ssl = None if (ssl_cert_var.get() == "" or ssl_key_var.get() == "") else ([ssl_cert_var.get(), ssl_key_var.get()])
@@ -3503,18 +3521,32 @@ def main(launch_args,start_server=True):
 
     #try to read story if provided
     if args.preloadstory:
+        global preloaded_story
+        canload = False
         if isinstance(args.preloadstory, str) and os.path.exists(args.preloadstory):
             print(f"Preloading saved story {args.preloadstory} into server...")
             with open(args.preloadstory, mode='rb') as f:
-                global preloaded_story
                 preloaded_story = f.read()
-                print("Saved story preloaded.")
+                canload = True
+        elif isinstance(args.preloadstory, str):
+            print(f"Preloading saved story as JSON into server...")
+            try:
+                import ast
+                parsed = ast.literal_eval(args.preloadstory)
+                preloaded_story = json.dumps(parsed).encode()
+                canload = True
+            except Exception as ex:
+                print(ex)
+        if canload:
+            print("Saved story preloaded.")
         else:
-            print(f"Warning: Saved story file {args.preloadstory} invalid or not found. No story will be preloaded into server.")
+            print(f"Warning: Saved story file invalid or not found. No story will be preloaded into server.")
 
     # try to read chat completions adapter
     if args.chatcompletionsadapter:
+        global chatcompl_adapter
         ccadapter_path = None
+        canload = False
         adapt_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'kcpp_adapters')
         adapt_dir = adapt_dir if os.path.isdir(adapt_dir) else None
         if isinstance(args.chatcompletionsadapter, str) and os.path.exists(args.chatcompletionsadapter):
@@ -3529,11 +3561,21 @@ def main(launch_args,start_server=True):
         if ccadapter_path:
             print(f"Loading Chat Completions Adapter: {ccadapter_path}")
             with open(ccadapter_path, 'r') as f:
-                global chatcompl_adapter
                 chatcompl_adapter = json.load(f)
-                print(f"Chat Completions Adapter Loaded")
+                canload = True
         else:
-            print(f"Warning: Chat Completions Adapter {args.chatcompletionsadapter} invalid or not found.")
+            if isinstance(args.chatcompletionsadapter, str) and args.chatcompletionsadapter!="":
+                try:
+                    import ast
+                    parsed = ast.literal_eval(args.chatcompletionsadapter)
+                    chatcompl_adapter = json.loads(json.dumps(parsed))
+                    canload = True
+                except Exception as ex:
+                    print(ex)
+        if canload:
+            print(f"Chat Completions Adapter Loaded")
+        else:
+            print(f"Warning: Chat Completions Adapter invalid or not found.")
 
     if args.model_param and args.model_param!="":
         if args.model_param.endswith("?download=true"):
