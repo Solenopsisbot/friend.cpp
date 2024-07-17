@@ -146,6 +146,10 @@ inline bool LogitsDuplicated(std::vector<float> & arr1, std::vector<float> & arr
 
 static std::string FileFormatTokenizeID(int id, FileFormat file_format, bool return_special = false)
 {
+    if(id<0)
+    {
+        return ""; //placeholder IDs cannot be tokenized!
+    }
     if (file_format == FileFormat::GGML || file_format == FileFormat::GGHF || file_format == FileFormat::GGJT || file_format == FileFormat::GGJT_2)
     {
         return std::string(llama_v2_token_to_str(llama_ctx_v2, id));

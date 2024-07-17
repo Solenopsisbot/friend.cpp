@@ -526,30 +526,33 @@ def string_contains_sequence_substring(inputstr,sequences):
 import struct
 
 def read_gguf_layer_count(file_path):
-    fsize = os.path.getsize(file_path)
-    if fsize < 10000: #ignore files under 10kb
+    try:
+        fsize = os.path.getsize(file_path)
+        if fsize < 10000: #ignore files under 10kb
+            return 0
+        with open(file_path, 'rb') as f:
+            file_header = f.read(4)
+            if file_header != b'GGUF': #file is not GGUF
+                return 0
+            magic_key = b'.block_count'
+            magic_length = len(magic_key)
+            chunk_size = 4096  # read only first 4kb of file
+            data = f.read(chunk_size)
+            index = data.find(magic_key)  # Search for the magic number, Read 2 chunks of 4 byte numbers
+            if index != -1 and index + magic_length + 8 <= chunk_size:
+                start_index = index + magic_length
+                first_value_bytes = data[start_index:start_index + 4]
+                second_value_bytes = data[start_index + 4:start_index + 8]
+                # Unpack each 4 bytes as an unsigned int32 in little-endian format
+                value1 = struct.unpack('<I', first_value_bytes)[0]
+                value2 = struct.unpack('<I', second_value_bytes)[0]
+                if value1 == 4 and value2 > 0 and value2 <= 300:
+                    return value2 #contains layer count
+                return 0
+            else:
+                return 0 #not found
+    except Exception as ex:
         return 0
-    with open(file_path, 'rb') as f:
-        file_header = f.read(4)
-        if file_header != b'GGUF': #file is not GGUF
-            return 0
-        magic_key = b'.block_count'
-        magic_length = len(magic_key)
-        chunk_size = 4096  # read only first 4kb of file
-        data = f.read(chunk_size)
-        index = data.find(magic_key)  # Search for the magic number, Read 2 chunks of 4 byte numbers
-        if index != -1 and index + magic_length + 8 <= chunk_size:
-            start_index = index + magic_length
-            first_value_bytes = data[start_index:start_index + 4]
-            second_value_bytes = data[start_index + 4:start_index + 8]
-            # Unpack each 4 bytes as an unsigned int32 in little-endian format
-            value1 = struct.unpack('<I', first_value_bytes)[0]
-            value2 = struct.unpack('<I', second_value_bytes)[0]
-            if value1 == 4 and value2 > 0 and value2 <= 300:
-                return value2 #contains layer count
-            return 0
-        else:
-            return 0 #not found
 
 def load_model(model_filename):
     global args
@@ -2008,7 +2011,7 @@ def show_gui():
         (lib_clblast_noavx2, "CLBlast NoAVX2 (Old CPU)"),
         (lib_vulkan_noavx2, "Vulkan NoAVX2 (Old CPU)"),
         (lib_failsafe, "Failsafe Mode (Old CPU)")]
-    openblas_option, clblast_option, cublas_option, hipblas_option, vulkan_option, default_option, clblast_noavx2_option, vulkan_noavx2_option, noavx2_option, failsafe_option = (opt if file_exists(lib) or (os.name == 'nt' and file_exists(opt + ".dll")) else None for lib, opt in lib_option_pairs)
+    openblas_option, default_option, clblast_option, cublas_option, hipblas_option, vulkan_option, noavx2_option, clblast_noavx2_option, vulkan_noavx2_option, failsafe_option = (opt if file_exists(lib) or (os.name == 'nt' and file_exists(opt + ".dll")) else None for lib, opt in lib_option_pairs)
     # slider data
     blasbatchsize_values = ["-1", "32", "64", "128", "256", "512", "1024", "2048"]
     blasbatchsize_text = ["Don't Batch BLAS","32","64","128","256","512","1024","2048"]
@@ -3952,7 +3955,7 @@ if __name__ == '__main__':
     advparser.add_argument("--lora", help="LLAMA models only, applies a lora file on top of model. Experimental.", metavar=('[lora_filename]', '[lora_base]'), nargs='+')
     advparser.add_argument("--noshift", help="If set, do not attempt to Trim and Shift the GGUF context.", action='store_true')
     advparser.add_argument("--nommap", help="If set, do not use mmap to load newer models", action='store_true')
-    advparser.add_argument("--usemlock", help="For Apple Systems. Force system to keep model in RAM rather than swapping or compressing", action='store_true')
+    advparser.add_argument("--usemlock", help="Enables mlock, preventing the RAM used to load the model from being paged out. Not usually recommended.", action='store_true')
     advparser.add_argument("--noavx2", help="Do not use AVX2 instructions, a slower compatibility mode for older devices.", action='store_true')
     advparser.add_argument("--debugmode", help="Shows additional debug info in the terminal.", nargs='?', const=1, type=int, default=0)
     advparser.add_argument("--skiplauncher", help="Doesn't display or use the GUI launcher.", action='store_true')
