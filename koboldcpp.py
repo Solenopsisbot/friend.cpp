@@ -72,6 +72,14 @@ currfinishreason = "null"
 using_gui_launcher = False
 using_outdated_flags = False
 
+CLDevices = ["1","2","3","4"]
+CUDevices = ["1","2","3","4","All"]
+CLDevicesNames = ["","","",""]
+CUDevicesNames = ["","","","",""]
+VKDevicesNames = ["","","",""]
+VKIsDGPU = [0,0,0,0]
+MaxMemory = [0]
+
 class logit_bias(ctypes.Structure):
     _fields_ = [("token_id", ctypes.c_int32),
                 ("bias", ctypes.c_float)]
@@ -553,6 +561,116 @@ def read_gguf_layer_count(file_path):
                 return 0 #not found
     except Exception as ex:
         return 0
+
+def autoset_gpu_layers(filepath,ctxsize,gpumem): #shitty algo to determine how many layers to use
+    try:
+        layerlimit = 0
+        fsize = os.path.getsize(filepath)
+        if fsize>10000000: #dont bother with models < 10mb
+            cs = ctxsize
+            mem = gpumem
+            if cs and cs > 4096:
+                fsize *= 1.2
+            elif cs and cs > 2048:
+                fsize *= 1.1
+            if mem < fsize*1.6:
+                layers = read_gguf_layer_count(filepath)
+                if layers == 0: #fail to read
+                    sizeperlayer = fsize*0.052
+                    layerlimit = int(min(200,mem/sizeperlayer))
+                else:
+                    ratio = mem/(fsize*1.5)
+                    layerlimit = int(ratio*layers)
+            else:
+                layerlimit = 200 #assume full offload
+        return layerlimit
+    except Exception as ex:
+        return 0
+
+def fetch_gpu_properties(testCL,testCU,testVK):
+    import subprocess
+    if testCL:
+        try: # Get OpenCL GPU names on windows using a special binary. overwrite at known index if found.
+            basepath = os.path.abspath(os.path.dirname(__file__))
+            output = ""
+            data = None
+            try:
+                output = subprocess.run(["clinfo","--json"], capture_output=True, text=True, check=True, encoding='utf-8').stdout
+                data = json.loads(output)
+            except Exception as e1:
+                output = subprocess.run([((os.path.join(basepath, "winclinfo.exe")) if os.name == 'nt' else "clinfo"),"--json"], capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS, encoding='utf-8').stdout
+                data = json.loads(output)
+            plat = 0
+            dev = 0
+            lowestclmem = 0
+            for platform in data["devices"]:
+                dev = 0
+                for device in platform["online"]:
+                    dname = device["CL_DEVICE_NAME"]
+                    dmem = int(device["CL_DEVICE_GLOBAL_MEM_SIZE"])
+                    idx = plat+dev*2
+                    if idx<len(CLDevices):
+                        CLDevicesNames[idx] = dname
+                        lowestclmem = dmem if lowestclmem==0 else (dmem if dmem<lowestclmem else lowestclmem)
+                    dev += 1
+                plat += 1
+            MaxMemory[0] = lowestclmem
+        except Exception as e:
+            pass
+
+    if testCU:
+        FetchedCUdevices = []
+        FetchedCUdeviceMem = []
+        AMDgpu = None
+        try: # Get NVIDIA GPU names
+            output = subprocess.run(['nvidia-smi','--query-gpu=name,memory.total','--format=csv,noheader'], capture_output=True, text=True, check=True, encoding='utf-8').stdout
+            FetchedCUdevices = [line.split(",")[0].strip() for line in output.splitlines()]
+            FetchedCUdeviceMem = [line.split(",")[1].strip().split(" ")[0].strip() for line in output.splitlines()]
+        except Exception as e:
+            pass
+        if len(FetchedCUdevices)==0:
+            try: # Get AMD ROCm GPU names
+                output = subprocess.run(['rocminfo'], capture_output=True, text=True, check=True, encoding='utf-8').stdout
+                device_name = None
+                for line in output.splitlines(): # read through the output line by line
+                    line = line.strip()
+                    if line.startswith("Marketing Name:"): device_name = line.split(":", 1)[1].strip() # if we find a named device, temporarily save the name
+                    elif line.startswith("Device Type:") and "GPU" in line and device_name is not None: # if the following Device Type is a GPU (not a CPU) then add it to devices list
+                        FetchedCUdevices.append(device_name)
+                        AMDgpu = True
+                    elif line.startswith("Device Type:") and "GPU" not in line: device_name = None
+                if FetchedCUdevices:
+                    getamdvram = subprocess.run(['rocm-smi', '--showmeminfo', 'vram', '--csv'], capture_output=True, text=True, check=True, encoding='utf-8').stdout # fetch VRAM of devices
+                    FetchedCUdeviceMem = [line.split(",")[1].strip() for line in getamdvram.splitlines()[1:] if line.strip()]
+            except Exception as e:
+                pass
+        for idx in range(0,4):
+            if(len(FetchedCUdevices)>idx):
+                CUDevicesNames[idx] = FetchedCUdevices[idx]
+                if AMDgpu:
+                    MaxMemory[0] = max(int(FetchedCUdeviceMem[idx]),MaxMemory[0])
+                else:
+                    MaxMemory[0] = max(int(FetchedCUdeviceMem[idx])*1024*1024,MaxMemory[0])
+
+    if testVK:
+        try: # Get Vulkan names
+            output = subprocess.run(['vulkaninfo','--summary'], capture_output=True, text=True, check=True, encoding='utf-8').stdout
+            devicelist = [line.split("=")[1].strip() for line in output.splitlines() if "deviceName" in line]
+            devicetypes = [line.split("=")[1].strip() for line in output.splitlines() if "deviceType" in line]
+            idx = 0
+            for dname in devicelist:
+                if idx<len(VKDevicesNames):
+                    VKDevicesNames[idx] = dname
+                    idx += 1
+            if len(devicetypes) == len(devicelist):
+                idx = 0
+                for dvtype in devicetypes:
+                    if idx<len(VKIsDGPU):
+                        VKIsDGPU[idx] = (1 if dvtype=="PHYSICAL_DEVICE_TYPE_DISCRETE_GPU" else 0)
+                        idx += 1
+        except Exception as e:
+            pass
+    return
 
 def load_model(model_filename):
     global args
@@ -1991,14 +2109,6 @@ def show_gui():
     tabcontentframe.grid(row=0, column=1, sticky="nsew", padx=2, pady=2)
     tabcontentframe.grid_propagate(False)
 
-    CLDevices = ["1","2","3","4"]
-    CUDevices = ["1","2","3","4","All"]
-    CLDevicesNames = ["","","",""]
-    CUDevicesNames = ["","","","",""]
-    VKDevicesNames = ["","","",""]
-    VKIsDGPU = [0,0,0,0]
-    MaxMemory = [0]
-
     tabcontent = {}
     lib_option_pairs = [
         (lib_openblas, "Use OpenBLAS"),
@@ -2182,89 +2292,8 @@ def show_gui():
 
     # decided to follow yellowrose's and kalomaze's suggestions, this function will automatically try to determine GPU identifiers
     # run in new thread so it doesnt block. does not return anything, instead overwrites specific values and redraws GUI
-    def auto_gpu_heuristics():
-        import subprocess
-        FetchedCUdevices = []
-        FetchedCUdeviceMem = []
-        AMDgpu = None
-        try: # Get OpenCL GPU names on windows using a special binary. overwrite at known index if found.
-            basepath = os.path.abspath(os.path.dirname(__file__))
-            output = ""
-            data = None
-            try:
-                output = subprocess.run(["clinfo","--json"], capture_output=True, text=True, check=True, encoding='utf-8').stdout
-                data = json.loads(output)
-            except Exception as e1:
-                output = subprocess.run([((os.path.join(basepath, "winclinfo.exe")) if os.name == 'nt' else "clinfo"),"--json"], capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS, encoding='utf-8').stdout
-                data = json.loads(output)
-            plat = 0
-            dev = 0
-            lowestclmem = 0
-            for platform in data["devices"]:
-                dev = 0
-                for device in platform["online"]:
-                    dname = device["CL_DEVICE_NAME"]
-                    dmem = int(device["CL_DEVICE_GLOBAL_MEM_SIZE"])
-                    idx = plat+dev*2
-                    if idx<len(CLDevices):
-                        CLDevicesNames[idx] = dname
-                        lowestclmem = dmem if lowestclmem==0 else (dmem if dmem<lowestclmem else lowestclmem)
-                    dev += 1
-                plat += 1
-            MaxMemory[0] = lowestclmem
-        except Exception as e:
-            pass
-
-        try: # Get NVIDIA GPU names
-            output = subprocess.run(['nvidia-smi','--query-gpu=name,memory.total','--format=csv,noheader'], capture_output=True, text=True, check=True, encoding='utf-8').stdout
-            FetchedCUdevices = [line.split(",")[0].strip() for line in output.splitlines()]
-            FetchedCUdeviceMem = [line.split(",")[1].strip().split(" ")[0].strip() for line in output.splitlines()]
-        except Exception as e:
-            pass
-
-        if len(FetchedCUdevices)==0:
-            try: # Get AMD ROCm GPU names
-                output = subprocess.run(['rocminfo'], capture_output=True, text=True, check=True, encoding='utf-8').stdout
-                device_name = None
-                for line in output.splitlines(): # read through the output line by line
-                    line = line.strip()
-                    if line.startswith("Marketing Name:"): device_name = line.split(":", 1)[1].strip() # if we find a named device, temporarily save the name
-                    elif line.startswith("Device Type:") and "GPU" in line and device_name is not None: # if the following Device Type is a GPU (not a CPU) then add it to devices list
-                        FetchedCUdevices.append(device_name)
-                        AMDgpu = True
-                    elif line.startswith("Device Type:") and "GPU" not in line: device_name = None
-                if FetchedCUdevices:
-                    getamdvram = subprocess.run(['rocm-smi', '--showmeminfo', 'vram', '--csv'], capture_output=True, text=True, check=True, encoding='utf-8').stdout # fetch VRAM of devices
-                    FetchedCUdeviceMem = [line.split(",")[1].strip() for line in getamdvram.splitlines()[1:] if line.strip()]
-            except Exception as e:
-                pass
-
-        try: # Get Vulkan names
-            output = subprocess.run(['vulkaninfo','--summary'], capture_output=True, text=True, check=True, encoding='utf-8').stdout
-            devicelist = [line.split("=")[1].strip() for line in output.splitlines() if "deviceName" in line]
-            devicetypes = [line.split("=")[1].strip() for line in output.splitlines() if "deviceType" in line]
-            idx = 0
-            for dname in devicelist:
-                if idx<len(VKDevicesNames):
-                    VKDevicesNames[idx] = dname
-                    idx += 1
-            if len(devicetypes) == len(devicelist):
-                idx = 0
-                for dvtype in devicetypes:
-                    if idx<len(VKIsDGPU):
-                        VKIsDGPU[idx] = (1 if dvtype=="PHYSICAL_DEVICE_TYPE_DISCRETE_GPU" else 0)
-                        idx += 1
-        except Exception as e:
-            pass
-
-        for idx in range(0,4):
-            if(len(FetchedCUdevices)>idx):
-                CUDevicesNames[idx] = FetchedCUdevices[idx]
-                if AMDgpu:
-                    MaxMemory[0] = max(int(FetchedCUdeviceMem[idx]),MaxMemory[0])
-                else:
-                    MaxMemory[0] = max(int(FetchedCUdeviceMem[idx])*1024*1024,MaxMemory[0])
-
+    def auto_set_backend():
+        fetch_gpu_properties(True,True,True)
         #autopick cublas if suitable, requires at least 3.5GB VRAM to auto pick
         global exitcounter, runmode_untouched
         #we do not want to autoselect hip/cublas if the user has already changed their desired backend!
@@ -2279,50 +2308,24 @@ def show_gui():
                     runopts_var.set("Use Vulkan")
                     gpu_choice_var.set(str(i+1))
                     break
-
         changed_gpu_choice_var()
-        return
 
     def on_picked_model_file(filepath):
+        global gui_layers_untouched
         if filepath.lower().endswith('.kcpps') or filepath.lower().endswith('.skcpps'):
             #load it as a config file instead
             with open(filepath, 'r') as f:
                 dict = json.load(f)
                 import_vars(dict)
         else:
-            autoset_gpu_layers(filepath)
-
-    def autoset_gpu_layers(filepath): #shitty algo to determine how many layers to use
-        try:
-            global gui_layers_untouched
-            fsize = os.path.getsize(filepath)
-            if fsize>10000000: #dont bother with models < 10mb
-                cs = int(contextsize_text[context_var.get()])
-                mem = MaxMemory[0]
-                layerlimit = 0
-                if cs and cs > 4096:
-                    fsize *= 1.2
-                elif cs and cs > 2048:
-                    fsize *= 1.1
-                if mem < fsize*1.6:
-                    layers = read_gguf_layer_count(filepath)
-                    if layers == 0: #fail to read
-                        sizeperlayer = fsize*0.052
-                        layerlimit = int(min(200,mem/sizeperlayer))
-                    else:
-                        ratio = mem/(fsize*1.5)
-                        layerlimit = int(ratio*layers)
-                else:
-                    layerlimit = 200 #assume full offload
-                old_gui_layers_untouched = gui_layers_untouched
-                gui_layers_zeroed = gpulayers_var.get()=="" or gpulayers_var.get()=="0"
-                if (gui_layers_untouched or gui_layers_zeroed) and layerlimit>0:
-                    gpulayers_var.set(str(layerlimit))
-                    gui_layers_untouched = old_gui_layers_untouched
-                    if gui_layers_zeroed:
-                        gui_layers_untouched = True
-        except Exception as ex:
-            pass
+            layerlimit = autoset_gpu_layers(filepath,int(contextsize_text[context_var.get()]),MaxMemory[0])
+            old_gui_layers_untouched = gui_layers_untouched
+            gui_layers_zeroed = gpulayers_var.get()=="" or gpulayers_var.get()=="0"
+            if (gui_layers_untouched or gui_layers_zeroed) and layerlimit>0:
+                gpulayers_var.set(str(layerlimit))
+                gui_layers_untouched = old_gui_layers_untouched
+                if gui_layers_zeroed:
+                    gui_layers_untouched = True
 
     def setup_backend_tooltip(parent):
         # backend count label with the tooltip function
@@ -2680,7 +2683,7 @@ def show_gui():
     makelabel(extra_tab, "Unpack KoboldCpp to a local directory to modify its files.", 1, 0)
     makelabel(extra_tab, "You can also launch via koboldcpp.py for faster startup.", 2, 0)
     ctk.CTkButton(extra_tab , text = "Unpack KoboldCpp To Folder", command = unpack_to_dir ).grid(row=3,column=0, stick="w", padx= 8, pady=2)
-    makecheckbox(extra_tab, "Embed JSON files when saving KCPPS", kcpp_jsonembed_var, 5, tooltiptxt="Embeds any selected JSON files directly into kcpps setting files when saving.")
+    makecheckbox(extra_tab, "Save launch settings as portable SKCPPS", kcpp_jsonembed_var, 5, tooltiptxt="Portable sharing format.\nEmbeds any selected JSON files directly into skcpps setting files when saving.")
 
 
     # launch
@@ -3010,7 +3013,7 @@ def show_gui():
     ctk.CTkButton(tabs , text = "Help", fg_color="#992222", hover_color="#bb3333", command = display_help, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= 135, pady=5)
 
     # start a thread that tries to get actual gpu names and layer counts
-    gpuinfo_thread = threading.Thread(target=auto_gpu_heuristics)
+    gpuinfo_thread = threading.Thread(target=auto_set_backend)
     gpuinfo_thread.start() #submit job in new thread so nothing is waiting
 
     # runs main loop until closed or launch clicked
@@ -3650,12 +3653,25 @@ def main(launch_args,start_server=True):
         global nocertify
         nocertify = True
 
-    if args.gpulayers and args.gpulayers>0:
+    if args.gpulayers:
         global libname, lib_default, lib_openblas, lib_failsafe, lib_noavx2
         nogood = [lib_default,lib_openblas,lib_failsafe,lib_noavx2]
+        shouldavoidgpu = False
         if libname in nogood and sys.platform!="darwin":
-            print("WARNING: GPU layers is set, but a GPU backend was not selected!")
-            pass
+            shouldavoidgpu = True
+        if args.gpulayers>0:
+            if shouldavoidgpu:
+                print("WARNING: GPU layers is set, but a GPU backend was not selected!")
+                pass
+        elif args.gpulayers==-1 and not shouldavoidgpu and os.path.exists(args.model_param):
+            print("Trying to automatically determine GPU layers...")
+            if MaxMemory[0] == 0: #try to get gpu vram for cuda
+                fetch_gpu_properties(False,True,False)
+                pass
+            if MaxMemory[0] > 0:
+                layeramt = autoset_gpu_layers(args.model_param, args.contextsize, MaxMemory[0])
+                print(f"Auto Recommended Layers: {layeramt}")
+                args.gpulayers = layeramt
 
     init_library() # Note: if blas does not exist and is enabled, program will crash.
     print("==========")
@@ -3986,7 +4002,7 @@ if __name__ == '__main__':
     compatgroup.add_argument("--useclblast", help="Use CLBlast for GPU Acceleration. Must specify exactly 2 arguments, platform ID and device ID (e.g. --useclblast 1 0).", type=int, choices=range(0,9), nargs=2)
     compatgroup.add_argument("--noblas", help="Do not use any accelerated prompt ingestion", action='store_true')
     parser.add_argument("--contextsize", help="Controls the memory allocated for maximum context size, only change if you need more RAM for big contexts. (default 4096). Supported values are [256,512,1024,2048,3072,4096,6144,8192,12288,16384,24576,32768,49152,65536,98304,131072]. IF YOU USE ANYTHING ELSE YOU ARE ON YOUR OWN.",metavar=('[256,512,1024,2048,3072,4096,6144,8192,12288,16384,24576,32768,49152,65536,98304,131072]'), type=check_range(int,256,262144), default=4096)
-    parser.add_argument("--gpulayers", help="Set number of layers to offload to GPU when using GPU. Requires GPU.",metavar=('[GPU layers]'), nargs='?', const=1, type=int, default=0)
+    parser.add_argument("--gpulayers", help="Set number of layers to offload to GPU when using GPU. Requires GPU. Set to -1 to try autodetect (experimental)",metavar=('[GPU layers]'), nargs='?', const=1, type=int, default=0)
     parser.add_argument("--tensor_split", help="For CUDA and Vulkan only, ratio to split tensors across multiple GPUs, space-separated list of proportions, e.g. 7 3", metavar=('[Ratios]'), type=float, nargs='+')
 
     #more advanced params
