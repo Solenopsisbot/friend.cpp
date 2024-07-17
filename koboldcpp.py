@@ -1886,7 +1886,7 @@ def show_gui():
         args.model_param = askopenfilename(title="Select ggml model .bin or .gguf file or .kcpps config")
         root.withdraw()
         root.quit()
-        if args.model_param and args.model_param!="" and args.model_param.lower().endswith('.kcpps'):
+        if args.model_param and args.model_param!="" and (args.model_param.lower().endswith('.kcpps') or args.model_param.lower().endswith('.skcpps')):
             loadconfigfile(args.model_param)
         if not args.model_param and not args.sdmodel and not args.whispermodel:
             global exitcounter
@@ -2284,7 +2284,7 @@ def show_gui():
         return
 
     def on_picked_model_file(filepath):
-        if filepath.lower().endswith('.kcpps'):
+        if filepath.lower().endswith('.kcpps') or filepath.lower().endswith('.skcpps'):
             #load it as a config file instead
             with open(filepath, 'r') as f:
                 dict = json.load(f)
@@ -2968,7 +2968,7 @@ def show_gui():
         whisper_model_var.set(dict["whispermodel"] if ("whispermodel" in dict and dict["whispermodel"]) else "")
 
     def save_config():
-        file_type = [("KoboldCpp Settings", "*.kcpps")]
+        file_type = [("KoboldCpp Settings", "*.kcpps *.skcpps")]
         filename = asksaveasfile(filetypes=file_type, defaultextension=file_type)
         if filename == None: return
         export_vars()
@@ -2978,7 +2978,7 @@ def show_gui():
         pass
 
     def load_config():
-        file_type = [("KoboldCpp Settings", "*.kcpps")]
+        file_type = [("KoboldCpp Settings", "*.kcpps *.skcpps")]
         global runmode_untouched
         runmode_untouched = False
         filename = askopenfilename(filetypes=file_type, defaultextension=file_type, initialdir=None)
@@ -3494,7 +3494,7 @@ def main(launch_args,start_server=True):
     args = convert_outdated_args(args)
 
     #positional handling for kcpps files (drag and drop)
-    if args.model_param and args.model_param!="" and args.model_param.lower().endswith('.kcpps'):
+    if args.model_param and args.model_param!="" and (args.model_param.lower().endswith('.kcpps') or args.model_param.lower().endswith('.skcpps')):
         loadconfigfile(args.model_param)
 
     #prevent quantkv from being used without flash attn
