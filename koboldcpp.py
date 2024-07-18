@@ -2280,14 +2280,10 @@ def show_gui():
 
 
     def makelabelentry(parent, text, var, row=0, width=50, padx=8, singleline=False, tooltip=""):
-        label = makelabel(parent, text, row,0,tooltip)
-        entry = ctk.CTkEntry(parent, width=width, textvariable=var) #you cannot set placeholder text for SHARED variables
-        if singleline:
-            entry.grid(row=row, column=0, padx=padx, stick="nw")
-        else:
-            entry.grid(row=row, column=1, padx=padx, stick="nw")
+        label = makelabel(parent, text, row, 0, tooltip)
+        entry = ctk.CTkEntry(parent, width=width, textvariable=var)
+        entry.grid(row=row, column=(0 if singleline else 1), padx=padx, sticky="nw")
         return entry, label
-
 
     def makefileentry(parent, text, searchtext, var, row=0, width=200, filetypes=[], onchoosefile=None, singlerow=False, singlecol=True, tooltiptxt=""):
         label = makelabel(parent, text, row,0,tooltiptxt,columnspan=3)
@@ -2656,21 +2652,24 @@ def show_gui():
     horde_workername_entry,  horde_workername_label = makelabelentry(horde_tab, "Horde Worker Name:",horde_workername_var, 24, 180,tooltip="Your worker's name to be displayed.")
 
     def togglehorde(a,b,c):
-        labels = [horde_name_label, horde_gen_label, horde_context_label, horde_apikey_label, horde_workername_label]
-        for idx, item in enumerate([horde_name_entry, horde_gen_entry, horde_context_entry, horde_apikey_entry, horde_workername_entry]):
+        horde_items = zip([horde_name_entry, horde_gen_entry, horde_context_entry, horde_apikey_entry, horde_workername_entry],
+                          [horde_name_label, horde_gen_label, horde_context_label, horde_apikey_label, horde_workername_label])
+        
+        for item, label in horde_items:
             if usehorde_var.get() == 1:
                 item.grid()
-                labels[idx].grid()
+                label.grid()
             else:
                 item.grid_remove()
-                labels[idx].grid_remove()
-        if usehorde_var.get()==1 and (horde_name_var.get()=="koboldcpp" or horde_name_var.get()=="") and model_var.get()!="":
+                label.grid_remove()
+        
+        if usehorde_var.get()==1 and not horde_name_var.get() and model_var.get():
             basefile = os.path.basename(model_var.get())
             horde_name_var.set(sanitize_string(os.path.splitext(basefile)[0]))
 
     makecheckbox(horde_tab, "Configure for Horde", usehorde_var, 19, command=togglehorde,tooltiptxt="Enable the embedded AI Horde worker.")
     togglehorde(1,1,1)
-
+    
     # Image Gen Tab
 
     images_tab = tabcontent["Image Gen"]
