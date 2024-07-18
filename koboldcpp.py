@@ -2056,7 +2056,7 @@ def show_gui():
     ctk.set_appearance_mode("dark")
     root = ctk.CTk()
     root.geometry(str(windowwidth) + "x" + str(windowheight))
-    root.title("KoboldCpp v"+KcppVersion)
+    root.title(f"KoboldCpp v{KcppVersion}")
 
     gtooltip_box = None
     gtooltip_label = None
@@ -4070,7 +4070,7 @@ if __name__ == '__main__':
             return f
         return range_checker
 
-    print("***\nWelcome to KoboldCpp - Version " + KcppVersion) # just update version manually
+    print(f"***\nWelcome to KoboldCpp - Version {KcppVersion}") # just update version manually
     # print("Python version: " + sys.version)
     parser = argparse.ArgumentParser(description='KoboldCpp Server')
     modelgroup = parser.add_mutually_exclusive_group() #we want to be backwards compatible with the unnamed positional args
