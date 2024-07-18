@@ -2662,8 +2662,7 @@ def show_gui():
             else:
                 item.grid_remove()
                 label.grid_remove()
-        
-        if usehorde_var.get()==1 and not horde_name_var.get() and model_var.get():
+        if usehorde_var.get()==1 and (horde_name_var.get()=="koboldcpp" or horde_name_var.get()=="") and model_var.get()!="":
             basefile = os.path.basename(model_var.get())
             horde_name_var.set(sanitize_string(os.path.splitext(basefile)[0]))
 
