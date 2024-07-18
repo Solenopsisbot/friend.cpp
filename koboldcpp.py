@@ -2511,15 +2511,18 @@ def show_gui():
     quick_mmq_box = makecheckbox(quick_tab,  "Use QuantMatMul (mmq)", mmq_var, 4,1,tooltiptxt="Enable MMQ mode instead of CuBLAS for prompt processing. Read the wiki. Speed may vary.")
 
     # quick boxes
-    quick_boxes = {"Launch Browser": launchbrowser , "Disable MMAP":disablemmap,"Use ContextShift":contextshift,"Remote Tunnel":remotetunnel,"Use FlashAttention":flashattention,"Quiet Mode":quietmode}
-    quick_boxes_desc = {"Launch Browser": "Launches your default browser after model loading is complete",
-    "Disable MMAP":"Avoids using mmap to load models if enabled",
-    "Use ContextShift":"Uses Context Shifting to reduce reprocessing.\nRecommended. Check the wiki for more info.",
-    "Remote Tunnel":"Creates a trycloudflare tunnel.\nAllows you to access koboldcpp from other devices over an internet URL.",
-    "Use FlashAttention":"Enable flash attention for GGUF models.",
-    "Quiet Mode":"Prevents all generation related terminal output from being displayed."}
-    for idx, name, in enumerate(quick_boxes):
-        makecheckbox(quick_tab, name, quick_boxes[name], int(idx/2) +20, idx%2,tooltiptxt=quick_boxes_desc[name])
+    quick_boxes = {
+        "Launch Browser": {"variable": launchbrowser, "description": "Launches your default browser after model loading is complete"},
+        "Disable MMAP": {"variable": disablemmap, "description": "Avoids using mmap to load models if enabled"},
+        "Use ContextShift": {"variable": contextshift, "description": "Uses Context Shifting to reduce reprocessing.\nRecommended. Check the wiki for more info."},
+        "Remote Tunnel": {"variable": remotetunnel, "description": "Creates a trycloudflare tunnel.\nAllows you to access koboldcpp from other devices over an internet URL."},
+        "Use FlashAttention": {"variable": flashattention, "description": "Enable flash attention for GGUF models."},
+        "Quiet Mode": {"variable": quietmode, "description": "Prevents all generation related terminal output from being displayed."}
+    }
+    
+    for idx, (name, properties) in enumerate(quick_boxes.items()):
+        makecheckbox(quick_tab, name, properties["variable"], int(idx/2) + 20, idx % 2, tooltiptxt=properties["description"])
+    
     # context size
     makeslider(quick_tab, "Context Size:", contextsize_text, context_var, 0, len(contextsize_text)-1, 30, width=280, set=5,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
 
@@ -2555,17 +2558,18 @@ def show_gui():
     makelabelentry(hardware_tab, "Threads:" , threads_var, 11, 50,tooltip="How many threads to use.\nRecommended value is your CPU core count, defaults are usually OK.")
 
     # hardware checkboxes
-    hardware_boxes = {"Launch Browser": launchbrowser, "High Priority" : highpriority, "Disable MMAP":disablemmap, "Use mlock":usemlock, "Debug Mode":debugmode, "Keep Foreground":keepforeground}
-    hardware_boxes_desc = {"Launch Browser": "Launches your default browser after model loading is complete",
-    "High Priority": "Increases the koboldcpp process priority.\nMay cause lag or slowdown instead. Not recommended.",
-    "Disable MMAP": "Avoids using mmap to load models if enabled",
-    "Use mlock": "Enables mlock, preventing the RAM used to load the model from being paged out.",
-    "Debug Mode": "Enables debug mode, with extra info printed to the terminal.",
-    "Keep Foreground": "Bring KoboldCpp to the foreground every time there is a new generation."}
-
-    for idx, name, in enumerate(hardware_boxes):
-        makecheckbox(hardware_tab, name, hardware_boxes[name], int(idx/2) +30, idx%2, tooltiptxt=hardware_boxes_desc[name])
-
+    hardware_boxes = {
+        "Launch Browser": {"variable": launchbrowser, "description": "Launches your default browser after model loading is complete"},
+        "High Priority": {"variable": highpriority, "description": "Increases the koboldcpp process priority.\nMay cause lag or slowdown instead. Not recommended."},
+        "Disable MMAP": {"variable": disablemmap, "description": "Avoids using mmap to load models if enabled"},
+        "Use mlock": {"variable": usemlock, "description": "Enables mlock, preventing the RAM used to load the model from being paged out."},
+        "Debug Mode": {"variable": debugmode, "description": "Enables debug mode, with extra info printed to the terminal."},
+        "Keep Foreground": {"variable": keepforeground, "description": "Bring KoboldCpp to the foreground every time there is a new generation."}
+    }
+    
+    for idx, (name, properties) in enumerate(hardware_boxes.items()):
+        makecheckbox(hardware_tab, name, properties["variable"], int(idx/2) + 30, idx % 2, tooltiptxt=properties["description"])
+    
     # blas thread specifier
     makelabelentry(hardware_tab, "BLAS threads:" , blas_threads_var, 14, 50,tooltip="How many threads to use during BLAS processing.\nIf left blank, uses same value as regular thread count.")
     # blas batch size
