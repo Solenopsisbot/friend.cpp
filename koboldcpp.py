@@ -494,6 +494,8 @@ def unpack_to_dir(destpath = ""):
             for item in os.listdir(srcpath):
                 s = os.path.join(srcpath, item)
                 d = os.path.join(destpath, item)
+                if item.endswith('.pyd'):  # Skip .pyd files
+                    continue
                 if os.path.isdir(s):
                     shutil.copytree(s, d, False, None)
                 else:
