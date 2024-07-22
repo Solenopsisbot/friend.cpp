@@ -607,21 +607,21 @@ def autoset_gpu_layers(filepath,ctxsize,gpumem): #shitty algo to determine how m
                 csmul = 1.2
             elif cs and cs > 2048:
                 csmul = 1.1
-            if mem < fsize*1.6*csmul:
-                ggufmeta = read_gguf_metadata(filepath)
-                if not ggufmeta or ggufmeta[0]==0: #fail to read or no layers
-                    sizeperlayer = fsize*csmul*0.052
-                    layerlimit = int(min(200,mem/sizeperlayer))
-                else:
-                    layers = ggufmeta[0]
-                    headcount = ggufmeta[1]
-                    headkvlen = (ggufmeta[2] if ggufmeta[2] > 0 else 128)
-                    ratio = mem/(fsize*csmul*1.5)
-                    if headcount > 0:
-                        ratio = max(ratio,mem/(fsize*1.34 + (layers*headcount*headkvlen*cs*4.25)))
-                    layerlimit = int(ratio*layers)
+            ggufmeta = read_gguf_metadata(filepath)
+            if not ggufmeta or ggufmeta[0]==0: #fail to read or no layers
+                sizeperlayer = fsize*csmul*0.052
+                layerlimit = int(min(200,mem/sizeperlayer))
             else:
-                layerlimit = 200 # assume full offload
+                layers = ggufmeta[0]
+                headcount = ggufmeta[1]
+                headkvlen = (ggufmeta[2] if ggufmeta[2] > 0 else 128)
+                ratio = mem/(fsize*csmul*1.5)
+                computemem = layers*4*headkvlen*cs*4*1.25 # For now the first 4 is the hardcoded result for a blasbatchsize of 512. Ideally we automatically calculate blasbatchsize / 4 but I couldn't easily grab the value yet - Henk
+                contextmem = layers*headcount*headkvlen*cs*4
+                reservedmem = 1.5*1024*1024*1024 # Users often don't have their GPU's VRAM worth of memory, we assume 500MB to avoid driver swapping + 500MB for the OS + 500MB for background apps / browser - Henk
+                if headcount > 0:
+                    ratio = max(ratio, (mem - reservedmem - computemem) / (fsize + contextmem))
+                layerlimit = min(int(ratio*layers), (layers + 3))
         return layerlimit
     except Exception as ex:
         return 0
