@@ -601,12 +601,8 @@ def autoset_gpu_layers(filepath,ctxsize,gpumem): #shitty algo to determine how m
             cs = ctxsize
             mem = gpumem
             csmul = 1.0
-            if cs and cs > 8192:
-                csmul = 1.4
-            elif cs and cs > 4096:
-                csmul = 1.2
-            elif cs and cs > 2048:
-                csmul = 1.1
+            if cs:
+                csmul = (cs/4096) if cs >= 8192 else 1.8 if cs > 4096 else 1.2 if cs > 2048 else 1.0
             ggufmeta = read_gguf_metadata(filepath)
             if not ggufmeta or ggufmeta[0]==0: #fail to read or no layers
                 sizeperlayer = fsize*csmul*0.052
@@ -616,11 +612,11 @@ def autoset_gpu_layers(filepath,ctxsize,gpumem): #shitty algo to determine how m
                 headcount = ggufmeta[1]
                 headkvlen = (ggufmeta[2] if ggufmeta[2] > 0 else 128)
                 ratio = mem/(fsize*csmul*1.5)
-                computemem = layers*4*headkvlen*cs*4*1.25 # For now the first 4 is the hardcoded result for a blasbatchsize of 512. Ideally we automatically calculate blasbatchsize / 4 but I couldn't easily grab the value yet - Henk
-                contextmem = layers*headcount*headkvlen*cs*4
+                computemem = layers*4*headkvlen*cs*4*1.26 # For now the first 4 is the hardcoded result for a blasbatchsize of 512. Ideally we automatically calculate blasbatchsize / 4 but I couldn't easily grab the value yet - Henk
+                contextmem = layers*headcount*headkvlen*cs*4.02
                 reservedmem = 1.5*1024*1024*1024 # Users often don't have their GPU's VRAM worth of memory, we assume 500MB to avoid driver swapping + 500MB for the OS + 500MB for background apps / browser - Henk
                 if headcount > 0:
-                    ratio = max(ratio, (mem - reservedmem - computemem) / (fsize + contextmem))
+                    ratio = max(ratio, (mem - reservedmem - computemem) / (fsize*1.01 + contextmem))
                 layerlimit = min(int(ratio*layers), (layers + 3))
         return layerlimit
     except Exception as ex:
@@ -2741,10 +2737,21 @@ def show_gui():
         kcpp_exporting_template = False
         savdict = json.loads(json.dumps(args.__dict__))
         file_type = [("KoboldCpp LaunchTemplate", "*.kcppt")]
+        #remove blacklisted fields
         savdict["istemplate"] = True
         savdict["gpulayers"] = -1
+        savdict["threads"] = -1
+        savdict["hordekey"] = ""
+        savdict["hordeworkername"] = ""
+        savdict["sdthreads"] = 0
+        savdict["password"] = None
+        savdict["nommap"] = False
+        savdict["usemlock"] = False
+        savdict["debugmode"] = 0
+        savdict["ssl"] = None
         filename = asksaveasfile(filetypes=file_type, defaultextension=file_type)
-        if filename == None: return
+        if filename == None:
+            return
         file = open(str(filename.name), 'a')
         file.write(json.dumps(savdict))
         file.close()
@@ -3789,6 +3796,9 @@ def main(launch_args,start_server=True):
                 layeramt = autoset_gpu_layers(args.model_param, args.contextsize, MaxMemory[0])
                 print(f"Auto Recommended Layers: {layeramt}")
                 args.gpulayers = layeramt
+            else:
+                print(f"Could not automatically determine layers. Please set it manually.")
+                args.gpulayers = 0
 
     if args.threads == -1:
         args.threads = get_default_threads()
