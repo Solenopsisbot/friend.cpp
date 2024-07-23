@@ -1130,10 +1130,6 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     useSmartContext = inputs.use_smartcontext;
     useContextShift = inputs.use_contextshift;
     debugmode = inputs.debugmode;
-    if(debugmode>0)
-    {
-        kcppstderr = true;
-    }
 
     auto clamped_max_context_length = inputs.max_context_length;
 
