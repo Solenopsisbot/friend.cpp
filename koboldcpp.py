@@ -3690,6 +3690,12 @@ def main(launch_args,start_server=True):
                     canload = True
                 except Exception as ex:
                     print(ex)
+            elif isinstance(args.chatcompletionsadapter, dict):
+                try:
+                    chatcompl_adapter = json.loads(json.dumps(args.chatcompletionsadapter))
+                    canload = True
+                except Exception as ex:
+                    print(ex)
         if canload:
             print(f"Chat Completions Adapter Loaded")
         else:
