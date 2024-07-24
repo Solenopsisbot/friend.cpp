@@ -612,7 +612,7 @@ def autoset_gpu_layers(filepath,ctxsize,gpumem): #shitty algo to determine how m
                 headcount = ggufmeta[1]
                 headkvlen = (ggufmeta[2] if ggufmeta[2] > 0 else 128)
                 ratio = mem/(fsize*csmul*1.5)
-                computemem = layers*4*headkvlen*cs*4*1.25 # For now the first 4 is the hardcoded result for a blasbatchsize of 512. Ideally we automatically calculate blasbatchsize / 4 but I couldn't easily grab the value yet - Henk
+                computemem = layers*4*headkvlen*cs*4*1.35 # For now the first 4 is the hardcoded result for a blasbatchsize of 512. Ideally we automatically calculate blasbatchsize / 4 but I couldn't easily grab the value yet - Henk
                 contextmem = layers*headcount*headkvlen*cs*4
                 reservedmem = 1.5*1024*1024*1024 # Users often don't have their GPU's VRAM worth of memory, we assume 500MB to avoid driver swapping + 500MB for the OS + 500MB for background apps / browser - Henk
                 if headcount > 0:
