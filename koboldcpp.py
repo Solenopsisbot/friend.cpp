@@ -3659,6 +3659,12 @@ def main(launch_args,start_server=True):
                 canload = True
             except Exception as ex:
                 print(ex)
+        elif isinstance(args.preloadstory, dict):
+            try:
+                preloaded_story = json.dumps(args.preloadstory).encode()
+                canload = True
+            except Exception as ex:
+                print(ex)
         if canload:
             print("Saved story preloaded.")
         else:
