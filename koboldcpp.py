@@ -18,11 +18,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 # constants
 sampler_order_max = 7
-stop_token_max = 16
+stop_token_max = 24
 ban_token_max = 16
 tensor_split_max = 16
-logit_bias_max = 16
-dry_seq_break_max = 16
+logit_bias_max = 24
+dry_seq_break_max = 24
 images_max = 4
 bias_min_value = -100.0
 bias_max_value = 100.0
