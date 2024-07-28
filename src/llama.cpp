@@ -5921,7 +5921,7 @@ static bool llm_load_tensors(
     #if defined(GGML_USE_CLBLAST)
     if(clblast_offload_fallback_mode)
     {
-        printf("\nOpenCL GPU Offload Fallback...");
+        printf("\nOpenCL GPU Offload Fallback...\n");
         clblast_offload_fallback_layers = n_gpu_layers;
         i_gpu_start = std::max((int64_t) hparams.n_layer, (int64_t) 0);
     }
@@ -8784,7 +8784,11 @@ struct llm_build_context {
             // self-attention
             {
                 // rope freq factors for llama3; may return nullptr for llama2 and other models
+                #if defined(GGML_USE_CLBLAST)
+                struct ggml_tensor * rope_factors = nullptr; //clblast does not work with rope_factors
+                #else
                 struct ggml_tensor * rope_factors = build_rope_factors(il);
+                #endif
 
                 // compute Q and K and RoPE them
                 struct ggml_tensor * Qcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wq, cur);
