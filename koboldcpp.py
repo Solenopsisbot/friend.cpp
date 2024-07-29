@@ -56,8 +56,9 @@ totalgens = 0
 currentusergenkey = "" #store a special key so polled streaming works even in multiuser
 pendingabortkey = "" #if an abort is received for the non-active request, remember it (at least 1) to cancel later
 args = None #global args
-gui_layers_untouched = True
 runmode_untouched = True
+modelfile_extracted_meta = None
+importvars_in_progress = False
 preloaded_story = None
 chatcompl_adapter = None
 embedded_kailite = None
@@ -592,17 +593,50 @@ def read_gguf_metadata(file_path):
     except Exception as ex:
         return None
 
-def autoset_gpu_layers(filepath,ctxsize,gpumem): #shitty algo to determine how many layers to use
+def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath):
+    global modelfile_extracted_meta
+    modelfile_extracted_meta = None
+    sdfsize = 0
+    whisperfsize = 0
+    mmprojsize = 0
+    if os.path.exists(sdfilepath):
+        sdfsize = os.path.getsize(sdfilepath)
+    if os.path.exists(whisperfilepath):
+        whisperfsize = os.path.getsize(whisperfilepath)
+    if os.path.exists(mmprojfilepath):
+        mmprojsize = os.path.getsize(mmprojfilepath)
+    if os.path.exists(filepath):
+        try:
+            fsize = os.path.getsize(filepath)
+            if fsize>10000000: #dont bother with models < 10mb as they are probably bad
+                ggufmeta = read_gguf_metadata(filepath)
+                modelfile_extracted_meta = [ggufmeta,fsize,sdfsize,whisperfsize,mmprojsize] #extract done. note that meta may be null
+        except Exception as ex:
+            modelfile_extracted_meta = None
+
+def autoset_gpu_layers(ctxsize,gpumem,sdquanted): #shitty algo to determine how many layers to use
+    global modelfile_extracted_meta # reference cached values instead
     try:
+        if not modelfile_extracted_meta:
+            return 0
         layerlimit = 0
-        fsize = os.path.getsize(filepath)
+        fsize = modelfile_extracted_meta[1]
         if fsize>10000000: #dont bother with models < 10mb
             cs = ctxsize
             mem = gpumem
+            if modelfile_extracted_meta[2] > 1024*1024*1024*5: #sdxl tax
+                mem -= 1024*1024*1024*(6 if sdquanted else 9)
+            elif modelfile_extracted_meta[2] > 1024*1024*512: #normal sd tax
+                mem -= 1024*1024*1024*(3.2 if sdquanted else 4.2)
+            if modelfile_extracted_meta[3] > 1024*1024*10: #whisper tax
+                mem -= 350*1024*1024
+            if modelfile_extracted_meta[4] > 1024*1024*10: #mmproj tax
+                mem -= 350*1024*1024
+
             csmul = 1.0
             if cs:
                 csmul = (cs/4096) if cs >= 8192 else 1.8 if cs > 4096 else 1.2 if cs > 2048 else 1.0
-            ggufmeta = read_gguf_metadata(filepath)
+            ggufmeta = modelfile_extracted_meta[0]
             if not ggufmeta or ggufmeta[0]==0: #fail to read or no layers
                 sizeperlayer = fsize*csmul*0.052
                 layerlimit = int(min(200,mem/sizeperlayer))
@@ -617,6 +651,7 @@ def autoset_gpu_layers(filepath,ctxsize,gpumem): #shitty algo to determine how m
                 if headcount > 0:
                     ratio = max(ratio, (mem - reservedmem - computemem) / (fsize + contextmem))
                 layerlimit = min(int(ratio*layers), (layers + 3))
+        layerlimit = (0 if layerlimit<0 else layerlimit)
         return layerlimit
     except Exception as ex:
         return 0
@@ -2065,6 +2100,14 @@ def show_gui():
             exit_with_error(2,"No ggml model or kcpps file was selected. Exiting.")
         return
 
+    #dummy line to get darkdetect imported in pyinstaller
+    try:
+        import darkdetect as darkdt
+        darkdt.isDark()
+        pass
+    except Exception as e:
+        pass
+
     import customtkinter as ctk
     nextstate = 0 #0=exit, 1=launch
     original_windowwidth = 550
@@ -2178,7 +2221,7 @@ def show_gui():
         exit_with_error(2,"KoboldCPP couldn't locate any backends to use (i.e Default, OpenBLAS, CLBlast, CuBLAS).\n\nTo use the program, please run the 'make' command from the directory.","No Backends Available!")
 
     # Vars - should be in scope to be used by multiple widgets
-    gpulayers_var = ctk.StringVar(value="0")
+    gpulayers_var = ctk.StringVar(value="-1")
     threads_var = ctk.StringVar(value=str(default_threads))
     runopts_var = ctk.StringVar()
     gpu_choice_var = ctk.StringVar(value="1")
@@ -2358,21 +2401,11 @@ def show_gui():
         changed_gpu_choice_var()
 
     def on_picked_model_file(filepath):
-        global gui_layers_untouched
         if filepath.lower().endswith('.kcpps') or filepath.lower().endswith('.kcppt'):
             #load it as a config file instead
             with open(filepath, 'r') as f:
                 dict = json.load(f)
                 import_vars(dict)
-        else:
-            layerlimit = autoset_gpu_layers(filepath,int(contextsize_text[context_var.get()]),MaxMemory[0])
-            old_gui_layers_untouched = gui_layers_untouched
-            gui_layers_zeroed = gpulayers_var.get()=="" or gpulayers_var.get()=="0"
-            if (gui_layers_untouched or gui_layers_zeroed) and layerlimit>0:
-                gpulayers_var.set(str(layerlimit))
-                gui_layers_untouched = old_gui_layers_untouched
-                if gui_layers_zeroed:
-                    gui_layers_untouched = True
 
     def setup_backend_tooltip(parent):
         # backend count label with the tooltip function
@@ -2382,9 +2415,34 @@ def show_gui():
         num_backends_built.grid(row=1, column=1, padx=195, pady=0)
         num_backends_built.configure(text_color="#00ff00")
 
-    def changed_gpulayers(*args):
-        global gui_layers_untouched
-        gui_layers_untouched = False
+    def gui_changed_modelfile(*args):
+        global importvars_in_progress
+        if not importvars_in_progress:
+            filepath = model_var.get()
+            sdfilepath = sd_model_var.get()
+            whisperfilepath = whisper_model_var.get()
+            mmprojfilepath = mmproj_var.get()
+            extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath)
+            changed_gpulayers_estimate()
+        pass
+
+    def changed_gpulayers_estimate(*args):
+        predicted_gpu_layers = autoset_gpu_layers(int(contextsize_text[context_var.get()]),MaxMemory[0],(sd_quant_var.get()==1))
+        index = runopts_var.get()
+        gpu_be = (index == "Use Vulkan" or index == "Vulkan NoAVX2 (Old CPU)" or index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)")
+        if gpu_be and gpulayers_var.get()=="-1" and predicted_gpu_layers>0:
+            quick_layercounter_label.configure(text=f"(Auto: {predicted_gpu_layers} Layers)")
+            layercounter_label.configure(text=f"(Auto: {predicted_gpu_layers} Layers)")
+            layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
+            quick_layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
+        elif gpu_be and gpulayers_var.get()=="":
+            quick_layercounter_label.configure(text=f"(Set -1 for Auto)")
+            layercounter_label.configure(text=f"(Set -1 for Auto)")
+            layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
+            quick_layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
+        else:
+            layercounter_label.grid_remove()
+            quick_layercounter_label.grid_remove()
         pass
 
     def changed_gpu_choice_var(*args):
@@ -2411,7 +2469,7 @@ def show_gui():
             gpuname_label.configure(text="")
 
     gpu_choice_var.trace("w", changed_gpu_choice_var)
-    gpulayers_var.trace("w", changed_gpulayers)
+    gpulayers_var.trace("w", changed_gpulayers_estimate)
 
     def togglectxshift(a,b,c):
         if contextshift.get()==0:
@@ -2504,6 +2562,7 @@ def show_gui():
             gpu_layers_entry.grid_remove()
             quick_gpu_layers_label.grid_remove()
             quick_gpu_layers_entry.grid_remove()
+        changed_gpulayers_estimate()
         changed_gpu_choice_var()
 
 
@@ -2525,6 +2584,9 @@ def show_gui():
     quick_gpuname_label.grid(row=3, column=1, padx=75, sticky="W")
     quick_gpuname_label.configure(text_color="#ffff00")
     quick_gpu_layers_entry,quick_gpu_layers_label = makelabelentry(quick_tab,"GPU Layers:", gpulayers_var, 6, 50,tooltip="How many layers to offload onto the GPU.\nVRAM intensive, usage increases with model and context size.\nRequires some trial and error to find the best fit value.\n\nCommon values for total layers, accuracy not guaranteed.\n\nLlama/Mistral 7b/8b: 33\nSolar 10.7b/11b: 49\nLlama 13b: 41\nLlama 20b(stack): 63\nLlama/Yi 34b: 61\nMixtral 8x7b: 33\nLlama 70b: 81")
+    quick_layercounter_label = ctk.CTkLabel(quick_tab, text="")
+    quick_layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
+    quick_layercounter_label.configure(text_color="#ffff00")
     quick_mmq_box = makecheckbox(quick_tab,  "Use QuantMatMul (mmq)", mmq_var, 4,1,tooltiptxt="Enable MMQ mode instead of CuBLAS for prompt processing. Read the wiki. Speed may vary.")
 
     # quick boxes
@@ -2545,6 +2607,7 @@ def show_gui():
 
     # load model
     makefileentry(quick_tab, "Model:", "Select GGML Model File", model_var, 40, 280, onchoosefile=on_picked_model_file,tooltiptxt="Select a GGUF or GGML model file on disk to be loaded.")
+    model_var.trace("w", gui_changed_modelfile)
 
     # Hardware Tab
     hardware_tab = tabcontent["Hardware"]
@@ -2566,6 +2629,9 @@ def show_gui():
     gpuname_label.grid(row=3, column=1, padx=75, sticky="W")
     gpuname_label.configure(text_color="#ffff00")
     gpu_layers_entry,gpu_layers_label = makelabelentry(hardware_tab,"GPU Layers:", gpulayers_var, 6, 50,tooltip="How many layers to offload onto the GPU.\nVRAM intensive, usage increases with model and context size.\nRequires some trial and error to find the best fit value.\n\nCommon values for total layers, accuracy not guaranteed.\n\nLlama/Mistral 7b/8b: 33\nSolar 10.7b/11b: 49\nLlama 13b: 41\nLlama 20b(stack): 63\nLlama/Yi 34b: 61\nMixtral 8x7b: 33\nLlama 70b: 81")
+    layercounter_label = ctk.CTkLabel(hardware_tab, text="")
+    layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
+    layercounter_label.configure(text_color="#ffff00")
     tensor_split_entry,tensor_split_label = makelabelentry(hardware_tab, "Tensor Split:", tensor_split_str_vars, 8, 80, tooltip='When using multiple GPUs this option controls how large tensors should be split across all GPUs.\nUses a comma-separated list of non-negative values that assigns the proportion of data that each GPU should get in order.\nFor example, "3,2" will assign 60% of the data to GPU 0 and 40% to GPU 1.')
     lowvram_box = makecheckbox(hardware_tab,  "Low VRAM (No KV offload)", lowvram_var, 4,0, tooltiptxt='Avoid offloading KV Cache or scratch buffers to VRAM.\nAllows more layers to fit, but may result in a speed loss.')
     mmq_box = makecheckbox(hardware_tab,  "Use QuantMatMul (mmq)", mmq_var, 4,1, tooltiptxt="Enable MMQ mode to use finetuned kernels instead of default CuBLAS/HipBLAS for prompt processing.\nRead the wiki. Speed may vary.")
@@ -2610,6 +2676,7 @@ def show_gui():
 
     # context size
     makeslider(tokens_tab, "Context Size:",contextsize_text, context_var, 0, len(contextsize_text)-1, 20, width=280, set=5,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
+    context_var.trace("w", changed_gpulayers_estimate)
 
     customrope_scale_entry, customrope_scale_label = makelabelentry(tokens_tab, "RoPE Scale:", customrope_scale, row=23, padx=100, singleline=True, tooltip="For Linear RoPE scaling. RoPE frequency scale.")
     customrope_base_entry, customrope_base_label = makelabelentry(tokens_tab, "RoPE Base:", customrope_base, row=24, padx=100, singleline=True, tooltip="For NTK Aware Scaling. RoPE frequency base.")
@@ -2645,6 +2712,7 @@ def show_gui():
     makefileentry(model_tab, "Lora Base:", "Select Lora Base File", lora_base_var, 5,width=280,tooltiptxt="Select an optional F16 GGML LoRA base file to use.\nLeave blank to skip.")
     makefileentry(model_tab, "LLaVA mmproj:", "Select LLaVA mmproj File", mmproj_var, 7,width=280,tooltiptxt="Select a mmproj file to use for LLaVA.\nLeave blank to skip.")
     makefileentry(model_tab, "Preloaded Story:", "Select Preloaded Story File", preloadstory_var, 9,width=280,tooltiptxt="Select an optional KoboldAI JSON savefile \nto be served on launch to any client.")
+    mmproj_var.trace("w", gui_changed_modelfile)
 
     # Network Tab
     network_tab = tabcontent["Network"]
@@ -2696,6 +2764,7 @@ def show_gui():
     makefileentry(images_tab, "Stable Diffusion Model (safetensors/gguf):", "Select Stable Diffusion Model File", sd_model_var, 1, width=280, singlecol=False, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")], tooltiptxt="Select a .safetensors or .gguf Stable Diffusion model file on disk to be loaded.")
     makelabelentry(images_tab, "Clamped Mode (Limit Resolution)", sd_clamped_var, 4, 50,tooltip="Limit generation steps and resolution settings for shared use.\nSet to 0 to disable, otherwise value is the size limit (min 512px).")
     makelabelentry(images_tab, "Image Threads:" , sd_threads_var, 6, 50,tooltip="How many threads to use during image generation.\nIf left blank, uses same value as threads.")
+    sd_model_var.trace("w", gui_changed_modelfile)
 
     sdloritem1,sdloritem2,sdloritem3 = makefileentry(images_tab, "Image LoRA (Must be non-quant):", "Select SD lora file",sd_lora_var, 10, width=280, singlecol=False, filetypes=[("*.safetensors *.gguf", "*.safetensors *.gguf")],tooltiptxt="Select a .safetensors or .gguf SD LoRA model file to be loaded.")
     sdloritem4,sdloritem5 = makelabelentry(images_tab, "Image LoRA Multiplier:" , sd_loramult_var, 12, 50,tooltip="What mutiplier value to apply the SD LoRA with.")
@@ -2713,7 +2782,7 @@ def show_gui():
             sdloritem4.grid()
             sdloritem5.grid()
     makecheckbox(images_tab, "Compress Weights (Saves Memory)", sd_quant_var, 8,command=togglesdquant,tooltiptxt="Quantizes the SD model weights to save memory. May degrade quality.")
-
+    sd_quant_var.trace("w", changed_gpulayers_estimate)
 
     sdvaeitem1,sdvaeitem2,sdvaeitem3 = makefileentry(images_tab, "Image VAE:", "Select SD VAE file",sd_vae_var, 14, width=280, singlecol=False, filetypes=[("*.safetensors *.gguf", "*.safetensors *.gguf")],tooltiptxt="Select a .safetensors or .gguf SD VAE file to be loaded.")
     def toggletaesd(a,b,c):
@@ -2730,6 +2799,7 @@ def show_gui():
     # audio tab
     audio_tab = tabcontent["Audio"]
     makefileentry(audio_tab, "Whisper Model (Speech-To-Text):", "Select Whisper .bin Model File", whisper_model_var, 1, width=280, filetypes=[("*.bin","*.bin")], tooltiptxt="Select a Whisper .bin model file on disk to be loaded.")
+    whisper_model_var.trace("w", gui_changed_modelfile)
 
     def kcpp_export_template():
         nonlocal kcpp_exporting_template
@@ -2915,6 +2985,8 @@ def show_gui():
             args.whispermodel = whisper_model_var.get()
 
     def import_vars(dict):
+        global importvars_in_progress
+        importvars_in_progress = True
         dict = convert_outdated_args(dict)
 
         if "threads" in dict:
@@ -3056,6 +3128,8 @@ def show_gui():
 
         whisper_model_var.set(dict["whispermodel"] if ("whispermodel" in dict and dict["whispermodel"]) else "")
 
+        importvars_in_progress = False
+        gui_changed_modelfile()
         if "istemplate" in dict and dict["istemplate"]:
             auto_set_backend_gui(True)
 
@@ -3811,7 +3885,8 @@ def main(launch_args,start_server=True):
                 fetch_gpu_properties(False,True,True)
                 pass
             if MaxMemory[0] > 0:
-                layeramt = autoset_gpu_layers(args.model_param, args.contextsize, MaxMemory[0])
+                extract_modelfile_params(args.model_param,args.sdmodel,args.whispermodel,args.mmproj)
+                layeramt = autoset_gpu_layers(args.contextsize, MaxMemory[0],args.sdquant)
                 print(f"Auto Recommended Layers: {layeramt}")
                 args.gpulayers = layeramt
             else:
