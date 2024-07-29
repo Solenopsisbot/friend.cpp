@@ -599,13 +599,13 @@ def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath)
     sdfsize = 0
     whisperfsize = 0
     mmprojsize = 0
-    if os.path.exists(sdfilepath):
+    if sdfilepath and os.path.exists(sdfilepath):
         sdfsize = os.path.getsize(sdfilepath)
-    if os.path.exists(whisperfilepath):
+    if whisperfilepath and os.path.exists(whisperfilepath):
         whisperfsize = os.path.getsize(whisperfilepath)
-    if os.path.exists(mmprojfilepath):
+    if mmprojfilepath and os.path.exists(mmprojfilepath):
         mmprojsize = os.path.getsize(mmprojfilepath)
-    if os.path.exists(filepath):
+    if filepath and os.path.exists(filepath):
         try:
             fsize = os.path.getsize(filepath)
             if fsize>10000000: #dont bother with models < 10mb as they are probably bad
@@ -744,7 +744,6 @@ def fetch_gpu_properties(testCL,testCU,testVK):
     return
 
 def auto_set_backend_cli():
-    print("\nA .kcppt template was selected from CLI - automatically selecting your backend...")
     fetch_gpu_properties(False,True,True)
     if exitcounter < 100 and MaxMemory[0]>3500000000 and (("Use CuBLAS" in runopts and CUDevicesNames[0]!="") or "Use hipBLAS (ROCm)" in runopts) and any(CUDevicesNames):
         if "Use CuBLAS" in runopts or "Use hipBLAS (ROCm)" in runopts:
@@ -3605,6 +3604,7 @@ def load_config_cli(filename):
         for key, value in config.items():
             setattr(args, key, value)
         if args.istemplate:
+            print("\nA .kcppt template was selected from CLI - automatically selecting your backend...")
             auto_set_backend_cli()
 
 
@@ -3882,6 +3882,9 @@ def main(launch_args,start_server=True):
                 print("WARNING: GPU layers is set, but a GPU backend was not selected!")
                 pass
         elif args.gpulayers==-1 and not shouldavoidgpu and os.path.exists(args.model_param):
+            if not args.usecublas and not args.usevulkan and not args.useclblast:
+                print("NOTE: Auto GPU layers was set without picking a GPU backend! Trying to assign one for you automatically...")
+                auto_set_backend_cli()
             print("Trying to automatically determine GPU layers...")
             if MaxMemory[0] == 0: #try to get gpu vram for cuda if not picked yet
                 fetch_gpu_properties(False,True,True)
