@@ -627,7 +627,7 @@ def autoset_gpu_layers(ctxsize,gpumem,sdquanted): #shitty algo to determine how 
             if modelfile_extracted_meta[2] > 1024*1024*1024*5: #sdxl tax
                 mem -= 1024*1024*1024*(6 if sdquanted else 9)
             elif modelfile_extracted_meta[2] > 1024*1024*512: #normal sd tax
-                mem -= 1024*1024*1024*(3.2 if sdquanted else 4.2)
+                mem -= 1024*1024*1024*(3.25 if sdquanted else 4.25)
             if modelfile_extracted_meta[3] > 1024*1024*10: #whisper tax
                 mem -= 350*1024*1024
             if modelfile_extracted_meta[4] > 1024*1024*10: #mmproj tax
@@ -651,7 +651,7 @@ def autoset_gpu_layers(ctxsize,gpumem,sdquanted): #shitty algo to determine how 
                 if headcount > 0:
                     ratio = max(ratio, (mem - reservedmem - computemem) / (fsize + contextmem))
                 layerlimit = min(int(ratio*layers), (layers + 3))
-        layerlimit = (0 if layerlimit<0 else layerlimit)
+        layerlimit = (0 if layerlimit<=2 else layerlimit)
         return layerlimit
     except Exception as ex:
         return 0
@@ -2428,18 +2428,20 @@ def show_gui():
 
     def changed_gpulayers_estimate(*args):
         predicted_gpu_layers = autoset_gpu_layers(int(contextsize_text[context_var.get()]),MaxMemory[0],(sd_quant_var.get()==1))
+        max_gpu_layers = (f"/{modelfile_extracted_meta[0][0]+3}" if (modelfile_extracted_meta and modelfile_extracted_meta[0] and modelfile_extracted_meta[0][0]!=0) else "")
         index = runopts_var.get()
         gpu_be = (index == "Use Vulkan" or index == "Vulkan NoAVX2 (Old CPU)" or index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)")
+        layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
+        quick_layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
         if gpu_be and gpulayers_var.get()=="-1" and predicted_gpu_layers>0:
-            quick_layercounter_label.configure(text=f"(Auto: {predicted_gpu_layers} Layers)")
-            layercounter_label.configure(text=f"(Auto: {predicted_gpu_layers} Layers)")
-            layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
-            quick_layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
+            quick_layercounter_label.configure(text=f"(Auto: {predicted_gpu_layers}{max_gpu_layers} Layers)")
+            layercounter_label.configure(text=f"(Auto: {predicted_gpu_layers}{max_gpu_layers} Layers)")
+        elif gpu_be and gpulayers_var.get()=="-1" and predicted_gpu_layers<=0 and (modelfile_extracted_meta and modelfile_extracted_meta[1]):
+            quick_layercounter_label.configure(text=f"(Auto: No Offload)")
+            layercounter_label.configure(text=f"(Auto: No Offload)")
         elif gpu_be and gpulayers_var.get()=="":
             quick_layercounter_label.configure(text=f"(Set -1 for Auto)")
             layercounter_label.configure(text=f"(Set -1 for Auto)")
-            layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
-            quick_layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
         else:
             layercounter_label.grid_remove()
             quick_layercounter_label.grid_remove()
