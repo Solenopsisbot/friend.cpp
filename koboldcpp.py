@@ -1571,7 +1571,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 if max_length>512:
                     max_length = 512
-                epurl = f"http://localhost:{args.port}"
+                epurl = f"http://127.0.0.1:{args.port}"
                 if args.host!="":
                     epurl = f"http://{args.host}:{args.port}"
                 gen_payload = {"prompt": prompt,"max_length": max_length,"temperature": temperature,"prompt": prompt,"top_k": top_k,"top_p": top_p,"rep_pen": rep_pen,"ban_eos_token":ban_eos_token}
@@ -2021,7 +2021,7 @@ def is_port_in_use(portNum):
     try:
         import socket
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            return s.connect_ex(('localhost', portNum)) == 0
+            return s.connect_ex(('127.0.0.1', portNum)) == 0
     except Exception as ex:
         return True
 
@@ -3266,7 +3266,7 @@ def run_horde_worker(args, api_key, worker_name):
     from datetime import datetime
     import random
     global friendlymodelname, maxhordectx, maxhordelen, exitcounter, punishcounter, modelbusy, session_starttime
-    epurl = f"http://localhost:{args.port}"
+    epurl = f"http://127.0.0.1:{args.port}"
     if args.host!="":
         epurl = f"http://{args.host}:{args.port}"
 
@@ -3475,13 +3475,13 @@ def setuptunnel(has_sd):
             time.sleep(0.2)
             if os.name == 'nt':
                 print("Starting Cloudflare Tunnel for Windows, please wait...", flush=True)
-                tunnelproc = subprocess.Popen(f"cloudflared.exe tunnel --url localhost:{args.port}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                tunnelproc = subprocess.Popen(f"cloudflared.exe tunnel --url 127.0.0.1:{args.port}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             elif sys.platform=="darwin":
                 print("Starting Cloudflare Tunnel for MacOS, please wait...", flush=True)
-                tunnelproc = subprocess.Popen(f"./cloudflared tunnel --url http://localhost:{args.port}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                tunnelproc = subprocess.Popen(f"./cloudflared tunnel --url http://127.0.0.1:{args.port}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             else:
                 print("Starting Cloudflare Tunnel for Linux, please wait...", flush=True)
-                tunnelproc = subprocess.Popen(f"./cloudflared-linux-amd64 tunnel --url http://localhost:{args.port}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                tunnelproc = subprocess.Popen(f"./cloudflared-linux-amd64 tunnel --url http://127.0.0.1:{args.port}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             time.sleep(10)
             def tunnel_reader():
                 nonlocal tunnelproc,tunneloutput,tunnelrawlog
@@ -4080,7 +4080,7 @@ def main(launch_args,start_server=True):
     epurl = ""
     httpsaffix = ("https" if sslvalid else "http")
     if args.host=="":
-        epurl = f"{httpsaffix}://localhost:{args.port}"
+        epurl = f"{httpsaffix}://127.0.0.1:{args.port}"
     else:
         epurl = f"{httpsaffix}://{args.host}:{args.port}"
     if not args.remotetunnel:
