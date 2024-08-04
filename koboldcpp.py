@@ -41,7 +41,7 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.72"
+KcppVersion = "1.73"
 showdebug = True
 guimode = False
 showsamplerwarning = True
@@ -2056,7 +2056,7 @@ def RunServerMultiThreaded(addr, port):
         if ipv6_sock:
             ipv6_sock = context.wrap_socket(ipv6_sock, server_side=True)
 
-    numThreads = 22
+    numThreads = 24
     ipv4_sock.bind((addr, port))
     ipv4_sock.listen(numThreads)
     if ipv6_sock:
