@@ -2056,7 +2056,7 @@ def RunServerMultiThreaded(addr, port):
         if ipv6_sock:
             ipv6_sock = context.wrap_socket(ipv6_sock, server_side=True)
 
-    numThreads = 20
+    numThreads = 22
     ipv4_sock.bind((addr, port))
     ipv4_sock.listen(numThreads)
     if ipv6_sock:
