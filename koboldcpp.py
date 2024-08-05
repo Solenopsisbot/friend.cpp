@@ -46,6 +46,7 @@ showdebug = True
 guimode = False
 showsamplerwarning = True
 showmaxctxwarning = True
+showusedmemwarning = True
 session_kudos_earned = 0
 session_jobs = 0
 session_starttime = None
@@ -80,6 +81,7 @@ CUDevicesNames = ["","","","",""]
 VKDevicesNames = ["","","",""]
 VKIsDGPU = [0,0,0,0]
 MaxMemory = [0]
+MaxFreeMemory = [0]
 
 class logit_bias(ctypes.Structure):
     _fields_ = [("token_id", ctypes.c_int32),
@@ -622,8 +624,16 @@ def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath)
         except Exception as ex:
             modelfile_extracted_meta = None
 
-def autoset_gpu_layers(ctxsize,gpumem,sdquanted,bbs): #shitty algo to determine how many layers to use
-    global modelfile_extracted_meta # reference cached values instead
+def autoset_gpu_layers(ctxsize,sdquanted,bbs): #shitty algo to determine how many layers to use
+    global showusedmemwarning, modelfile_extracted_meta # reference cached values instead
+    gpumem = MaxMemory[0]
+    usedmem = 0
+    if MaxFreeMemory[0]>0:
+        usedmem = MaxMemory[0]-MaxFreeMemory[0]
+        if showusedmemwarning and usedmem > (2.5*1024*1024*1024):
+            showusedmemwarning = False
+            print(f"Note: KoboldCpp has detected that a significant amount of GPU VRAM ({usedmem/1024/1024} MB) is currently used by another application.\nFor best results, you may wish to close that application and then restart KoboldCpp.\n***")
+    reservedmem = max(1.5*1024*1024*1024,(0.5*1024*1024*1024 + usedmem)) # determine vram overhead
     try:
         if not modelfile_extracted_meta:
             return 0
@@ -647,15 +657,14 @@ def autoset_gpu_layers(ctxsize,gpumem,sdquanted,bbs): #shitty algo to determine 
             ggufmeta = modelfile_extracted_meta[0]
             if not ggufmeta or ggufmeta[0]==0: #fail to read or no layers
                 sizeperlayer = fsize*csmul*0.052
-                layerlimit = int(min(200,mem/sizeperlayer))
+                layerlimit = int(min(200,(mem-usedmem)/sizeperlayer))
             else:
                 layers = ggufmeta[0]
                 headcount = ggufmeta[1]
                 headkvlen = (ggufmeta[2] if ggufmeta[2] > 0 else 128)
-                ratio = mem/(fsize*csmul*1.5)
-                computemem = layers*(4 if bbs <= 512 else (bbs/128))*headkvlen*cs*4*1.5 # For now the first 4 is the hardcoded result for a blasbatchsize of 512. Ideally we automatically calculate blasbatchsize / 4 but I couldn't easily grab the value yet - Henk
+                ratio = (mem-usedmem)/(fsize*csmul*1.55)
+                computemem = layers*(4 if bbs <= 512 else (bbs/128))*headkvlen*cs*4*1.5 # apply blasbatchsize calculations if over 512
                 contextmem = layers*headcount*headkvlen*cs*4*1.1
-                reservedmem = 1.5*1024*1024*1024 # Users often don't have their GPU's VRAM worth of memory, we assume 500MB to avoid driver swapping + 500MB for the OS + 500MB for background apps / browser - Henk
                 if headcount > 0:
                     ratio = max(ratio, (mem - reservedmem - computemem) / (fsize + contextmem))
                 layerlimit = min(int(ratio*layers), (layers + 3))
@@ -698,11 +707,13 @@ def fetch_gpu_properties(testCL,testCU,testVK):
     if testCU:
         FetchedCUdevices = []
         FetchedCUdeviceMem = []
+        FetchedCUfreeMem = []
         AMDgpu = None
         try: # Get NVIDIA GPU names
-            output = subprocess.run(['nvidia-smi','--query-gpu=name,memory.total','--format=csv,noheader'], capture_output=True, text=True, check=True, encoding='utf-8').stdout
+            output = subprocess.run(['nvidia-smi','--query-gpu=name,memory.total,memory.free','--format=csv,noheader'], capture_output=True, text=True, check=True, encoding='utf-8').stdout
             FetchedCUdevices = [line.split(",")[0].strip() for line in output.splitlines()]
             FetchedCUdeviceMem = [line.split(",")[1].strip().split(" ")[0].strip() for line in output.splitlines()]
+            FetchedCUfreeMem = [line.split(",")[2].strip().split(" ")[0].strip() for line in output.splitlines()]
         except Exception as e:
             pass
         if len(FetchedCUdevices)==0:
@@ -730,6 +741,8 @@ def fetch_gpu_properties(testCL,testCU,testVK):
                         MaxMemory[0] = max(int(FetchedCUdeviceMem[idx]),MaxMemory[0])
                     else:
                         MaxMemory[0] = max(int(FetchedCUdeviceMem[idx])*1024*1024,MaxMemory[0])
+                if len(FetchedCUfreeMem)>idx:
+                    MaxFreeMemory[0] = max(int(FetchedCUfreeMem[idx])*1024*1024,MaxFreeMemory[0])
 
     if testVK:
         try: # Get Vulkan names
@@ -2458,7 +2471,7 @@ def show_gui():
         pass
 
     def changed_gpulayers_estimate(*args):
-        predicted_gpu_layers = autoset_gpu_layers(int(contextsize_text[context_var.get()]),MaxMemory[0],(sd_quant_var.get()==1),int(blasbatchsize_values[int(blas_size_var.get())]))
+        predicted_gpu_layers = autoset_gpu_layers(int(contextsize_text[context_var.get()]),(sd_quant_var.get()==1),int(blasbatchsize_values[int(blas_size_var.get())]))
         max_gpu_layers = (f"/{modelfile_extracted_meta[0][0]+3}" if (modelfile_extracted_meta and modelfile_extracted_meta[0] and modelfile_extracted_meta[0][0]!=0) else "")
         index = runopts_var.get()
         gpu_be = (index == "Use Vulkan" or index == "Vulkan NoAVX2 (Old CPU)" or index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)")
@@ -2586,6 +2599,11 @@ def show_gui():
             tensor_split_entry.grid(row=8, column=1, padx=8, pady=1, stick="nw")
 
         if index == "Use Vulkan" or index == "Vulkan NoAVX2 (Old CPU)" or index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
+            gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
+            gpu_layers_entry.grid(row=6, column=1, padx=8, pady=1, stick="nw")
+            quick_gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
+            quick_gpu_layers_entry.grid(row=6, column=1, padx=8, pady=1, stick="nw")
+        elif sys.platform=="darwin":
             gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
             gpu_layers_entry.grid(row=6, column=1, padx=8, pady=1, stick="nw")
             quick_gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
@@ -3925,7 +3943,7 @@ def main(launch_args,start_server=True):
                 pass
             if MaxMemory[0] > 0:
                 extract_modelfile_params(args.model_param,args.sdmodel,args.whispermodel,args.mmproj)
-                layeramt = autoset_gpu_layers(args.contextsize, MaxMemory[0],args.sdquant,args.blasbatchsize)
+                layeramt = autoset_gpu_layers(args.contextsize,args.sdquant,args.blasbatchsize)
                 print(f"Auto Recommended Layers: {layeramt}")
                 args.gpulayers = layeramt
             else:
