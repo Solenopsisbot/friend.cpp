@@ -13245,13 +13245,13 @@ struct llm_build_context {
 
                 // self-attention
                 {
-                    struct ggml_tensor * Qcur = ggml_mul_mat(ctx0, model.layers[il].wq_enc, cur);
+                    struct ggml_tensor * Qcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wq_enc, cur);
                     cb(Qcur, "Qcur", il);
 
-                    struct ggml_tensor * Kcur = ggml_mul_mat(ctx0, model.layers[il].wk_enc, cur);
+                    struct ggml_tensor * Kcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wk_enc, cur);
                     cb(Kcur, "Kcur", il);
 
-                    struct ggml_tensor * Vcur = ggml_mul_mat(ctx0, model.layers[il].wv_enc, cur);
+                    struct ggml_tensor * Vcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wv_enc, cur);
                     cb(Vcur, "Vcur", il);
 
                     Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens);
@@ -13285,7 +13285,7 @@ struct llm_build_context {
 
                     ggml_build_forward_expand(gf, cur);
 
-                    cur = ggml_mul_mat(ctx0, model.layers[il].wo_enc, cur);
+                    cur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wo_enc, cur);
                     cb(cur, "kqv_out", il);
                 }
 
@@ -13359,13 +13359,13 @@ struct llm_build_context {
 
                 // self-attention
                 {
-                    struct ggml_tensor * Qcur = ggml_mul_mat(ctx0, model.layers[il].wq, cur);
+                    struct ggml_tensor * Qcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wq, cur);
                     cb(Qcur, "Qcur", il);
 
-                    struct ggml_tensor * Kcur = ggml_mul_mat(ctx0, model.layers[il].wk, cur);
+                    struct ggml_tensor * Kcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wk, cur);
                     cb(Kcur, "Kcur", il);
 
-                    struct ggml_tensor * Vcur = ggml_mul_mat(ctx0, model.layers[il].wv, cur);
+                    struct ggml_tensor * Vcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wv, cur);
                     cb(Vcur, "Vcur", il);
 
                     llm_build_kv_store(ctx0, hparams, cparams, kv_self, gf, Kcur, Vcur, n_tokens, kv_head, cb, il);
@@ -13412,7 +13412,7 @@ struct llm_build_context {
 
                     ggml_build_forward_expand(gf, cur);
 
-                    cur = ggml_mul_mat(ctx0, model.layers[il].wo, cur);
+                    cur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wo, cur);
                     cb(cur, "kqv_out", il);
                 }
 
@@ -13429,13 +13429,13 @@ struct llm_build_context {
 
                 // cross-attention
                 {
-                    struct ggml_tensor * Qcur = ggml_mul_mat(ctx0, model.layers[il].wq_cross, cur);
+                    struct ggml_tensor * Qcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wq_cross, cur);
                     cb(Qcur, "Qcur", il);
 
-                    struct ggml_tensor * Kcur = ggml_mul_mat(ctx0, model.layers[il].wk_cross, embd_enc);
+                    struct ggml_tensor * Kcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wk_cross, embd_enc);
                     cb(Kcur, "Kcur", il);
 
-                    struct ggml_tensor * Vcur = ggml_mul_mat(ctx0, model.layers[il].wv_cross, embd_enc);
+                    struct ggml_tensor * Vcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wv_cross, embd_enc);
                     cb(Vcur, "Vcur", il);
 
                     Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
@@ -13464,7 +13464,7 @@ struct llm_build_context {
 
                     ggml_build_forward_expand(gf, cur);
 
-                    cur = ggml_mul_mat(ctx0, model.layers[il].wo_cross, cur);
+                    cur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wo_cross, cur);
                     cb(cur, "kqv_out", il);
                 }
 
@@ -13521,7 +13521,7 @@ struct llm_build_context {
             cb(cur, "result_norm", -1);
 
             // lm_head
-            cur = ggml_mul_mat(ctx0, model.output, cur);
+            cur = llm_build_lora_mm(lctx, ctx0, model.output, cur);
             cb(cur, "result_output", -1);
         }
 
@@ -15371,7 +15371,7 @@ static ggml_type llama_tensor_get_type(quantize_state_internal & qs, ggml_type n
     const int n_expert = std::max(1, (int)qs.model.hparams.n_expert);
     auto layer_info = [n_expert] (int i_layer, int n_layer, const char * name) {
         if (n_expert > 1) {
-            // Believe it or not, "experts" in the FFN of Mixtral-8x7B are not consecutive, but iccasionally randomly
+            // Believe it or not, "experts" in the FFN of Mixtral-8x7B are not consecutive, but occasionally randomly
             // sprinkled in the model. Hence, simply dividing i_ffn_down by n_expert does not work
             // for getting the current layer as I initially thought, and we need to resort to parsing the
             // tensor name.
@@ -17396,6 +17396,7 @@ bool llama_save_session_file(struct llama_context * ctx, const char * path_sessi
 // TODO: replace all non-fatal assertions with returned errors or exceptions
 struct llama_data_write {
     virtual void write(const void * src, size_t size) = 0;
+    virtual void write_tensor_data(const struct ggml_tensor * tensor, size_t offset, size_t size) = 0;
     virtual size_t get_size_written() = 0;
     virtual ~llama_data_write() = default;
 
@@ -17518,9 +17519,8 @@ struct llama_data_write {
             // Read each range of cells of k_size length each into tmp_buf and write out
             for (const auto & range : cell_ranges) {
                 const size_t range_size = range.second - range.first;
-                tmp_buf.resize(range_size * k_size_row);
-                ggml_backend_tensor_get(kv_self.k_l[il], tmp_buf.data(), range.first * k_size_row, range_size * k_size_row);
-                write(tmp_buf.data(), tmp_buf.size());
+                const size_t buf_size = range_size * k_size_row;
+                write_tensor_data(kv_self.k_l[il], range.first * k_size_row, buf_size);
             }
         }
 
@@ -17539,9 +17539,8 @@ struct llama_data_write {
                 // Read each range of cells of v_size length each into tmp_buf and write out
                 for (const auto & range : cell_ranges) {
                     const size_t range_size = range.second - range.first;
-                    tmp_buf.resize(range_size * v_size_row);
-                    ggml_backend_tensor_get(kv_self.v_l[il], tmp_buf.data(), range.first * v_size_row, range_size * v_size_row);
-                    write(tmp_buf.data(), tmp_buf.size());
+                    const size_t buf_size = range_size * v_size_row;
+                    write_tensor_data(kv_self.v_l[il], range.first * v_size_row, buf_size);
                 }
             }
         } else {
@@ -17567,9 +17566,8 @@ struct llama_data_write {
                     for (const auto & range : cell_ranges) {
                         const size_t range_size = range.second - range.first;
                         const size_t src_offset = (range.first + j * kv_size) * v_size_el;
-                        tmp_buf.resize(range_size * v_size_el);
-                        ggml_backend_tensor_get(kv_self.v_l[il], tmp_buf.data(), src_offset, tmp_buf.size());
-                        write(tmp_buf.data(), tmp_buf.size());
+                        const size_t buf_size = range_size * v_size_el;
+                        write_tensor_data(kv_self.v_l[il], src_offset, buf_size);
                     }
                 }
             }
@@ -17928,9 +17926,11 @@ struct llama_data_write_dummy : llama_data_write {
 
     llama_data_write_dummy() {}
 
-    // TODO: avoid unnecessary calls to ggml_backend_tensor_get in a dummy context
-
     void write(const void * /* src */, size_t size) override {
+        size_written += size;
+    }
+
+    void write_tensor_data(const struct ggml_tensor * /* tensor */, size_t /* offset */, size_t size) override {
         size_written += size;
     }
 
@@ -17951,6 +17951,16 @@ struct llama_data_write_buffer : llama_data_write {
             throw std::runtime_error("unexpectedly reached end of buffer");
         }
         memcpy(ptr, src, size);
+        ptr += size;
+        size_written += size;
+        buf_size -= size;
+    }
+
+    void write_tensor_data(const struct ggml_tensor * tensor, size_t offset, size_t size) override {
+        if (size > buf_size) {
+            throw std::runtime_error("unexpectedly reached end of buffer");
+        }
+        ggml_backend_tensor_get(tensor, ptr, offset, size);
         ptr += size;
         size_written += size;
         buf_size -= size;
@@ -17991,12 +18001,19 @@ struct llama_data_read_buffer : llama_data_read {
 struct llama_data_write_file : llama_data_write {
     llama_file * file;
     size_t size_written = 0;
+    std::vector<uint8_t> temp_buffer;
 
     llama_data_write_file(llama_file * f) : file(f) {}
 
     void write(const void * src, size_t size) override {
         file->write_raw(src, size);
         size_written += size;
+    }
+
+    void write_tensor_data(const struct ggml_tensor * tensor, size_t offset, size_t size) override {
+        temp_buffer.resize(size);
+        ggml_backend_tensor_get(tensor, temp_buffer.data(), offset, size);
+        write(temp_buffer.data(), temp_buffer.size());
     }
 
     size_t get_size_written() override {
