@@ -4211,7 +4211,7 @@ def main(launch_args,start_server=True):
         start_server = False
         save_to_file = (args.benchmark and args.benchmark!="stdout" and args.benchmark!="")
         benchmaxctx = maxctx
-        benchlen = 100
+        benchlen = args.promptlimit
         benchtemp = 0.1
         benchtopk = 1
         benchreppen = 1
@@ -4225,7 +4225,6 @@ def main(launch_args,start_server=True):
             benchtemp = 0.8
             if not args.benchmark:
                 benchbaneos = False
-                benchlen = 256
         if args.benchmark:
             if os.path.exists(args.benchmark) and os.path.getsize(args.benchmark) > 1000000:
                 print(f"\nWarning: The benchmark CSV output file you selected exceeds 1MB. This is probably not what you want, did you select the wrong CSV file?\nFor safety, benchmark output will not be saved.")
@@ -4364,6 +4363,7 @@ if __name__ == '__main__':
     advparser.add_argument("--onready", help="An optional shell command to execute after the model has been loaded.", metavar=('[shell command]'), type=str, default="",nargs=1)
     advparser.add_argument("--benchmark", help="Do not start server, instead run benchmarks. If filename is provided, appends results to provided file.", metavar=('[filename]'), nargs='?', const="stdout", type=str, default=None)
     advparser.add_argument("--prompt", metavar=('[prompt]'), help="Passing a prompt string triggers a direct inference, loading the model, outputs the response to stdout and exits. Can be used alone or with benchmark.", type=str, default="")
+    advparser.add_argument("--promptlimit", help="Sets the maximum number of generated tokens, usable only with --prompt or --benchmark",metavar=('[token limit]'), type=int, default=100)
     advparser.add_argument("--multiuser", help="Runs in multiuser mode, which queues incoming requests instead of blocking them.", metavar=('limit'), nargs='?', const=1, type=int, default=1)
     advparser.add_argument("--remotetunnel", help="Uses Cloudflare to create a remote tunnel, allowing you to access koboldcpp remotely over the internet even behind a firewall.", action='store_true')
     advparser.add_argument("--highpriority", help="Experimental flag. If set, increases the process CPU priority, potentially speeding up generation. Use caution.", action='store_true')
