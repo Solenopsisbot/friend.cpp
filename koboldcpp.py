@@ -4234,7 +4234,7 @@ def main(launch_args,start_server=True):
             else:
                 print(f"\nRunning benchmark (Not Saved)...")
             if benchprompt=="":
-                benchprompt = "1111111111111111"
+                benchprompt = " 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1"
                 for i in range(0,14): #generate massive prompt
                     benchprompt += benchprompt
         genout = generate(benchprompt,memory="",images=[],max_length=benchlen,max_context_length=benchmaxctx,temperature=benchtemp,top_k=benchtopk,rep_pen=benchreppen,ban_eos_token=benchbaneos)
