@@ -1206,6 +1206,7 @@ def extract_json_from_string(input_string):
     return []
 
 def transform_genparams(genparams, api_format):
+    global chatcompl_adapter
     #api format 1=basic,2=kai,3=oai,4=oai-chat,5=interrogate
     #alias all nonstandard alternative names for rep pen.
     rp1 = genparams.get('repeat_penalty', 1.0)
@@ -1348,7 +1349,6 @@ ws ::= | " " | "\n" [ \t]{0,20}
 
 
     elif api_format==5:
-        global chatcompl_adapter
         firstimg = genparams.get('image', "")
         genparams["images"] = [firstimg]
         genparams["max_length"] = 42
