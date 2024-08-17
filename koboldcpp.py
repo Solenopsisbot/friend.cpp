@@ -1348,10 +1348,14 @@ ws ::= | " " | "\n" [ \t]{0,20}
 
 
     elif api_format==5:
+        global chatcompl_adapter
         firstimg = genparams.get('image', "")
         genparams["images"] = [firstimg]
         genparams["max_length"] = 42
-        genparams["prompt"] = "### Instruction: In one sentence, write a descriptive caption for this image.\n### Response:"
+        adapter_obj = {} if chatcompl_adapter is None else chatcompl_adapter
+        user_message_start = adapter_obj.get("user_start", "### Instruction:")
+        assistant_message_start = adapter_obj.get("assistant_start", "### Response:")
+        genparams["prompt"] = f"{user_message_start} In one sentence, write a descriptive caption for this image.\n{assistant_message_start}"
 
     return genparams
 
