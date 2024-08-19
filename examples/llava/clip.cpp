@@ -2419,7 +2419,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
             struct ggml_tensor * patches = ggml_graph_get_tensor(gf, "patches");
             int* patches_data = (int*)malloc(ggml_nbytes(patches));
             for (int i = 0; i < num_patches; i++) {
-                patches_data[i] = i;
+                patches_data[i] = i + 1;
             }
             ggml_backend_tensor_set(patches, patches_data, 0, ggml_nbytes(patches));
             free(patches_data);
