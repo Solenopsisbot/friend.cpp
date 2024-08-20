@@ -1941,6 +1941,9 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         llama_reset_timings(llama_ctx_v4);
     }
 
+    generation_finished = false; // Set current generation status
+    generated_tokens.clear(); // New Generation, new tokens
+
     concat_output_mtx.lock();
     concat_output = "";
     concat_output_reader_copy_poll = "";
@@ -2140,8 +2143,6 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     bool allow_regular_prints = (debugmode!=-1 && !inputs.quiet) || debugmode >= 1;
 
-    generation_finished = false; // Set current generation status
-    generated_tokens.clear(); // New Generation, new tokens
 
     std::string grammarstr = inputs.grammar;
     bool grammar_retain_state = inputs.grammar_retain_state;

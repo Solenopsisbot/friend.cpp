@@ -41,7 +41,7 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.73"
+KcppVersion = "1.73.1"
 showdebug = True
 guimode = False
 showsamplerwarning = True
@@ -1412,11 +1412,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 global last_non_horde_req_time
                 last_non_horde_req_time = time.time()
 
-            return generate(
-                genparams=genparams,
-                is_quiet=is_quiet,
-                stream_flag=stream_flag
-            )
+            return generate(genparams=genparams,is_quiet=is_quiet,stream_flag=stream_flag)
 
         genout = {"text": "", "status": -1, "stopreason": -1}
         if stream_flag:
@@ -1486,7 +1482,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         current_token = 0
         incomplete_token_buffer = bytearray()
         async_sleep_short = 0.02
-        await asyncio.sleep(0.3) #anti race condition, prevent check from overtaking generate
+        await asyncio.sleep(0.5) #anti race condition, prevent check from overtaking generate
         try:
             tokenReserve = "" #keeps fully formed tokens that we cannot send out yet
             while True:
