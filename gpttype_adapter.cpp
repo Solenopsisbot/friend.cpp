@@ -698,6 +698,10 @@ void sample_dry(int n_ctx, int penalty_range, float penalty_multiplier, float pe
         candidates->data[token].logit -= penalty;
         ++count;
     }
+    if(count>0)
+    {
+        candidates->sorted = false;
+    }
     if (debugmode==1 && !dry_max_token_repeat.empty()) {
         printf("]\n");
     }
