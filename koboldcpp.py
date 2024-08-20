@@ -1482,7 +1482,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         current_token = 0
         incomplete_token_buffer = bytearray()
         async_sleep_short = 0.02
-        await asyncio.sleep(0.5) #anti race condition, prevent check from overtaking generate
+        await asyncio.sleep(0.35) #anti race condition, prevent check from overtaking generate
         try:
             tokenReserve = "" #keeps fully formed tokens that we cannot send out yet
             while True:
