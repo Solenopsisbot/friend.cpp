@@ -768,16 +768,20 @@ def fetch_gpu_properties(testCL,testCU,testVK):
                         FetchedCUdeviceMem = [line.split(",")[1].strip() for line in getamdvram.splitlines()[1:] if line.strip()]
             except Exception as e:
                 pass
+        lowestcumem = 0
+        lowestfreecumem = 0
         for idx in range(0,4):
             if(len(FetchedCUdevices)>idx):
                 CUDevicesNames[idx] = FetchedCUdevices[idx]
                 if len(FetchedCUdeviceMem)>idx:
-                    if AMDgpu:
-                        MaxMemory[0] = max(int(FetchedCUdeviceMem[idx]),MaxMemory[0])
-                    else:
-                        MaxMemory[0] = max(int(FetchedCUdeviceMem[idx])*1024*1024,MaxMemory[0])
+                    dmem = int(FetchedCUdeviceMem[idx]) if AMDgpu else (int(FetchedCUdeviceMem[idx])*1024*1024)
+                    lowestcumem = dmem if lowestcumem==0 else (dmem if dmem<lowestcumem else lowestcumem)
                 if len(FetchedCUfreeMem)>idx:
-                    MaxFreeMemory[0] = max(int(FetchedCUfreeMem[idx])*1024*1024,MaxFreeMemory[0])
+                    dmem = (int(FetchedCUfreeMem[idx])*1024*1024)
+                    lowestfreecumem = dmem if lowestfreecumem==0 else (dmem if dmem<lowestfreecumem else lowestfreecumem)
+
+        MaxMemory[0] = max(lowestcumem,MaxMemory[0])
+        MaxFreeMemory[0] = max(lowestfreecumem,MaxFreeMemory[0])
 
     if testVK:
         try: # Get Vulkan names
