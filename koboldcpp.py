@@ -41,7 +41,7 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.73.1"
+KcppVersion = "1.74"
 showdebug = True
 guimode = False
 showsamplerwarning = True
@@ -154,6 +154,8 @@ class generation_inputs(ctypes.Structure):
                 ("dry_allowed_length", ctypes.c_int),
                 ("dry_penalty_last_n", ctypes.c_int),
                 ("dry_sequence_breakers", ctypes.c_char_p * dry_seq_break_max),
+                ("xtc_threshold", ctypes.c_float),
+                ("xtc_probability", ctypes.c_float),
                 ("sampler_order", ctypes.c_int * sampler_order_max),
                 ("sampler_len", ctypes.c_int),
                 ("allow_eos_token", ctypes.c_bool),
@@ -896,6 +898,8 @@ def generate(genparams, is_quiet=False, stream_flag=False):
     dry_allowed_length = genparams.get('dry_allowed_length', 2)
     dry_penalty_last_n = genparams.get('dry_penalty_last_n', 320)
     dry_sequence_breakers = genparams.get('dry_sequence_breakers', [])
+    xtc_threshold = genparams.get('xtc_threshold', 0.2)
+    xtc_probability = genparams.get('xtc_probability', 0)
     sampler_order = genparams.get('sampler_order', [6, 0, 1, 3, 4, 2, 5])
     seed = tryparseint(genparams.get('sampler_seed', -1))
     stop_sequence = genparams.get('stop_sequence', [])
@@ -964,6 +968,8 @@ def generate(genparams, is_quiet=False, stream_flag=False):
         inputs.mirostat = inputs.mirostat_tau = inputs.mirostat_eta = 0
     inputs.dry_multiplier = dry_multiplier
     inputs.dry_base = dry_base
+    inputs.xtc_threshold = xtc_threshold
+    inputs.xtc_probability = xtc_probability
     inputs.dry_allowed_length = dry_allowed_length
     inputs.dry_penalty_last_n = dry_penalty_last_n
     # Handle dry_sequence_breakers being passed as a json-encoded array of
