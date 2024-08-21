@@ -1961,6 +1961,9 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     dry_sequence_breakers.clear();
     dry_max_token_repeat.clear();
 
+    double time0 = 0, time1 = 0, time2 = 0;
+    timer_start();
+
     for(int x=0;x<stop_token_max;++x)
     {
         std::string stopper = inputs.stop_sequence[x];
@@ -2421,8 +2424,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     bool startedsampling = false;
     bool v3_use_scratch = true; //for normal inference always use scratch
 
+    time0 = timer_check();
     timer_start();
-    double time1 = 0, time2 = 0;
 
     if(file_format == FileFormat::RWKV_1 || file_format==FileFormat::RWKV_2)
     {
@@ -2872,7 +2875,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     float pt2 = (time2*1000.0/(realnpredict==0?1:realnpredict));
     float ts2 = (1000.0/pt2);
     float tokens_per_second = (realnpredict == 0 ? 0 : realnpredict / (time1 + time2));
-    printf("\nCtxLimit:%d/%d, Amt:%d/%d, Process:%.2fs (%.1fms/T = %.2fT/s), Generate:%.2fs (%.1fms/T = %.2fT/s), Total:%.2fs (%.2fT/s)",(int)current_context_tokens.size(),(int)nctx, realnpredict, kcpp_params->n_predict, time1, pt1, ts1, time2, pt2, ts2, (time1 + time2), tokens_per_second);
+    printf("\nCtxLimit:%d/%d, Amt:%d/%d, Init:%.2fs, Process:%.2fs (%.1fms/T = %.2fT/s), Generate:%.2fs (%.1fms/T = %.2fT/s), Total:%.2fs (%.2fT/s)",(int)current_context_tokens.size(),(int)nctx, realnpredict, kcpp_params->n_predict, time0, time1, pt1, ts1, time2, pt2, ts2, (time1 + time2), tokens_per_second);
     fflush(stdout);
     output.status = 1;
     output.stopreason = last_stop_reason;
