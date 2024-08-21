@@ -4353,7 +4353,7 @@ if __name__ == '__main__':
             return f
         return range_checker
 
-    parser = argparse.ArgumentParser(description='KoboldCpp Server')
+    parser = argparse.ArgumentParser(description=f'KoboldCpp Server - Version {KcppVersion}')
     modelgroup = parser.add_mutually_exclusive_group() #we want to be backwards compatible with the unnamed positional args
     modelgroup.add_argument("--model", metavar=('[filename]'), help="Model file to load", type=str, default="")
     modelgroup.add_argument("model_param", help="Model file to load (positional)", nargs="?")
