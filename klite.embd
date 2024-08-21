@@ -12095,6 +12095,7 @@ Current version indicated by LITEVER below.
 			submit_payload.params.dry_multiplier = localsettings.dry_multiplier;
 			submit_payload.params.dry_base = localsettings.dry_base;
 			submit_payload.params.dry_allowed_length = localsettings.dry_allowed_length;
+			submit_payload.params.dry_penalty_last_n = localsettings.rep_pen_range;
 			submit_payload.params.dry_sequence_breakers = JSON.parse(JSON.stringify(localsettings.dry_sequence_breakers));
 		}
 		//presence pen and logit bias for OAI and newer kcpp
