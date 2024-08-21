@@ -534,7 +534,7 @@ void sample_xtc(llama_token_data_array * candidates, float xtc_threshold, float 
 
         // then remove all other tokens EXCEPT the least likely one
         for (size_t i = 0; i < candidates->size - 1; ++i) {
-            candidates->data[i].logit = -999.0f; //infinity gets wonky results downstream, this hack works well enough
+            candidates->data[i].logit -= 999.0f; //infinity gets wonky results downstream, this hack works well enough
         }
         candidates->sorted = false;
 
