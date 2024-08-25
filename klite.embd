@@ -12,7 +12,7 @@ Current version indicated by LITEVER below.
 -->
 
 <script>
-	const LITEVER = 169;
+	const LITEVER = 171;
 	const urlParams = new URLSearchParams(window.location.search);
 	const localflag = true;
 	const STORAGE_PREFIX = (localflag?"e_":"")+"kaihordewebui_";
@@ -8524,7 +8524,7 @@ Current version indicated by LITEVER below.
 										koboldcpp_has_whisper = (data.transcribe?true:false);
 										let has_password = (data.protected?true:false);
 										let has_txt2img = (data.txt2img?true:false);
-										let no_model = (mdlname=="inactive");
+										let no_txt_model = (mdlname=="inactive");
 
 										//also check against kcpp's max true context length
 										fetch(apply_proxy_url(desiredkoboldendpoint + koboldcpp_truemaxctxlen_endpoint),
@@ -8615,12 +8615,16 @@ Current version indicated by LITEVER below.
 												}
 											},false,false,true);
 										}
-										else if(localflag && has_txt2img && no_model && safe_to_overwrite())
+										else if(localflag && has_txt2img && no_txt_model && safe_to_overwrite())
 										{
 											msgboxYesNo("This KoboldCpp instance seems to be running an Image Generation model without any Text Generation model loaded.\n\nWould you like to launch StableUI (Dedicated Image Generation WebUI bundled with KoboldCpp)?\n\nIf unsure, select 'No'.","Launch StableUI?", ()=>{
 												go_to_stableui();
 											},()=>{
 											});
+										}
+										else if(localflag && no_txt_model && !has_txt2img && !koboldcpp_has_vision && !koboldcpp_has_whisper)
+										{
+											msgbox("This KoboldCpp instance has no models loaded. You can still use the WebUI to edit or view existing stories.<br><br>You can also <a href='#' class='color_blueurl' onclick='hide_popups();display_endpoint_container();'>connect to an external service</a> instead","No Models Loaded",true);
 										}
 
 									}else{
@@ -11018,10 +11022,52 @@ Current version indicated by LITEVER below.
 	}
 
 
+	var dragdropimgsetup = false;
 	function add_img_btn_paste()
 	{
 		document.getElementById("addimgcontainer").classList.add("hidden");
 		document.getElementById("pasteimgcontainer").classList.remove("hidden");
+
+		if(!dragdropimgsetup)
+		{
+			const dropZone = document.getElementById('pasteimgwin');
+			const onDropFn = function(e){
+				e.preventDefault();
+				e.stopPropagation();
+
+				let draggedData = e.dataTransfer;
+				let files = draggedData.files;
+
+				console.log(files);
+				if (files.length > 0 && files[0] != null && files[0].name && files[0].name != "") {
+					const file = files[0];
+					const reader = new FileReader();
+					reader.onload = function(img) {
+						let origImg = img.target.result;
+						self_upload_img(origImg);
+					}
+					reader.readAsDataURL(file);
+					document.getElementById("pasteimgcontainer").classList.add("hidden");
+				}
+			}
+
+			dropZone.addEventListener(
+				"dragover",
+				(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+				},
+				false
+			);
+			dropZone.addEventListener(
+				"drop",
+				(e) => {
+					onDropFn(e);
+				},
+				false
+			);
+			dragdropimgsetup = true;
+		}
 	}
 
 	function add_img_btn_upload()
@@ -12001,7 +12047,7 @@ Current version indicated by LITEVER below.
 			seqs = [st, et];
 			if(localsettings.fix_alpaca_leak && st.toLowerCase().includes("### instruction"))
 			{
-				seqs.push("\n\n### ");
+				seqs.push("\n### ");
 			}
 			if(localsettings.inject_chatnames_instruct)
 			{
