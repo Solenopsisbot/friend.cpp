@@ -1554,6 +1554,28 @@ bool clip_image_load_from_file(const char * fname, clip_image_u8 * img) {
     return true;
 }
 
+//note that the memory here must be subsequently freed!
+uint8_t* make_new_letterbox_img(uint8_t* input_image, int nx, int ny, int nc, int target_width, int target_height) {
+    int new_image_size = target_width * target_height * nc;
+    uint8_t* letterboxed_image = (uint8_t*)malloc(new_image_size);
+    if(letterboxed_image==nullptr)
+    {
+        printf("\nWARNING: make_new_letterbox_img MALLOC FAILED\n");
+        return nullptr;
+    }
+    memset(letterboxed_image, 0, new_image_size);  // fill with black (0) or any color you prefer
+    int offset_x = (target_width - nx) / 2;
+    int offset_y = (target_height - ny) / 2;
+    for (int y = 0; y < ny; ++y) {
+        memcpy(
+            letterboxed_image + ((y + offset_y) * target_width + offset_x) * nc,
+            input_image + (y * nx * nc),
+            nx * nc
+        );
+    }
+    return letterboxed_image;
+}
+
 bool clip_image_load_from_bytes(const unsigned char * bytes, size_t bytes_length, struct clip_image_u8 * img) {
     int nx, ny, nc;
     auto * data = stbi_load_from_memory(bytes, bytes_length, &nx, &ny, &nc, 3);
@@ -1561,7 +1583,34 @@ bool clip_image_load_from_bytes(const unsigned char * bytes, size_t bytes_length
         LOG_TEE("%s: failed to decode image bytes\n", __func__);
         return false;
     }
-    build_clip_img_from_data(data, nx, ny, img);
+
+    float aspect_ratio = static_cast<float>(nx) / ny;
+    int new_width = nx;
+    int new_height = ny;
+    bool need_letterbox = false;
+    // Check if the image exceeds the aspect ratio limits
+    float maxaspect = 4.0f;
+    if (aspect_ratio > maxaspect) {
+        new_height = (int)(nx / maxaspect);
+        need_letterbox = true;
+    } else if (aspect_ratio < 1.0f / maxaspect) {
+        new_width = (int)(ny / maxaspect);
+        need_letterbox = true;
+    }
+    if (need_letterbox) {
+        LOG_TEE("\nImage requires letterboxing: %d x %d changed to %d x %d\n",nx,ny,new_width, new_height);
+        uint8_t* letterboxed_image = make_new_letterbox_img(data, nx, ny, nc, new_width, new_height);
+        if(letterboxed_image!=nullptr)
+        {
+            build_clip_img_from_data(letterboxed_image, new_width, new_height, img);
+            free(letterboxed_image);
+            letterboxed_image = nullptr;
+        }
+    }
+    else
+    {
+        build_clip_img_from_data(data, nx, ny, img);
+    }
     stbi_image_free(data);
     return true;
 }
