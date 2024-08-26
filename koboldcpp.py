@@ -2539,7 +2539,10 @@ def show_gui():
         gpu_be = (index == "Use Vulkan" or index == "Vulkan NoAVX2 (Old CPU)" or index == "Use CLBlast" or index == "CLBlast NoAVX2 (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)")
         layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
         quick_layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
-        if gpu_be and gpulayers_var.get()=="-1" and predicted_gpu_layers>0:
+        if sys.platform=="darwin" and gpulayers_var.get()=="-1":
+            quick_layercounter_label.configure(text=f"(Auto: All Layers)")
+            layercounter_label.configure(text=f"(Auto: All Layers)")
+        elif gpu_be and gpulayers_var.get()=="-1" and predicted_gpu_layers>0:
             quick_layercounter_label.configure(text=f"(Auto: {predicted_gpu_layers}{max_gpu_layers} Layers)")
             layercounter_label.configure(text=f"(Auto: {predicted_gpu_layers}{max_gpu_layers} Layers)")
         elif gpu_be and gpulayers_var.get()=="-1" and predicted_gpu_layers<=0 and (modelfile_extracted_meta and modelfile_extracted_meta[1]):
@@ -4006,6 +4009,9 @@ def main(launch_args,start_server=True):
             if shouldavoidgpu:
                 print("WARNING: GPU layers is set, but a GPU backend was not selected!")
                 pass
+        elif args.gpulayers==-1 and sys.platform=="darwin" and args.model_param and os.path.exists(args.model_param):
+            print(f"MacOS detected: Auto GPU layers set to maximum")
+            args.gpulayers = 200
         elif args.gpulayers==-1 and not shouldavoidgpu and args.model_param and os.path.exists(args.model_param):
             if not args.usecublas and not args.usevulkan and not args.useclblast:
                 print("NOTE: Auto GPU layers was set without picking a GPU backend! Trying to assign one for you automatically...")
