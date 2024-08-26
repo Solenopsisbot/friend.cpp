@@ -27,6 +27,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#include "stb_image_resize.h"
+
 #include <cassert>
 #include <cmath>
 #include <cstdlib>
@@ -1575,6 +1578,30 @@ uint8_t* make_new_letterbox_img(uint8_t* input_image, int nx, int ny, int nc, in
     }
     return letterboxed_image;
 }
+uint8_t* scale_down_image(uint8_t* input_image, int& nx, int& ny, int nc, int max_width, int max_height) {
+    float aspect_ratio = static_cast<float>(nx) / ny;
+    int new_width = nx;
+    int new_height = ny;
+    if (nx > max_width || ny > max_height) {
+        if (aspect_ratio > 1.0f) { // wider than tall
+            new_width = max_width;
+            new_height = static_cast<int>(max_width / aspect_ratio);
+        } else { // taller than wide
+            new_height = max_height;
+            new_width = static_cast<int>(max_height * aspect_ratio);
+        }
+    }
+    uint8_t* resized_image = (uint8_t*)malloc(new_width * new_height * nc);
+    int resok = stbir_resize_uint8(input_image, nx, ny, 0, resized_image, new_width, new_height, 0, nc);
+    if (!resok) {
+        printf("\nKCPP SD: clip resize image failed!\n");
+        free(resized_image);
+        return nullptr;
+    }
+    nx = new_width;
+    ny = new_height;
+    return resized_image;
+}
 
 bool clip_image_load_from_bytes(const unsigned char * bytes, size_t bytes_length, struct clip_image_u8 * img) {
     int nx, ny, nc;
@@ -1584,12 +1611,26 @@ bool clip_image_load_from_bytes(const unsigned char * bytes, size_t bytes_length
         return false;
     }
 
+    float maxaspect = 4.0f;
+    int maxdims = 2048;
+
+    //check if image needs downscaling
+    if (nx > maxdims || ny > maxdims) {
+        LOG_TEE("\nImage requires resizing: original size %d x %d scaling to max %d px\n",nx,ny,maxdims);
+        uint8_t* resized_image = scale_down_image(data, nx, ny, nc, maxdims, maxdims);
+        if(resized_image!=nullptr)
+        {
+            stbi_image_free(data); // Free the original image buffer and assign the new one
+            data = resized_image;
+            LOG_TEE("Resized to clamped to %d x %d\n",nx,ny);
+        }
+    }
+
     float aspect_ratio = static_cast<float>(nx) / ny;
     int new_width = nx;
     int new_height = ny;
     bool need_letterbox = false;
     // Check if the image exceeds the aspect ratio limits
-    float maxaspect = 4.0f;
     if (aspect_ratio > maxaspect) {
         new_height = (int)(nx / maxaspect);
         need_letterbox = true;
@@ -1597,6 +1638,7 @@ bool clip_image_load_from_bytes(const unsigned char * bytes, size_t bytes_length
         new_width = (int)(ny / maxaspect);
         need_letterbox = true;
     }
+
     if (need_letterbox) {
         LOG_TEE("\nImage requires letterboxing: %d x %d changed to %d x %d\n",nx,ny,new_width, new_height);
         uint8_t* letterboxed_image = make_new_letterbox_img(data, nx, ny, nc, new_width, new_height);
