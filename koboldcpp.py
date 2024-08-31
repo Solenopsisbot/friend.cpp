@@ -3407,8 +3407,11 @@ def run_horde_worker(args, api_key, worker_name):
                 if exitcounter > 1:
                     exitcounter -= 1
 
-    def make_url_request_horde(url, data, method='POST'):
+    def make_url_request_horde(url, data, method='POST',addmykey=False):
+        global password
         headers = headers = {"apikey": api_key,'User-Agent':'KoboldCppEmbeddedWorkerV2','Client-Agent':'KoboldCppEmbedWorker:2'}
+        if addmykey and password!="":
+            headers["Authorization"] = f"Bearer {password}"
         ret = make_url_request(url, data, method, headers)
         if not ret:
             print("Make sure your Horde API key and worker name is valid!")
@@ -3425,7 +3428,7 @@ def run_horde_worker(args, api_key, worker_name):
     cluster = "https://aihorde.net"
     while exitcounter < 10:
         time.sleep(3)
-        readygo = make_url_request_horde(f'{epurl}/api/v1/info/version', None,'GET')
+        readygo = make_url_request_horde(f'{epurl}/api/v1/info/version', None,'GET',addmykey=True)
         if readygo:
             print_with_time(f"Embedded Horde Worker '{worker_name}' is started.")
             break
@@ -3493,7 +3496,7 @@ def run_horde_worker(args, api_key, worker_name):
             if not modelbusy.locked():
                 #horde gets a genkey to avoid KCPP overlap
                 current_payload['genkey'] = f"HORDEREQ_{random.randint(100, 999)}"
-                current_generation = make_url_request_horde(f'{epurl}/api/v1/generate', current_payload)
+                current_generation = make_url_request_horde(f'{epurl}/api/v1/generate', current_payload, method='POST',addmykey=True)
                 if current_generation:
                     break
                 else:
