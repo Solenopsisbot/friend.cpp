@@ -4163,7 +4163,7 @@ def main(launch_args,start_server=True):
 
     #load embedded lite
     try:
-        basepath = os.path.abspath(os.path.dirname(__file__))
+        basepath = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
         with open(os.path.join(basepath, "klite.embd"), mode='rb') as f:
             embedded_kailite = f.read()
             # patch it with extra stuff
@@ -4177,7 +4177,7 @@ def main(launch_args,start_server=True):
         print("Could not find KoboldAI Lite. Embedded KoboldAI Lite will not be available.")
 
     try:
-        basepath = os.path.abspath(os.path.dirname(__file__))
+        basepath = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
         with open(os.path.join(basepath, "kcpp_docs.embd"), mode='rb') as f:
             embedded_kcpp_docs = f.read()
             print("Embedded API docs loaded.")
@@ -4185,7 +4185,7 @@ def main(launch_args,start_server=True):
         print("Could not find Embedded KoboldCpp API docs.")
 
     try:
-        basepath = os.path.abspath(os.path.dirname(__file__))
+        basepath = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
         with open(os.path.join(basepath, "kcpp_sdui.embd"), mode='rb') as f:
             embedded_kcpp_sdui = f.read()
             if args.sdmodel:
