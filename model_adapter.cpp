@@ -314,6 +314,10 @@ void print_tok_vec(std::vector<float> &embd)
             {
                 fileformatmeta->model_architecture = GGUFArch::ARCH_QWEN2;
             }
+            else if(modelarch=="rwkv6")
+            {
+                fileformatmeta->model_architecture = GGUFArch::ARCH_RWKV;
+            }
             printf("Arch Category: %d\n",fileformatmeta->model_architecture);
 
         }
