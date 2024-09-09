@@ -78,7 +78,7 @@ extern "C"
 
         if(file_format==FileFormat::GPTJ_1 || file_format==FileFormat::GPTJ_2 || file_format==FileFormat::GPTJ_3 || file_format==FileFormat::GPTJ_4  || file_format==FileFormat::GPTJ_5)
         {
-            printf("\n---\nIdentified as GPT-J model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+            printf("\n---\nIdentified as Legacy GPT-J model: (ver %d)\nAttempting to Load...\n---\n", file_format);
             ModelLoadResult lr = gpttype_load_model(inputs, file_format, file_format_meta);
             if (lr == ModelLoadResult::RETRY_LOAD)
             {
@@ -87,14 +87,14 @@ extern "C"
                     //if we tried 1 first, then try 3 and lastly 2
                     //otherwise if we tried 3 first, then try 2
                     file_format = FileFormat::GPTJ_4;
-                    printf("\n---\nRetrying as GPT-J model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+                    printf("\n---\nRetrying as Legacy GPT-J model: (ver %d)\nAttempting to Load...\n---\n", file_format);
                     lr = gpttype_load_model(inputs, file_format, file_format_meta);
                 }
 
                 if (lr == ModelLoadResult::RETRY_LOAD)
                 {
                     file_format = FileFormat::GPTJ_3;
-                    printf("\n---\nRetrying as GPT-J model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+                    printf("\n---\nRetrying as Legacy GPT-J model: (ver %d)\nAttempting to Load...\n---\n", file_format);
                     lr = gpttype_load_model(inputs, file_format, file_format_meta);
                 }
 
@@ -102,7 +102,7 @@ extern "C"
                 if (lr == ModelLoadResult::RETRY_LOAD)
                 {
                     file_format = FileFormat::GPTJ_2;
-                    printf("\n---\nRetrying as GPT-J model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+                    printf("\n---\nRetrying as Legacy GPT-J model: (ver %d)\nAttempting to Load...\n---\n", file_format);
                     lr = gpttype_load_model(inputs, file_format, file_format_meta);
                 }
             }
@@ -118,18 +118,18 @@ extern "C"
         }
         else if(file_format==FileFormat::GPT2_1||file_format==FileFormat::GPT2_2||file_format==FileFormat::GPT2_3||file_format==FileFormat::GPT2_4)
         {
-            printf("\n---\nIdentified as GPT-2 model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+            printf("\n---\nIdentified as Legacy GPT-2 model: (ver %d)\nAttempting to Load...\n---\n", file_format);
             ModelLoadResult lr = gpttype_load_model(inputs, file_format, file_format_meta);
             if (lr == ModelLoadResult::RETRY_LOAD)
             {
                 file_format = FileFormat::GPT2_3;
-                printf("\n---\nRetrying as GPT-2 model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+                printf("\n---\nRetrying as Legacy GPT-2 model: (ver %d)\nAttempting to Load...\n---\n", file_format);
                 lr = gpttype_load_model(inputs, file_format, file_format_meta);
             }
             if (lr == ModelLoadResult::RETRY_LOAD)
             {
                 file_format = FileFormat::GPT2_2;
-                printf("\n---\nRetrying as GPT-2 model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+                printf("\n---\nRetrying as Legacy GPT-2 model: (ver %d)\nAttempting to Load...\n---\n", file_format);
                 lr = gpttype_load_model(inputs, file_format, file_format_meta);
             }
             if (lr == ModelLoadResult::FAIL || lr == ModelLoadResult::RETRY_LOAD)
@@ -143,27 +143,27 @@ extern "C"
         }
         else if(file_format==FileFormat::NEOX_1 || file_format==FileFormat::NEOX_2 || file_format==FileFormat::NEOX_3 || file_format==FileFormat::NEOX_4 || file_format==FileFormat::NEOX_5 || file_format==FileFormat::NEOX_6 || file_format==FileFormat::NEOX_7)
         {
-            printf("\n---\nIdentified as GPT-NEO-X model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+            printf("\n---\nIdentified as Legacy GPT-NEO-X model: (ver %d)\nAttempting to Load...\n---\n", file_format);
             ModelLoadResult lr = gpttype_load_model(inputs, file_format, file_format_meta);
             if (lr == ModelLoadResult::RETRY_LOAD)
             {
                 if(file_format==FileFormat::NEOX_2)
                 {
                     file_format = FileFormat::NEOX_3;
-                    printf("\n---\nRetrying as GPT-NEO-X model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+                    printf("\n---\nRetrying as Legacy GPT-NEO-X model: (ver %d)\nAttempting to Load...\n---\n", file_format);
                     lr = gpttype_load_model(inputs, file_format, file_format_meta);
                 }
                 else
                 {
                     file_format = FileFormat::NEOX_5;
-                    printf("\n---\nRetrying as GPT-NEO-X model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+                    printf("\n---\nRetrying as Legacy GPT-NEO-X model: (ver %d)\nAttempting to Load...\n---\n", file_format);
                     lr = gpttype_load_model(inputs, file_format, file_format_meta);
                 }
             }
             if (lr == ModelLoadResult::RETRY_LOAD)
             {
                 file_format = FileFormat::NEOX_1;
-                printf("\n---\nRetrying as GPT-NEO-X model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+                printf("\n---\nRetrying as Legacy GPT-NEO-X model: (ver %d)\nAttempting to Load...\n---\n", file_format);
                 lr = gpttype_load_model(inputs, file_format, file_format_meta);
             }
             if (lr == ModelLoadResult::FAIL || lr == ModelLoadResult::RETRY_LOAD)
@@ -179,15 +179,19 @@ extern "C"
         {
             if(file_format==FileFormat::MPT_1)
             {
-                printf("\n---\nIdentified as MPT model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+                printf("\n---\nIdentified as Legacy MPT model: (ver %d)\nAttempting to Load...\n---\n", file_format);
             }
             else if(file_format==FileFormat::RWKV_1 || file_format==FileFormat::RWKV_2)
             {
-                printf("\n---\nIdentified as RWKV model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+                printf("\n---\nIdentified as Legacy RWKV model: (ver %d)\nAttempting to Load...\n---\n", file_format);
             }
             else if(file_format==FileFormat::GGUF_GENERIC)
             {
                 printf("\n---\nIdentified as GGUF model: (ver %d)\nAttempting to Load...\n---\n", file_format);
+            }
+            else if(file_format==FileFormat::GGML || file_format==FileFormat::GGHF || file_format==FileFormat::GGJT || file_format==FileFormat::GGJT_2 || file_format==FileFormat::GGJT_3)
+            {
+                printf("\n---\nIdentified as Legacy GGML model: (ver %d)\nYou are STRONGLY ENCOURAGED to obtain a newer GGUF model!\nAttempting to Load...\n---\n", file_format);
             }
             else
             {
