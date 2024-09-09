@@ -5291,6 +5291,7 @@ struct ggml_tensor * ggml_concat(
     bool is_node = false;
 
     if (a->grad || b->grad) {
+        GGML_ABORT("fatal error"); // TODO: implement
         is_node = true;
     }
 
@@ -5412,6 +5413,7 @@ struct ggml_tensor * ggml_leaky_relu(
     bool is_node = false;
 
     if (!inplace && (a->grad)) {
+        GGML_ABORT("fatal error"); // TODO: not implemented
         is_node = true;
     }
 
@@ -5850,6 +5852,7 @@ static struct ggml_tensor * ggml_set_impl(
     // make a view of the destination
     struct ggml_tensor * result = inplace ? ggml_view_tensor(ctx, a) : ggml_dup_tensor(ctx, a);
 
+    GGML_ASSERT(offset < (size_t)(1 << 30));
     int32_t params[] = { nb1, nb2, nb3, offset, inplace ? 1 : 0 };
     ggml_set_op_params(result, params, sizeof(params));
 
@@ -6807,14 +6810,12 @@ struct ggml_tensor * ggml_rope_back(
     GGML_ASSERT(ggml_is_vector(b));
     GGML_ASSERT(b->type == GGML_TYPE_I32);
     GGML_ASSERT(a->ne[2] == b->ne[0]);
-    GGML_ASSERT(c == NULL && "freq factors not implemented yet");
-
-    GGML_ASSERT((mode & 4) == 0 && "ggml_rope_back() for ChatGLM not implemented yet");
 
     bool is_node = false;
 
     if (a->grad) {
-        is_node = false; // TODO: implement backward
+        GGML_ASSERT(false && "backwards pass not implemented");
+        is_node = false;
     }
 
     struct ggml_tensor * result = ggml_dup_tensor(ctx, a);
@@ -6832,6 +6833,7 @@ struct ggml_tensor * ggml_rope_back(
     result->grad = is_node ? ggml_dup_tensor(ctx, result) : NULL;
     result->src[0] = a;
     result->src[1] = b;
+    result->src[2] = c;
 
     return result;
 }
@@ -7384,6 +7386,11 @@ struct ggml_tensor * ggml_argsort(
         struct ggml_tensor  * a,
         enum ggml_sort_order  order) {
     bool is_node = false;
+
+    if (a->grad) {
+        GGML_ABORT("fatal error"); // TODO: not implemented
+        is_node = true;
+    }
 
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_I32, GGML_MAX_DIMS, a->ne);
 
@@ -8346,8 +8353,7 @@ static void ggml_compute_forward_dup_same_cont(
     GGML_ASSERT(ggml_is_contiguous(dst) && ggml_is_contiguous(src0));
     GGML_ASSERT(src0->type == dst->type);
 
-    const size_t nb00 = src0->nb[0];
-    const size_t nb0 = dst->nb[0];
+    const size_t nb0 = ggml_type_size(src0->type);
 
     const int ith = params->ith; // thread index
     const int nth = params->nth; // number of threads
@@ -8361,8 +8367,8 @@ static void ggml_compute_forward_dup_same_cont(
     if (ie0 < ie1) {
         memcpy(
             ((char *)  dst->data + ie0*nb0),
-            ((char *) src0->data + ie0*nb00),
-            (ie1 - ie0) * ggml_type_size(src0->type));
+            ((char *) src0->data + ie0*nb0),
+            (ie1 - ie0) * nb0);
     }
 }
 
@@ -8378,11 +8384,6 @@ static void ggml_compute_forward_dup_f16(
 
     const int ith = params->ith; // thread index
     const int nth = params->nth; // number of threads
-
-    if (ggml_is_contiguous(src0) && ggml_is_contiguous(dst) && src0->type == dst->type) {
-        ggml_compute_forward_dup_same_cont(params, dst);
-        return;
-    }
 
     // parallelize by rows
     const int nr = ne01;
@@ -8647,11 +8648,6 @@ static void ggml_compute_forward_dup_bf16(
 
     const int ith = params->ith; // thread index
     const int nth = params->nth; // number of threads
-
-    if (ggml_is_contiguous(src0) && ggml_is_contiguous(dst) && src0->type == dst->type) {
-        ggml_compute_forward_dup_same_cont(params, dst);
-        return;
-    }
 
     // parallelize by rows
     const int nr = ne01;
@@ -9004,11 +9000,6 @@ static void ggml_compute_forward_dup_f32(
     const int ith = params->ith; // thread index
     const int nth = params->nth; // number of threads
 
-    if (ggml_is_contiguous(src0) && ggml_is_contiguous(dst) && src0->type == dst->type) {
-        ggml_compute_forward_dup_same_cont(params, dst);
-        return;
-    }
-
     // parallelize by rows
     const int nr = ne01;
     // number of rows per thread
@@ -9318,12 +9309,12 @@ static void ggml_compute_forward_dup_bytes(
     GGML_ASSERT(ggml_nelements(dst) == ggml_nelements(src0));
     GGML_ASSERT(src0->type == dst->type);
 
+    GGML_TENSOR_UNARY_OP_LOCALS;
+
     if (ggml_is_contiguous(src0) && ggml_is_contiguous(dst)) {
         ggml_compute_forward_dup_same_cont(params, dst);
         return;
     }
-
-    GGML_TENSOR_UNARY_OP_LOCALS;
 
     const size_t type_size = ggml_type_size(src0->type);
     const int ith = params->ith; // thread index
@@ -11014,9 +11005,6 @@ static void ggml_compute_forward_sum_f32(
     if (params->ith != 0) {
         return;
     }
-
-    assert(ggml_is_scalar(dst));
-
 
     assert(ggml_is_scalar(dst));
     assert(src0->nb[0] == sizeof(float));
@@ -13775,7 +13763,7 @@ static void ggml_compute_forward_get_rows_q(
         const int64_t i10 = (i - i12*ne11*ne10 - i11*ne10);
         const int64_t i01 = *(int32_t *) ((char *) src1->data + i10*nb10 + i11*nb11 + i12*nb12);
 
-        assert(i01 >= 0 && i01 < ne01);
+        GGML_ASSERT(i01 >= 0 && i01 < ne01);
 
         dequantize_row_q(
                 (const void *) ((char *) src0->data + i01*nb01 + i11*nb02 + i12*nb03),
@@ -13816,7 +13804,7 @@ static void ggml_compute_forward_get_rows_f16(
         const int64_t i10 = (i - i12*ne11*ne10 - i11*ne10);
         const int64_t i01 = *(int32_t *) ((char *) src1->data + i10*nb10 + i11*nb11 + i12*nb12);
 
-        assert(i01 >= 0 && i01 < ne01);
+        GGML_ASSERT(i01 >= 0 && i01 < ne01);
 
         ggml_fp16_to_fp32_row(
                 (const void *) ((char *) src0->data + i01*nb01 + i11*nb02 + i12*nb03),
@@ -13857,7 +13845,7 @@ static void ggml_compute_forward_get_rows_bf16(
         const int64_t i10 = (i - i12*ne11*ne10 - i11*ne10);
         const int64_t i01 = *(int32_t *) ((char *) src1->data + i10*nb10 + i11*nb11 + i12*nb12);
 
-        assert(i01 >= 0 && i01 < ne01);
+        GGML_ASSERT(i01 >= 0 && i01 < ne01);
 
         ggml_bf16_to_fp32_row(
                 (const void *) ((char *) src0->data + i01*nb01 + i11*nb02 + i12*nb03),
@@ -13898,7 +13886,7 @@ static void ggml_compute_forward_get_rows_f32(
         const int64_t i10 = (i - i12*ne11*ne10 - i11*ne10);
         const int64_t i01 = *(int32_t *) ((char *) src1->data + i10*nb10 + i11*nb11 + i12*nb12);
 
-        assert(i01 >= 0 && i01 < ne01);
+        GGML_ASSERT(i01 >= 0 && i01 < ne01);
 
         ggml_vec_cpy_f32(nc,
                 (float *) ((char *)  dst->data + i10*nb1  + i11*nb2  + i12*nb3),
@@ -18426,14 +18414,10 @@ static void ggml_compute_backward(struct ggml_context * ctx, struct ggml_tensor 
                 if (src0->grad || src1->grad) {
                     GGML_ASSERT(src0->type == tensor->type);
                     GGML_ASSERT(tensor->grad->type == tensor->type);
-                    GGML_ASSERT(tensor->grad->type == src1->grad->type);
+                    GGML_ASSERT(!src1->grad || src1->grad->type == tensor->grad->type);
 
                     tensor_grad_view = ggml_view_4d(ctx,
-                        tensor->grad,
-                        src1->grad->ne[0],
-                        src1->grad->ne[1],
-                        src1->grad->ne[2],
-                        src1->grad->ne[3],
+                        tensor->grad, src1->ne[0], src1->ne[1], src1->ne[2], src1->ne[3],
                         nb1, nb2, nb3, offset);
                 }
 
@@ -18502,9 +18486,9 @@ static void ggml_compute_backward(struct ggml_context * ctx, struct ggml_tensor 
 
                     memcpy(&offset, tensor->op_params, sizeof(offset));
 
-                    size_t nb1     = tensor->nb[1];
-                    size_t nb2     = tensor->nb[2];
-                    size_t nb3     = tensor->nb[3];
+                    size_t nb1 = tensor->nb[1];
+                    size_t nb2 = tensor->nb[2];
+                    size_t nb3 = tensor->nb[3];
 
                     if (src0->type != src0->grad->type) {
                         // gradient is typically F32, but src0 could be other type
@@ -19200,7 +19184,8 @@ void ggml_graph_cpy(struct ggml_cgraph * src, struct ggml_cgraph * dst) {
     }
 
     for (size_t i = 0; i < src->visited_hash_set.size; ++i) {
-        if (src->visited_hash_set.keys[i]) {
+        // copy all hashset keys (tensors) that are in use
+        if (ggml_bitset_get(src->visited_hash_set.used, i)) {
             ggml_hash_insert(&dst->visited_hash_set, src->visited_hash_set.keys[i]);
         }
     }

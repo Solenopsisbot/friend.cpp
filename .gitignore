@@ -21,6 +21,7 @@ gcovr-report/
 build*/
 out/
 tmp/
+autogen-*.md
 
 models/*
 models-mnt

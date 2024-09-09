@@ -6449,6 +6449,11 @@ static void llm_load_vocab(
                         )
                    ) {
                     vocab.special_eot_id = t.second;
+                    if ((vocab.id_to_token[t.second].attr & LLAMA_TOKEN_ATTR_CONTROL) == 0) {
+                        LLAMA_LOG_WARN("%s: control-looking token: '%s' was not control-type; this is probably a bug in the model. its type will be overridden\n",
+                            __func__, t.first.c_str());
+                        vocab.id_to_token[t.second].attr = LLAMA_TOKEN_ATTR_CONTROL;
+                    }
                     break;
                 }
             }
@@ -6462,6 +6467,11 @@ static void llm_load_vocab(
             const auto & t = vocab.token_to_id.find("<|eom_id|>");
             if (t != vocab.token_to_id.end()) {
                 vocab.special_eom_id = t->second;
+                if ((vocab.id_to_token[t->second].attr & LLAMA_TOKEN_ATTR_CONTROL) == 0) {
+                    LLAMA_LOG_WARN("%s: control-looking token: '%s' was not control-type; this is probably a bug in the model. its type will be overridden\n",
+                        __func__, t->first.c_str());
+                    vocab.id_to_token[t->second].attr = LLAMA_TOKEN_ATTR_CONTROL;
+                }
             }
         }
     }
@@ -16143,6 +16153,13 @@ static int llama_decode_internal(
         return -1;
     }
 
+    for (uint32_t i = 0; i < n_tokens_all; ++i) {
+        if (batch_all.token[i] < 0 || (uint32_t)batch_all.token[i] >= lctx.model.vocab.n_vocab) {
+            LLAMA_LOG_ERROR("%s: invalid token[%d] = %d", __func__, i, batch_all.token[i]);
+            return -1;
+        }
+    }
+
     const auto & model   = lctx.model;
     const auto & hparams = model.hparams;
     const auto & cparams = lctx.cparams;
@@ -16433,6 +16450,13 @@ static int llama_encode_internal(
     if (n_tokens == 0) {
         LLAMA_LOG_ERROR("%s: n_tokens == 0", __func__);
         return -1;
+    }
+
+    for (uint32_t i = 0; i < n_tokens; ++i) {
+        if (batch.token[i] < 0 || (uint32_t)batch.token[i] >= lctx.model.vocab.n_vocab) {
+            LLAMA_LOG_ERROR("%s: invalid token[%d] = %d", __func__, i, batch.token[i]);
+            return -1;
+        }
     }
 
     const auto & model   = lctx.model;
