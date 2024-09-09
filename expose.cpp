@@ -191,13 +191,18 @@ extern "C"
             }
             else if(file_format==FileFormat::GGML || file_format==FileFormat::GGHF || file_format==FileFormat::GGJT || file_format==FileFormat::GGJT_2 || file_format==FileFormat::GGJT_3)
             {
-                printf("\n---\nIdentified as Legacy GGML model: (ver %d)\nYou are STRONGLY ENCOURAGED to obtain a newer GGUF model!\nAttempting to Load...\n---\n", file_format);
+                printf("\n---\nIdentified as Legacy GGML model: (ver %d)\n======\nGGML Models are Outdated: You are STRONGLY ENCOURAGED to obtain a newer GGUF model!\n======\nAttempting to Load...\n---\n", file_format);
             }
             else
             {
                 printf("\n---\nUnidentified Model Encountered: (ver %d)\n---\n", file_format);
             }
             ModelLoadResult lr = gpttype_load_model(inputs, file_format, file_format_meta);
+            if(file_format==FileFormat::GGML || file_format==FileFormat::GGHF || file_format==FileFormat::GGJT || file_format==FileFormat::GGJT_2 || file_format==FileFormat::GGJT_3)
+            {
+                //warn a second time
+                printf("\n======\nGGML Models are Outdated: You are STRONGLY ENCOURAGED to obtain a newer GGUF model!\n======\n");
+            }
             if (lr == ModelLoadResult::FAIL || lr == ModelLoadResult::RETRY_LOAD)
             {
                 return false;

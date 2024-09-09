@@ -144,8 +144,8 @@ struct gpt_params {
     float   dynatemp_range     = 0.0f;  // enables DynaTemp if greater than 0. dynatemp_min = temperature - dt_range, dynatemp_max = temperature + dt_range
     float   dynatemp_exponent  = 1.0f;
 
-    // // sampling parameters
-    struct llama_sampling_params sparams;
+
+    struct gpt_sampler_params sparams;
 
     std::string model                = ""; // model path
     std::string model_draft          = ""; // draft model for speculative decoding
@@ -209,7 +209,6 @@ struct gpt_params {
     bool flash_attn        = false; // flash attention
 
     bool input_prefix_bos  = false; // prefix BOS to user inputs, preceding input_prefix
-    bool ignore_eos        = false; // ignore generated EOS tokens
     bool logits_all        = false; // return logits for all tokens in the batch
     bool use_mmap          = true;  // use mmap for faster loads
     bool use_mlock         = false; // use mlock to keep model in memory

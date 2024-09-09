@@ -13,7 +13,11 @@
 #include <unordered_map>
 #include "model_adapter.h"
 #include "otherarch.h"
-#include "grammar-parser.h"
+#include "llama.h"
+#include <vector>
+#include <map>
+#include <cstdint>
+#include <string>
 
 //for easier compilation
 //concat source files into one file for compilation purposes
@@ -55,7 +59,7 @@ stop_reason last_stop_reason = stop_reason::INVALID;
 std::vector<std::string> generated_tokens;
 
 llama_grammar *  grammar = nullptr; //currently used grammar
-grammar_parser::parse_state parsed_grammar;
+llama_grammar_parser parsed_grammar;
 static std::string current_grammar = "";
 
 //return val: 0=fail, 1=(original ggml, alpaca), 2=(ggmf), 3=(ggjt)
@@ -399,7 +403,7 @@ static void GetOverlappingTokenSequences(const std::string& str, std::unordered_
 
 llama_token sample_token(llama_token_data_array * candidates, std::mt19937 & rng)
 {
-    llama_sample_softmax(nullptr, candidates);
+    llama_sampler_softmax_impl(candidates);
     std::vector<float> probs;
     probs.reserve(candidates->size);
     top_picks.clear();
@@ -429,7 +433,7 @@ llama_token sample_token(llama_token_data_array * candidates, std::mt19937 & rng
 llama_token sample_token_mirostat(int n_vocab, llama_token_data_array * candidates, std::mt19937 & rng, float tau, float eta, int m, float * mu)
 {
     float N = float(n_vocab);
-    llama_sample_softmax(nullptr, candidates);
+    llama_sampler_softmax_impl(candidates);
     // Estimate s_hat using the most probable m tokens
     float s_hat = 0.0;
     float sum_ti_bi = 0.0;
@@ -445,7 +449,7 @@ llama_token sample_token_mirostat(int n_vocab, llama_token_data_array * candidat
     float epsilon_hat = s_hat - 1;
     float k = powf((epsilon_hat * powf(2, *mu)) / (1 - powf(N, -epsilon_hat)), 1 / s_hat);
     // Sample the next word X using top-k sampling
-    llama_sample_top_k(nullptr, candidates, int(k),1);
+    llama_sampler_top_k_impl(candidates, int(k));
     llama_token X = sample_token(candidates, rng);    // Compute error as the difference between observed surprise and target surprise value
     size_t X_idx = std::distance(candidates->data, std::find_if(candidates->data, candidates->data + candidates->size, [&](const llama_token_data & candidate) {
         return candidate.id == X;
@@ -459,7 +463,7 @@ llama_token sample_token_mirostat(int n_vocab, llama_token_data_array * candidat
 
 llama_token sample_token_mirostat_v2(llama_token_data_array * candidates, std::mt19937 & rng, float tau, float eta, float * mu)
 {
-    llama_sample_softmax(nullptr, candidates);
+    llama_sampler_softmax_impl(candidates);
     // Truncate the words with surprise values greater than mu
     candidates->size = std::distance(candidates->data, std::find_if(candidates->data, candidates->data + candidates->size, [&](const llama_token_data & candidate) {
         return -log2f(candidate.p) > *mu;
@@ -470,7 +474,7 @@ llama_token sample_token_mirostat_v2(llama_token_data_array * candidates, std::m
     }
 
     // Normalize the probabilities of the remaining words
-    llama_sample_softmax(nullptr, candidates);
+    llama_sampler_softmax_impl(candidates);
     // Sample the next word X from the remaining words
     llama_token X = sample_token(candidates,rng);
 
@@ -492,7 +496,7 @@ void sample_top_a(llama_token_data_array * candidates, float a, size_t min_keep)
         return;
     }
 
-    llama_sample_softmax(nullptr, candidates);
+    llama_sampler_softmax_impl(candidates);
 
     // Compute the cumulative probabilities
     float maxprob = candidates->data[0].p;
@@ -528,7 +532,7 @@ void sample_xtc(llama_token_data_array * candidates, float xtc_threshold, float 
         return;
     }
 
-    llama_sample_softmax(nullptr, candidates);
+    llama_sampler_softmax_impl(candidates);
 
     //calculate how many tokens cross the xtc threshold
     size_t last_idx = candidates->size;
@@ -827,12 +831,12 @@ void sample_temperature(llama_token_data_array * candidates_p, float temp, float
     {
         // Imitate greedy sampling
         temp = 0.00390625f; //cannot be zero else div0, this is 1/256
-        llama_sample_temp(nullptr, candidates_p, temp, 0);
-        llama_sample_top_k(nullptr, candidates_p, 1, 1); //only want first candidate
+        llama_sampler_temp_impl(candidates_p, temp, 0);
+        llama_sampler_top_k_impl(candidates_p, 1); //only want first candidate
     }
     else
     {
-        llama_sample_temp(nullptr, candidates_p, temp, smoothing_factor);
+        llama_sampler_temp_impl(candidates_p, temp, smoothing_factor);
     }
 }
 
@@ -903,7 +907,7 @@ const std::vector<samplers> & sampler_order, llama_grammar * grammar, float dyna
     sample_dry(n_ctx, dry_penalty_last_n, dry_multiplier, dry_base, dry_allowed_length, dry_sequence_breakers, &candidates_p);
 
     //prefilter to top 5k tokens for improved speed
-    llama_sample_top_k(nullptr, &candidates_p, 5000, 1);
+    llama_sampler_top_k_impl(&candidates_p, 5000);
 
     if (mirostat == 1 || mirostat == 2)
     {
@@ -927,20 +931,20 @@ const std::vector<samplers> & sampler_order, llama_grammar * grammar, float dyna
             switch (sampler_order[i])
             {
                 case KCPP_SAMPLER_TOP_K:
-                    llama_sample_top_k(nullptr, &candidates_p, top_k,1);
+                    llama_sampler_top_k_impl(&candidates_p, top_k);
                     break;
                 case KCPP_SAMPLER_TOP_A:
-                    sample_top_a(&candidates_p,top_a,1);
+                    sample_top_a(&candidates_p, top_a, 1);
                     break;
                 case KCPP_SAMPLER_TOP_P:
-                    llama_sample_top_p(nullptr, &candidates_p, top_p,1);
-                    llama_sample_min_p(nullptr, &candidates_p, min_p,1);
+                    llama_sampler_top_p_impl(&candidates_p, top_p, 1);
+                    llama_sampler_min_p_impl(&candidates_p, min_p, 1);
                     break;
                 case KCPP_SAMPLER_TFS:
-                    llama_sample_tail_free(nullptr, &candidates_p, tfs,1);
+                    llama_sampler_tail_free_impl(&candidates_p, tfs, 1);
                     break;
                 case KCPP_SAMPLER_TYP:
-                    llama_sample_typical(nullptr, &candidates_p, typical_p,1);
+                    llama_sampler_typical_impl(&candidates_p, typical_p, 1);
                     break;
                 case KCPP_SAMPLER_TEMP:
                     if (dynatemp_range>0)
@@ -951,7 +955,7 @@ const std::vector<samplers> & sampler_order, llama_grammar * grammar, float dyna
                         dynatemp_min = dynatemp_min<0?0:dynatemp_min;
                         dynatemp_max = dynatemp_max<0?0:dynatemp_max;
                         dynatemp_exponent = dynatemp_exponent<0?0:dynatemp_exponent;
-                        llama_sample_entropy(nullptr, &candidates_p, dynatemp_min, dynatemp_max, dynatemp_exponent, smoothing_factor);
+                        llama_sampler_entropy_impl(&candidates_p, dynatemp_min, dynatemp_max, dynatemp_exponent, smoothing_factor);
                     }
                     else
                     {
@@ -1002,12 +1006,12 @@ static void load_grammar(const std::string & gammarstr)
 {
     if(grammar!=nullptr) //on demand free when next grammar is loaded
     {
-        llama_grammar_free(grammar);
+        llama_grammar_free_impl(grammar);
         grammar = nullptr;
     }
 
     if (!gammarstr.empty()) {
-        parsed_grammar = grammar_parser::parse(gammarstr.c_str());
+        parsed_grammar.parse(gammarstr.c_str());
         // will be empty (default) if there are parse errors
         if (parsed_grammar.rules.empty()) {
             printf("\nIgnored invalid grammar sampler.");
@@ -1015,10 +1019,10 @@ static void load_grammar(const std::string & gammarstr)
         }
         if(debugmode==1)
         {
-            grammar_parser::print_grammar(stderr, parsed_grammar);
+            parsed_grammar.print(stderr);
         }
         std::vector<const llama_grammar_element *> grammar_rules(parsed_grammar.c_rules());
-        grammar = llama_grammar_init(grammar_rules.data(), grammar_rules.size(), parsed_grammar.symbol_ids.at("root"));
+        grammar = llama_grammar_init_impl(nullptr,grammar_rules.data(), grammar_rules.size(), parsed_grammar.symbol_ids.at("root"));
     }
 }
 
@@ -1395,7 +1399,6 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
            llama_ctx_params.n_ctx += extra_context_handle_fragmentation;
         }
 
-        llama_ctx_params.seed = -1;
         llama_ctx_params.offload_kqv = !inputs.low_vram;
         llama_ctx_params.logits_all = false;
         model_params.use_mmap = inputs.use_mmap;
@@ -2002,7 +2005,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     if(debugmode==1 && file_format == FileFormat::GGUF_GENERIC)
     {
-        llama_reset_timings(llama_ctx_v4);
+        llama_perf_reset(llama_ctx_v4, LLAMA_PERF_TYPE_CONTEXT);
     }
 
     generation_finished = false; // Set current generation status
@@ -2926,7 +2929,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     if(debugmode==1 && file_format == FileFormat::GGUF_GENERIC)
     {
-        llama_print_timings(llama_ctx_v4);
+        printf("\n");
+        llama_perf_print(llama_ctx_v4, LLAMA_PERF_TYPE_CONTEXT);
     }
 
     time2 = timer_check();
