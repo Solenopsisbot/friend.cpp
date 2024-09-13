@@ -891,7 +891,7 @@ public:
 #endif
 
         if (output != NULL) {
-            auto result = gf->nodes[gf->n_nodes - 1];
+            auto result = ggml_graph_node(gf, -1);
             if (*output == NULL && output_ctx != NULL) {
                 *output = ggml_dup_tensor(output_ctx, result);
             }

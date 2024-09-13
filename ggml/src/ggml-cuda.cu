@@ -1,5 +1,5 @@
 #include "ggml-cuda.h"
-#include "ggml.h"
+#include "ggml-impl.h"
 #include "ggml-backend-impl.h"
 
 bool g_mul_mat_q = false;

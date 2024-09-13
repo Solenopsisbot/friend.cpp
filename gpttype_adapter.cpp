@@ -2388,7 +2388,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     if(debugmode==1 && file_format == FileFormat::GGUF_GENERIC)
     {
-        llama_perf_reset(llama_ctx_v4, LLAMA_PERF_TYPE_CONTEXT);
+        llama_perf_context_reset(llama_ctx_v4);
     }
 
     generation_finished = false; // Set current generation status
@@ -3317,7 +3317,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     if(debugmode==1 && file_format == FileFormat::GGUF_GENERIC)
     {
         printf("\n");
-        llama_perf_print(llama_ctx_v4, LLAMA_PERF_TYPE_CONTEXT);
+        llama_perf_context_print(llama_ctx_v4);
     }
 
     time2 = timer_check();
