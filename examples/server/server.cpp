@@ -29,6 +29,7 @@
 #include "system-prompts.js.hpp"
 #include "prompt-formats.js.hpp"
 #include "json-schema-to-grammar.mjs.hpp"
+#include "loading.html.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -2593,10 +2594,16 @@ int main(int argc, char ** argv) {
         return false;
     };
 
-    auto middleware_server_state = [&res_error, &state](const httplib::Request &, httplib::Response & res) {
+    auto middleware_server_state = [&res_error, &state](const httplib::Request & req, httplib::Response & res) {
         server_state current_state = state.load();
         if (current_state == SERVER_STATE_LOADING_MODEL) {
-            res_error(res, format_error_response("Loading model", ERROR_TYPE_UNAVAILABLE));
+            auto tmp = string_split(req.path, '.');
+            if (req.path == "/" || tmp.back() == "html") {
+                res.set_content(reinterpret_cast<const char*>(loading_html), loading_html_len, "text/html; charset=utf-8");
+                res.status = 503;
+            } else {
+                res_error(res, format_error_response("Loading model", ERROR_TYPE_UNAVAILABLE));
+            }
             return false;
         }
         return true;
@@ -2987,6 +2994,8 @@ int main(int argc, char ** argv) {
                 }, [&](json error_data) {
                     server_sent_event(sink, "error", error_data);
                 });
+                static const std::string ev_done = "data: [DONE]\n\n";
+                sink.write(ev_done.data(), ev_done.size());
                 sink.done();
                 return true;
             };
