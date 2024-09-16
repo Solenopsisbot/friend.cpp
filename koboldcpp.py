@@ -2492,6 +2492,7 @@ def show_gui():
             fetch_gpu_properties(False,True,True)
         else:
             fetch_gpu_properties(True,True,True)
+        found_new_backend = False
         #autopick cublas if suitable, requires at least 3.5GB VRAM to auto pick
         #we do not want to autoselect hip/cublas if the user has already changed their desired backend!
         if exitcounter < 100 and MaxMemory[0]>3500000000 and (("Use CuBLAS" in runopts and CUDevicesNames[0]!="") or "Use hipBLAS (ROCm)" in runopts) and (any(CUDevicesNames) or any(CLDevicesNames)) and runmode_untouched:
@@ -2499,17 +2500,22 @@ def show_gui():
                 runopts_var.set("Use CuBLAS")
                 gpu_choice_var.set("1")
                 print("Auto Selected CUDA Backend...\n")
+                found_new_backend = True
             elif "Use hipBLAS (ROCm)" in runopts:
                 runopts_var.set("Use hipBLAS (ROCm)")
                 gpu_choice_var.set("1")
                 print("Auto Selected HIP Backend...\n")
+                found_new_backend = True
         elif exitcounter < 100 and (1 in VKIsDGPU) and runmode_untouched and "Use Vulkan" in runopts:
             for i in range(0,len(VKIsDGPU)):
                 if VKIsDGPU[i]==1:
                     runopts_var.set("Use Vulkan")
                     gpu_choice_var.set(str(i+1))
                     print("Auto Selected Vulkan Backend...\n")
+                    found_new_backend = True
                     break
+        if not found_new_backend:
+            print("Auto Selected Default Backend...\n")
         changed_gpu_choice_var()
 
     def on_picked_model_file(filepath):
