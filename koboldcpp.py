@@ -2196,7 +2196,7 @@ def show_gui():
     from tkinter.filedialog import asksaveasfile
 
     # if args received, launch
-    if len(sys.argv) != 1:
+    if len(sys.argv) != 1 and not args.showgui:
         import tkinter as tk
         root = tk.Tk() #we dont want the useless window to be visible, but we want it in taskbar
         root.attributes("-alpha", 0)
@@ -3315,6 +3315,11 @@ def show_gui():
     gpuinfo_thread = threading.Thread(target=auto_set_backend_gui)
     gpuinfo_thread.start() #submit job in new thread so nothing is waiting
 
+    if args.showgui:
+        if isinstance(args, argparse.Namespace):
+            dict = vars(args)
+            import_vars(dict)
+
     # runs main loop until closed or launch clicked
     root.mainloop()
 
@@ -3850,7 +3855,7 @@ def main(launch_args,start_server=True):
     if not args.model_param:
         args.model_param = args.model
 
-    if not args.model_param and not args.sdmodel and not args.whispermodel and not args.nomodel:
+    if args.showgui or (not args.model_param and not args.sdmodel and not args.whispermodel and not args.nomodel):
         #give them a chance to pick a file
         print("For command line arguments, please refer to --help")
         print("***")
@@ -4433,6 +4438,7 @@ if __name__ == '__main__':
     advparser.add_argument("--smartcontext", help="Reserving a portion of context to try processing less frequently. Outdated. Not recommended.", action='store_true')
     advparser.add_argument("--unpack", help="Extracts the file contents of the KoboldCpp binary into a target directory.", metavar=('destination'), type=str, default="")
     advparser.add_argument("--nomodel", help="Allows you to launch the GUI alone, without selecting any model.", action='store_true')
+    advparser.add_argument("--showgui", help="Always show the GUI instead of launching the model right away when loading settings from a .kcpps file.", action='store_true')
 
     hordeparsergroup = parser.add_argument_group('Horde Worker Commands')
     hordeparsergroup.add_argument("--hordemodelname", metavar=('[name]'), help="Sets your AI Horde display model name.", default="")
