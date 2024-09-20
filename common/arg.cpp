@@ -2,6 +2,7 @@
 
 #include "log.h"
 #include "sampling.h"
+#include "build-info.h"
 
 #include <algorithm>
 #include <climits>
