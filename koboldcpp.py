@@ -3746,8 +3746,13 @@ def load_config_cli(filename):
     with open(filename, 'r') as f:
         config = json.load(f)
         args.istemplate = False
+        raw_args = (sys.argv[1:]) #a lousy hack to allow for overriding kcpps
         for key, value in config.items():
-            setattr(args, key, value)
+            if f"--{key}" in raw_args:
+                if key!="config":
+                    print(f"Overriding Config Value: {key}")
+            else:
+                setattr(args, key, value)
         if args.istemplate:
             print("\nA .kcppt template was selected from CLI - automatically selecting your backend...")
             auto_set_backend_cli()
