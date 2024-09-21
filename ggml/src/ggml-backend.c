@@ -1174,6 +1174,8 @@ static char causes[GGML_DEFAULT_GRAPH_SIZE*16 + GGML_SCHED_MAX_SPLITS_DEBUG*GGML
 #define GET_CAUSE(node) ""
 #endif
 
+static bool backend_prealloc_warn = false;
+
 // returns the backend that should be used for the node based on the current locations
 static int ggml_backend_sched_backend_id_from_cur(ggml_backend_sched_t sched, struct ggml_tensor * tensor) {
     // TODO: use supports_op to check if the backend supports the op
@@ -1196,7 +1198,11 @@ static int ggml_backend_sched_backend_id_from_cur(ggml_backend_sched_t sched, st
 
     if (tensor->buffer || (tensor->view_src && tensor->view_src->buffer)) {
         // since the tensor is pre-allocated, it cannot be moved to another backend
-        GGML_ABORT("pre-allocated tensor in a backend that cannot run the operation");
+        if(!backend_prealloc_warn)
+        {
+            backend_prealloc_warn = true;
+            printf("\nCaution: pre-allocated tensor in a backend that cannot run the operation\n");
+        }
     }
 
     // graph input

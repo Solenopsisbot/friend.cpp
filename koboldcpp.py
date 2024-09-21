@@ -41,7 +41,7 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.75"
+KcppVersion = "1.75.1"
 showdebug = True
 guimode = False
 showsamplerwarning = True
@@ -4038,7 +4038,7 @@ def main(launch_args,start_server=True):
             print(f"MacOS detected: Auto GPU layers set to maximum")
             args.gpulayers = 200
         elif not shouldavoidgpu and args.model_param and os.path.exists(args.model_param):
-            if not args.usecublas and (args.usevulkan is None) and not args.useclblast:
+            if (args.usecublas is None) and (args.usevulkan is None) and (args.useclblast is None):
                 print("No GPU or CPU backend was selected. Trying to assign one for you automatically...")
                 auto_set_backend_cli()
             if MaxMemory[0] == 0: #try to get gpu vram for cuda if not picked yet
