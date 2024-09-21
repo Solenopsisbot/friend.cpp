@@ -2807,7 +2807,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         {
             ContextFastForward(current_context_tokens, embd_inp, n_past, last_n_tokens, nctx, smartcontext, false, true);
         }
-        if(is_mamba)
+        if(is_mamba || is_rwkv_new)
         {
             if(n_past==0)
             {
