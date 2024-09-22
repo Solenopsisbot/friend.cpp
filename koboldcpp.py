@@ -1756,7 +1756,8 @@ Enter Prompt:<br>
             lastseed = handle.get_last_seed()
             uptime = time.time() - start_time
             idletime = time.time() - last_req_time
-            response_body = (json.dumps({"last_process":lastp,"last_eval":laste,"last_token_count":lastc, "last_seed":lastseed, "total_gens":totalgens, "stop_reason":stopreason, "total_img_gens":totalimggens, "queue":requestsinqueue, "idle":(0 if modelbusy.locked() else 1), "hordeexitcounter":exitcounter, "uptime":uptime, "idletime":idletime}).encode())
+            is_quiet = True if (args.quiet and args.debugmode != 1) else False
+            response_body = (json.dumps({"last_process":lastp,"last_eval":laste,"last_token_count":lastc, "last_seed":lastseed, "total_gens":totalgens, "stop_reason":stopreason, "total_img_gens":totalimggens, "queue":requestsinqueue, "idle":(0 if modelbusy.locked() else 1), "hordeexitcounter":exitcounter, "uptime":uptime, "idletime":idletime, "quiet":is_quiet}).encode())
 
         elif self.path.endswith('/api/extra/generate/check'):
             if not self.secure_endpoint():
