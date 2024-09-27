@@ -4185,6 +4185,7 @@ Current version indicated by LITEVER below.
 
 	const default_oai_image_endpoint = "/images/generations";
 	const default_oai_tts_endpoint = "/audio/speech";
+	const default_dalle_model_name = "dall-e-3";
 
 	const claude_submit_endpoint = "/complete";
 	const claude_submit_endpoint_v3 = "/messages";
@@ -4325,6 +4326,7 @@ Current version indicated by LITEVER below.
 		saved_oai_addr: default_oai_base, //do not ever share this in save files!
 		saved_dalle_key: "",
 		saved_dalle_url: (default_oai_base + "/v1" + default_oai_image_endpoint),
+		saved_dalle_model: default_dalle_model_name,
 		saved_oai_tts_key: "",
 		saved_oai_tts_url: (default_oai_base + "/v1" + default_oai_tts_endpoint),
 		saved_openrouter_key: "",
@@ -4557,16 +4559,23 @@ Current version indicated by LITEVER below.
 	},
 	{
 		"id":12,
-		"name":"Mistral Gen 1",
-		"user":"\\n[INST] ",
-		"assistant":" [/INST]\\n",
+		"name":"Mistral V1",
+		"user":"</s> [INST] ",
+		"assistant":" [/INST]",
 		"system":"",
 	},
 	{
 		"id":13,
-		"name":"Mistral Gen 2",
-		"user":"</s>\\n[INST]",
-		"assistant":"[/INST]\\n",
+		"name":"Mistral V2 & V3",
+		"user":"</s>[INST] ",
+		"assistant":"[/INST]",
+		"system":"",
+	},
+	{
+		"id":14,
+		"name":"Mistral V3-Tekken",
+		"user":"</s>[INST]",
+		"assistant":"[/INST]",
 		"system":"",
 	}
 	];
@@ -5114,6 +5123,7 @@ Current version indicated by LITEVER below.
 		const foundChub = urlParams.get('chub');
 		const foundPyg = urlParams.get('pyg');
 		const foundAicc = urlParams.get('aicc');
+		const foundQuery = urlParams.get('query');
 
 		if (foundStory && foundStory != "") {
 			if (localsettings.persist_session && !safe_to_overwrite()) {
@@ -5149,6 +5159,25 @@ Current version indicated by LITEVER below.
 			get_aicc_scenario(foundAicc);
 			//purge url params
 			window.history.replaceState(null, null, window.location.pathname);
+		}
+		else if (foundQuery && foundQuery != "")
+		{
+			window.history.replaceState(null, null, window.location.pathname);
+			if (localsettings.persist_session && !safe_to_overwrite()) {
+				msgboxYesNo("You already have an existing persistent story. Do you want to overwrite it?","Overwrite Story Warning",()=>{
+					localsettings.opmode = 4;
+					restart_new_game(false);
+					document.getElementById("input_text").value = foundQuery;
+					submit_generation();
+				},null,false);
+			}
+			else
+			{
+				localsettings.opmode = 4;
+				restart_new_game(false);
+				document.getElementById("input_text").value = foundQuery;
+				submit_generation();
+			}
 		}
 	}
 
@@ -5363,6 +5392,18 @@ Current version indicated by LITEVER below.
 			}
 		},false);
 	}
+	function set_dalle_model()
+	{
+		inputBox("Enter DALL-E API Model Identifier.","DALL-E API Model Identifier",localsettings.saved_dalle_model,"Input DALL-E Model Identifier", ()=>{
+			let userinput = getInputBoxValue();
+			userinput = userinput.trim();
+			if (userinput != null && userinput!="") {
+				localsettings.saved_dalle_model = userinput.trim();
+			}else{
+				localsettings.saved_dalle_model = default_dalle_model_name;
+			}
+		},false);
+	}
 
 	function set_oai_tts_key()
 	{
@@ -5394,7 +5435,7 @@ Current version indicated by LITEVER below.
 		let prompt = splits[0].trim();
 
 		let dalle_payload = {
-			"model": "dall-e-3",
+			"model": localsettings.saved_dalle_model,
 			"prompt": prompt,
 			"n": 1,
 			"size": "1024x1024",
@@ -12596,7 +12637,7 @@ Current version indicated by LITEVER below.
 					//mistral api does not support presence pen
 					oai_payload.presence_penalty = scaled_rep_pen;
 				}
-				if(targetep.toLowerCase().includes("featherless.ai"))
+				if(document.getElementById("useoainonstandard").checked || targetep.toLowerCase().includes("featherless.ai"))
 				{
 					//featherless api supports additional fields, include them
 					oai_payload.top_k = (submit_payload.params.top_k<1?300:submit_payload.params.top_k);
@@ -12605,6 +12646,7 @@ Current version indicated by LITEVER below.
 					{
 						oai_payload.seed = submit_payload.params.sampler_seed;
 					}
+					oai_payload.top_a = localsettings.top_a;
 				}
 				if(submit_payload.params.logit_bias && JSON.stringify(submit_payload.params.logit_bias) != '{}')
 				{
@@ -17982,11 +18024,13 @@ Current version indicated by LITEVER below.
 				<button type="button" class="btn btn-primary" style="display:inline;width:105px;" id="oaiusecustom" onclick="select_custom_oai_model()">Use Custom</button>
 				<div style="display:inline-flex">
 					<div><input type="checkbox" id="oaiaddversion" title="Add Endpoint Version Number" onchange="" checked>
-					<div class="box-label">Add Version Num</div></div>
+					<div class="box-label">Add Ver. Num</div></div>
 					<div><input type="checkbox" id="oaistreaming" title="Enable SSE Streaming" onchange="">
 					<div class="box-label">Streaming</div></div>
 					<div><input type="checkbox" id="useoaichatcompl" title="Use ChatCompletions API" onchange="toggleoaichatcompl()">
-					<div class="box-label" id="useoaichatcompllabel">ChatCompletions API</div></div>
+					<div class="box-label">Chat-Completions API</div></div>
+					<div><input type="checkbox" id="useoainonstandard" title="Send Non-Standard Fields">
+					<div class="box-label">Non-Standard Fields</div></div>
 				</div>
 				<span id="useoaichatcomplbox" class="hidden" onload="toggleoaichatcompl();">
 					<br>
@@ -18694,8 +18738,9 @@ Current version indicated by LITEVER below.
 							</div>
 							<div id="generate_images_dalle_container" class="settinglabel hidden">
 								<table width="100%"><tr>
-								<td><button id="generate_images_dalle_setkey" type="button" class="btn btn-primary" style="width:100%; padding:2px 3px;margin-top:2px;font-size:11px;" onclick="set_dalle_url()">Set URL</button></td>
-								<td><button id="generate_images_dalle_seturl" type="button" class="btn btn-primary" style="width:100%; padding:2px 3px;margin-top:2px;font-size:11px;" onclick="set_dalle_key()">Set Key</button></td>
+								<td><button type="button" class="btn btn-primary" style="width:100%; padding:2px 3px;margin-top:2px;font-size:11px;" onclick="set_dalle_url()">Set URL</button></td>
+								<td><button type="button" class="btn btn-primary" style="width:100%; padding:2px 3px;margin-top:2px;font-size:11px;" onclick="set_dalle_key()">Set Key</button></td>
+								<td><button type="button" class="btn btn-primary" style="width:100%; padding:2px 3px;margin-top:2px;font-size:11px;" onclick="set_dalle_model()">Model</button></td>
 								</tr></table>
 							</div>
 
