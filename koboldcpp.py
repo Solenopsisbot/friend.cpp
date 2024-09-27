@@ -15,6 +15,7 @@ import platform
 import base64
 import json, sys, http.server, time, asyncio, socket, threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 # constants
 sampler_order_max = 7
@@ -2007,8 +2008,9 @@ Enter Prompt:<br>
                         return
 
                 is_quiet = args.quiet
+                utfprint(f"\n{datetime.now().strftime('[%H:%M:%S] Input Received')}")
                 if (args.debugmode != -1 and not is_quiet) or args.debugmode >= 1:
-                    utfprint("\nInput: " + json.dumps(genparams))
+                    utfprint(f"Input: " + json.dumps(genparams))
 
                 if args.foreground:
                     bring_terminal_to_foreground()
@@ -3351,7 +3353,6 @@ def show_gui_msgbox(title,message):
         pass
 
 def print_with_time(txt):
-    from datetime import datetime
     print(f"{datetime.now().strftime('[%H:%M:%S]')} " + txt, flush=True)
 
 def make_url_request(url, data, method='POST', headers={}):
@@ -3390,7 +3391,6 @@ def make_url_request(url, data, method='POST', headers={}):
 
 #A very simple and stripped down embedded horde worker with no dependencies
 def run_horde_worker(args, api_key, worker_name):
-    from datetime import datetime
     import random
     global friendlymodelname, maxhordectx, maxhordelen, exitcounter, punishcounter, modelbusy, session_starttime, sslvalid
     httpsaffix = ("https" if sslvalid else "http")
@@ -4260,7 +4260,6 @@ def main(launch_args,start_server=True):
         timer_thread.start()
 
     if args.model_param and (args.benchmark or args.prompt):
-        from datetime import datetime, timezone
         start_server = False
         save_to_file = (args.benchmark and args.benchmark!="stdout" and args.benchmark!="")
         benchmaxctx = maxctx
