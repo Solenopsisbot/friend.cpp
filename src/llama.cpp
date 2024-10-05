@@ -2279,17 +2279,12 @@ static std::string llama_token_to_piece(const struct llama_model * model, llama_
 // globals
 //
 
-struct llama_state {
-    llama_state() {
-        llama_log_set(log_callback, log_callback_user_data);
-    }
-
-    // We save the log callback globally
+struct llama_logger_state {
     ggml_log_callback log_callback = llama_log_callback_default;
     void * log_callback_user_data = nullptr;
 };
 
-static llama_state g_state;
+static llama_logger_state g_logger_state;
 
 // available llama models
 enum e_model {
@@ -2430,7 +2425,7 @@ struct llama_hparams {
 
     // needed by encoder-decoder models (e.g. T5, FLAN-T5)
     // ref: https://github.com/ggerganov/llama.cpp/pull/8141
-    llama_token dec_start_token_id = -1;
+    llama_token dec_start_token_id = LLAMA_TOKEN_NULL;
 
     enum llama_pooling_type      pooling_type            = LLAMA_POOLING_TYPE_NONE;
     enum llama_rope_type         rope_type               = LLAMA_ROPE_TYPE_NONE;
@@ -21928,16 +21923,9 @@ const std::vector<std::pair<std::string, struct ggml_tensor *>> & llama_internal
 }
 
 void llama_log_set(ggml_log_callback log_callback, void * user_data) {
-    g_state.log_callback = log_callback ? log_callback : llama_log_callback_default;
-    g_state.log_callback_user_data = user_data;
-
-    ggml_backend_set_log_callback(log_callback, user_data);
-
-#ifdef GGML_USE_METAL
-    ggml_backend_metal_log_set_callback(g_state.log_callback, g_state.log_callback_user_data);
-#elif defined(GGML_USE_CANN)
-    ggml_backend_cann_log_set_callback(g_state.log_callback, g_state.log_callback_user_data);
-#endif
+    ggml_log_set(log_callback, user_data);
+    g_logger_state.log_callback = log_callback ? log_callback : llama_log_callback_default;
+    g_logger_state.log_callback_user_data = user_data;
 }
 
 static void llama_log_internal_v(ggml_log_level level, const char * format, va_list args) {
@@ -21946,12 +21934,12 @@ static void llama_log_internal_v(ggml_log_level level, const char * format, va_l
     char buffer[128];
     int len = vsnprintf(buffer, 128, format, args);
     if (len < 128) {
-        g_state.log_callback(level, buffer, g_state.log_callback_user_data);
+        g_logger_state.log_callback(level, buffer, g_logger_state.log_callback_user_data);
     } else {
         char * buffer2 = new char[len + 1];
         vsnprintf(buffer2, len + 1, format, args_copy);
         buffer2[len] = 0;
-        g_state.log_callback(level, buffer2, g_state.log_callback_user_data);
+        g_logger_state.log_callback(level, buffer2, g_logger_state.log_callback_user_data);
         delete[] buffer2;
     }
     va_end(args_copy);
