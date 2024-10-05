@@ -459,12 +459,12 @@ ggml-aarch64.o: ggml/src/ggml-aarch64.c ggml/include/ggml.h ggml/src/ggml-aarch6
 	$(CC)  $(CFLAGS) -c $< -o $@
 
 #these have special gpu defines
-ggml-backend_default.o: ggml/src/ggml-backend.c ggml/include/ggml.h ggml/include/ggml-backend.h
-	$(CC)  $(CFLAGS) -c $< -o $@
-ggml-backend_vulkan.o: ggml/src/ggml-backend.c ggml/include/ggml.h ggml/include/ggml-backend.h
-	$(CC)  $(CFLAGS) $(VULKAN_FLAGS) -c $< -o $@
-ggml-backend_cublas.o: ggml/src/ggml-backend.c ggml/include/ggml.h ggml/include/ggml-backend.h
-	$(CC)  $(CFLAGS) $(CUBLAS_FLAGS) -c $< -o $@
+ggml-backend_default.o: ggml/src/ggml-backend.cpp ggml/src/ggml-backend-impl.h ggml/include/ggml.h ggml/include/ggml-backend.h
+	$(CXX)  $(CXXFLAGS) -c $< -o $@
+ggml-backend_vulkan.o: ggml/src/ggml-backend.cpp ggml/src/ggml-backend-impl.h ggml/include/ggml.h ggml/include/ggml-backend.h
+	$(CXX)  $(CXXFLAGS) $(VULKAN_FLAGS) -c $< -o $@
+ggml-backend_cublas.o: ggml/src/ggml-backend.cpp ggml/src/ggml-backend-impl.h ggml/include/ggml.h ggml/include/ggml-backend.h
+	$(CXX)  $(CXXFLAGS) $(CUBLAS_FLAGS) -c $< -o $@
 llavaclip_default.o: examples/llava/clip.cpp examples/llava/clip.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 llavaclip_cublas.o: examples/llava/clip.cpp examples/llava/clip.h
