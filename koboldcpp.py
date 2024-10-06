@@ -3285,10 +3285,10 @@ def show_gui():
     def load_config_gui(): #this is used to populate the GUI with a config file, whereas load_config_cli simply overwrites cli args
         file_type = [("KoboldCpp Settings", "*.kcpps *.kcppt")]
         global runmode_untouched
-        runmode_untouched = False
         filename = askopenfilename(filetypes=file_type, defaultextension=file_type, initialdir=None)
         if not filename or filename=="":
             return
+        runmode_untouched = False
         with open(filename, 'r') as f:
             dict = json.load(f)
             import_vars(dict)
