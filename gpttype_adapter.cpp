@@ -120,6 +120,10 @@ static std::string concat_output_reader_copy_poll = ""; //for streaming
 static std::string concat_output_reader_copy_res = ""; //for gen response
 static std::vector<logit_bias> logit_biases;
 
+static int delayed_generated_tokens_limit = 0;
+std::deque<std::string> delayed_generated_tokens; //for use with antislop sampling
+
+
 inline bool IsNanCheck(float f)
 {
     const unsigned int u = *(unsigned int*)&f;
@@ -2451,6 +2455,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     generation_finished = false; // Set current generation status
     generated_tokens.clear(); // New Generation, new tokens
+    delayed_generated_tokens.clear();
 
     concat_output_mtx.lock();
     concat_output = "";
@@ -3195,13 +3200,16 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 {
                     tokenizedstr = ""; //prevent render
                 }
-                if(stream_sse)
+
+                delayed_generated_tokens.push_back(tokenizedstr);
+                while(delayed_generated_tokens.size() > delayed_generated_tokens_limit && delayed_generated_tokens.size() > 0)
                 {
-                    generated_tokens.push_back(tokenizedstr);
+                    generated_tokens.push_back(delayed_generated_tokens[0]);
+                    concat_output_mtx.lock();
+                    concat_output += delayed_generated_tokens[0];
+                    concat_output_mtx.unlock();
+                    delayed_generated_tokens.pop_front();
                 }
-                concat_output_mtx.lock();
-                concat_output += tokenizedstr;
-                concat_output_mtx.unlock();
             }
 
             if (startedsampling && allow_regular_prints)
@@ -3372,6 +3380,16 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         }
     }
 
+    //flush any remaining delayed tokens
+    while(delayed_generated_tokens.size() > 0)
+    {
+        generated_tokens.push_back(delayed_generated_tokens[0]);
+        concat_output_mtx.lock();
+        concat_output += delayed_generated_tokens[0];
+        concat_output_mtx.unlock();
+        delayed_generated_tokens.pop_front();
+    }
+
     if(debugmode==1 && file_format == FileFormat::GGUF_GENERIC)
     {
         printf("\n");
@@ -3389,7 +3407,6 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     fflush(stdout);
     output.status = 1;
     output.stopreason = last_stop_reason;
-    generation_finished = true;
     last_eval_time = pt2;
     last_process_time = pt1;
     last_token_count = realnpredict;
@@ -3399,5 +3416,6 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     concat_output_reader_copy_res = concat_output;
     concat_output_mtx.unlock();
     output.text = concat_output_reader_copy_res.c_str();
+    generation_finished = true;
     return output;
 }
