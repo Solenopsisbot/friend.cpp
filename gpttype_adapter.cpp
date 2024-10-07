@@ -2544,7 +2544,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             int tokcount = toks.size();
             if(tokcount>0)
             {
-                tokcount += 2; //add some extra buffer
+                tokcount += 1; //add some extra buffer
             }
             delayed_generated_tokens_limit = (tokcount>delayed_generated_tokens_limit?tokcount:delayed_generated_tokens_limit);
             banned_phrases.push_back(word);
@@ -3260,23 +3260,22 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             }
 
             //anti slop detection
-            // for (const auto &matched : stop_sequence)
-            // {
-            //     if (concat_output.find(matched) != std::string::npos)
-            //     {
-            //         stopper_unused_tokens = remaining_tokens;
-            //         remaining_tokens = 0;
-            //         if(allow_regular_prints)
-            //         {
-            //             auto match_clean = matched;
-            //             replace_all(match_clean, "\n", "\\n");
-            //             printf("\n(Stop sequence triggered: %s)", match_clean.c_str());
-            //         }
-            //         last_stop_reason = stop_reason::CUSTOM_STOPPER;
-            //         earlystopped = true;
-            //         break;
-            //     }
-            // }
+            for (const auto &matched : banned_phrases)
+            {
+                if (concat_output.find(matched) != std::string::npos)
+                {
+                    std::vector<int> toks;
+                    TokenizeString(matched, toks, file_format, false);
+                    int tokcount = toks.size();
+                    if(allow_regular_prints)
+                    {
+                        auto match_clean = matched;
+                        replace_all(match_clean, "\n", "\\n");
+                        printf("\n(Banned Phrase Detected: %s - Rewinding %d tokens)\n", match_clean.c_str(),tokcount);
+                    }
+                    break;
+                }
+            }
 
             bool earlystopped = false;
             if(!inputs.bypass_eos_token && inputs.allow_eos_token && (id==eosID || (id==eotID && id!=-1)))
