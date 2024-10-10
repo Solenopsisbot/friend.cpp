@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 # constants
 sampler_order_max = 7
 stop_token_max = 32
-ban_token_max = 40
+ban_token_max = 48
 tensor_split_max = 16
 logit_bias_max = 32
 dry_seq_break_max = 24
@@ -915,8 +915,9 @@ def generate(genparams, is_quiet=False, stream_flag=False):
     custom_token_bans = genparams.get('custom_token_bans', '')
 
     for tok in custom_token_bans.split(','):
+        tok = tok.strip()  # Remove leading/trailing whitespace
         if tok.isdigit():
-            logit_biases[tok] = -999
+            logit_biases[tok] = bias_min_value
 
     inputs = generation_inputs()
     inputs.prompt = prompt.encode("UTF-8")
