@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 # constants
 sampler_order_max = 7
 stop_token_max = 24
-ban_token_max = 24
+ban_token_max = 32
 tensor_split_max = 16
 logit_bias_max = 24
 dry_seq_break_max = 24
@@ -909,7 +909,8 @@ def generate(genparams, is_quiet=False, stream_flag=False):
     smoothing_factor = genparams.get('smoothing_factor', 0.0)
     logit_biases = genparams.get('logit_bias', {})
     render_special = genparams.get('render_special', False)
-    banned_tokens = genparams.get('banned_tokens', [])
+    banned_strings = genparams.get('banned_strings', []) # SillyTavern uses that name
+    banned_tokens = genparams.get('banned_tokens', banned_strings)
     bypass_eos_token = genparams.get('bypass_eos', False)
 
     inputs = generation_inputs()
