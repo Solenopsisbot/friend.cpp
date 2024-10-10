@@ -3019,6 +3019,11 @@ def show_gui():
             args.quantkv = 0
 
         gpuchoiceidx = 0
+        args.usecpu = False
+        args.usevulkan = None
+        args.usecublas = None
+        args.useclblast = None
+        args.noavx2 = False
         if gpu_choice_var.get()!="All":
             gpuchoiceidx = int(gpu_choice_var.get())-1
         if runopts_var.get() == "Use CLBlast" or runopts_var.get() == "Use CLBlast (Old CPU)":
