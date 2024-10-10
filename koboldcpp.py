@@ -19,10 +19,10 @@ from datetime import datetime, timezone
 
 # constants
 sampler_order_max = 7
-stop_token_max = 24
-ban_token_max = 32
+stop_token_max = 32
+ban_token_max = 40
 tensor_split_max = 16
-logit_bias_max = 24
+logit_bias_max = 32
 dry_seq_break_max = 24
 images_max = 4
 bias_min_value = -100.0
