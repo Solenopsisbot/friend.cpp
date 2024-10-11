@@ -168,7 +168,7 @@ static std::string FileFormatTokenizeID(int id, FileFormat file_format, bool ret
     }
     else if(file_format == FileFormat::GGUF_GENERIC)
     {
-        return std::string(llama_token_to_piece(llama_ctx_v4, id, return_special));
+        return std::string(common_token_to_piece(llama_ctx_v4, id, return_special));
     }
     else
     {
@@ -194,7 +194,7 @@ static void TokenizeString(const std::string & str_to_tokenize, std::vector<int>
         }
         else
         {
-            output_tokens = ::llama_tokenize(llama_ctx_v4, str_to_tokenize, add_bos, true);
+            output_tokens = ::common_tokenize(llama_ctx_v4, str_to_tokenize, add_bos, true);
             if(add_bos)
             {
                 llama_token bostoadd = llama_token_bos(&(llama_ctx_v4->model));
