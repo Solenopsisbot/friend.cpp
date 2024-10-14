@@ -2,7 +2,7 @@
 #include <cstdint>
 
 const int stop_token_max = 32;
-const int ban_token_max = 48;
+const int ban_token_max = 64;
 const int tensor_split_max = 16;
 const int logit_bias_max = 32;
 const int dry_seq_break_max = 24;
