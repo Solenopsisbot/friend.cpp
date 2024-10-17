@@ -44,7 +44,7 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.76"
+KcppVersion = "1.77"
 showdebug = True
 guimode = False
 showsamplerwarning = True
@@ -2250,8 +2250,8 @@ def show_gui():
 
     import customtkinter as ctk
     nextstate = 0 #0=exit, 1=launch
-    original_windowwidth = 550
-    original_windowheight = 550
+    original_windowwidth = 580
+    original_windowheight = 560
     windowwidth = original_windowwidth
     windowheight = original_windowheight
     ctk.set_appearance_mode("dark")
