@@ -1415,10 +1415,13 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                         detected_upload_filename = re.findall(r'Content-Disposition.*name="file"; filename="(.*)"', fpart.decode('utf-8',errors='ignore'))
                         if detected_upload_filename and len(detected_upload_filename)>0:
                             utfprint(f"Detected uploaded file: {detected_upload_filename[0]}")
-                            file_data = fpart.split(b'\r\n\r\n')[1].rsplit(b'\r\n', 1)[0]
-                            file_data_base64 = base64.b64encode(file_data).decode('utf-8',"ignore")
-                            base64_string = f"data:audio/wav;base64,{file_data_base64}"
-                            return base64_string
+                            file_content_start = fpart.find(b'\r\n\r\n') + 4  # Position after headers
+                            file_content_end = fpart.rfind(b'\r\n')  # Ending boundary
+                            if file_content_start != -1 and file_content_end != -1:
+                                file_data = fpart[file_content_start:file_content_end]
+                                file_data_base64 = base64.b64encode(file_data).decode('utf-8',"ignore")
+                                base64_string = f"data:audio/wav;base64,{file_data_base64}"
+                                return base64_string
             print("Uploaded file not found.")
             return None
         except Exception as e:
