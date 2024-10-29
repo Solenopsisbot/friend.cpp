@@ -118,6 +118,13 @@ struct token_count_outputs
     int count = 0;
     int * ids; //we'll just use shared memory for this one, bit of a hack
 };
+struct last_logprobs_outputs {
+    int count = 0;
+    char ** selected_token;
+    float * selected_logprob;
+    char * tokens[5];
+    float * logprobs[5];
+};
 struct sd_load_model_inputs
 {
     const char * model_filename = nullptr;

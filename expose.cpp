@@ -294,5 +294,13 @@ extern "C"
         return output;
     }
 
+    last_logprobs_outputs last_logprobs()
+    {
+        last_logprobs_outputs output;
+        std::vector<TopPicksData> toppicks = gpttype_get_top_picks_data(); //copy top picks
+        output.count = 0;
+        return output;
+    }
+
 
 }

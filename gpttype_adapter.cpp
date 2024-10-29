@@ -114,7 +114,7 @@ static std::vector<std::string> banned_phrases;
 static std::unordered_multimap<gpt_vocab::id, std::vector<gpt_vocab::id>> dry_sequence_breakers; // Multi-mapping from first token of sequence to tail of sequence (tail is empty for a single token)
 static std::vector<int> dry_repeat_count; // Indexed as last_n_tokens
 static std::unordered_map<gpt_vocab::id, int> dry_max_token_repeat;
-static std::vector<llama_token_data> top_picks;
+static std::vector<TopPicksData> top_picks_history;
 static int remaining_tokens = 0;
 static int stopper_unused_tokens = 0;
 static std::mutex concat_output_mtx;
@@ -587,7 +587,8 @@ llama_token sample_token(llama_token_data_array * candidates, std::mt19937 & rng
     sample_softmax(candidates);
     std::vector<float> probs;
     probs.reserve(candidates->size);
-    top_picks.clear();
+    TopPicksData newpick;
+
     for (size_t i = 0; i < candidates->size; ++i) {
         probs.push_back(candidates->data[i].p);
     }
@@ -595,17 +596,19 @@ llama_token sample_token(llama_token_data_array * candidates, std::mt19937 & rng
     std::discrete_distribution<> dist(probs.begin(), probs.end());
     int idx = dist(rng);
 
-    if(debugmode==1)
+    newpick.selected_token = FileFormatTokenizeID(candidates->data[idx].id, file_format, true);
+    newpick.selected_logprob = candidates->data[idx].logit;
+    newpick.selected_probability = candidates->data[idx].p;
+    newpick.selected_tokenid = candidates->data[idx].id;
+    for (size_t i = 0; (i < candidates->size && i<5); ++i)
     {
-        top_picks.push_back(candidates->data[idx]);
-        for (size_t i = 0; (i < candidates->size && i<4); ++i)
-        {
-            if(i!=idx)
-            {
-                top_picks.push_back(candidates->data[i]);
-            }
-        }
+        newpick.tokens.push_back(FileFormatTokenizeID(candidates->data[i].id, file_format, true));
+        newpick.logprobs.push_back(candidates->data[i].logit);
+        newpick.p.push_back(candidates->data[i].p);
+        newpick.tokenid.push_back(candidates->data[i].id);
     }
+
+    top_picks_history.push_back(newpick);
 
     llama_token result = candidates->data[idx].id;
     return result;
@@ -2422,6 +2425,11 @@ const std::string & gpttype_get_pending_output()
     return concat_output_reader_copy_poll;
 }
 
+const std::vector<TopPicksData> gpttype_get_top_picks_data()
+{
+    return top_picks_history;
+}
+
 bool VecContainsIntVal(const std::vector<int> & vec, const int val)
 {
     for (const auto &matched : vec)
@@ -2484,6 +2492,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     dry_repeat_count.clear();
     dry_sequence_breakers.clear();
     dry_max_token_repeat.clear();
+    top_picks_history.clear();
 
     double time0 = 0, time1 = 0, time2 = 0;
     timer_start();
@@ -3271,20 +3280,25 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             {
                 printf("\rGenerating (%d / %d tokens)", (kcpp_data->n_predict - remaining_tokens), kcpp_data->n_predict);
             }
-            if(debugmode==1 && top_picks.size()>0)
+            if(debugmode==1 && top_picks_history.size()>0)
             {
                 printf(" [");
                 bool firstloop = true;
-                for (auto & pick : top_picks)
+                TopPicksData toppick = top_picks_history[top_picks_history.size()-1];
+                std::string topstr = toppick.selected_token;
+                ::utreplace(topstr, "\n", "\\n");
+                printf("(%s %.2f%%)", RemoveBell(topstr).c_str(), toppick.selected_probability*100);
+                int maxtoshow = (toppick.tokenid.size()>4?4:toppick.tokenid.size());
+                for (int i=0;i<maxtoshow;++i)
                 {
-                    if (!firstloop)
+                    if(toppick.tokenid[i]==toppick.selected_tokenid)
                     {
-                        printf(" ");
+                        continue;
                     }
-                    firstloop = false;
-                    std::string tokenizedstr = FileFormatTokenizeID(pick.id, file_format, true);
+                    printf(" ");
+                    std::string tokenizedstr = toppick.tokens[i];
                     ::utreplace(tokenizedstr, "\n", "\\n");
-                    printf("(%s %.2f%%)", RemoveBell(tokenizedstr).c_str(), pick.p*100);
+                    printf("(%s %.2f%%)", RemoveBell(tokenizedstr).c_str(), toppick.p[i]*100);
                 }
                 printf("]\n");
             }
