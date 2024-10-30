@@ -604,7 +604,7 @@ def string_has_overlap(str_a, str_b, maxcheck):
     return False
 
 def string_contains_or_overlaps_sequence_substring(inputstr, sequences):
-    if inputstr.strip()=="":
+    if inputstr=="":
         return False
     for s in sequences:
         if s.strip()=="":
