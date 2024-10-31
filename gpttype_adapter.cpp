@@ -597,13 +597,13 @@ llama_token sample_token(llama_token_data_array * candidates, std::mt19937 & rng
     int idx = dist(rng);
 
     newpick.selected_token = FileFormatTokenizeID(candidates->data[idx].id, file_format, true);
-    newpick.selected_logprob = candidates->data[idx].logit;
+    newpick.selected_logprob = logf(candidates->data[idx].p);
     newpick.selected_probability = candidates->data[idx].p;
     newpick.selected_tokenid = candidates->data[idx].id;
-    for (size_t i = 0; (i < candidates->size && i<5); ++i)
+    for (size_t i = 0; (i < candidates->size && i<logprobs_max); ++i)
     {
         newpick.tokens.push_back(FileFormatTokenizeID(candidates->data[i].id, file_format, true));
-        newpick.logprobs.push_back(candidates->data[i].logit);
+        newpick.logprobs.push_back(logf(candidates->data[i].p));
         newpick.p.push_back(candidates->data[i].p);
         newpick.tokenid.push_back(candidates->data[i].id);
     }
@@ -2467,6 +2467,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         printf("\nWarning: KCPP text generation not initialized!\n");
         output.text = nullptr;
         output.status = 0;
+        output.prompt_tokens = output.completion_tokens = 0;
         output.stopreason = stop_reason::INVALID;
         generation_finished = true;
         return output;
@@ -3142,6 +3143,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 fprintf(stderr, "\nFailed to predict at %d! Check your context buffer sizes!\n",n_past);
                 output.text = nullptr;
                 output.status = 0;
+                output.prompt_tokens = output.completion_tokens = 0;
                 output.stopreason = stop_reason::INVALID;
                 generation_finished = true;
                 return output;
@@ -3471,6 +3473,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                                 fprintf(stderr, "\nFailed to eval llava image at %d!\n",n_past);
                                 output.text = nullptr;
                                 output.status = 0;
+                                output.prompt_tokens = output.completion_tokens = 0;
                                 output.stopreason = stop_reason::INVALID;
                                 generation_finished = true;
                                 return output;
@@ -3482,6 +3485,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                             fprintf(stderr, "\nLLAVA image tokens mismatch at %d! (%d vs %d tokens)\n",n_past,llavatokenscounted,llavatokensevaled);
                             output.text = nullptr;
                             output.status = 0;
+                            output.prompt_tokens = output.completion_tokens = 0;
                             output.stopreason = stop_reason::INVALID;
                             generation_finished = true;
                             return output;
@@ -3534,6 +3538,9 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     printf("\nCtxLimit:%d/%d, Amt:%d/%d, Init:%.2fs, Process:%.2fs (%.1fms/T = %.2fT/s), Generate:%.2fs (%.1fms/T = %.2fT/s), Total:%.2fs (%.2fT/s)",(int)current_context_tokens.size(),(int)nctx, realnpredict, kcpp_data->n_predict, time0, time1, pt1, ts1, time2, pt2, ts2, (time1 + time2), tokens_per_second);
     fflush(stdout);
     output.status = 1;
+    int finaltokcount = (int)current_context_tokens.size()-realnpredict;
+    output.prompt_tokens = (finaltokcount<0?0:finaltokcount);
+    output.completion_tokens = realnpredict;
     output.stopreason = last_stop_reason;
     last_eval_time = pt2;
     last_process_time = pt1;
