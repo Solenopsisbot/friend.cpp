@@ -1084,7 +1084,7 @@ def generate(genparams, is_quiet=False, stream_flag=False):
     if pendingabortkey!="" and pendingabortkey==genkey:
         print(f"\nDeferred Abort for GenKey: {pendingabortkey}")
         pendingabortkey = ""
-        return {"text":"","status":-1,"stopreason":-1, "prompt_tokens":0, "completion_tokens": 0}
+        return {"text":"","status":-1,"stopreason":-1, "prompt_tokens":0, "completion_tokens": 0, "total_tokens": 0}
     else:
         ret = handle.generate(inputs)
         outstr = ""
@@ -1502,7 +1502,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
             return generate(genparams=genparams,is_quiet=is_quiet,stream_flag=stream_flag)
 
-        genout = {"text": "", "status": -1, "stopreason": -1, "prompt_tokens":0, "completion_tokens": 0}
+        genout = {"text": "", "status": -1, "stopreason": -1, "prompt_tokens":0, "completion_tokens": 0, "total_tokens": 0}
         if stream_flag:
             loop = asyncio.get_event_loop()
             executor = ThreadPoolExecutor()
