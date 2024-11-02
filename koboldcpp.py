@@ -717,7 +717,7 @@ def autoset_gpu_layers(ctxsize,sdquanted,bbs): #shitty algo to determine how man
                 layers = ggufmeta[0]
                 headcount = ggufmeta[1]
                 headkvlen = (ggufmeta[2] if ggufmeta[2] > 0 else 128)
-                ratio = (mem-usedmem)/(fsize*csmul*1.55)
+                ratio = (mem-usedmem)/(fsize*csmul*1.6*(1.0 if bbs <= 512 else 1.2))
                 computemem = layers*(4 if bbs <= 512 else (bbs/128))*headkvlen*cs*4*1.5 # apply blasbatchsize calculations if over 512
                 contextmem = layers*headcount*headkvlen*cs*4*1.1
                 if headcount > 0:
