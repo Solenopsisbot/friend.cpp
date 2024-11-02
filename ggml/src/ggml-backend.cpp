@@ -562,6 +562,10 @@ void * ggml_backend_reg_get_proc_address(ggml_backend_reg_t reg, const char * na
 #include "ggml-cann.h"
 #endif
 
+#ifdef GGML_USE_KOMPUTE
+#include "ggml-kompute.h"
+#endif
+
 struct ggml_backend_registry {
     std::vector<ggml_backend_reg_t> backends;
     std::vector<ggml_backend_dev_t> devices;
@@ -591,8 +595,9 @@ struct ggml_backend_registry {
 #ifdef GGML_USE_AMX
         register_backend(ggml_backend_amx_reg());
 #endif
-
-        // TODO: kompute
+#ifdef GGML_USE_KOMPUTE
+        register_backend(ggml_backend_kompute_reg());
+#endif
 
         register_backend(ggml_backend_cpu_reg());
     }
@@ -1503,7 +1508,7 @@ static int ggml_backend_sched_backend_from_buffer(ggml_backend_sched_t sched, co
     return -1;
 }
 
-#if 1
+#if 0
 #define GGML_SCHED_MAX_SPLITS_DEBUG 4096
 static char causes[GGML_DEFAULT_GRAPH_SIZE*16 + GGML_SCHED_MAX_SPLITS_DEBUG*GGML_SCHED_MAX_SPLIT_INPUTS][128]; // debug only
 #define SET_CAUSE(node, ...) sprintf(causes[hash_id(node)], __VA_ARGS__)
