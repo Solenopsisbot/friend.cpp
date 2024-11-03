@@ -12,9 +12,12 @@
 #include "ggml-backend.h"
 #include "ggml-cpp.h"
 
-#if defined(GGML_USE_CLBLAST)
+#ifdef GGML_USE_CUDA
+#  include "ggml-cuda.h"
+#elif defined(GGML_USE_CLBLAST)
 #  include "ggml-opencl.h"
 #endif
+
 
 // TODO: replace with ggml API call
 #define QK_K 256
