@@ -171,6 +171,9 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     std::string taesdpath = "";
     std::string lorafilename = inputs.lora_filename;
     std::string vaefilename = inputs.vae_filename;
+    std::string t5xxl_filename = inputs.t5xxl_filename;
+    std::string clipl_filename = inputs.clipl_filename;
+    std::string clipg_filename = inputs.clipg_filename;
     printf("\nImageGen Init - Load Model: %s\n",inputs.model_filename);
     if(lorafilename!="")
     {
@@ -184,6 +187,18 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     else if(vaefilename!="")
     {
         printf("With Custom VAE: %s\n",vaefilename.c_str());
+    }
+    if(t5xxl_filename!="")
+    {
+        printf("With Custom T5-XXL Model: %s\n",t5xxl_filename.c_str());
+    }
+    if(clipl_filename!="")
+    {
+        printf("With Custom Clip-L Model: %s\n",clipl_filename.c_str());
+    }
+    if(clipg_filename!="")
+    {
+        printf("With Custom Clip-G Model: %s\n",clipg_filename.c_str());
     }
 
     //duplicated from expose.cpp
@@ -219,6 +234,17 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     sd_params->batch_count = 1;
     sd_params->vae_path = vaefilename;
     sd_params->taesd_path = taesdpath;
+    sd_params->t5xxl_path = t5xxl_filename;
+    sd_params->clip_l_path = clipl_filename;
+    sd_params->clip_g_path = clipg_filename;
+    //if clip and t5 is set, and model is a gguf, load it as a diffusion model path
+    bool endswithgguf = (sd_params->model_path.rfind(".gguf") == sd_params->model_path.size() - 5);
+    if(sd_params->clip_l_path!="" && sd_params->t5xxl_path!="" && endswithgguf)
+    {
+        printf("\nSwap to Diffusion Model Path:%s",sd_params->model_path.c_str());
+        sd_params->diffusion_model_path = sd_params->model_path;
+        sd_params->model_path = "";
+    }
 
     sddebugmode = inputs.debugmode;
 
