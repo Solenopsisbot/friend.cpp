@@ -220,8 +220,10 @@ void ggml_log_callback_default(enum ggml_log_level level, const char * text, voi
 
 
 void * ggml_aligned_malloc(size_t size) {
+    const int alignment = 64;
+
 #if defined(_MSC_VER) || defined(__MINGW32__)
-    return _aligned_malloc(size, TENSOR_ALIGNMENT);
+    return _aligned_malloc(size, alignment);
 #else
     if (size == 0) {
         GGML_LOG_WARN("Behavior may be unexpected when allocating 0 bytes for ggml_aligned_malloc!\n");
@@ -229,8 +231,9 @@ void * ggml_aligned_malloc(size_t size) {
     }
     void * aligned_memory = NULL;
   #ifdef GGML_USE_CPU_HBM
-    int result = hbw_posix_memalign(&aligned_memory, TENSOR_ALIGNMENT, size);
+    int result = hbw_posix_memalign(&aligned_memory, alignment, size);
   #elif TARGET_OS_OSX
+    GGML_UNUSED(alignment);
     kern_return_t alloc_status = vm_allocate((vm_map_t) mach_task_self(), (vm_address_t *) &aligned_memory, size, VM_FLAGS_ANYWHERE);
     int result = EFAULT;
     switch (alloc_status) {
@@ -248,7 +251,7 @@ void * ggml_aligned_malloc(size_t size) {
             break;
     }
   #else
-    int result = posix_memalign(&aligned_memory, TENSOR_ALIGNMENT, size);
+    int result = posix_memalign(&aligned_memory, alignment, size);
   #endif
     if (result != 0) {
         // Handle allocation failure
@@ -392,6 +395,8 @@ void ggml_bf16_to_fp32_row(const ggml_bf16_t * x, float * y, int64_t n) {
                                     16)));
         }
     }
+#endif
+#if defined(__AVX2__)
     if (ggml_cpu_has_avx2()) {
         for (; i + 8 <= n; i += 8) {
             _mm256_storeu_ps(y + i,
@@ -1402,11 +1407,11 @@ static inline bool ggml_can_repeat_rows(const struct ggml_tensor * t0, const str
 ////////////////////////////////////////////////////////////////////////////////
 
 struct ggml_context * ggml_init(struct ggml_init_params params) {
-    static bool is_first_call = false;
+    static bool is_first_call = true;
 
     ggml_critical_section_start();
 
-    if (!is_first_call) {
+    if (is_first_call) {
         // initialize time system (required on Windows)
         ggml_time_init();
 
@@ -1417,7 +1422,8 @@ struct ggml_context * ggml_init(struct ggml_init_params params) {
             } u = {i};
             ggml_table_f32_f16[i] = GGML_COMPUTE_FP16_TO_FP32(u.fp16);
         }
-        is_first_call = true;
+
+        is_first_call = false;
     }
 
     ggml_critical_section_end();
