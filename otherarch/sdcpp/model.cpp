@@ -1366,6 +1366,16 @@ bool ModelLoader::init_from_ckpt_file(const std::string& file_path, const std::s
     return true;
 }
 
+bool ModelLoader::has_diffusion_model_tensors()
+{
+    for (auto& tensor_storage : tensor_storages) {
+        if (tensor_storage.name.find("model.diffusion_model.") != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 SDVersion ModelLoader::get_sd_version() {
     TensorStorage token_embedding_weight;
     bool is_flux = false;

@@ -232,8 +232,21 @@ public:
         }
 
         version = model_loader.get_sd_version();
+
+        if (version == VERSION_COUNT && model_path.size() > 0 && clip_l_path.size() > 0 && diffusion_model_path.size() == 0 && t5xxl_path.size() > 0) {
+            bool endswithsafetensors = (model_path.rfind(".safetensors") == model_path.size() - 12);
+            if(endswithsafetensors && !model_loader.has_diffusion_model_tensors())
+            {
+                LOG_INFO("SD Diffusion Model tensors missing! Fallback trying alternative tensor names...\n");
+                if (!model_loader.init_from_file(model_path, "model.diffusion_model.")) {
+                    LOG_WARN("loading diffusion model from '%s' failed", model_path.c_str());
+                }
+                version = model_loader.get_sd_version();
+            }
+        }
+
         if (version == VERSION_COUNT) {
-            LOG_ERROR("get sd version from file failed: '%s'", model_path.c_str());
+            LOG_ERROR("Error: get SD version from file failed: '%s'", model_path.c_str());
             return false;
         }
 
