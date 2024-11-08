@@ -149,6 +149,7 @@ static ggml_cuda_device_info ggml_cuda_init() {
 //#else
 //    GGML_LOG_INFO("%s: GGML_CUDA_FORCE_CUBLAS: no\n", __func__);
 //#endif // GGML_CUDA_FORCE_CUBLAS
+    GGML_LOG_INFO("Initializing CUDA, please wait, this might take a while for first run...\n", __func__, info.device_count);
     GGML_LOG_INFO("%s: found %d " GGML_CUDA_NAME " devices:\n", __func__, info.device_count);
     for (int id = 0; id < info.device_count; ++id) {
         int device_vmm = 0;
