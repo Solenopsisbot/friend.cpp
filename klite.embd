@@ -12,7 +12,7 @@ Current version indicated by LITEVER below.
 -->
 
 <script>
-	const LITEVER = 185;
+	const LITEVER = 186;
 	const urlParams = new URLSearchParams(window.location.search);
 	var localflag = true;
 	const STORAGE_PREFIX = (localflag?"e_":"")+"kaihordewebui_";
@@ -4355,6 +4355,7 @@ Current version indicated by LITEVER below.
 	const XTTS_ID = 1000;
 	const ALLTALK_ID = 1001;
 	const OAI_TTS_ID = 1002;
+	const BIG_HD_RES_PX = 512; //when saving oversized images, could be 640?
 	const HD_RES_PX = 512;
 	const NO_HD_RES_PX = 320;
 	const SAVE_SLOTS = 6;
@@ -4527,6 +4528,7 @@ Current version indicated by LITEVER below.
 		img_allowhd: true,
 		img_crop: false,
 		img_img2imgstr: 0.6,
+		img_clipskip: -1,
 		img_steps: 20,
 		img_sampler: "Euler a",
 		img_aspect:0, //0=square,1=portrait,2=landscape,3=bigsquare
@@ -5569,6 +5571,10 @@ Current version indicated by LITEVER below.
 			ep = a1111_img2img_endpoint;
 			a1111_t2i_payload.init_images = [req_payload.source_image];
 			a1111_t2i_payload.denoising_strength = req_payload.params.denoising_strength;
+		}
+		if(req_payload.params.clip_skip && req_payload.params.clip_skip>0)
+		{
+			a1111_t2i_payload.clip_skip = req_payload.params.clip_skip;
 		}
 
 		if(localsettings.save_remote_images)
@@ -10485,6 +10491,7 @@ Current version indicated by LITEVER below.
 		document.getElementById("save_remote_images").checked = localsettings.save_remote_images;
 		document.getElementById("img_cfgscale").value = localsettings.img_cfgscale;
 		document.getElementById("img_img2imgstr").value = localsettings.img_img2imgstr;
+		document.getElementById("img_clipskip").value = localsettings.img_clipskip;
 		document.getElementById("img_aspect").value = localsettings.img_aspect;
 		document.getElementById("img_sampler").value = localsettings.img_sampler;
 		document.getElementById("img_steps").value = localsettings.img_steps;
@@ -10785,6 +10792,7 @@ Current version indicated by LITEVER below.
 
 		localsettings.img_cfgscale = parseFloat(document.getElementById("img_cfgscale").value);
 		localsettings.img_img2imgstr = parseFloat(document.getElementById("img_img2imgstr").value);
+		localsettings.img_clipskip = parseInt(document.getElementById("img_clipskip").value);
 		localsettings.img_aspect = parseInt(document.getElementById("img_aspect").value);
 		localsettings.img_sampler = document.getElementById("img_sampler").value;
 		localsettings.img_steps = parseInt(document.getElementById("img_steps").value);
@@ -10800,7 +10808,12 @@ Current version indicated by LITEVER below.
 		{
 			localsettings.img_img2imgstr = defaultsettings.img_img2imgstr;
 		}
+		if(isNaN(localsettings.img_clipskip))
+		{
+			localsettings.img_clipskip = defaultsettings.img_clipskip;
+		}
 		localsettings.img_img2imgstr = cleannum(localsettings.img_img2imgstr, 0.0, 1.0);
+		localsettings.img_clipskip = cleannum(localsettings.img_clipskip, -1, 20);
 		if(isNaN(localsettings.img_aspect))
 		{
 			localsettings.img_aspect = defaultsettings.img_aspect;
@@ -13881,6 +13894,10 @@ Current version indicated by LITEVER below.
 			genimg_payload["source_image"] = base64img;
 			genimg_payload["params"]["denoising_strength"] = localsettings.img_img2imgstr;
 		}
+		if(localsettings.img_clipskip>0)
+		{
+			genimg_payload["params"]["clip_skip"] = localsettings.img_clipskip;
+		}
 
 		if(localsettings.generate_images_mode==1) //horde
 		{
@@ -13931,7 +13948,7 @@ Current version indicated by LITEVER below.
 				{
 					//console.log(outputimg);
 					let origImg = "data:image/jpeg;base64," + outputimg;
-					let imgres = localsettings.img_allowhd?HD_RES_PX:NO_HD_RES_PX;
+					let imgres = localsettings.img_allowhd?(localsettings.img_aspect==0?HD_RES_PX:BIG_HD_RES_PX):NO_HD_RES_PX;
 					compressImage(origImg, (newDataUri) => {
 						image_db[imgid].done = true;
 						image_db[imgid].result = newDataUri;
@@ -13961,7 +13978,7 @@ Current version indicated by LITEVER below.
 					{
 						//console.log(outputimg);
 						let origImg = "data:image/jpeg;base64," + outputimg;
-						let imgres = localsettings.img_allowhd?HD_RES_PX:NO_HD_RES_PX;
+						let imgres = localsettings.img_allowhd?(localsettings.img_aspect==0?HD_RES_PX:BIG_HD_RES_PX):NO_HD_RES_PX;
 						compressImage(origImg, (newDataUri) => {
 							image_db[imgid].done = true;
 							image_db[imgid].result = newDataUri;
@@ -14610,7 +14627,7 @@ Current version indicated by LITEVER below.
 		console.log("polling for pending images " + imagecount);
 		for (let key in image_db) {
 			let img = image_db[key];
-			if (img.done == false && img.poll_category==1) {
+			if (img.done == false && img.poll_category==1) { //horde image polling
 				//call check
 				fetch(stablehorde_poll_endpoint + "/" + key)
 					.then(x => x.json())
@@ -14637,7 +14654,7 @@ Current version indicated by LITEVER below.
 										img.queue = 0;
 										let origImg = "data:image/jpeg;base64," + finalimg.generations[0].img;
 										//console.log("Original image: " + origImg);
-										let imgres = localsettings.img_allowhd?HD_RES_PX:NO_HD_RES_PX;
+										let imgres = localsettings.img_allowhd?(localsettings.img_aspect==0?HD_RES_PX:BIG_HD_RES_PX):NO_HD_RES_PX;
 										compressImage(origImg, (newDataUri) => {
 											img.result = newDataUri;
 										}, true, false, imgres,0.35,false);
@@ -14660,7 +14677,7 @@ Current version indicated by LITEVER below.
 						delete image_db[key];
 					});
 			}
-			else if (img.done == false && img.poll_category==2)
+			else if (img.done == false && img.poll_category==2) //comfyui image polling
 			{
 				//comfyui polling
 				fetch(localsettings.saved_comfy_url + comfy_history_endpoint + "/" + key, {
@@ -14687,7 +14704,7 @@ Current version indicated by LITEVER below.
 							reader.onloadend = () => {
 								img.queue = 0;
 								let origImg = reader.result;
-								let imgres = localsettings.img_allowhd?HD_RES_PX:NO_HD_RES_PX;
+								let imgres = localsettings.img_allowhd?(localsettings.img_aspect==0?HD_RES_PX:BIG_HD_RES_PX):NO_HD_RES_PX;
 								compressImage(origImg, (newDataUri) => {
 									img.result = newDataUri;
 								}, true, false, imgres,0.35,false);
@@ -19570,6 +19587,10 @@ Current version indicated by LITEVER below.
 									<span class="helptext">Higher values lead to a more different image.</span>
 								</span>: </div>
 								<input title="Img2Img Strength" type="text" inputmode="decimal" id="img_img2imgstr" style="width:60px">
+							</div>
+							<div class="inlinelabel">
+								<div class="justifyleft" style="padding:4px">Clip Skip: </div>
+								<input title="Clip Skip" type="text" inputmode="decimal" id="img_clipskip" style="width:60px">
 							</div>
 							<div class="inlinelabel">
 								<div class="justifyleft" style="padding:4px">Save Higher-Res <span class="helpicon">?
