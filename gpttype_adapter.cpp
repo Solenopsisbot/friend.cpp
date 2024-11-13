@@ -1688,6 +1688,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     kcpp_data->model_filename = inputs.model_filename;
     kcpp_data->use_smartcontext = inputs.use_smartcontext;
     kcpp_data->use_contextshift = inputs.use_contextshift;
+    kcpp_data->use_fastforward = inputs.use_fastforward;
     debugmode = inputs.debugmode;
 
     auto clamped_max_context_length = inputs.max_context_length;
@@ -2951,7 +2952,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     {
         if(!blank_prompt)
         {
-            ContextFastForward(current_context_tokens, embd_inp, n_past, last_n_tokens, nctx, smartcontext, false, true);
+            if(kcpp_data->use_fastforward)
+            {
+                ContextFastForward(current_context_tokens, embd_inp, n_past, last_n_tokens, nctx, smartcontext, false, true);
+            }
         }
         if(is_mamba || is_rwkv_new)
         {
@@ -2971,12 +2975,15 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         bool triggersc = kcpp_data->use_smartcontext;
         if(!blank_prompt) //special case for blank prompts, no fast forward or shifts
         {
-            if(kcpp_data->use_contextshift && (file_format == FileFormat::GGUF_GENERIC))
+            if(kcpp_data->use_fastforward && kcpp_data->use_contextshift && (file_format == FileFormat::GGUF_GENERIC))
             {
                 PurgeMissingTokens(llama_ctx_v4, current_context_tokens, embd_inp, inputs.max_length, nctx);
                 triggersc = false;
             }
-            ContextFastForward(current_context_tokens, embd_inp, n_past, last_n_tokens, nctx, smartcontext, triggersc, false);
+            if(kcpp_data->use_fastforward)
+            {
+                ContextFastForward(current_context_tokens, embd_inp, n_past, last_n_tokens, nctx, smartcontext, triggersc, false);
+            }
         }
         if(file_format == FileFormat::GGUF_GENERIC)
         {
