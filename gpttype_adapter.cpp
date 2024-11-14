@@ -3547,8 +3547,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                             if(i>0 && sepsize>0)
                             {
                                 //add a separator between each image
-                                kcpp_embd_batch batch = kcpp_embd_batch(embd, n_past);
-                                auto evr = llama_decode(llama_ctx_v4, batch.batch);
+                                auto evr = llama_decode(llama_ctx_v4, llama_batch_get_one(llava_sep.data(), sepsize));
                                 if(evr!=0)
                                 {
                                     printf("\nError when appending llava separator: %d\n",evr);
