@@ -36,9 +36,9 @@ jobs:
       - name: Print System Environment Variables
         id: printvars
         run: |
-          echo "Number of processors: $NUMBER_OF_PROCESSORS"
-          echo "Processor Architecture: $PROCESSOR_ARCHITECTURE"
-          echo "Computer Name: $COMPUTERNAME"
+          echo "Number of processors: ${env:NUMBER_OF_PROCESSORS}"
+          echo "Processor Architecture: ${env:PROCESSOR_ARCHITECTURE}"
+          echo "Computer Name: ${env:COMPUTERNAME}"
           wmic cpu get name
           wmic os get TotalVisibleMemorySize, FreePhysicalMemory
 
