@@ -1472,8 +1472,12 @@ static void ggml_vec_dot_bf16(int n, float * restrict s, size_t bs, ggml_bf16_t 
     sumf += (ggml_float)_mm512_reduce_add_ps(c2);
 
 #undef LOAD
-#elif defined(__AVX2__)
+#elif defined(__AVX2__) || defined(__AVX__)
+#if defined(__AVX2__)
 #define LOAD(p) _mm256_castsi256_ps(_mm256_slli_epi32(_mm256_cvtepu16_epi32(_mm_loadu_si128((const __m128i *)(p))), 16))
+#else
+#define LOAD(p) _mm256_castsi256_ps(_mm256_insertf128_si256(_mm256_castsi128_si256(_mm_slli_epi32(_mm_cvtepu16_epi32(_mm_loadu_si128((const __m128i *)(p))), 16)), (_mm_slli_epi32(_mm_cvtepu16_epi32(_mm_bsrli_si128(_mm_loadu_si128((const __m128i *)(p)), 8)), 16)), 1))
+#endif
     __m256 c1 = _mm256_setzero_ps();
     __m256 c2 = _mm256_setzero_ps();
     __m256 c3 = _mm256_setzero_ps();
@@ -7358,6 +7362,7 @@ static void ggml_compute_forward_group_norm(
 static void ggml_compute_forward_mul_mat_one_chunk(
     const struct ggml_compute_params * params,
     struct ggml_tensor * dst,
+    const enum ggml_type type,
     const int64_t num_rows_per_vec_dot,
     const int64_t ir0_start,
     const int64_t ir0_end,
@@ -7368,8 +7373,6 @@ static void ggml_compute_forward_mul_mat_one_chunk(
     const struct ggml_tensor * src1 = dst->src[1];
 
     GGML_TENSOR_BINARY_OP_LOCALS
-
-    const enum ggml_type type = src0->type;
 
     const bool src1_cont = ggml_is_contiguous(src1);
 
@@ -7458,7 +7461,11 @@ static void ggml_compute_forward_mul_mat(
     const int ith = params->ith;
     const int nth = params->nth;
 
-    const enum ggml_type type = src0->type;
+    enum ggml_type type = src0->type;
+
+    if (src0->buffer && ggml_backend_cpu_buft_is_aarch64(src0->buffer->buft)) {
+        type = (enum ggml_type)(intptr_t)src0->extra;
+    }
 
     enum ggml_type           const vec_dot_type         = type_traits_cpu[type].vec_dot_type;
     ggml_from_float_t        const from_float           = type_traits_cpu[vec_dot_type].from_float;
@@ -7505,15 +7512,15 @@ static void ggml_compute_forward_mul_mat(
     if (src1_cont) {
         for (int64_t i13 = 0; i13 < ne13; i13++)
             for (int64_t i12 = 0; i12 < ne12; i12++)
-                if (!llamafile_sgemm(ne01, ne11, ne00/ggml_blck_size(src0->type),
+                if (!llamafile_sgemm(ne01, ne11, ne00/ggml_blck_size(type),
                                      (const char *)src0->data + i12/r2*nb02 + i13/r3*nb03,
-                                     nb01/ggml_type_size(src0->type),
+                                     nb01/ggml_type_size(type),
                                      (const char *)src1->data + i12*nb12 + i13*nb13,
                                      nb11/ggml_type_size(src1->type),
                                      (char *)dst->data + i12*nb2 + i13*nb3,
                                      nb1/ggml_type_size(dst->type),
                                      ith, nth,
-                                     src0->type,
+                                     type,
                                      src1->type,
                                      dst->type))
                     goto UseGgmlGemm1;
@@ -7566,15 +7573,15 @@ UseGgmlGemm1:;
 
         for (int64_t i13 = 0; i13 < ne13; i13++)
             for (int64_t i12 = 0; i12 < ne12; i12++)
-                if (!llamafile_sgemm(ne01, ne11, ne00/ggml_blck_size(src0->type),
+                if (!llamafile_sgemm(ne01, ne11, ne00/ggml_blck_size(type),
                                      (const char *)src0->data + i12/r2*nb02 + i13/r3*nb03,
-                                     nb01/ggml_type_size(src0->type),
+                                     nb01/ggml_type_size(type),
                                      (const char *)wdata + (i12*ne11 + i13*ne12*ne11)*row_size,
                                      row_size/ggml_type_size(vec_dot_type),
                                      (char *)dst->data + i12*nb2 + i13*nb3,
                                      nb1/ggml_type_size(dst->type),
                                      ith, nth,
-                                     src0->type,
+                                     type,
                                      vec_dot_type,
                                      dst->type))
                     goto UseGgmlGemm2;
@@ -7659,7 +7666,7 @@ UseGgmlGemm2:;
         const int64_t ir1_start = dr1 * ith1;
         const int64_t ir1_end = MIN(ir1_start + dr1, nr1);
 
-        ggml_compute_forward_mul_mat_one_chunk(params, dst, num_rows_per_vec_dot, ir0_start, ir0_end, ir1_start, ir1_end);
+        ggml_compute_forward_mul_mat_one_chunk(params, dst, type, num_rows_per_vec_dot, ir0_start, ir0_end, ir1_start, ir1_end);
 
         if (nth >= nchunk0 * nchunk1) {
             break;
