@@ -127,6 +127,14 @@ static int delayed_generated_tokens_limit = 0;
 std::deque<std::string> delayed_generated_tokens; //for use with antislop sampling
 static std::map<int,std::vector<int>> antislop_banned_token_ids; //first is the npast position, second is the array of banned ids at that index
 
+inline int kcpp_cpu_has_blas(void) {
+#if defined(GGML_USE_BLAS) || defined(GGML_USE_CUDA) || defined(GGML_USE_VULKAN) || defined(GGML_USE_CLBLAST) || defined(GGML_USE_SYCL)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 inline bool IsNanCheck(float f)
 {
     const unsigned int u = *(unsigned int*)&f;
@@ -1971,7 +1979,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         }
         #endif
         #if defined(GGML_USE_CUDA)
-        if(ggml_cpu_has_gpublas() && cu_parseinfo_maindevice>0)
+        if(cu_parseinfo_maindevice>0)
         {
             printf("CUBLAS: Set main device to %d\n",cu_parseinfo_maindevice);
         }
@@ -2538,14 +2546,11 @@ int GetThreadsToUse(bool blasmode)
 {
     if (blasmode)
     {
-        if(!ggml_cpu_has_gpublas())
-        {
-            return std::min(kcpp_data->n_blasthreads, 4);
-        }
-        else
-        {
+        #if defined(GGML_USE_CLBLAST) || defined(GGML_USE_CUDA) || defined(GGML_USE_VULKAN)
             return kcpp_data->n_blasthreads;
-        }
+        #else
+            return std::min(kcpp_data->n_blasthreads, 4);
+        #endif
     }
     return kcpp_data->n_threads;
 }
@@ -3052,7 +3057,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         }
     }
 
-    bool blasmode = (embd_inp.size() >= 32 && ggml_cpu_has_blas() && kcpp_data->n_batch>=32);
+    bool blasmode = (embd_inp.size() >= 32 && kcpp_cpu_has_blas() && kcpp_data->n_batch>=32);
 
     current_context_tokens.resize(n_past);
 
