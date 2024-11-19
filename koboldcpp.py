@@ -65,6 +65,8 @@ runmode_untouched = True
 modelfile_extracted_meta = None
 importvars_in_progress = False
 has_multiplayer = False
+multiplayer_story = None #stores the full json of the current multiplayer session
+multiplayer_turn = 0 # to keep track of when a client needs to sync their stories
 preloaded_story = None
 chatcompl_adapter = None
 embedded_kailite = None
@@ -1793,7 +1795,7 @@ Enter Prompt:<br>
 
     def do_GET(self):
         global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
-        global has_multiplayer, maxctx, maxhordelen, friendlymodelname, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath
+        global has_multiplayer, multiplayer_turn, multiplayer_story, maxctx, maxhordelen, friendlymodelname, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath
         self.path = self.path.rstrip('/')
         response_body = None
         content_type = 'application/json'
@@ -1928,6 +1930,20 @@ Enter Prompt:<br>
             content_type = 'text/html'
             response_body = (f"KoboldCpp OpenAI compatible endpoint is running!\n\nFor usage reference, see https://platform.openai.com/docs/api-reference").encode()
 
+        elif self.path=="/api/extra/multiplayer/status":
+            if not has_multiplayer:
+                response_body = (json.dumps({"error":"Multiplayer not enabled!"}).encode())
+            else:
+                response_body = (json.dumps({"turn":multiplayer_turn,"idle":(0 if modelbusy.locked() else 1)}).encode())
+
+        elif self.path=="/api/extra/multiplayer/getstory":
+            if not has_multiplayer:
+                response_body = (json.dumps({"error":"Multiplayer not enabled!"}).encode())
+            elif multiplayer_story is None:
+                response_body = (json.dumps({"gamestarted":True,"prompt":"","memory":"","authorsnote":"","anotetemplate":"","actions":[],"actions_metadata":{},"worldinfo":[],"wifolders_d":{},"wifolders_l":[]}).encode())
+            else:
+                response_body = multiplayer_story
+
         elif self.path=="/api/extra/preloadstory":
             if preloaded_story is None:
                 response_body = (json.dumps({}).encode())
@@ -1953,7 +1969,7 @@ Enter Prompt:<br>
         return
 
     def do_POST(self):
-        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey
+        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey, multiplayer_turn, multiplayer_story
         contlenstr = self.headers['content-length']
         content_length = 0
         body = None
@@ -2048,6 +2064,24 @@ Enter Prompt:<br>
                     lastlogprobs = handle.last_logprobs()
                     logprobsdict = parse_last_logprobs(lastlogprobs)
             response_body = (json.dumps({"logprobs":logprobsdict}).encode())
+
+        elif self.path.endswith(('/api/extra/multiplayer/setstory')):
+            if not self.secure_endpoint():
+                return
+            if not has_multiplayer:
+                response_code = 400
+                response_body = (json.dumps({"success":False, "error":"Multiplayer not enabled!"}).encode())
+
+            try:
+                incoming_story = json.loads(body) # ensure submitted data is valid json
+                multiplayer_story = json.dumps(incoming_story) #save latest story
+                multiplayer_turn += 1
+                response_body = (json.dumps({"success":True,"turn":multiplayer_turn}).encode())
+
+            except Exception as e:
+                utfprint("Multiplayer Set Story - Body Error: " + str(e))
+                response_code = 400
+                response_body = (json.dumps({"success": False, "error":"Submitted story invalid!"}).encode())
 
         if response_body is not None:
             self.send_response(response_code)
