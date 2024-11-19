@@ -2077,13 +2077,18 @@ Enter Prompt:<br>
                 fullupdate = incoming_story.get('fullupdate', False)
                 storybody = incoming_story.get('data', None) #should be a compressed string
                 if storybody:
-                    multiplayer_story_data_compressed = str(storybody) #save latest story
-                    if fullupdate:
-                        multiplayer_turn_minor = 0
-                        multiplayer_turn_major += 1
+                    storybody = str(storybody)
+                    if len(storybody) > (1024*1024*3): #limit story to 3mb
+                        response_code = 400
+                        response_body = (json.dumps({"success":False, "error":"Story is too long!"}).encode())
                     else:
-                        multiplayer_turn_minor += 1
-                    response_body = (json.dumps({"success":True,"turn_major":multiplayer_turn_major,"turn_minor":multiplayer_turn_minor}).encode())
+                        multiplayer_story_data_compressed = str(storybody) #save latest story
+                        if fullupdate:
+                            multiplayer_turn_minor = 0
+                            multiplayer_turn_major += 1
+                        else:
+                            multiplayer_turn_minor += 1
+                        response_body = (json.dumps({"success":True,"turn_major":multiplayer_turn_major,"turn_minor":multiplayer_turn_minor}).encode())
                 else:
                     response_code = 400
                     response_body = (json.dumps({"success":False, "error":"No story submitted!"}).encode())
