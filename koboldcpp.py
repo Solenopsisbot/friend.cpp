@@ -65,8 +65,9 @@ runmode_untouched = True
 modelfile_extracted_meta = None
 importvars_in_progress = False
 has_multiplayer = False
-multiplayer_story = None #stores the full json of the current multiplayer session
-multiplayer_turn = 0 # to keep track of when a client needs to sync their stories
+multiplayer_story_data_compressed = None #stores the full compressed story of the current multiplayer session
+multiplayer_turn_major = 0 # to keep track of when a client needs to sync their stories
+multiplayer_turn_minor = 0
 preloaded_story = None
 chatcompl_adapter = None
 embedded_kailite = None
@@ -1795,7 +1796,7 @@ Enter Prompt:<br>
 
     def do_GET(self):
         global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
-        global has_multiplayer, multiplayer_turn, multiplayer_story, maxctx, maxhordelen, friendlymodelname, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath
+        global has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, maxctx, maxhordelen, friendlymodelname, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath
         self.path = self.path.rstrip('/')
         response_body = None
         content_type = 'application/json'
@@ -1934,15 +1935,15 @@ Enter Prompt:<br>
             if not has_multiplayer:
                 response_body = (json.dumps({"error":"Multiplayer not enabled!"}).encode())
             else:
-                response_body = (json.dumps({"turn":multiplayer_turn,"idle":(0 if modelbusy.locked() else 1)}).encode())
+                response_body = (json.dumps({"turn_major":multiplayer_turn_major,"turn_minor":multiplayer_turn_minor,"idle":(0 if modelbusy.locked() else 1)}).encode())
 
         elif self.path=="/api/extra/multiplayer/getstory":
             if not has_multiplayer:
                 response_body = (json.dumps({"error":"Multiplayer not enabled!"}).encode())
-            elif multiplayer_story is None:
+            elif multiplayer_story_data_compressed is None:
                 response_body = (json.dumps({"gamestarted":True,"prompt":"","memory":"","authorsnote":"","anotetemplate":"","actions":[],"actions_metadata":{},"worldinfo":[],"wifolders_d":{},"wifolders_l":[]}).encode())
             else:
-                response_body = multiplayer_story
+                response_body = multiplayer_story_data_compressed.encode()
 
         elif self.path=="/api/extra/preloadstory":
             if preloaded_story is None:
@@ -1969,7 +1970,7 @@ Enter Prompt:<br>
         return
 
     def do_POST(self):
-        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey, multiplayer_turn, multiplayer_story
+        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed
         contlenstr = self.headers['content-length']
         content_length = 0
         body = None
@@ -2071,13 +2072,21 @@ Enter Prompt:<br>
             if not has_multiplayer:
                 response_code = 400
                 response_body = (json.dumps({"success":False, "error":"Multiplayer not enabled!"}).encode())
-
             try:
                 incoming_story = json.loads(body) # ensure submitted data is valid json
-                multiplayer_story = json.dumps(incoming_story) #save latest story
-                multiplayer_turn += 1
-                response_body = (json.dumps({"success":True,"turn":multiplayer_turn}).encode())
-
+                fullupdate = incoming_story.get('fullupdate', False)
+                storybody = incoming_story.get('data', None) #should be a compressed string
+                if storybody:
+                    multiplayer_story_data_compressed = str(storybody) #save latest story
+                    if fullupdate:
+                        multiplayer_turn_minor = 0
+                        multiplayer_turn_major += 1
+                    else:
+                        multiplayer_turn_minor += 1
+                    response_body = (json.dumps({"success":True,"turn_major":multiplayer_turn_major,"turn_minor":multiplayer_turn_minor}).encode())
+                else:
+                    response_code = 400
+                    response_body = (json.dumps({"success":False, "error":"No story submitted!"}).encode())
             except Exception as e:
                 utfprint("Multiplayer Set Story - Body Error: " + str(e))
                 response_code = 400
