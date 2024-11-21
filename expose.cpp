@@ -275,14 +275,10 @@ extern "C"
         return (int)last_stop_reason;
     }
 
+    static std::string chat_template = "";
     const char* get_chat_template() {
-        // we need to keep this around
-        static std::string* ct = nullptr;
-        if (ct == nullptr) {
-            ct = new std::string();
-        }
-        *ct = gpttype_get_chat_template();
-        return ct->c_str();
+        chat_template = gpttype_get_chat_template();
+        return chat_template.c_str();
     }
 
     const char* get_pending_output() {

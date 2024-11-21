@@ -1914,6 +1914,11 @@ Enter Prompt:<br>
         elif self.path.endswith(('/.well-known/serviceinfo')):
             response_body = (json.dumps({"version":"0.2","software":{"name":"KoboldCpp","version":KcppVersion,"repository":"https://github.com/LostRuins/koboldcpp","homepage":"https://github.com/LostRuins/koboldcpp","logo":"https://raw.githubusercontent.com/LostRuins/koboldcpp/refs/heads/concedo/niko.ico"},"api":{"koboldai":{"name":"KoboldAI API","rel_url":"/api","documentation":"https://lite.koboldai.net/koboldcpp_api","version":KcppVersion},"openai":{"name":"OpenAI API","rel_url ":"/v1","documentation":"https://openai.com/documentation/api","version":KcppVersion}}}).encode())
 
+        elif self.path=="/props":
+            ctbytes = handle.get_chat_template()
+            chat_template = ctypes.string_at(ctbytes).decode("UTF-8","ignore")
+            response_body = (json.dumps({"chat_template":chat_template,"total_slots":1}).encode())
+
         elif self.path=="/api" or self.path=="/docs" or self.path.startswith(('/api/?json=','/api?json=','/docs/?json=','/docs?json=')):
             content_type = 'text/html'
             if embedded_kcpp_docs is None:
@@ -1957,13 +1962,6 @@ Enter Prompt:<br>
             self.send_header("location", self.path)
             self.end_headers(content_type='text/html')
             return None
-        elif self.path.endswith('/props'):
-            ctbytes = handle.get_chat_template()
-            chat_template = ctypes.string_at(ctbytes).decode("UTF-8")
-            # TODO: decide whether to add or skip below settings from llama.cpp /props endpoint.
-            # { "default_generation_settings", ctx_server.default_generation_settings_for_props },
-            # { "total_slots",                 ctx_server.params.n_parallel },
-            response_body = (json.dumps({"chat_template":chat_template}).encode())
 
         if response_body is None:
             self.send_response(404)
