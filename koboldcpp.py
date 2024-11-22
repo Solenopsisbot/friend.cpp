@@ -66,8 +66,8 @@ modelfile_extracted_meta = None
 importvars_in_progress = False
 has_multiplayer = False
 multiplayer_story_data_compressed = None #stores the full compressed story of the current multiplayer session
-multiplayer_turn_major = 0 # to keep track of when a client needs to sync their stories
-multiplayer_turn_minor = 0
+multiplayer_turn_major = 1 # to keep track of when a client needs to sync their stories
+multiplayer_turn_minor = 1
 multiplayer_dataformat = "" # used to tell what is the data payload in saved story. set by client
 preloaded_story = None
 chatcompl_adapter = None
@@ -2127,7 +2127,7 @@ Enter Prompt:<br>
                             multiplayer_story_data_compressed = str(storybody) #save latest story
                             multiplayer_dataformat = dataformat
                             if fullupdate:
-                                multiplayer_turn_minor = 0
+                                multiplayer_turn_minor = 1
                                 multiplayer_turn_major += 1
                             else:
                                 multiplayer_turn_minor += 1
