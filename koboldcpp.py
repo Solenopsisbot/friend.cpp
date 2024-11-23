@@ -1332,7 +1332,7 @@ def parse_last_logprobs(lastlogprobs):
 
 def transform_genparams(genparams, api_format):
     global chatcompl_adapter
-    #api format 1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama
+    #api format 1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat
     #alias all nonstandard alternative names for rep pen.
     rp1 = genparams.get('repeat_penalty', 1.0)
     rp2 = genparams.get('repetition_penalty', 1.0)
@@ -1350,7 +1350,7 @@ def transform_genparams(genparams, api_format):
     elif api_format==2:
         pass
 
-    elif api_format==3 or api_format==4:
+    elif api_format==3 or api_format==4 or api_format==7:
         default_max_tok = (400 if api_format==4 else 200)
         genparams["max_length"] = genparams.get('max_tokens', genparams.get('max_completion_tokens', default_max_tok))
         presence_penalty = genparams.get('presence_penalty', genparams.get('frequency_penalty', 0.0))
@@ -1364,7 +1364,7 @@ def transform_genparams(genparams, api_format):
         genparams["sampler_seed"] = tryparseint(genparams.get('seed', -1))
         genparams["mirostat"] = genparams.get('mirostat_mode', 0)
 
-        if api_format==4:
+        if api_format==4 or api_format==7: #handle ollama chat here too
             # translate openai chat completion messages format into one big string.
             messages_array = genparams.get('messages', [])
             default_adapter = {} if chatcompl_adapter is None else chatcompl_adapter
@@ -1482,6 +1482,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
         user_message_start = adapter_obj.get("user_start", "### Instruction:")
         assistant_message_start = adapter_obj.get("assistant_start", "### Response:")
         genparams["prompt"] = f"{user_message_start} In one sentence, write a descriptive caption for this image.\n{assistant_message_start}"
+
     elif api_format==6:
         detokstr = ""
         tokids = genparams.get('context', [])
@@ -1606,6 +1607,8 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             oldprompt = genparams.get('ollamabodyprompt', "")
             tokarr = tokenize_ids(oldprompt+recvtxt,False)
             res = {"model": friendlymodelname,"created_at": str(datetime.now(timezone.utc).isoformat()),"response":recvtxt,"done": True,"context": tokarr,"total_duration": 1,"load_duration": 1,"prompt_eval_count": prompttokens,"prompt_eval_duration": 1,"eval_count": comptokens,"eval_duration": 1}
+        elif api_format == 7:
+            res = {"model": friendlymodelname,"created_at": str(datetime.now(timezone.utc).isoformat()),"message":{"role":"assistant","content":recvtxt},"done": True,"total_duration": 1,"load_duration": 1,"prompt_eval_count": prompttokens,"prompt_eval_duration": 1,"eval_count": comptokens,"eval_duration": 1}
         else:
             res = {"results": [{"text": recvtxt, "finish_reason": currfinishreason, "logprobs":logprobsdict, "prompt_tokens": prompttokens, "completion_tokens": comptokens}]}
 
@@ -2250,7 +2253,7 @@ Enter Prompt:<br>
         try:
             sse_stream_flag = False
 
-            api_format = 0 #1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama
+            api_format = 0 #1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat
             is_imggen = False
             is_transcribe = False
 
@@ -2284,6 +2287,8 @@ Enter Prompt:<br>
 
             if self.path.endswith('/api/generate'):
                 api_format = 6
+            if self.path.endswith('/api/chat'):
+                api_format = 7
 
             if self.path.endswith('/sdapi/v1/txt2img') or self.path.endswith('/sdapi/v1/img2img'):
                 is_imggen = True
