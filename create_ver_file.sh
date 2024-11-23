@@ -7,5 +7,5 @@ vminor=$(echo $extracted_ver | cut -d '.' -f2)
 echo "Major Version: $vmajor"
 echo "Minor Version: $vminor"
 cp version_template.txt version.txt
-sed -i "s/MYVER_MAJOR/$vmajor/g" version.txt
-sed -i "s/MYVER_MINOR/$vminor/g" version.txt
+sed "s/MYVER_MAJOR/$vmajor/g" version.txt > tempversion.txt && mv tempversion.txt version.txt
+sed "s/MYVER_MINOR/$vminor/g" version.txt > tempversion.txt && mv tempversion.txt version.txt

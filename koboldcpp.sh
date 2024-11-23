@@ -26,8 +26,12 @@ if [ -n "$NOAVX2" ]; then
 fi
 
 bin/micromamba run -r conda -p conda/envs/linux make -j$(nproc) LLAMA_VULKAN=1 LLAMA_CLBLAST=1 LLAMA_CUBLAS=1 LLAMA_PORTABLE=1 LLAMA_ADD_CONDA_PATHS=1 $LLAMA_NOAVX2_FLAG
+if [ $? -ne 0 ]; then
+    echo "Error: make failed."
+    exit 1
+fi
 bin/micromamba run -r conda -p conda/envs/linux chmod +x "./create_ver_file.sh"
-bin/micromamba run -r conda -p conda/envs/linux . create_ver_file.sh
+bin/micromamba run -r conda -p conda/envs/linux ./create_ver_file.sh
 
 if [[ $1 == "rebuild" ]]; then
 	echo Rebuild complete, you can now try to launch Koboldcpp.
