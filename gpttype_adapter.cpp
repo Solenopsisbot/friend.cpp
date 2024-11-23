@@ -2528,6 +2528,17 @@ std::vector<int> gpttype_get_token_arr(const std::string & input, bool addbos)
     return toks;
 }
 
+std::string gpttype_detokenize(const std::vector<int> & inputids, bool render_special)
+{
+    std::string output = "";
+    for (auto eid : inputids)
+    {
+        std::string tokenizedstr = FileFormatTokenizeID(eid, file_format, render_special);
+        output += tokenizedstr;
+    }
+    return output;
+}
+
 const std::string & gpttype_get_pending_output()
 {
     if(kcpp_data==nullptr)
