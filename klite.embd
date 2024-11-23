@@ -12,7 +12,7 @@ Current version indicated by LITEVER below.
 -->
 
 <script>
-	const LITEVER = 190;
+	const LITEVER = 191;
 	const urlParams = new URLSearchParams(window.location.search);
 	var localflag = true;
 	const STORAGE_PREFIX = (localflag?"e_":"")+"kaihordewebui_";
@@ -4119,7 +4119,7 @@ Current version indicated by LITEVER below.
 	const poll_interval_base_text = 500;
 	const poll_interval_base_img = 3800;
 	const poll_interval_idle = 1000;
-	const poll_interval_multiplayer = 1500; //every 1.5s
+	const poll_interval_multiplayer = 1000; //every 1s
 
 	const horde_base_url = "https://aihorde.net"
 	const horde_perf_endpoint = horde_base_url + "/api/v2/status/performance";
@@ -4220,6 +4220,7 @@ Current version indicated by LITEVER below.
 	const SAVE_SLOTS = 6;
 
 	//all configurable globals
+	var unique_uid = "LITE_UID_"+(Math.floor(100000 + Math.random() * 900000)).toString();
 	var perfdata = null; //if it's null, we are not connected
 	var models_data = [];
 	var selected_models = []; //this stores ALL selected models properties as array of objects
@@ -4412,6 +4413,7 @@ Current version indicated by LITEVER below.
 		inject_timestamps: false,
 		inject_chatnames_instruct: false,
 		inject_jailbreak_instruct: false,
+		adventure_dicemode: false,
 		idle_responses: 0,
 		idle_duration: 60,
 		export_settings: true, //affects if settings are included with the story and sharelinks
@@ -4429,7 +4431,7 @@ Current version indicated by LITEVER below.
 		rep_pen: 1.07,
 		rep_pen_range: 360,
 		rep_pen_slope: 0.7,
-		temperature: 0.7,
+		temperature: 0.8,
 		dynatemp_range: 0.0,
 		dynatemp_exponent: 1.0,
 		smoothing_factor: 0.0,
@@ -4476,7 +4478,7 @@ Current version indicated by LITEVER below.
 			rep_pen_slope: defaultsettings.rep_pen_slope,
 			sampler_order: defaultsettings.sampler_order
 		},
-		{"preset":"Simple Logical","description":"A very predictable preset with low randomness.","temp":0.3,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":100,"top_p":0.6,"min_p":0.0,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.02,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,0,1,3,4,2,5]},{"preset":"Simple Balanced","description":"A good balanced preset with medium randomness.","temp":0.7,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":100,"top_p":0.92,"min_p":0.0,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.07,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,0,1,3,4,2,5]},{"preset":"Simple Creative","description":"A wild and unpredictable preset with higher randomness.","temp":1.0,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":100,"top_p":0.98,"min_p":0.0,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.15,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,0,1,3,4,2,5]},{"preset":"Basic Min-P","description":"A good default for Min-P, only works on backends with min-p.","temp":1.25,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":0,"top_p":1,"min_p":0.1,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.03,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,5,0,1,3,4,2]},{"preset":"Basic DynaTemp","description":"A good default for DynaTemp, only works on backends with it.","temp":1.25,"dynatemp_range":0.75,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":0,"top_p":1,"min_p":0.05,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.03,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,5,0,1,3,4,2]},{"preset":"Basic SmoothSample","description":"A good default for Smooth Sampling, only works on backends with it.","temp":1.0,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.25,"top_k":0,"top_p":1,"min_p":0.05,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.03,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,5,0,1,3,4,2]},{"preset":"Basic SillyTavern","description":"Similar to default preset used in SillyTavern.","temp":0.7,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":40,"top_p":0.6,"min_p":0,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1.0,"rep_pen":1.18,"rep_pen_range":1024,"rep_pen_slope":0.8,"sampler_order":[6,0,1,3,4,2,5]},{"preset":"Neutral (Disabled)","description":"Sets all samplers neutralized, allowing you to customize your own.","temp":1.0,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":200,"top_p":1.0,"min_p":0.0,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.0,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,0,1,3,4,2,5]},{"preset":"CoherentCreativity (Legacy)","description":"Legacy preset. A good balance between coherence, creativity, and quality of prose.","rep_pen":1.2,"rep_pen_range":360,"rep_pen_slope":0,"sampler_order":[6,5,0,2,3,1,4],"temp":0.5,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"tfs":0.99,"top_a":0,"top_k":0,"top_p":1,"min_p":0.0,"presence_penalty":0.0,"typical":1},{"preset":"Godlike (Legacy)","description":"Legacy preset. Makes AI give a descriptive and sensual output.","temp":0.7,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":0,"top_p":0.5,"min_p":0.0,"presence_penalty":0.0,"top_a":0.75,"typical":0.19,"tfs":0.97,"rep_pen":1.1,"rep_pen_range":1024,"rep_pen_slope":0.7,"sampler_order":[6,5,4,3,2,1,0]},{"preset":"LiminalDrift (Legacy)","description":"Legacy preset. Sometimes surreal situations arise based on information already present in the story.","temp":0.66,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":0,"top_p":1,"min_p":0.0,"presence_penalty":0.0,"top_a":0.96,"typical":0.6,"tfs":1,"rep_pen":1.1,"rep_pen_range":1024,"rep_pen_slope":0.7,"sampler_order":[6,4,5,1,0,2,3]}
+		{"preset":"Simple Logical","description":"A very predictable preset with low randomness.","temp":0.3,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":100,"top_p":0.6,"min_p":0.0,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.02,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,0,1,3,4,2,5]},{"preset":"Simple Balanced","description":"A good balanced preset with medium randomness.","temp":0.8,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":100,"top_p":0.92,"min_p":0.0,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.07,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,0,1,3,4,2,5]},{"preset":"Simple Creative","description":"A wild and unpredictable preset with higher randomness.","temp":1.0,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":100,"top_p":0.98,"min_p":0.0,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.15,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,0,1,3,4,2,5]},{"preset":"Basic Min-P","description":"A good default for Min-P, only works on backends with min-p.","temp":1.25,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":0,"top_p":1,"min_p":0.1,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.03,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,5,0,1,3,4,2]},{"preset":"Basic DynaTemp","description":"A good default for DynaTemp, only works on backends with it.","temp":1.25,"dynatemp_range":0.75,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":0,"top_p":1,"min_p":0.05,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.03,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,5,0,1,3,4,2]},{"preset":"Basic SmoothSample","description":"A good default for Smooth Sampling, only works on backends with it.","temp":1.0,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.25,"top_k":0,"top_p":1,"min_p":0.05,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.03,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,5,0,1,3,4,2]},{"preset":"Basic SillyTavern","description":"Similar to default preset used in SillyTavern.","temp":0.8,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":40,"top_p":0.6,"min_p":0,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1.0,"rep_pen":1.18,"rep_pen_range":1024,"rep_pen_slope":0.8,"sampler_order":[6,0,1,3,4,2,5]},{"preset":"Neutral (Disabled)","description":"Sets all samplers neutralized, allowing you to customize your own.","temp":1.0,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":200,"top_p":1.0,"min_p":0.0,"presence_penalty":0.0,"top_a":0,"typical":1,"tfs":1,"rep_pen":1.0,"rep_pen_range":360,"rep_pen_slope":0.7,"sampler_order":[6,0,1,3,4,2,5]},{"preset":"CoherentCreativity (Legacy)","description":"Legacy preset. A good balance between coherence, creativity, and quality of prose.","rep_pen":1.2,"rep_pen_range":360,"rep_pen_slope":0,"sampler_order":[6,5,0,2,3,1,4],"temp":0.5,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"tfs":0.99,"top_a":0,"top_k":0,"top_p":1,"min_p":0.0,"presence_penalty":0.0,"typical":1},{"preset":"Godlike (Legacy)","description":"Legacy preset. Makes AI give a descriptive and sensual output.","temp":0.7,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":0,"top_p":0.5,"min_p":0.0,"presence_penalty":0.0,"top_a":0.75,"typical":0.19,"tfs":0.97,"rep_pen":1.1,"rep_pen_range":1024,"rep_pen_slope":0.7,"sampler_order":[6,5,4,3,2,1,0]},{"preset":"LiminalDrift (Legacy)","description":"Legacy preset. Sometimes surreal situations arise based on information already present in the story.","temp":0.66,"dynatemp_range":0.0,"dynatemp_exponent":1.0,"smoothing_factor":0.0,"top_k":0,"top_p":1,"min_p":0.0,"presence_penalty":0.0,"top_a":0.96,"typical":0.6,"tfs":1,"rep_pen":1.1,"rep_pen_range":1024,"rep_pen_slope":0.7,"sampler_order":[6,4,5,1,0,2,3]}
 	];
 
 	const instructpresets = [
@@ -7499,6 +7501,7 @@ Current version indicated by LITEVER below.
 		multiplayer_active = false;
 		multiplayer_last_turn_major = 0;
 		multiplayer_last_turn_minor = 0;
+		max_poll_limit_counter = 0;
 		schedule_multiplayer_minor_change = false;
 		schedule_multiplayer_major_change = false;
 		multiplayer_override_name = "";
@@ -7559,6 +7562,7 @@ Current version indicated by LITEVER below.
 			body: JSON.stringify({
 				"full_update": fullupdate,
 				"data": subdata,
+				"sender": unique_uid,
 				"data_format":"kcpp_lzma_b64",
 			})
 		})
@@ -7567,7 +7571,7 @@ Current version indicated by LITEVER below.
 			if(vals && vals.success)
 			{
 				let expected_major = (fullupdate?(1+multiplayer_last_turn_major):multiplayer_last_turn_major);
-				let expected_minor = (fullupdate?0:(multiplayer_last_turn_minor+1));
+				let expected_minor = (fullupdate?1:(multiplayer_last_turn_minor+1));
 				if(vals.turn_major==expected_major && vals.turn_minor==expected_minor)
 				{
 					//if nobody else updated, disregard our own updates
@@ -10283,6 +10287,7 @@ Current version indicated by LITEVER below.
 		document.getElementById("inject_timestamps").checked = localsettings.inject_timestamps;
 		document.getElementById("inject_chatnames_instruct").checked = localsettings.inject_chatnames_instruct;
 		document.getElementById("inject_jailbreak_instruct").checked = localsettings.inject_jailbreak_instruct;
+		document.getElementById("adventure_dicemode").checked = localsettings.adventure_dicemode;
 		document.getElementById("idle_responses").value = localsettings.idle_responses;
 		document.getElementById("idle_duration").value = localsettings.idle_duration;
 		document.getElementById("fix_alpaca_leak").checked = localsettings.fix_alpaca_leak;
@@ -10604,6 +10609,7 @@ Current version indicated by LITEVER below.
 		localsettings.inject_timestamps = (document.getElementById("inject_timestamps").checked ? true : false);
 		localsettings.inject_chatnames_instruct = (document.getElementById("inject_chatnames_instruct").checked ? true : false);
 		localsettings.inject_jailbreak_instruct = (document.getElementById("inject_jailbreak_instruct").checked ? true : false);
+		localsettings.adventure_dicemode = (document.getElementById("adventure_dicemode").checked ? true : false);
 		localsettings.idle_responses = document.getElementById("idle_responses").value;
 		localsettings.idle_duration = document.getElementById("idle_duration").value;
 		localsettings.fix_alpaca_leak = (document.getElementById("fix_alpaca_leak").checked ? true : false);
@@ -11316,6 +11322,7 @@ Current version indicated by LITEVER below.
 		completed_imgs_meta = {};
 		localsettings.adventure_is_action = false;
 		prev_hl_chunk = null;
+		gametext_focused = false;
 		last_token_budget = "";
 		groupchat_removals = [];
 		welcome = "";
@@ -12296,7 +12303,14 @@ Current version indicated by LITEVER below.
 			}
 			if (localsettings.opmode == 2 && newgen != "" && localsettings.adventure_is_action) {
 				//append action for adventure mode, except for the first turn.
-				newgen = "\n\n\> " + newgen + "\n\n";
+				let diceaddon = "";
+				if(localsettings.adventure_dicemode)
+				{
+					let roll = Math.floor(Math.random() * 20) + 1;
+					let outcome = (roll==20?"Perfect":(roll>16?"Excellent":(roll>12?"Good":(roll>8?"Fair":(roll>4?"Poor":"Terrible")))));
+					diceaddon = ` (Rolled 1d20=${roll}/20, Outcome: ${outcome})`;
+				}
+				newgen = "\n\n\> " + newgen + diceaddon + "\n\n";
 			}
 			//if very first submission is a story in adventure mode, swap to action
 			if(localsettings.opmode == 2 && newgen != "" && gametext_arr.length==0)
@@ -14756,7 +14770,7 @@ Current version indicated by LITEVER below.
 		let newgenempty = (document.getElementById("input_text").value == "");
 		let	chatinputempty = (document.getElementById("cht_inp").value == "" && document.getElementById("corpo_cht_inp").value == "");
 		if ((localsettings.opmode == 1 || localsettings.opmode == 2 || localsettings.opmode == 3 || localsettings.opmode == 4)
-		&& localsettings.idle_responses > 0 && newgenempty && chatinputempty && !document.getElementById("btnsend").disabled && idle_triggered_counter<localsettings.idle_responses && !is_popup_open())
+		&& localsettings.idle_responses > 0 && newgenempty && chatinputempty && !gametext_focused && !document.getElementById("btnsend").disabled && idle_triggered_counter<localsettings.idle_responses && !is_popup_open())
 		{
 			idle_timer += 1000;
 			if (idle_timer > idle_timer_max) {
@@ -15068,6 +15082,7 @@ Current version indicated by LITEVER below.
 		});
 	}
 
+	var max_poll_limit_counter = 0;
 	function poll_multiplayer()
 	{
 		if(!is_using_kcpp_with_multiplayer() || !multiplayer_active)
@@ -15084,20 +15099,34 @@ Current version indicated by LITEVER below.
 			schedule_multiplayer_minor_change = false;
 			schedule_multiplayer_major_change = false;
 		}
-		else
+		else if(max_poll_limit_counter<4)
 		{
 			//listen for others changes
+			max_poll_limit_counter += 1;
+			let newgenempty = (document.getElementById("input_text").value == "");
+			let	chatinputempty = (document.getElementById("cht_inp").value == "" && document.getElementById("corpo_cht_inp").value == "");
 			fetch(apply_proxy_url(custom_kobold_endpoint + koboldcpp_multiplayer_check_endpoint),
 			{
-				method: 'GET',
+				method: 'POST',
 				headers: get_kobold_header(),
+				body: JSON.stringify({
+				"sender": unique_uid,
+				"senderbusy": (!newgenempty || !chatinputempty || gametext_focused),
+				}),
 			})
 			.then(response => response.json())
 			.then(vals => {
+				max_poll_limit_counter -= 1;
 				if(!multiplayer_pinged)
 				{
 					multiplayer_pinged = true;
 					render_gametext(false);
+				}
+				if(vals && vals.idle!=1)
+				{
+					document.getElementById("connectstatusmultiplayer").innerHTML = "<span title='Multiplayer Active' class='color_red'>M.P. (Active)</span>";
+				}else{
+					document.getElementById("connectstatusmultiplayer").innerHTML = "<span title='Multiplayer Idle'>M.P. (Idle)</span>";
 				}
 				if(vals && vals.turn_major && multiplayer_active && (vals.turn_major != multiplayer_last_turn_major || vals.turn_minor != multiplayer_last_turn_minor))
 				{
@@ -15106,7 +15135,7 @@ Current version indicated by LITEVER below.
 					multiplayer_last_turn_minor = vals.turn_minor;
 					fetch(apply_proxy_url(custom_kobold_endpoint + koboldcpp_multiplayer_fetch_endpoint),
 					{
-						method: 'GET',
+						method: 'POST',
 						headers: get_kobold_header(),
 					})
 					.then(response => response.text())
@@ -15121,7 +15150,14 @@ Current version indicated by LITEVER below.
 								{
 									retry_preserve_last = false;
 									synchro_pending_stream = "";
-									abort_generation();
+									if(synchro_pending_stream != "" && pending_response_id != "")
+									{
+										abort_generation();
+									}
+									else
+									{
+										clear_poll_flags();
+									}
 								}
 								//minor change, load only gametext_arr. assume its v1
 								gametext_arr = [];
@@ -15359,12 +15395,14 @@ Current version indicated by LITEVER below.
 		}
 	}
 
+	var gametext_focused = false;
 	function click_gametext()
 	{
 		if(document.getElementById("allowediting").checked)
 		{
 			const isSupported = typeof window.getSelection !== "undefined";
 			if (isSupported) {
+				gametext_focused = true;
 				warn_on_quit = true;
 				const selection = window.getSelection();
 				let foundparent = null;
@@ -15432,6 +15470,7 @@ Current version indicated by LITEVER below.
 	}
 
 	function merge_edit_field() {
+		gametext_focused = false;
 		if (gametext_arr.length > 0 && document.getElementById("allowediting").checked) {
 			let oldInnerText = concat_gametext(false, "","","");
 			let gametext_elem = document.getElementById("gametext");
@@ -18343,7 +18382,7 @@ Current version indicated by LITEVER below.
 				</div>
 				<div id="connectstatusdiv">
 					<div id="connectstatus">Connecting</div>
-					<div class="hidden" id="connectstatusmultiplayer">Multiplayer</div>
+					<div class="hidden" style="font-size: 12px;" id="connectstatusmultiplayer"></div>
 				</div>
 			</div>
 		</div>
@@ -19111,6 +19150,11 @@ Current version indicated by LITEVER below.
 							<div class="justifyleft settingsmall">Assistant Jailbreak <span class="helpicon">?<span
 								class="helptext">Automatically injects a jailbreak message after every instruct query, to make the AI more likely to obey you.</span></span></div>
 							<input type="checkbox" title="Assistant Jailbreak" id="inject_jailbreak_instruct" style="margin:0px 0px 0px auto;">
+						</div>
+						<div class="settinglabel">
+							<div class="justifyleft settingsmall">Adventure DiceMode <span class="helpicon">?<span
+								class="helptext">Allows the AI to roll a dice to determine the outcome of your actions in adventure mode.</span></span></div>
+							<input type="checkbox" title="Adventure DiceMode" id="adventure_dicemode" style="margin:0px 0px 0px auto;">
 						</div>
 
 					</div>

@@ -69,7 +69,7 @@ multiplayer_story_data_compressed = None #stores the full compressed story of th
 multiplayer_turn_major = 1 # to keep track of when a client needs to sync their stories
 multiplayer_turn_minor = 1
 multiplayer_dataformat = "" # used to tell what is the data payload in saved story. set by client
-multiplayer_lastactive = 0 # timestamp of last activity
+multiplayer_lastactive = {} # timestamp of last activity for each unique player
 preloaded_story = None
 chatcompl_adapter = None
 embedded_kailite = None
@@ -1693,6 +1693,14 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(e)
 
+    def get_multiplayer_idle_state(self,userid):
+        if modelbusy.locked():
+            return False
+        for key, value in multiplayer_lastactive.items():
+            if key!=userid and time.time()-value<6: #6s to idle
+                return False
+        return True
+
     def secure_endpoint(self): #returns false if auth fails. caller should exit
         #handle password stuff
         if password and password !="":
@@ -1939,20 +1947,6 @@ Enter Prompt:<br>
             content_type = 'text/html'
             response_body = (f"KoboldCpp OpenAI compatible endpoint is running!\n\nFor usage reference, see https://platform.openai.com/docs/api-reference").encode()
 
-        elif self.path=="/api/extra/multiplayer/status":
-            if not has_multiplayer:
-                response_body = (json.dumps({"error":"Multiplayer not enabled!"}).encode())
-            else:
-                response_body = (json.dumps({"turn_major":multiplayer_turn_major,"turn_minor":multiplayer_turn_minor,"idle":(0 if (modelbusy.locked() or (time.time()-multiplayer_lastactive)<10) else 1),"data_format":multiplayer_dataformat}).encode())
-
-        elif self.path=="/api/extra/multiplayer/getstory":
-            if not has_multiplayer:
-                response_body = ("".encode())
-            elif multiplayer_story_data_compressed is None:
-                response_body = ("".encode())
-            else:
-                response_body = multiplayer_story_data_compressed.encode()
-
         elif self.path=="/api/extra/preloadstory":
             if preloaded_story is None:
                 response_body = (json.dumps({}).encode())
@@ -2107,7 +2101,36 @@ Enter Prompt:<br>
                     logprobsdict = parse_last_logprobs(lastlogprobs)
             response_body = (json.dumps({"logprobs":logprobsdict}).encode())
 
-        elif self.path.endswith(('/api/extra/multiplayer/setstory')):
+        elif self.path=="/api/extra/multiplayer/status":
+            if not self.secure_endpoint():
+                return
+            if not has_multiplayer:
+                response_body = (json.dumps({"error":"Multiplayer not enabled!"}).encode())
+            else:
+                sender = ""
+                senderbusy = False
+                try:
+                    tempbody = json.loads(body)
+                    if isinstance(tempbody, dict):
+                        sender = tempbody.get('sender', "")
+                        senderbusy = tempbody.get('senderbusy', False)
+                except Exception as e:
+                    pass
+                if sender!="" and senderbusy:
+                    multiplayer_lastactive[sender] = int(time.time())
+                response_body = (json.dumps({"turn_major":multiplayer_turn_major,"turn_minor":multiplayer_turn_minor,"idle":self.get_multiplayer_idle_state(sender),"data_format":multiplayer_dataformat}).encode())
+
+        elif self.path=="/api/extra/multiplayer/getstory":
+            if not self.secure_endpoint():
+                return
+            if not has_multiplayer:
+                response_body = ("".encode())
+            elif multiplayer_story_data_compressed is None:
+                response_body = ("".encode())
+            else:
+                response_body = multiplayer_story_data_compressed.encode()
+
+        elif self.path=="/api/extra/multiplayer/setstory":
             if not self.secure_endpoint():
                 return
             if not has_multiplayer:
@@ -2118,6 +2141,7 @@ Enter Prompt:<br>
                     incoming_story = json.loads(body) # ensure submitted data is valid json
                     fullupdate = incoming_story.get('full_update', False)
                     dataformat = incoming_story.get('data_format', "")
+                    sender = incoming_story.get('sender', "")
                     storybody = incoming_story.get('data', None) #should be a compressed string
                     if storybody:
                         storybody = str(storybody)
@@ -2127,13 +2151,14 @@ Enter Prompt:<br>
                         else:
                             multiplayer_story_data_compressed = str(storybody) #save latest story
                             multiplayer_dataformat = dataformat
-                            multiplayer_lastactive = int(time.time())
+                            if sender!="":
+                                multiplayer_lastactive[sender] = int(time.time())
                             if fullupdate:
                                 multiplayer_turn_minor = 1
                                 multiplayer_turn_major += 1
                             else:
                                 multiplayer_turn_minor += 1
-                            response_body = (json.dumps({"success":True,"turn_major":multiplayer_turn_major,"turn_minor":multiplayer_turn_minor,"idle":(0 if (modelbusy.locked() or (time.time()-multiplayer_lastactive)<10) else 1),"data_format":multiplayer_dataformat}).encode())
+                            response_body = (json.dumps({"success":True,"turn_major":multiplayer_turn_major,"turn_minor":multiplayer_turn_minor,"idle":self.get_multiplayer_idle_state(sender),"data_format":multiplayer_dataformat}).encode())
                     else:
                         response_code = 400
                         response_body = (json.dumps({"success":False, "error":"No story submitted!"}).encode())
