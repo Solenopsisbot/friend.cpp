@@ -2533,6 +2533,10 @@ std::string gpttype_detokenize(const std::vector<int> & inputids, bool render_sp
     std::string output = "";
     for (auto eid : inputids)
     {
+        if(eid<0 || eid>=n_vocab)
+        {
+            continue;
+        }
         std::string tokenizedstr = FileFormatTokenizeID(eid, file_format, render_special);
         output += tokenizedstr;
     }
