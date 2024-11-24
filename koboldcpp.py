@@ -35,6 +35,7 @@ dry_seq_break_max = 128
 handle = None
 friendlymodelname = "inactive"
 friendlysdmodelname = "inactive"
+lastgeneratedcomfyimg = b''
 fullsdmodelpath = ""  #if empty, it's not initialized
 mmprojpath = "" #if empty, it's not initialized
 password = "" #if empty, no auth key required
@@ -1141,6 +1142,29 @@ def sd_load_model(model_filename,vae_filename,lora_filename,t5xxl_filename,clipl
     ret = handle.sd_load_model(inputs)
     return ret
 
+def sd_comfyui_tranform_params(genparams):
+    promptobj = genparams.get('prompt', None)
+    if promptobj and isinstance(promptobj, dict):
+        temp = promptobj.get('3', {})
+        temp = temp.get('inputs', {})
+        genparams["seed"] = temp.get("seed", -1)
+        genparams["steps"] = temp.get("steps", 20)
+        genparams["cfg_scale"] = temp.get("cfg", 5)
+        genparams["sampler_name"] = temp.get("sampler_name", "euler")
+        temp = promptobj.get('5', {})
+        temp = temp.get('inputs', {})
+        genparams["width"] = temp.get("width", 512)
+        genparams["height"] = temp.get("height", 512)
+        temp = promptobj.get('6', {})
+        temp = temp.get('inputs', {})
+        genparams["prompt"] = temp.get("text", "high quality")
+        temp = promptobj.get('7', {})
+        temp = temp.get('inputs', {})
+        genparams["negative_prompt"] = temp.get("text", "")
+    else:
+        print("Warning: ComfyUI Payload Missing!")
+    return genparams
+
 def sd_generate(genparams):
     global maxctx, args, currentusergenkey, totalgens, pendingabortkey, chatcompl_adapter
 
@@ -1853,7 +1877,7 @@ Enter Prompt:<br>
 
     def do_GET(self):
         global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
-        global has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath
+        global has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath
         self.path = self.path.rstrip('/')
         response_body = None
         content_type = 'application/json'
@@ -1952,8 +1976,19 @@ Enter Prompt:<br>
                 response_body = (json.dumps([]).encode())
             else:
                 response_body = (json.dumps([{"title":friendlysdmodelname,"model_name":friendlysdmodelname,"hash":"8888888888","sha256":"8888888888888888888888888888888888888888888888888888888888888888","filename":fullsdmodelpath,"config": None}]).encode())
+        elif self.path.endswith('/api/models/checkpoints') or self.path.endswith('/models/checkpoints'): #emulate comfyui, duplication is redundant but added for clarity
+            if friendlysdmodelname=="inactive" or fullsdmodelpath=="":
+                response_body = (json.dumps([]).encode())
+            else:
+                response_body = (json.dumps([friendlysdmodelname]).encode())
+        elif self.path=='/view' or self.path=='/api/view' or self.path.startswith('/view?') or self.path.startswith('/api/view?'): #emulate comfyui
+            content_type = 'image/png'
+            response_body = lastgeneratedcomfyimg
+        elif self.path=='/history' or self.path=='/api/history' or self.path.startswith('/api/history/') or self.path.startswith('/history/'): #emulate comfyui
+            imgdone = (False if lastgeneratedcomfyimg==b'' else True)
+            response_body = (json.dumps({"12345678-0000-0000-0000-000000000001":{"prompt":[0,"12345678-0000-0000-0000-000000000001",{"3":{"class_type":"KSampler","inputs":{"cfg":5.0,"denoise":1.0,"latent_image":["5",0],"model":["4",0],"negative":["7",0],"positive":["6",0],"sampler_name":"euler","scheduler":"normal","seed":1,"steps":20}},"4":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"koboldcpp"}},"5":{"class_type":"EmptyLatentImage","inputs":{"batch_size":1,"height":512,"width":512}},"6":{"class_type":"CLIPTextEncode","inputs":{"clip":["4",1],"text":"prompt"}},"7":{"class_type":"CLIPTextEncode","inputs":{"clip":["4",1],"text":""}},"8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},"9":{"class_type":"SaveImage","inputs":{"filename_prefix":"kliteimg","images":["8",0]}}},{},["9"]],"outputs":{"9":{"images":[{"filename":"kliteimg_00001_.png","subfolder":"","type":"output"}]}},"status":{"status_str":"success","completed":imgdone,"messages":[["execution_start",{"prompt_id":"12345678-0000-0000-0000-000000000001","timestamp":1}],["execution_cached",{"nodes":[],"prompt_id":"12345678-0000-0000-0000-000000000001","timestamp":1}],["execution_success",{"prompt_id":"12345678-0000-0000-0000-000000000001","timestamp":1}]]},"meta":{"9":{"node_id":"9","display_node":"9","parent_node":None,"real_node_id":"9"}}}}).encode())
         elif self.path.endswith('/sdapi/v1/options'):
-           response_body = (json.dumps({"samples_format":"png","sd_model_checkpoint":friendlysdmodelname}).encode())
+            response_body = (json.dumps({"samples_format":"png","sd_model_checkpoint":friendlysdmodelname}).encode())
         elif self.path.endswith('/sdapi/v1/samplers'):
             if friendlysdmodelname=="inactive" or fullsdmodelpath=="":
                 response_body = (json.dumps([]).encode())
@@ -2018,7 +2053,7 @@ Enter Prompt:<br>
         return
 
     def do_POST(self):
-        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive
+        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey, lastgeneratedcomfyimg, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive
         contlenstr = self.headers['content-length']
         content_length = 0
         body = None
@@ -2255,6 +2290,7 @@ Enter Prompt:<br>
 
             api_format = 0 #1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat
             is_imggen = False
+            is_comfyui_imggen = False
             is_transcribe = False
 
             if self.path.endswith('/request'):
@@ -2290,8 +2326,10 @@ Enter Prompt:<br>
             if self.path.endswith('/api/chat'):
                 api_format = 7
 
-            if self.path.endswith('/sdapi/v1/txt2img') or self.path.endswith('/sdapi/v1/img2img'):
+            if self.path=="/prompt" or self.path.endswith('/sdapi/v1/txt2img') or self.path.endswith('/sdapi/v1/img2img'):
                 is_imggen = True
+                if self.path=="/prompt":
+                    is_comfyui_imggen = True
 
             if self.path.endswith('/api/extra/transcribe') or self.path.endswith('/v1/audio/transcriptions'):
                 is_transcribe = True
@@ -2357,8 +2395,19 @@ Enter Prompt:<br>
 
                 elif is_imggen: #image gen
                     try:
+                        if is_comfyui_imggen:
+                            lastgeneratedcomfyimg = b''
+                            genparams = sd_comfyui_tranform_params(genparams)
                         gen = sd_generate(genparams)
-                        genresp = (json.dumps({"images":[gen],"parameters":{},"info":""}).encode())
+                        genresp = None
+                        if is_comfyui_imggen:
+                            if gen:
+                                lastgeneratedcomfyimg = base64.b64decode(gen)
+                            else:
+                                lastgeneratedcomfyimg = b''
+                            genresp = (json.dumps({"prompt_id": "12345678-0000-0000-0000-000000000001","number": 0,"node_errors":{}}).encode())
+                        else:
+                            genresp = (json.dumps({"images":[gen],"parameters":{},"info":""}).encode())
                         self.send_response(200)
                         self.send_header('content-length', str(len(genresp)))
                         self.end_headers(content_type='application/json')
