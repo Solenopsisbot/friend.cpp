@@ -53,7 +53,7 @@ std::string lora_filename = "";
 std::string lora_base = "";
 std::string mmproj_filename = "";
 std::string draftmodel_filename = "";
-int speculative_chunk_amt = 12; //do it in chunks of this many tokens
+int speculative_chunk_amt = 8; //do it in chunks of this many tokens
 bool generation_finished;
 float last_process_time = 0;
 float last_eval_time = 0;
