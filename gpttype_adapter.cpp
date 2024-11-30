@@ -43,7 +43,6 @@
 #include "common/common.h"
 
 //const
-const int speculative_chunk_amt = 16; //do it in chunks of this many tokens
 const int extra_context_handle_fragmentation = 120;
 const int LLAVA_TOKEN_IDENTIFIER_A = -998; //alternate between both, changing when image changes
 const int LLAVA_TOKEN_IDENTIFIER_B = -999;
@@ -54,6 +53,7 @@ std::string lora_filename = "";
 std::string lora_base = "";
 std::string mmproj_filename = "";
 std::string draftmodel_filename = "";
+int speculative_chunk_amt = 16; //do it in chunks of this many tokens
 bool generation_finished;
 float last_process_time = 0;
 float last_eval_time = 0;
@@ -2267,6 +2267,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             else
             {
                 printf("\nAttempting to load draft model for speculative decoding. It will be fully offloaded if possible. Vocab must match the main model.\n");
+                speculative_chunk_amt = inputs.draft_amount;
                 speculative_decoding_setup(draftmodel_filename, model_params, llama_ctx_params, n_vocab);
             }
         }
