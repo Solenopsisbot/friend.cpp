@@ -53,7 +53,7 @@ std::string lora_filename = "";
 std::string lora_base = "";
 std::string mmproj_filename = "";
 std::string draftmodel_filename = "";
-int speculative_chunk_amt = 16; //do it in chunks of this many tokens
+int speculative_chunk_amt = 12; //do it in chunks of this many tokens
 bool generation_finished;
 float last_process_time = 0;
 float last_eval_time = 0;
@@ -680,7 +680,10 @@ static speculative_draft_result speculative_decoding_eval_chunk(llama_context * 
         ++draft_npast;
     }
     //now that we have our drafted tokens, we form a batch and PP it
-    kcpp_embd_batch batch2 = kcpp_embd_batch(drafted_ids, actual_npast, true);
+
+    std::vector<int> real_embd = drafted_ids;
+    real_embd.pop_back();
+    kcpp_embd_batch batch2 = kcpp_embd_batch(real_embd, actual_npast, true);
     auto draftok = (llama_decode(main_ctx, batch2.batch)==0); //actual eval for big model
     if(!draftok)
     {
