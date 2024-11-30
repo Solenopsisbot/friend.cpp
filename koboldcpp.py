@@ -545,6 +545,15 @@ def tryparseint(value):
     except ValueError:
         return value
 
+def is_incomplete_utf8_sequence(byte_seq): #note, this will only flag INCOMPLETE sequences, corrupted ones will be ignored.
+    try:
+        byte_seq.decode('utf-8')
+        return False  # Valid UTF-8
+    except UnicodeDecodeError as e:
+        if e.reason == 'unexpected end of data':
+            return True #incomplete sequence
+        return False #invalid sequence, but not incomplete
+
 def unpack_to_dir(destpath = ""):
     import shutil
     srcpath = os.path.abspath(os.path.dirname(__file__))
@@ -1697,7 +1706,8 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     newbyte = ctypes.string_at(token)
                     incomplete_token_buffer += bytearray(newbyte)
                     tokenSeg = incomplete_token_buffer.decode("UTF-8","ignore")
-                    badFragment = (tokenSeg==" " and len(incomplete_token_buffer)>1) #partial incomplete unicode
+                    incseq = is_incomplete_utf8_sequence(incomplete_token_buffer)
+                    badFragment = (tokenSeg==" " and len(incomplete_token_buffer)>1) or incseq #partial incomplete unicode
                     if tokenSeg!="" and not badFragment:
                         incomplete_token_buffer.clear()
                         tokenStr += tokenSeg
