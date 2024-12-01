@@ -4640,7 +4640,9 @@ def main(launch_args,start_server=True):
         print(args)
         # Flush stdout for win32 issue with regards to piping in terminals,
         # especially before handing over to C++ context.
-        print(f"==========\nLoading model: {modelname}", flush=True)
+        print(f"==========\nLoading Text Model: {modelname}", flush=True)
+        if not modelname.endswith(".bin") and not modelname.endswith(".gguf"):
+            print("WARNING: Selected Text Model does not seem to be a GGUF file! Are you sure you picked the right file?")
         loadok = load_model(modelname)
         print("Load Text Model OK: " + str(loadok))
 
