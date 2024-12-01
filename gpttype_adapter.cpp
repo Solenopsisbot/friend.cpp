@@ -628,16 +628,25 @@ static void speculative_decoding_setup(std::string spec_model_filename, const ll
     else
     {
         int draftvocab = llama_n_vocab(draftmodel);
-        if(draftvocab!=base_n_vocab)
-        {
-            printf("Error: Draft model vocab of (%d) does not match base vocab of (%d). Speculative decoding cannot be used!\n",draftvocab,base_n_vocab);
-            llama_free(draft_ctx);
-            draft_ctx = nullptr;
-        }else if(llama_model_is_recurrent(draftmodel))
+        if(llama_model_is_recurrent(draftmodel))
         {
             printf("Error: Speculative decoding cannot be used with Recurrent draft models!\n");
             llama_free(draft_ctx);
             draft_ctx = nullptr;
+        }
+        else if(draftvocab!=base_n_vocab)
+        {
+            if(debugmode==1)
+            {
+                printf("WARNING: Draft model vocab of (%d) does not match base vocab of (%d).\nIn debug mode, this restriction is bypassed. However, speculative decoding may malfunction!\n",draftvocab,base_n_vocab);
+            }
+            else
+            {
+                printf("Error: Draft model vocab of (%d) does not match base vocab of (%d). Speculative decoding cannot be used!\n",draftvocab,base_n_vocab);
+                printf("If you REALLY want to override this, run in --debugmode and this restriction will be disabled. However, you might encounter unwanted results!\n");
+                llama_free(draft_ctx);
+                draft_ctx = nullptr;
+            }
         }
     }
 }
@@ -1866,11 +1875,11 @@ static float CalcGradientAIRopeFreqBase(float original_rope_base, int n_ctx_trai
         {
             printf("Trained max context length (value:%.d).\n", n_ctx_train);
             printf("Desired context length (value:%.d).\n", n_ctx_desired);
-            printf("Solar context multiplier (value:%.3f).\n", ctx_multiplier);
-            printf("Chi context train (value:%.3f).\n", chi_ctx_train_value);
-            printf("Chi chosen context (value:%.3f).\n", chi_ctx_value);
-            printf("Log Chi context train (value:%.3f).\n", log10f(chi_ctx_train_value));
-            printf("Log Chi chosen context (value:%.3f).\n", log10f(chi_ctx_value));
+            // printf("Solar context multiplier (value:%.3f).\n", ctx_multiplier);
+            // printf("Chi context train (value:%.3f).\n", chi_ctx_train_value);
+            // printf("Chi chosen context (value:%.3f).\n", chi_ctx_value);
+            // printf("Log Chi context train (value:%.3f).\n", log10f(chi_ctx_train_value));
+            // printf("Log Chi chosen context (value:%.3f).\n", log10f(chi_ctx_value));
             printf("RoPE Frequency Base value (value:%.3f).\n", original_rope_base);
             printf("RoPE base calculated via Gradient AI formula. (value:%.1f).\n", gradient_ai_rope_freq_base_value);
         }
