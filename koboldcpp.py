@@ -56,7 +56,7 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.79.1"
+KcppVersion = "1.80"
 showdebug = True
 guimode = False
 showsamplerwarning = True
@@ -2014,7 +2014,7 @@ Enter Prompt:<br>
             if friendlysdmodelname=="inactive" or fullsdmodelpath=="":
                 response_body = (json.dumps([]).encode())
             else:
-                response_body = (json.dumps([{"name":"Euler a","aliases":["k_euler_a","k_euler_ancestral"],"options":{}},{"name":"Euler","aliases":["k_euler"],"options":{}},{"name":"Heun","aliases":["k_heun"],"options":{}},{"name":"DPM2","aliases":["k_dpm_2"],"options":{}},{"name":"DPM++ 2M","aliases":["k_dpmpp_2m"],"options":{}},{"name":"LCM","aliases":["k_lcm"],"options":{}}]).encode())
+                response_body = (json.dumps([{"name":"Euler","aliases":["k_euler"],"options":{}},{"name":"Euler a","aliases":["k_euler_a","k_euler_ancestral"],"options":{}},{"name":"Heun","aliases":["k_heun"],"options":{}},{"name":"DPM2","aliases":["k_dpm_2"],"options":{}},{"name":"DPM++ 2M","aliases":["k_dpmpp_2m"],"options":{}},{"name":"LCM","aliases":["k_lcm"],"options":{}}]).encode())
         elif self.path.endswith('/sdapi/v1/latent-upscale-modes'):
            response_body = (json.dumps([]).encode())
         elif self.path.endswith('/sdapi/v1/upscalers'):
