@@ -4389,6 +4389,8 @@ def main(launch_args,start_server=True):
             filename = args.chatcompletionsadapter
             if not filename.endswith(".json"):
                 filename += ".json"
+            #strip to just the filename
+            filename = os.path.basename(filename)
             premade_adapt_path = os.path.join(adapt_dir,filename)
             if premade_adapt_path and os.path.exists(premade_adapt_path):
                 ccadapter_path = os.path.abspath(premade_adapt_path)
