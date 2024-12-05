@@ -37,6 +37,8 @@ jobs:
           export CC=aarch64-linux-gnu-gcc
           export CXX=aarch64-linux-gnu-g++
           export AR=aarch64-linux-gnu-ar
+          export UNAME_M=aarch64
+          export UNAME_S=Linux
 
           make LLAMA_PORTABLE=1
           chmod +x './create_ver_file.sh'
