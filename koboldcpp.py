@@ -264,6 +264,7 @@ class whisper_load_model_inputs(ctypes.Structure):
 class whisper_generation_inputs(ctypes.Structure):
     _fields_ = [("prompt", ctypes.c_char_p),
                 ("audio_data", ctypes.c_char_p),
+                ("suppress_non_speech", ctypes.c_bool),
                 ("quiet", ctypes.c_bool)]
 
 class whisper_generation_outputs(ctypes.Structure):
@@ -1236,6 +1237,7 @@ def whisper_generate(genparams):
     inputs.prompt = prompt.encode("UTF-8")
     inputs.audio_data = audio_data.encode("UTF-8")
     inputs.quiet = is_quiet
+    inputs.suppress_non_speech = genparams.get("suppress_non_speech", False)
     ret = handle.whisper_generate(inputs)
     outstr = ""
     if ret.status==1:
@@ -1392,9 +1394,11 @@ def transform_genparams(genparams, api_format):
                     messages_string += tools_message_start
 
                 # content can be a string or an array of objects
-                curr_content = message['content']
-                if isinstance(curr_content, str):
-                        messages_string += curr_content
+                curr_content = message.get("content",None)
+                if not curr_content:
+                    pass  # do nothing
+                elif isinstance(curr_content, str):
+                    messages_string += curr_content
                 elif isinstance(curr_content, list): #is an array
                     for item in curr_content:
                         if item['type']=="text":
