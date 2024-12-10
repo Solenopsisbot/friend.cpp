@@ -21,6 +21,10 @@ ifndef UNAME_M
 UNAME_M := $(shell uname -m)
 endif
 
+ifndef UNAME_O
+UNAME_O := $(shell uname -o)
+endif
+
 ifneq ($(shell grep -e "Arch Linux" -e "ID_LIKE=arch" /etc/os-release 2>/dev/null),)
 ARCH_ADD = -lcblas
 endif
@@ -132,6 +136,9 @@ ifdef LLAMA_PERF
 	CFLAGS   += -DGGML_PERF
 	CXXFLAGS += -DGGML_PERF
 endif
+
+CCV := $(shell $(CC) --version | head -n 1)
+CXXV := $(shell $(CXX) --version | head -n 1)
 
 # Architecture specific
 # TODO: probably these flags need to be tweaked on some architectures
@@ -315,9 +322,19 @@ ifneq ($(filter aarch64%,$(UNAME_M)),)
 		CFLAGS +=
 		CXXFLAGS +=
 	else
-		# sve is cooked so we are disabling it
-		CFLAGS += -mcpu=native -DLLAMA_NOSVE
-		CXXFLAGS += -mcpu=native -DLLAMA_NOSVE
+		# sve is cooked on termux so we are disabling it
+		ifeq ($(UNAME_O), Android)
+			ifneq ($(findstring clang, $(CCV)), )
+				CFLAGS += -mcpu=native+nosve
+				CXXFLAGS += -mcpu=native+nosve
+			else
+				CFLAGS += -mcpu=native
+				CXXFLAGS += -mcpu=native
+			endif
+		else
+			CFLAGS += -mcpu=native
+			CXXFLAGS += -mcpu=native
+		endif
 	endif
 endif
 
@@ -406,17 +423,16 @@ else
 	endif
 endif
 
-CCV := $(shell $(CC) --version | head -n 1)
-CXXV := $(shell $(CXX) --version | head -n 1)
 
 #
 # Print build information
 #
 
-$(info I llama.cpp build info: )
+$(info I koboldcpp build info: )
 $(info I UNAME_S:  $(UNAME_S))
 $(info I UNAME_P:  $(UNAME_P))
 $(info I UNAME_M:  $(UNAME_M))
+$(info I UNAME_O:  $(UNAME_O))
 $(info I CFLAGS:   $(CFLAGS))
 $(info I CXXFLAGS: $(CXXFLAGS))
 $(info I LDFLAGS:  $(LDFLAGS))
