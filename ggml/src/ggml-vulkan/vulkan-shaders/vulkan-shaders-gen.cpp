@@ -263,18 +263,22 @@ std::map<std::string, std::string> merge_maps(const std::map<std::string, std::s
 }
 
 static std::vector<std::future<void>> compiles;
+// void string_to_spv(const std::string& _name, const std::string& in_fname, const std::map<std::string, std::string>& defines, bool fp16 = true, bool coopmat = false, bool coopmat2 = false, bool f16acc = false) {
+//     {
+//         // wait until fewer than N compiles are in progress.
+//         // 16 is an arbitrary limit, the goal is to avoid "failed to create pipe" errors.
+//         uint32_t N = 16;
+//         std::unique_lock<std::mutex> guard(compile_count_mutex);
+//         while (compile_count >= N) {
+//             compile_count_cond.wait(guard);
+//         }
+//         compile_count++;
+//     }
+//     compiles.push_back(std::async(string_to_spv_func, _name, in_fname, defines, fp16, coopmat, coopmat2, f16acc));
+// }
 void string_to_spv(const std::string& _name, const std::string& in_fname, const std::map<std::string, std::string>& defines, bool fp16 = true, bool coopmat = false, bool coopmat2 = false, bool f16acc = false) {
-    {
-        // wait until fewer than N compiles are in progress.
-        // 16 is an arbitrary limit, the goal is to avoid "failed to create pipe" errors.
-        uint32_t N = 16;
-        std::unique_lock<std::mutex> guard(compile_count_mutex);
-        while (compile_count >= N) {
-            compile_count_cond.wait(guard);
-        }
-        compile_count++;
-    }
-    compiles.push_back(std::async(string_to_spv_func, _name, in_fname, defines, fp16, coopmat, coopmat2, f16acc));
+     std::cout << "string_to_spv: " << _name << "\n";
+     string_to_spv_func(_name, in_fname, defines, fp16, coopmat, coopmat2, f16acc); //non async version
 }
 
 void matmul_shaders(bool fp16, bool matmul_id, bool coopmat, bool coopmat2, bool f16acc) {

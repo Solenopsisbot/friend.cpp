@@ -64,7 +64,7 @@
 
 #ifdef _WIN32
 
-using dl_handle = typename std::remove_pointer<HMODULE>::type;
+using dl_handle = std::remove_pointer_t<HMODULE>;
 
 struct dl_handle_deleter {
     void operator()(HMODULE handle) {
@@ -452,75 +452,70 @@ static std::string backend_filename_suffix() {
 static ggml_backend_reg_t ggml_backend_load_best(const char * name, bool silent, const char * user_search_path) {
     // enumerate all the files that match [lib]ggml-name-*.[so|dll] in the search paths
      // TODO: search system paths
+    std::string file_prefix = backend_filename_prefix() + name + "-";
+    std::vector<std::string> search_paths;
+    if (user_search_path == nullptr) {
+        search_paths.push_back("./");
+        search_paths.push_back(get_executable_path());
+    } else {
+#if defined(_WIN32)
+        search_paths.push_back(std::string(user_search_path) + "\\");
+#else
+        search_paths.push_back(std::string(user_search_path) + "/");
+#endif
+    }
 
-    //not available as we don't want c++17
-    printf("\nggml_backend_load_best NOT AVAILABLE!\n");
-    return nullptr;
+    int best_score = 0;
+    std::string best_path;
 
-//     std::string file_prefix = backend_filename_prefix() + name + "-";
-//     std::vector<std::string> search_paths;
-//     if (user_search_path == nullptr) {
-//         search_paths.push_back("./");
-//         search_paths.push_back(get_executable_path());
-//     } else {
-// #if defined(_WIN32)
-//         search_paths.push_back(std::string(user_search_path) + "\\");
-// #else
-//         search_paths.push_back(std::string(user_search_path) + "/");
-// #endif
-//     }
+    namespace fs = std::filesystem;
+    for (const auto & search_path : search_paths) {
+        if (!fs::exists(search_path)) {
+            continue;
+        }
+        for (const auto & entry : fs::directory_iterator(search_path)) {
+            if (entry.is_regular_file()) {
+                std::string filename = entry.path().filename().string();
+                std::string ext = entry.path().extension().string();
+                if (filename.find(file_prefix) == 0 && ext == backend_filename_suffix()) {
+                    dl_handle_ptr handle { dl_load_library(entry.path().c_str()) };
+                    if (!handle && !silent) {
+                        GGML_LOG_ERROR("%s: failed to load %s\n", __func__, entry.path().string().c_str());
+                    }
+                    if (handle) {
+                        auto score_fn = (ggml_backend_score_t) dl_get_sym(handle.get(), "ggml_backend_score");
+                        if (score_fn) {
+                            int s = score_fn();
+#ifndef NDEBUG
+                            GGML_LOG_DEBUG("%s: %s score: %d\n", __func__, entry.path().string().c_str(), s);
+#endif
+                            if (s > best_score) {
+                                best_score = s;
+                                best_path = entry.path().string();
+                            }
+                        } else {
+                            if (!silent) {
+                                GGML_LOG_INFO("%s: failed to find ggml_backend_score in %s\n", __func__, entry.path().string().c_str());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
-//     int best_score = 0;
-//     std::string best_path;
+    if (best_score == 0) {
+        // try to load the base backend
+        for (const auto & search_path : search_paths) {
+            std::string path = search_path + backend_filename_prefix() + name + backend_filename_suffix();
+            if (fs::exists(path)) {
+                return get_reg().load_backend(path.c_str(), silent);
+            }
+        }
+        return nullptr;
+    }
 
-//     namespace fs = std::filesystem;
-//     for (const auto & search_path : search_paths) {
-//         if (!fs::exists(search_path)) {
-//             continue;
-//         }
-//         for (const auto & entry : fs::directory_iterator(search_path)) {
-//             if (entry.is_regular_file()) {
-//                 std::string filename = entry.path().filename().string();
-//                 std::string ext = entry.path().extension().string();
-//                 if (filename.find(file_prefix) == 0 && ext == backend_filename_suffix()) {
-//                     dl_handle_ptr handle { dl_load_library(entry.path().c_str()) };
-//                     if (!handle && !silent) {
-//                         GGML_LOG_ERROR("%s: failed to load %s\n", __func__, entry.path().string().c_str());
-//                     }
-//                     if (handle) {
-//                         auto score_fn = (ggml_backend_score_t) dl_get_sym(handle.get(), "ggml_backend_score");
-//                         if (score_fn) {
-//                             int s = score_fn();
-// #ifndef NDEBUG
-//                             GGML_LOG_DEBUG("%s: %s score: %d\n", __func__, entry.path().string().c_str(), s);
-// #endif
-//                             if (s > best_score) {
-//                                 best_score = s;
-//                                 best_path = entry.path().string();
-//                             }
-//                         } else {
-//                             if (!silent) {
-//                                 GGML_LOG_INFO("%s: failed to find ggml_backend_score in %s\n", __func__, entry.path().string().c_str());
-//                             }
-//                         }
-//                     }
-//                 }
-//             }
-//         }
-//     }
-
-//     if (best_score == 0) {
-//         // try to load the base backend
-//         for (const auto & search_path : search_paths) {
-//             std::string path = search_path + backend_filename_prefix() + name + backend_filename_suffix();
-//             if (fs::exists(path)) {
-//                 return get_reg().load_backend(path.c_str(), silent);
-//             }
-//         }
-//         return nullptr;
-//     }
-
-//     return get_reg().load_backend(best_path.c_str(), silent);
+    return get_reg().load_backend(best_path.c_str(), silent);
 }
 
 void ggml_backend_load_all() {
