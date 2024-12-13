@@ -597,18 +597,18 @@ struct kcpp_embd_batch { //duplcated from llava_embd_batch
 };
 
 //loads a model for speculative decoding.
-static void speculative_decoding_setup(std::string spec_model_filename, const llama_model_params & base_model_params, const llama_context_params & base_ctx_params, int base_n_vocab)
+static void speculative_decoding_setup(std::string spec_model_filename, const llama_model_params & base_model_params, const llama_context_params & base_ctx_params, int base_n_vocab, int draftgpuid, int draftgpulayers)
 {
     llama_model_params draft_model_params = llama_model_default_params();
     llama_context_params draft_ctx_params = llama_context_default_params();
 
     draft_model_params.use_mmap = base_model_params.use_mmap;
     draft_model_params.use_mlock = base_model_params.use_mlock;
-    draft_model_params.n_gpu_layers = 999; //assume they want to fully offload the speculative model. Otherwise, why even use it?
+    draft_model_params.n_gpu_layers = draftgpulayers; //layers offload the speculative model.
     draft_ctx_params.n_ctx = base_ctx_params.n_ctx;
     draft_ctx_params.logits_all = false;
     draft_ctx_params.offload_kqv = base_ctx_params.offload_kqv;
-    draft_model_params.main_gpu = base_model_params.main_gpu;
+    draft_model_params.main_gpu = (draftgpuid>=0?draftgpuid:base_model_params.main_gpu);
     draft_model_params.split_mode = llama_split_mode::LLAMA_SPLIT_MODE_LAYER;
     draft_ctx_params.n_batch = base_ctx_params.n_batch;
     draft_ctx_params.n_ubatch = base_ctx_params.n_ubatch;
@@ -2187,7 +2187,21 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             OldBPETokenizerMode = true;
         }
 
+        std::vector<llama_model_kv_override> kvos; //ensure it keeps in scope until model is created
+        if(inputs.moe_experts>0)
+        {
+            printf("\nOverriding number of experts to %d\n",inputs.moe_experts);
+            llama_model_kv_override kvo;
+            const char * moekey = "llama.expert_used_count";
+            std::strncpy(kvo.key, moekey, sizeof(kvo.key) - 1);
+            kvo.key[sizeof(kvo.key) - 1] = '\0'; // Ensure null termination
+            kvo.tag = LLAMA_KV_OVERRIDE_TYPE_INT;
+            kvo.val_i64 = inputs.moe_experts;
+            kvos.push_back(kvo);
+            model_params.kv_overrides = kvos.data();
+        }
         llama_model * llamamodel = llama_load_model_from_file(kcpp_data->model_filename.c_str(), model_params);
+
         if(overwriteRope)
         {
             llama_ctx_params.rope_freq_base = rope_freq_base;
@@ -2280,7 +2294,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             {
                 printf("\nAttempting to load draft model for speculative decoding. It will be fully offloaded if possible. Vocab must match the main model.\n");
                 speculative_chunk_amt = inputs.draft_amount;
-                speculative_decoding_setup(draftmodel_filename, model_params, llama_ctx_params, n_vocab);
+                speculative_decoding_setup(draftmodel_filename, model_params, llama_ctx_params, n_vocab, inputs.draft_gpuid, inputs.draft_gpulayers);
             }
         }
 

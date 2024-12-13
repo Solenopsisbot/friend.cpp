@@ -42,6 +42,8 @@ struct load_model_inputs
     const char * lora_base = nullptr;
     const char * draftmodel_filename = nullptr;
     const int draft_amount = 8;
+    const int draft_gpulayers = 999;
+    const int draft_gpuid = -1;
     const char * mmproj_filename = nullptr;
     const bool use_mmap = false;
     const bool use_mlock = false;
@@ -57,6 +59,7 @@ struct load_model_inputs
     const int gpulayers = 0;
     const float rope_freq_scale = 1.0f;
     const float rope_freq_base = 10000.0f;
+    const int moe_experts = -1;
     const bool flash_attention = false;
     const float tensor_split[tensor_split_max] = {};
     const int quant_k = 0;

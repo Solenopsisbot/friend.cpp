@@ -143,6 +143,8 @@ class load_model_inputs(ctypes.Structure):
                 ("lora_base", ctypes.c_char_p),
                 ("draftmodel_filename", ctypes.c_char_p),
                 ("draft_amount", ctypes.c_int),
+                ("draft_gpulayers", ctypes.c_int),
+                ("draft_gpuid", ctypes.c_int),
                 ("mmproj_filename", ctypes.c_char_p),
                 ("use_mmap", ctypes.c_bool),
                 ("use_mlock", ctypes.c_bool),
@@ -158,6 +160,7 @@ class load_model_inputs(ctypes.Structure):
                 ("gpulayers", ctypes.c_int),
                 ("rope_freq_scale", ctypes.c_float),
                 ("rope_freq_base", ctypes.c_float),
+                ("moe_experts", ctypes.c_int),
                 ("flash_attention", ctypes.c_bool),
                 ("tensor_split", ctypes.c_float * tensor_split_max),
                 ("quant_k", ctypes.c_int),
@@ -369,7 +372,7 @@ def init_library():
             libname = lib_clblast_noavx2
         elif (args.usevulkan is not None) and file_exists(lib_vulkan_noavx2):
             libname = lib_vulkan_noavx2
-        elif (args.usecpu and args.nommap) and file_exists(lib_failsafe):
+        elif ((args.usecpu and args.nommap) or args.failsafe) and file_exists(lib_failsafe):
             print("!!! Attempting to use FAILSAFE MODE !!!")
             libname = lib_failsafe
         elif file_exists(lib_noavx2):
@@ -853,6 +856,8 @@ def load_model(model_filename):
 
     inputs.draftmodel_filename = args.draftmodel.encode("UTF-8") if args.draftmodel else "".encode("UTF-8")
     inputs.draft_amount = args.draftamount
+    inputs.draft_gpulayers = args.draftgpulayers
+    inputs.draft_gpuid = args.draftgpuid
     inputs.mmproj_filename = args.mmproj.encode("UTF-8") if args.mmproj else "".encode("UTF-8")
     inputs.use_smartcontext = args.smartcontext
     inputs.use_contextshift = (0 if args.noshift else 1)
@@ -879,6 +884,7 @@ def load_model(model_filename):
         else:
             inputs.tensor_split[n] = 0
 
+    inputs.moe_experts = args.moeexperts
     inputs = set_backend_props(inputs)
 
     inputs.executable_path = (getdirpath()+"/").encode("UTF-8")
@@ -2741,6 +2747,7 @@ def show_gui():
     customrope_scale = ctk.StringVar(value="1.0")
     customrope_base = ctk.StringVar(value="10000")
     chatcompletionsadapter_var = ctk.StringVar()
+    moeexperts_var = ctk.StringVar(value=str(-1))
 
     model_var = ctk.StringVar()
     lora_var = ctk.StringVar()
@@ -2749,6 +2756,8 @@ def show_gui():
     mmproj_var = ctk.StringVar()
     draftmodel_var = ctk.StringVar()
     draftamount_var = ctk.StringVar(value=str(default_draft_amount))
+    draftgpulayers_var = ctk.StringVar(value=str(999))
+    draftgpuid_var = ctk.StringVar(value=str(-1))
     nomodel = ctk.IntVar(value=0)
 
     port_var = ctk.StringVar(value=defaultport)
@@ -2835,8 +2844,8 @@ def show_gui():
         return slider, sliderLabel, titleLabel
 
 
-    def makelabelentry(parent, text, var, row=0, width=50, padx=8, singleline=False, tooltip=""):
-        label = makelabel(parent, text, row, 0, tooltip)
+    def makelabelentry(parent, text, var, row=0, width=50, padx=8, singleline=False, tooltip="", labelpadx=8):
+        label = makelabel(parent, text, row, 0, tooltip, padx=labelpadx)
         entry = ctk.CTkEntry(parent, width=width, textvariable=var)
         entry.grid(row=row, column=(0 if singleline else 1), padx=padx, sticky="nw")
         return entry, label
@@ -3221,6 +3230,7 @@ def show_gui():
     noqkvlabel = makelabel(tokens_tab,"Requirments Not Met",31,0,"Requires FlashAttention ENABLED and ContextShift DISABLED.")
     noqkvlabel.configure(text_color="#ff5555")
     qkvslider,qkvlabel,qkvtitle = makeslider(tokens_tab, "Quantize KV Cache:", quantkv_text, quantkv_var, 0, 2, 30, set=0,tooltip="Enable quantization of KV cache.\nRequires FlashAttention and disables ContextShift.")
+    makelabelentry(tokens_tab, "MoE Experts:", moeexperts_var, row=35, padx=100, singleline=True, tooltip="Override number of MoE experts.")
 
     togglerope(1,1,1)
     toggleflashattn(1,1,1)
@@ -3235,6 +3245,8 @@ def show_gui():
     makefileentry(model_tab, "Vision mmproj:", "Select Vision mmproj File", mmproj_var, 7,width=280,singlerow=True,tooltiptxt="Select a mmproj file to use for vision models like LLaVA.\nLeave blank to skip.")
     makefileentry(model_tab, "Draft Model:", "Select Speculative Text Model File", draftmodel_var, 9,width=280,singlerow=True,tooltiptxt="Select a draft text model file to use for speculative decoding.\nLeave blank to skip.")
     makelabelentry(model_tab, "Draft Amount: ", draftamount_var, 11, 50,padx=100,singleline=True,tooltip="How many tokens to draft per chunk before verifying results")
+    makelabelentry(model_tab, "GPU ID: ", draftgpuid_var, 11, 50,padx=210,singleline=True,tooltip="Which GPU to use for draft model. Only works if multi-gpu (All) selected in main model.", labelpadx=160)
+    makelabelentry(model_tab, "Layers: ", draftgpulayers_var, 11, 50,padx=320,singleline=True,tooltip="How many layers to GPU offload for the draft model", labelpadx=270)
     makefileentry(model_tab, "Preload Story:", "Select Preloaded Story File", preloadstory_var, 15,width=280,singlerow=True,tooltiptxt="Select an optional KoboldAI JSON savefile \nto be served on launch to any client.")
     makefileentry(model_tab, "ChatCompletions Adapter:", "Select ChatCompletions Adapter File", chatcompletionsadapter_var, 24, width=250, filetypes=[("JSON Adapter", "*.json")], tooltiptxt="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.")
     def pickpremadetemplate():
@@ -3454,6 +3466,7 @@ def show_gui():
             args.noavx2 = True
             args.usecpu = True
             args.nommap = True
+            args.failsafe = True
         if tensor_split_str_vars.get()!="":
             tssv = tensor_split_str_vars.get()
             if "," in tssv:
@@ -3462,15 +3475,12 @@ def show_gui():
                 args.tensor_split = [float(x) for x in tssv.split(" ")]
 
         args.blasthreads = None if blas_threads_var.get()=="" else int(blas_threads_var.get())
-
         args.blasbatchsize = int(blasbatchsize_values[int(blas_size_var.get())])
         args.forceversion = 0 if version_var.get()=="" else int(version_var.get())
-
         args.contextsize = int(contextsize_text[context_var.get()])
-
         if customrope_var.get()==1:
             args.ropeconfig = [float(customrope_scale.get()),float(customrope_base.get())]
-
+        args.moeexperts = int(moeexperts_var.get()) if moeexperts_var.get()!="" else -1
         args.chatcompletionsadapter = None if chatcompletionsadapter_var.get() == "" else chatcompletionsadapter_var.get()
         try:
             if kcpp_exporting_template and isinstance(args.chatcompletionsadapter, str) and args.chatcompletionsadapter!="" and os.path.exists(args.chatcompletionsadapter):
@@ -3493,6 +3503,8 @@ def show_gui():
         args.mmproj = None if mmproj_var.get() == "" else mmproj_var.get()
         args.draftmodel = None if draftmodel_var.get() == "" else draftmodel_var.get()
         args.draftamount = int(draftamount_var.get()) if draftamount_var.get()!="" else default_draft_amount
+        args.draftgpulayers = int(draftgpulayers_var.get()) if draftgpulayers_var.get()!="" else 999
+        args.draftgpuid = int(draftgpuid_var.get()) if draftgpuid_var.get()!="" else -1
 
         args.ssl = None if (ssl_cert_var.get() == "" or ssl_key_var.get() == "") else ([ssl_cert_var.get(), ssl_key_var.get()])
         args.password = None if (password_var.get() == "") else (password_var.get())
@@ -3607,7 +3619,7 @@ def show_gui():
                             gpu_choice_var.set(str(opt+1))
                             break
 
-        elif  "noavx2" in dict and "usecpu" in dict and dict["usecpu"] and dict["noavx2"]:
+        elif ("noavx2" in dict and "usecpu" in dict and dict["usecpu"] and dict["noavx2"]) or ("failsafe" in dict and dict["failsafe"]):
             if failsafe_option is not None:
                 runopts_var.set(failsafe_option)
         elif "noavx2" in dict and dict["noavx2"]:
@@ -3636,6 +3648,8 @@ def show_gui():
                 customrope_base.set(str(dict["ropeconfig"][1]))
             else:
                 customrope_var.set(0)
+        if "moeexperts" in dict and dict["moeexperts"]:
+            moeexperts_var.set(dict["moeexperts"])
 
         if "blasbatchsize" in dict and dict["blasbatchsize"]:
             blas_size_var.set(blasbatchsize_values.index(str(dict["blasbatchsize"])))
@@ -3656,6 +3670,10 @@ def show_gui():
         draftmodel_var.set(dict["draftmodel"] if ("draftmodel" in dict and dict["draftmodel"]) else "")
         if "draftamount" in dict:
             draftamount_var.set(dict["draftamount"])
+        if "draftgpulayers" in dict:
+            draftgpulayers_var.set(dict["draftgpulayers"])
+        if "draftgpuid" in dict:
+            draftgpuid_var.set(dict["draftgpuid"])
 
         ssl_cert_var.set("")
         ssl_key_var.set("")
@@ -4909,8 +4927,8 @@ if __name__ == '__main__':
 
     parser.add_argument("--threads", metavar=('[threads]'), help="Use a custom number of threads if specified. Otherwise, uses an amount based on CPU cores", type=int, default=get_default_threads())
     compatgroup = parser.add_mutually_exclusive_group()
-    compatgroup.add_argument("--usecublas", help="Use CuBLAS for GPU Acceleration. Requires CUDA. Select lowvram to not allocate VRAM scratch buffer. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs. For hipBLAS binaries, please check YellowRoseCx rocm fork.", nargs='*',metavar=('[lowvram|normal] [main GPU ID] [mmq] [rowsplit]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'mmq', 'rowsplit'])
-    compatgroup.add_argument("--usevulkan", help="Use Vulkan for GPU Acceleration. Can optionally specify GPU Device ID (e.g. --usevulkan 0).", metavar=('[Device ID]'), nargs='*', type=int, default=None)
+    compatgroup.add_argument("--usecublas", help="Use CuBLAS for GPU Acceleration. Requires CUDA. Select lowvram to not allocate VRAM scratch buffer. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs. For hipBLAS binaries, please check YellowRoseCx rocm fork.", nargs='*',metavar=('[lowvram|normal] [main GPU ID] [mmq] [rowsplit]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'all', 'mmq', 'rowsplit'])
+    compatgroup.add_argument("--usevulkan", help="Use Vulkan for GPU Acceleration. Can optionally specify one or more GPU Device ID (e.g. --usevulkan 0), leave blank to autodetect.", metavar=('[Device IDs]'), nargs='*', type=int, default=None)
     compatgroup.add_argument("--useclblast", help="Use CLBlast for GPU Acceleration. Must specify exactly 2 arguments, platform ID and device ID (e.g. --useclblast 1 0).", type=int, choices=range(0,9), nargs=2)
     compatgroup.add_argument("--usecpu", help="Do not use any GPU acceleration (CPU Only)", action='store_true')
     parser.add_argument("--contextsize", help="Controls the memory allocated for maximum context size, only change if you need more RAM for big contexts. (default 4096). Supported values are [256,512,1024,2048,3072,4096,6144,8192,12288,16384,24576,32768,49152,65536,98304,131072]. IF YOU USE ANYTHING ELSE YOU ARE ON YOUR OWN.",metavar=('[256,512,1024,2048,3072,4096,6144,8192,12288,16384,24576,32768,49152,65536,98304,131072]'), type=check_range(int,256,262144), default=4096)
@@ -4928,6 +4946,7 @@ if __name__ == '__main__':
     advparser.add_argument("--nommap", help="If set, do not use mmap to load newer models", action='store_true')
     advparser.add_argument("--usemlock", help="Enables mlock, preventing the RAM used to load the model from being paged out. Not usually recommended.", action='store_true')
     advparser.add_argument("--noavx2", help="Do not use AVX2 instructions, a slower compatibility mode for older devices.", action='store_true')
+    advparser.add_argument("--failsafe", help="Use failsafe mode, extremely slow CPU only compatibility mode that should work on all devices.", action='store_true')
     advparser.add_argument("--debugmode", help="Shows additional debug info in the terminal.", nargs='?', const=1, type=int, default=0)
     advparser.add_argument("--onready", help="An optional shell command to execute after the model has been loaded.", metavar=('[shell command]'), type=str, default="",nargs=1)
     advparser.add_argument("--benchmark", help="Do not start server, instead run benchmarks. If filename is provided, appends results to provided file.", metavar=('[filename]'), nargs='?', const="stdout", type=str, default=None)
@@ -4945,6 +4964,8 @@ if __name__ == '__main__':
     advparser.add_argument("--mmproj", help="Select a multimodal projector file for vision models like LLaVA.", default="")
     advparser.add_argument("--draftmodel", help="Load a small draft model for speculative decoding. It will be fully offloaded. Vocab must match the main model.", default="")
     advparser.add_argument("--draftamount", metavar=('[tokens]'), help="How many tokens to draft per chunk before verifying results", type=int, default=default_draft_amount)
+    advparser.add_argument("--draftgpulayers", metavar=('[layers]'), help="How many layers to offload to GPU for the draft model (default=full offload)", type=int, default=999)
+    advparser.add_argument("--draftgpuid", metavar=('[gpu id]'), help="Which GPU to use for draft model (default=same as main). Only works if multi-GPUs selected for MAIN model!", type=int, default=-1)
     advparser.add_argument("--password", help="Enter a password required to use this instance. This key will be required for all text endpoints. Image endpoints are not secured.", default=None)
     advparser.add_argument("--ignoremissing", help="Ignores all missing non-essential files, just skipping them instead.", action='store_true')
     advparser.add_argument("--chatcompletionsadapter", help="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.", default="")
@@ -4954,6 +4975,7 @@ if __name__ == '__main__':
     advparser.add_argument("--smartcontext", help="Reserving a portion of context to try processing less frequently. Outdated. Not recommended.", action='store_true')
     advparser.add_argument("--unpack", help="Extracts the file contents of the KoboldCpp binary into a target directory.", metavar=('destination'), type=str, default="")
     advparser.add_argument("--nomodel", help="Allows you to launch the GUI alone, without selecting any model.", action='store_true')
+    advparser.add_argument("--moeexperts", metavar=('[num of experts]'), help="How many experts to use for MoE models (default=follow gguf)", type=int, default=-1)
     compatgroup2 = parser.add_mutually_exclusive_group()
     compatgroup2.add_argument("--showgui", help="Always show the GUI instead of launching the model right away when loading settings from a .kcpps file.", action='store_true')
     compatgroup2.add_argument("--skiplauncher", help="Doesn't display or use the GUI launcher.", action='store_true')
