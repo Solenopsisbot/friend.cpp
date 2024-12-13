@@ -3692,7 +3692,14 @@ static block_q4_0x8 make_block_q4_0x8(block_q4_0 * in, unsigned int blck_size_in
     return out;
 }
 
+static bool kcpp_q_already_repacked = false; //to support legacy q4_0_M_N quants that were preconverted.
+
 static int repack_q4_0_to_q4_0_4_bl(struct ggml_tensor * t, int interleave_block, const void * GGML_RESTRICT data, size_t data_size) {
+    if(kcpp_q_already_repacked) //using legacy prepacked quant, so just copy it
+    {
+        memcpy(t->data, data, data_size);
+        return 0;
+    }
     GGML_ASSERT(t->type == GGML_TYPE_Q4_0);
     GGML_ASSERT(interleave_block == 4 || interleave_block == 8);
     constexpr int nrows_interleaved = 4;
@@ -3724,6 +3731,11 @@ static int repack_q4_0_to_q4_0_4_bl(struct ggml_tensor * t, int interleave_block
 }
 
 static int repack_q4_0_to_q4_0_8_bl(struct ggml_tensor * t, int interleave_block, const void * GGML_RESTRICT data, size_t data_size) {
+    if(kcpp_q_already_repacked) //using legacy prepacked quant, so just copy it
+    {
+        memcpy(t->data, data, data_size);
+        return 0;
+    }
     GGML_ASSERT(t->type == GGML_TYPE_Q4_0);
     GGML_ASSERT(interleave_block == 8);
     constexpr int nrows_interleaved = 8;
@@ -3790,6 +3802,11 @@ static block_iq4_nlx4 make_block_iq4_nlx4(block_iq4_nl * in, unsigned int blck_s
 }
 
 static int repack_iq4_nl_to_iq4_nl_4_bl(struct ggml_tensor * t, int interleave_block, const void * GGML_RESTRICT data, size_t data_size) {
+    if(kcpp_q_already_repacked) //using legacy prepacked quant, so just copy it
+    {
+        memcpy(t->data, data, data_size);
+        return 0;
+    }
     GGML_ASSERT(t->type == GGML_TYPE_IQ4_NL);
     //GGML_ASSERT(interleave_block == 4 || interleave_block == 8);
     GGML_ASSERT(interleave_block == 4);
@@ -4143,6 +4160,15 @@ static const tensor_traits<block_iq4_nl, 4, 4> iq4_nl_4x4_q8_0;
 }
 }  // namespace ggml::cpu::aarch64
 
+static void flag_aarch_prepacked_quant(int type)
+{
+    if(!kcpp_q_already_repacked)
+    {
+        printf("\nWARNING! Legacy aarch64 prepacked QM_0_M_N quant (%d) detected! Please switch to Q4_0!\n",type);
+        kcpp_q_already_repacked = true;
+    }
+}
+
 static const ggml::cpu::tensor_traits * ggml_aarch64_get_optimal_repack_type(const struct ggml_tensor * cur) {
     if (cur->type == GGML_TYPE_Q4_0) {
         if (ggml_cpu_has_avx2() || (ggml_cpu_has_sve() && ggml_cpu_has_matmul_int8() && ggml_cpu_get_sve_cnt() == QK8_0)) {
@@ -4166,6 +4192,26 @@ static const ggml::cpu::tensor_traits * ggml_aarch64_get_optimal_repack_type(con
                 return &ggml::cpu::aarch64::iq4_nl_4x4_q8_0;
             }
         }
+    }
+    else if (cur->type == GGML_TYPE_Q4_0_4_4) //kcpp backport old quant support
+    {
+        flag_aarch_prepacked_quant(cur->type);
+        return &ggml::cpu::aarch64::q4_0_4x4_q8_0;
+    }
+    else if (cur->type == GGML_TYPE_Q4_0_4_8)
+    {
+        flag_aarch_prepacked_quant(cur->type);
+        return &ggml::cpu::aarch64::q4_0_4x8_q8_0;
+    }
+    else if (cur->type == GGML_TYPE_Q4_0_8_8)
+    {
+        flag_aarch_prepacked_quant(cur->type);
+        return &ggml::cpu::aarch64::q4_0_8x8_q8_0;
+    }
+    else if (cur->type == GGML_TYPE_IQ4_NL)
+    {
+        flag_aarch_prepacked_quant(cur->type);
+        return &ggml::cpu::aarch64::iq4_nl_4x4_q8_0;
     }
 
     return nullptr;
