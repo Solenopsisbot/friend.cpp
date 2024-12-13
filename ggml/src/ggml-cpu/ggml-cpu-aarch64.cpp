@@ -3821,7 +3821,9 @@ static int repack_iq4_nl_to_iq4_nl_4_bl(struct ggml_tensor * t, int interleave_b
     GGML_UNUSED(data_size);
 }
 
-namespace ggml::cpu::aarch64 {
+namespace ggml {
+namespace cpu {
+namespace aarch64 { //ggml::cpu::aarch64
 // repack
 template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS>
 int repack(struct ggml_tensor *, const void *, size_t);
@@ -4137,6 +4139,8 @@ static const tensor_traits<block_q4_0, 8, 8> q4_0_8x8_q8_0;
 // instance for IQ4
 static const tensor_traits<block_iq4_nl, 4, 4> iq4_nl_4x4_q8_0;
 
+}
+}
 }  // namespace ggml::cpu::aarch64
 
 static const ggml::cpu::tensor_traits * ggml_aarch64_get_optimal_repack_type(const struct ggml_tensor * cur) {
@@ -4210,7 +4214,9 @@ static size_t ggml_backend_cpu_aarch64_buffer_type_get_alignment(ggml_backend_bu
     GGML_UNUSED(buft);
 }
 
-namespace ggml::cpu::aarch64 {
+namespace ggml {
+namespace cpu {
+namespace aarch64 { //ggml::cpu::aarch64
 class extra_buffer_type : ggml::cpu::extra_buffer_type {
     bool supports_op(ggml_backend_dev_t, const struct ggml_tensor * op) override {
         if (    op->op == GGML_OP_MUL_MAT &&
@@ -4257,6 +4263,9 @@ class extra_buffer_type : ggml::cpu::extra_buffer_type {
         return nullptr;
     }
 };
+
+}
+}
 }  // namespace ggml::cpu::aarch64
 
 ggml_backend_buffer_type_t ggml_backend_cpu_aarch64_buffer_type(void) {

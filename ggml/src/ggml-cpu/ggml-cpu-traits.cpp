@@ -3,10 +3,12 @@
 #include "ggml-backend-impl.h"
 #include "ggml-backend.h"
 
-namespace ggml::cpu {
+namespace ggml {
+namespace cpu {
 tensor_traits::~tensor_traits() {}
 
 extra_buffer_type::~extra_buffer_type() {}
+}
 }  // namespace ggml::cpu
 
 bool ggml_cpu_extra_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * op) {
