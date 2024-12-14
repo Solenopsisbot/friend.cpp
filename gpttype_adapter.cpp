@@ -597,7 +597,7 @@ struct kcpp_embd_batch { //duplcated from llava_embd_batch
 };
 
 //loads a model for speculative decoding.
-static void speculative_decoding_setup(std::string spec_model_filename, const llama_model_params & base_model_params, const llama_context_params & base_ctx_params, int base_n_vocab, int draftgpuid, int draftgpulayers)
+static void speculative_decoding_setup(std::string spec_model_filename, const llama_model_params & base_model_params, const llama_context_params & base_ctx_params, int base_n_vocab, const float * draft_gpusplit, int draftgpulayers)
 {
     llama_model_params draft_model_params = llama_model_default_params();
     llama_context_params draft_ctx_params = llama_context_default_params();
@@ -608,8 +608,22 @@ static void speculative_decoding_setup(std::string spec_model_filename, const ll
     draft_ctx_params.n_ctx = base_ctx_params.n_ctx;
     draft_ctx_params.logits_all = false;
     draft_ctx_params.offload_kqv = base_ctx_params.offload_kqv;
-    draft_model_params.main_gpu = (draftgpuid>=0?draftgpuid:base_model_params.main_gpu);
+    draft_model_params.main_gpu = base_model_params.main_gpu;
     draft_model_params.split_mode = llama_split_mode::LLAMA_SPLIT_MODE_LAYER;
+    #if defined(GGML_USE_CUDA) || defined(GGML_USE_VULKAN)
+    bool ts_all_zero = true;
+    for (int i = 0; i < tensor_split_max; ++i) {
+        if (draft_gpusplit[i] != 0.0f) {
+            ts_all_zero = false;
+            break;
+        }
+    }
+    if(!ts_all_zero)
+    {
+        printf("\nApplying Draft GPU Split...\n");
+        draft_model_params.tensor_split = draft_gpusplit;
+    }
+    #endif
     draft_ctx_params.n_batch = base_ctx_params.n_batch;
     draft_ctx_params.n_ubatch = base_ctx_params.n_ubatch;
     draft_ctx_params.n_threads = base_ctx_params.n_threads;
@@ -2063,7 +2077,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         }
         if(!ts_all_zero)
         {
-            printf("\nApplying Tensor Split...");
+            printf("\nApplying Tensor Split...\n");
             llama_ctx_params.tensor_split = inputs.tensor_split;
         }
         #endif
@@ -2174,7 +2188,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         }
         if(!ts_all_zero)
         {
-            printf("\nApplying Tensor Split...");
+            printf("\nApplying Tensor Split...\n");
             model_params.tensor_split = inputs.tensor_split;
         }
         #endif
@@ -2294,7 +2308,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             {
                 printf("\nAttempting to load draft model for speculative decoding. It will be fully offloaded if possible. Vocab must match the main model.\n");
                 speculative_chunk_amt = inputs.draft_amount;
-                speculative_decoding_setup(draftmodel_filename, model_params, llama_ctx_params, n_vocab, inputs.draft_gpuid, inputs.draft_gpulayers);
+                speculative_decoding_setup(draftmodel_filename, model_params, llama_ctx_params, n_vocab, inputs.draft_gpusplit, inputs.draft_gpulayers);
             }
         }
 

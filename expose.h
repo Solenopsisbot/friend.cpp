@@ -43,7 +43,7 @@ struct load_model_inputs
     const char * draftmodel_filename = nullptr;
     const int draft_amount = 8;
     const int draft_gpulayers = 999;
-    const int draft_gpuid = -1;
+    const float draft_gpusplit[tensor_split_max] = {};
     const char * mmproj_filename = nullptr;
     const bool use_mmap = false;
     const bool use_mlock = false;
