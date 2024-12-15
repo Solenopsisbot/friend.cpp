@@ -459,7 +459,7 @@ struct server_task_result_cmpl_final : server_task_result {
     int32_t n_decoded;
     int32_t n_prompt_tokens;
     int32_t n_tokens_cached;
-    int32_t has_new_line;
+    bool has_new_line;
     std::string stopping_word;
     stop_type stop = STOP_TYPE_NONE;
 
@@ -1079,9 +1079,9 @@ struct server_slot {
 
         SLT_INF(*this,
                 "\n"
-                "\rprompt eval time = %10.2f ms / %5d tokens (%8.2f ms per token, %8.2f tokens per second)\n"
-                "\r       eval time = %10.2f ms / %5d tokens (%8.2f ms per token, %8.2f tokens per second)\n"
-                "\r      total time = %10.2f ms / %5d tokens\n",
+                "prompt eval time = %10.2f ms / %5d tokens (%8.2f ms per token, %8.2f tokens per second)\n"
+                "       eval time = %10.2f ms / %5d tokens (%8.2f ms per token, %8.2f tokens per second)\n"
+                "      total time = %10.2f ms / %5d tokens\n",
                 t_prompt_processing, n_prompt_tokens_processed, t_prompt, n_prompt_second,
                 t_token_generation, n_decoded, t_gen, n_gen_second,
                 t_prompt_processing + t_token_generation, n_prompt_tokens_processed + n_decoded);

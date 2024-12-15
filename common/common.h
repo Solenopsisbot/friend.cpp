@@ -433,6 +433,11 @@ std::vector<std::string> string_split<std::string>(const std::string & input, ch
     return parts;
 }
 
+static bool string_starts_with(const std::string & str,
+                               const std::string & prefix) {  // While we wait for C++20's std::string::starts_with...
+    return str.rfind(prefix, 0) == 0;
+}
+
 bool string_parse_kv_override(const char * data, std::vector<llama_model_kv_override> & overrides);
 void string_process_escapes(std::string & input);
 
