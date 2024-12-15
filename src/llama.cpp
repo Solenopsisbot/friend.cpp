@@ -15,7 +15,7 @@
 #ifdef GGML_USE_CUDA
 #  include "ggml-cuda.h"
 #elif defined(GGML_USE_CLBLAST)
-#  include "ggml-opencl.h"
+#  include "ggml_v3b-opencl.h"
 #endif
 
 

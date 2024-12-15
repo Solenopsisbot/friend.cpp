@@ -578,7 +578,7 @@ ggml_v1_failsafe.o: otherarch/ggml_v1.c otherarch/ggml_v1.h
 	$(CC)  $(FASTCFLAGS) $(NONECFLAGS) -c $< -o $@
 
 #opencl
-ggml-opencl.o: ggml-opencl.cpp ggml-opencl.h
+ggml-opencl.o: otherarch/ggml_v3b-opencl.cpp otherarch/ggml_v3b-opencl.h
 	$(CXX) $(CXXFLAGS) $(CLBLAST_FLAGS) -c $< -o $@
 ggml_v2-opencl.o: otherarch/ggml_v2-opencl.cpp otherarch/ggml_v2-opencl.h
 	$(CXX) $(CXXFLAGS) $(CLBLAST_FLAGS) -c $< -o $@

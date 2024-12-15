@@ -87,7 +87,7 @@
 #include <Accelerate/Accelerate.h>
 #endif
 #if defined(GGML_USE_CLBLAST) // allow usage of CLBlast alongside Accelerate functions
-#include "ggml-opencl.h"
+#include "ggml_v3b-opencl.h"
 #endif
 
 // floating point type used to accumulate sums
