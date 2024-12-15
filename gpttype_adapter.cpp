@@ -542,9 +542,10 @@ struct kcpp_embd_batch { //duplcated from llava_embd_batch
     std::vector<int32_t *> seq_ids;
     std::vector<int8_t> logits;
     llama_batch batch;
-    kcpp_embd_batch(float * embd, int32_t n_tokens, int32_t npast) {
+    kcpp_embd_batch(float * embd, int32_t n_tokens, int32_t npast, bool use_mrope) {
         int32_t seq_id = 0;
-        pos.resize(n_tokens);
+        pos.resize(n_tokens * (use_mrope?4:1));
+        std::fill(pos.begin(), pos.end(), 0);
         n_seq_id.resize(n_tokens);
         seq_ids.resize(n_tokens + 1);
         logits.resize(n_tokens);
@@ -560,23 +561,39 @@ struct kcpp_embd_batch { //duplcated from llava_embd_batch
             /*seq_id         =*/ seq_ids.data(),
             /*logits         =*/ logits.data(),
         };
-        for (int i = 0; i < n_tokens; i++) {
-            batch.pos     [i] = npast + i;
-            batch.n_seq_id[i] = 1;
-            batch.seq_id  [i] = seq_id_0.data();
-            batch.logits  [i] = false;
+
+        if(!use_mrope)
+        {
+           for (int i = 0; i < n_tokens; i++) {
+                batch.pos     [i] = npast + i;
+                batch.n_seq_id[i] = 1;
+                batch.seq_id  [i] = seq_id_0.data();
+                batch.logits  [i] = false;
+            }
+        }
+        else
+        {
+            for (int i = 0; i < n_tokens; i++) {
+                batch.n_seq_id[i] = 1;
+                batch.seq_id  [i] = seq_id_0.data();
+                batch.logits  [i] = false;
+            }
+             for (int j = 0; j < batch.n_tokens * 3; j++) {
+                batch.pos[j] = npast + (j % batch.n_tokens);
+            }
         }
     }
-    kcpp_embd_batch(std::vector<llama_token> & tokens, int32_t npast, bool return_all_logits) {
+    kcpp_embd_batch(std::vector<llama_token> & tokens, int32_t npast, bool use_mrope, bool return_all_logits) {
         int32_t seq_id = 0;
         int32_t n_tokens = tokens.size();
-        pos.resize(n_tokens);
+        pos.resize(n_tokens * (use_mrope?4:1));
+        std::fill(pos.begin(), pos.end(), 0);
         n_seq_id.resize(n_tokens);
         seq_ids.resize(n_tokens + 1);
         logits.resize(n_tokens);
         seq_id_0.resize(1);
         seq_id_0[0] = seq_id;
-        seq_ids [n_tokens] = nullptr;
+        seq_ids[n_tokens] = nullptr;
         batch = {
             /*n_tokens       =*/ n_tokens,
             /*tokens         =*/ tokens.data(),
@@ -586,11 +603,26 @@ struct kcpp_embd_batch { //duplcated from llava_embd_batch
             /*seq_id         =*/ seq_ids.data(),
             /*logits         =*/ logits.data(),
         };
-        for (int i = 0; i < n_tokens; i++) {
-            batch.pos     [i] = npast + i;
-            batch.n_seq_id[i] = 1;
-            batch.seq_id  [i] = seq_id_0.data();
-            batch.logits  [i] = (return_all_logits?true:false);
+
+        if(!use_mrope)
+        {
+           for (int i = 0; i < n_tokens; i++) {
+                batch.pos     [i] = npast + i;
+                batch.n_seq_id[i] = 1;
+                batch.seq_id  [i] = seq_id_0.data();
+                batch.logits  [i] = (return_all_logits?true:false);
+            }
+        }
+        else
+        {
+            for (int i = 0; i < n_tokens; i++) {
+                batch.n_seq_id[i] = 1;
+                batch.seq_id  [i] = seq_id_0.data();
+                batch.logits  [i] = (return_all_logits?true:false);
+            }
+             for (int j = 0; j < batch.n_tokens * 3; j++) {
+                batch.pos[j] = npast + (j % batch.n_tokens);
+            }
         }
         batch.logits[n_tokens - 1] = true;
     }
@@ -687,7 +719,7 @@ static speculative_draft_result speculative_decoding_eval_chunk(llama_context * 
     drafted_ids.push_back(embd[0]);
     for(int i=0;i<speculative_chunk_amt;++i)
     {
-        kcpp_embd_batch batch1 = kcpp_embd_batch(temp_embd, draft_npast, false);
+        kcpp_embd_batch batch1 = kcpp_embd_batch(temp_embd, draft_npast, false, false);
         auto draftok = (llama_decode(draft_ctx, batch1.batch)==0);
         if(!draftok)
         {
@@ -706,7 +738,8 @@ static speculative_draft_result speculative_decoding_eval_chunk(llama_context * 
 
     std::vector<int> real_embd = drafted_ids;
     real_embd.pop_back();
-    kcpp_embd_batch batch2 = kcpp_embd_batch(real_embd, actual_npast, true);
+    bool use_mrope = (file_format==FileFormat::GGUF_GENERIC && file_format_meta.model_architecture == GGUFArch::ARCH_QWEN2VL);
+    kcpp_embd_batch batch2 = kcpp_embd_batch(real_embd, actual_npast, use_mrope, true);
     auto draftok = (llama_decode(main_ctx, batch2.batch)==0); //actual eval for big model
     if(!draftok)
     {
@@ -1754,6 +1787,7 @@ static void load_grammar(const std::string & gammarstr)
 
 static bool kcpp_eval_image(llama_context * ctx_llama, float * img_embd, int num_img_tokens, int n_batch, int * n_past) {
     int n_embd  = llama_n_embd(llama_get_model(ctx_llama));
+    bool use_mrope = (file_format==FileFormat::GGUF_GENERIC && file_format_meta.model_architecture == GGUFArch::ARCH_QWEN2VL);
 
     for (int i = 0; i < num_img_tokens; i += n_batch) {
         int n_eval = num_img_tokens - i;
@@ -1761,7 +1795,7 @@ static bool kcpp_eval_image(llama_context * ctx_llama, float * img_embd, int num
             n_eval = n_batch;
         }
         float * embd = img_embd+i*n_embd;
-        kcpp_embd_batch llava_batch = kcpp_embd_batch(embd, n_eval, *n_past);
+        kcpp_embd_batch llava_batch = kcpp_embd_batch(embd, n_eval, *n_past, use_mrope);
         if (llama_decode(ctx_llama, llava_batch.batch)) {
             fprintf(stderr, "\n%s : failed to eval image\n", __func__);
             return false;
@@ -1770,6 +1804,70 @@ static bool kcpp_eval_image(llama_context * ctx_llama, float * img_embd, int num
     }
     return true;
 }
+static bool qwen2vl_eval_image_embed(llama_context * ctx_llama, float * image_embd, int num_img_tokens,
+                                     int n_batch, int * n_past) {
+    auto image_size = clip_get_load_image_size(clp_ctx);
+    int n_embd  = llama_n_embd(llama_get_model(ctx_llama));
+    const int patch_size = 14 * 2;
+    const int ph = image_size->height / patch_size + (image_size->height % patch_size > 0);
+    const int pw = image_size->width / patch_size + (image_size->width % patch_size > 0);
+    auto img_tokens = num_img_tokens;
+    // llama_pos mrope_pos[img_tokens * 4];
+    std::vector<llama_pos> mrope_pos;
+    mrope_pos.resize(img_tokens * 4);
+
+    int st_pos_id = *n_past;
+
+    for (int y = 0; y < ph; y++)
+    {
+        for (int x = 0; x < pw; x++)
+        {
+            int i = y * pw + x;
+            mrope_pos[i] = st_pos_id;
+            mrope_pos[i + img_tokens] = st_pos_id + y;
+            mrope_pos[i + img_tokens * 2] = st_pos_id + x;
+            mrope_pos[i + img_tokens * 3] = 0;
+        }
+    }
+    st_pos_id += std::max(pw, ph);
+
+    int processed = 0;
+    std::vector<llama_pos> batch_mrope_pos;
+    batch_mrope_pos.resize(img_tokens * 4);
+
+    for (int i = 0; i < img_tokens; i += n_batch) {
+        int n_eval = img_tokens - i;
+        if (n_eval > n_batch) {
+            n_eval = n_batch;
+        }
+
+        // llama_pos batch_mrope_pos[n_eval * 4];
+        std::fill(batch_mrope_pos.begin(), batch_mrope_pos.end(), 0);
+        memcpy(batch_mrope_pos.data(), &mrope_pos[processed], n_eval * sizeof(llama_pos));
+        memcpy(&batch_mrope_pos[n_eval * 1], &mrope_pos[img_tokens * 1 + processed], n_eval * sizeof(llama_pos));
+        memcpy(&batch_mrope_pos[n_eval * 2], &mrope_pos[img_tokens * 2 + processed], n_eval * sizeof(llama_pos));
+        memcpy(&batch_mrope_pos[n_eval * 3], &mrope_pos[img_tokens * 3 + processed], n_eval * sizeof(llama_pos));
+
+        llama_batch batch = {
+            int32_t(n_eval),                // n_tokens
+            nullptr,                        // token
+            (image_embd+i*n_embd),  // embed
+            batch_mrope_pos.data(),         // pos
+            nullptr,  // n_seq_id
+            nullptr,  // seq_id
+            nullptr,  // logits
+        };
+
+        if (llama_decode(ctx_llama, batch)) {
+            fprintf(stderr, "\n%s : failed to eval image\n", __func__);
+            return false;
+        }
+        *n_past += n_eval;
+        processed += n_eval;
+    }
+    return true;
+}
+
 
 //given an old GGUF context and a new context that has some middle portion removed,
 //find and remove the middle portion from the old context from the KV. Does not fast forward after this destructive action
@@ -2160,11 +2258,15 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             printf("CUBLAS: Set main device to %d\n",cu_parseinfo_maindevice);
         }
         ggml_cuda_set_mul_mat_q(inputs.use_mmq);
-        if(file_format_meta.model_architecture == GGUFArch::ARCH_QWEN2 && !kcpp_data->flash_attn)
-        {
-            printf("CUBLAS: Warning, you are running Qwen2 without Flash Attention and may observe incoherent output.\n");
-        }
         #endif
+        if((file_format_meta.model_architecture == GGUFArch::ARCH_QWEN2 || file_format_meta.model_architecture == GGUFArch::ARCH_QWEN2VL) && !kcpp_data->flash_attn)
+        {
+            printf("Warning, you are running Qwen2 without Flash Attention. If you observe incoherent output, try enabling it.\n");
+        }
+        if(file_format_meta.model_architecture == GGUFArch::ARCH_QWEN2VL)
+        {
+            printf("Qwen2VL detected! Mrope will be used!\n");
+        }
         model_params.main_gpu = cu_parseinfo_maindevice;
 
         #if defined(GGML_USE_CUDA)
@@ -3423,7 +3525,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 if(embd.size()!=1 || draft_ctx==nullptr || remaining_tokens<=speculative_chunk_amt || grammar!=nullptr || startedsampling==false) //for large batch, or if no draft model, PP/TG as usual
                 {
                     draft_used = false;
-                    kcpp_embd_batch batch = kcpp_embd_batch(embd, n_past, false);
+                    bool use_mrope = (file_format==FileFormat::GGUF_GENERIC && file_format_meta.model_architecture == GGUFArch::ARCH_QWEN2VL);
+                    kcpp_embd_batch batch = kcpp_embd_batch(embd, n_past, use_mrope, false);
                     evalres = (llama_decode(llama_ctx_v4, batch.batch)==0);
                     if(draft_ctx)
                     {
