@@ -2722,6 +2722,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
     return true;
 }
 
+static bool avoid_problematic_indivisible = true;
 bool clip_model_quantize(const char * fname_inp, const char * fname_out, const int itype) {
     ggml_type type = GGML_TYPE_Q4_1;
 
@@ -2781,6 +2782,15 @@ bool clip_model_quantize(const char * fname_inp, const char * fname_out, const i
 
         // quantize only 2D tensors
         quantize &= (ggml_n_dims(cur) == 2);
+
+        //kcpp fix: do not quantize certain tensors if they are indivisible!
+        if(avoid_problematic_indivisible)
+        {
+            if(name=="v.position_embd.weight")
+            {
+                quantize = false;
+            }
+        }
 
         if (quantize) {
             new_type = type;
