@@ -7825,6 +7825,7 @@ static bool llm_load_tensors(
         }
 
         int n_moved_tensors = 0;
+        int n_total_tensors = 0;
         ggml_tensor * first_moved_tensor = nullptr;
         ggml_backend_buffer_type_t first_moved_from_buft = nullptr;
         ggml_backend_buffer_type_t first_moved_to_buft = nullptr;
@@ -7909,6 +7910,7 @@ static bool llm_load_tensors(
                     first_moved_to_buft   = buft;
                 }
             }
+            n_total_tensors++;
 
             ggml_context * ctx = ctx_for_buft(buft);
 
@@ -9732,12 +9734,13 @@ static bool llm_load_tensors(
                 throw std::runtime_error("unknown architecture");
         }
 
-        if (n_moved_tensors > 1) { //only warn if more than 1 moved tensor
-            LLAMA_LOG_DEBUG("%s: tensor '%s' (%s) (and %d others) cannot be used with preferred buffer type %s, using %s instead\n",
-                __func__, first_moved_tensor->name, ggml_type_name(first_moved_tensor->type), n_moved_tensors - 1,
-                ggml_backend_buft_name(first_moved_from_buft), ggml_backend_buft_name(first_moved_to_buft));
-            LLAMA_LOG_DEBUG("(This is not an error, it just means some tensors will use CPU instead.)\n");
-        }
+        // if (n_moved_tensors > 1) { //only warn if more than 1 moved tensor
+        //     LLAMA_LOG_DEBUG("%s: tensor '%s' (%s) (and %d others) cannot be used with preferred buffer type %s, using %s instead\n",
+        //         __func__, first_moved_tensor->name, ggml_type_name(first_moved_tensor->type), n_moved_tensors - 1,
+        //         ggml_backend_buft_name(first_moved_from_buft), ggml_backend_buft_name(first_moved_to_buft));
+        //     LLAMA_LOG_DEBUG("(This is not an error, it just means some tensors will use CPU instead.)\n");
+        // }
+        LLAMA_LOG_DEBUG("%s: relocated tensors: %d of %d\n", __func__, n_moved_tensors, n_total_tensors);
     }
 
     ml.done_getting_tensors();
