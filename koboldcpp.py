@@ -2584,6 +2584,9 @@ def show_gui():
         root.withdraw()
         root.quit()
         if args.model_param and args.model_param!="" and (args.model_param.lower().endswith('.kcpps') or args.model_param.lower().endswith('.kcppt')):
+            dlfile = download_model_from_url(args.model_param,[".kcpps",".kcppt"]) # maybe download from url
+            if dlfile:
+                args.model_param = dlfile
             load_config_cli(args.model_param)
         if not args.model_param and not args.sdmodel and not args.whispermodel and not args.nomodel:
             global exitcounter
@@ -4353,6 +4356,9 @@ def main(launch_args,start_server=True):
 
     #positional handling for kcpps files (drag and drop)
     if args.model_param and args.model_param!="" and (args.model_param.lower().endswith('.kcpps') or args.model_param.lower().endswith('.kcppt')):
+        dlfile = download_model_from_url(args.model_param,[".kcpps",".kcppt"]) # maybe download from url
+        if dlfile:
+            args.model_param = dlfile
         load_config_cli(args.model_param)
 
     #prevent quantkv from being used without flash attn
