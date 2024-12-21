@@ -3158,6 +3158,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             }
             else
             {
+                if(debugmode==1)
+                {
+                    printf("\nCreating clip image embed...");
+                }
                 llava_images[i].clp_image_tokens = 0;
                 if (!llava_image_embed_make_with_clip_img(clp_ctx, kcpp_data->n_threads, clp_img_data, &llava_images[i].clp_img_embd, &llava_images[i].clp_image_tokens)) {
                     printf("\nError: Clip image %d failed to create embd!",i);
