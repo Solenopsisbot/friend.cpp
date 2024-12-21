@@ -1754,7 +1754,7 @@ static void grammar_accept_token(FileFormat file_format, int32_t n_vocab, struct
     const auto & code_points = decoded.first;
     for (auto it = code_points.begin(), end = code_points.end() - 1; it != end; ++it) {
         auto prev_stacks = grammar->stacks;
-        llama_grammar_accept(grammar->rules, prev_stacks, *it, grammar->stacks);
+        llama_grammar_accept(grammar, *it);
     }
     grammar->partial_utf8 = decoded.second;
     GGML_ASSERT(!grammar->stacks.empty());
