@@ -3611,7 +3611,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             {
                 logits_to_sample = draft_results.drafted_amount;
             }
-            while(logits_sampled<logits_to_sample && remaining_tokens>0 && !abort_draft)
+            while(logits_sampled<logits_to_sample && remaining_tokens>0 && !abort_draft && !early_abort)
             {
                 if(logits_sampled>0)
                 {
