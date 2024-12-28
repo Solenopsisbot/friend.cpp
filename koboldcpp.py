@@ -4648,10 +4648,7 @@ def main(launch_args,start_server=True):
             exitcounter = 999
             exit_with_error(3,"Could not load text model: " + modelname)
 
-    if (
-        chatcompl_adapter is not None
-        and isinstance(chatcompl_adapter, list)
-    ):
+    if (chatcompl_adapter is not None and isinstance(chatcompl_adapter, list)):
         # The chat completions adapter is a list that needs derivation from chat templates
         # Try to derive chat completions adapter from chat template, now that we have the model loaded
         ctbytes = handle.get_chat_template()
@@ -4666,10 +4663,6 @@ def main(launch_args,start_server=True):
                     break
         if chatcompl_adapter is None:
             print("Chat template heuristics failed to identify chat completions format. Alpaca will be used.")
-
-    if chatcompl_adapter is None and not args.chatcompletionsadapter:
-        print("Note: Alpaca format will be used for OpenAI Compatible API chat completions. Use --chatcompletionsadapter=AutoGuess to use chat template heuristics.")
-
 
     #handle loading image model
     if args.sdmodel and args.sdmodel!="":
