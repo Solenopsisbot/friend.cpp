@@ -23,6 +23,8 @@ import time
 import asyncio
 import socket
 import threading
+import html
+import urllib.parse as urlparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -1268,6 +1270,71 @@ def detokenize_ids(tokids):
         detokstr = ctypes.string_at(detok).decode("UTF-8","ignore")
     return detokstr
 
+# Performs a web search using DuckDuckGo and extracts text content from the top results.
+def websearch(query):
+    if not query or query=="":
+        return []
+    import urllib.parse
+    import urllib.request
+    from html.parser import HTMLParser
+    num_results = 3
+    searchresults = []
+    class ExtractResultsParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.results = []
+            self.recordingTitle = False
+            self.recordingDesc = False
+            self.currentrytxt = ""
+            self.currsegmenttxt = ""
+
+        def handle_starttag(self, tag, attrs):
+            if tag == "a":
+                # Check if the "class" attribute matches the target class
+                for attr_name, attr_value in attrs:
+                    if not self.recordingTitle and attr_name == "class" and "result__a" in attr_value.split():
+                        self.recordingTitle = True
+                        self.currentrytxt = ""
+                        self.currsegmenttxt = ""
+                    if not self.recordingTitle and attr_name == "class" and "result__url" in attr_value.split():
+                        self.recordingTitle = True
+                        self.currsegmenttxt = ""
+                    if not self.recordingDesc and attr_name == "class" and "result__snippet" in attr_value.split():
+                        self.recordingDesc = True
+                        self.currsegmenttxt = ""
+
+        def handle_endtag(self, tag):
+            if tag == "a" and self.recordingTitle:
+                self.recordingTitle = False
+                self.currentrytxt += self.currsegmenttxt.strip() + "\n"
+                self.currsegmenttxt = ""
+            if tag == "a" and self.recordingDesc:
+                self.recordingDesc = False
+                self.currentrytxt += self.currsegmenttxt.strip()
+                self.currsegmenttxt = ""
+                if self.currentrytxt != "":
+                    self.results.append(self.currentrytxt.strip())
+                    self.currentrytxt = ""
+
+        def handle_data(self, data):
+            if self.recordingTitle or self.recordingDesc:
+                self.currsegmenttxt += data
+
+    encoded_query = urllib.parse.quote(query)
+    search_url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
+
+    try:
+        req = urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response:
+            search_html = response.read().decode('utf-8', errors='ignore')
+            parser = ExtractResultsParser()
+            parser.feed(search_html)
+            searchresults = parser.results[:num_results]
+    except Exception as e:
+        print(f"Error fetching URL {search_url}: {e}")
+        return ""
+    return searchresults
+
 #################################################################
 ### A hacky simple HTTP server simulating a kobold api by Concedo
 ### we are intentionally NOT using flask, because we want MINIMAL dependencies
@@ -1797,8 +1864,6 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     def noscript_webui(self):
         global modelbusy, sslvalid
-        import html
-        import urllib.parse as urlparse
         parsed_url = urlparse.urlparse(self.path)
         parsed_dict = urlparse.parse_qs(parsed_url.query)
         reply = ""
@@ -2021,6 +2086,18 @@ Enter Prompt:<br>
                     "n_ctx": maxctx,
                 },
             }).encode())
+
+        elif self.path.startswith(("/websearch")):
+            if args.websearch:
+                parsed_url = urlparse.urlparse(self.path)
+                parsed_dict = urlparse.parse_qs(parsed_url.query)
+                searchstr = (parsed_dict['q'][0]) if 'q' in parsed_dict else ""
+                if args.debugmode:
+                    print(f"Searching web for: {searchstr}")
+                searchres = websearch(searchstr)
+                response_body = (json.dumps(searchres).encode())
+            else:
+                response_body = (json.dumps([]).encode())
 
         elif self.path=="/api" or self.path=="/docs" or self.path.startswith(('/api/?json=','/api?json=','/docs/?json=','/docs?json=')):
             content_type = 'text/html'
@@ -2765,6 +2842,7 @@ def show_gui():
     host_var = ctk.StringVar(value="")
     multiuser_var = ctk.IntVar(value=1)
     multiplayer_var = ctk.IntVar(value=has_multiplayer)
+    websearch_var = ctk.IntVar(value=0)
     horde_name_var = ctk.StringVar(value="koboldcpp")
     horde_gen_var = ctk.StringVar(value=maxhordelen)
     horde_context_var = ctk.StringVar(value=maxhordectx)
@@ -3274,6 +3352,7 @@ def show_gui():
     makecheckbox(network_tab, "Quiet Mode", quietmode, 4,tooltiptxt="Prevents all generation related terminal output from being displayed.")
     makecheckbox(network_tab, "NoCertify Mode (Insecure)", nocertifymode, 4, 1,tooltiptxt="Allows insecure SSL connections. Use this if you have cert errors and need to bypass certificate restrictions.")
     makecheckbox(network_tab, "Shared Multiplayer", multiplayer_var, 5,tooltiptxt="Hosts a shared multiplayer session that others can join.")
+    makecheckbox(network_tab, "Enable WebSearch", websearch_var, 5, 1,tooltiptxt="Enable the local search engine proxy so Web Searches can be done.")
 
     makefileentry(network_tab, "SSL Cert:", "Select SSL cert.pem file",ssl_cert_var, 7, width=200 ,filetypes=[("Unencrypted Certificate PEM", "*.pem")], singlerow=True, singlecol=False,tooltiptxt="Select your unencrypted .pem SSL certificate file for https.\nCan be generated with OpenSSL.")
     makefileentry(network_tab, "SSL Key:", "Select SSL key.pem file", ssl_key_var, 9, width=200, filetypes=[("Unencrypted Key PEM", "*.pem")], singlerow=True, singlecol=False, tooltiptxt="Select your unencrypted .pem SSL key file for https.\nCan be generated with OpenSSL.")
@@ -3523,6 +3602,7 @@ def show_gui():
         args.host = host_var.get()
         args.multiuser = multiuser_var.get()
         args.multiplayer = (multiplayer_var.get()==1)
+        args.websearch = (websearch_var.get()==1)
 
         if usehorde_var.get() != 0:
             args.hordemodelname = horde_name_var.get()
@@ -3700,6 +3780,7 @@ def show_gui():
         host_var.set(dict["host"] if ("host" in dict and dict["host"]) else "")
         multiuser_var.set(dict["multiuser"] if ("multiuser" in dict) else 1)
         multiplayer_var.set(dict["multiplayer"] if ("multiplayer" in dict) else 0)
+        websearch_var.set(dict["websearch"] if ("websearch" in dict) else 0)
 
         horde_name_var.set(dict["hordemodelname"] if ("hordemodelname" in dict and dict["hordemodelname"]) else "koboldcpp")
         horde_context_var.set(dict["hordemaxctx"] if ("hordemaxctx" in dict and dict["hordemaxctx"]) else maxhordectx)
@@ -4984,6 +5065,7 @@ if __name__ == '__main__':
     advparser.add_argument("--promptlimit", help="Sets the maximum number of generated tokens, usable only with --prompt or --benchmark",metavar=('[token limit]'), type=int, default=100)
     advparser.add_argument("--multiuser", help="Runs in multiuser mode, which queues incoming requests instead of blocking them.", metavar=('limit'), nargs='?', const=1, type=int, default=1)
     advparser.add_argument("--multiplayer", help="Hosts a shared multiplayer session that others can join.", action='store_true')
+    advparser.add_argument("--websearch", help="Enable the local search engine proxy so Web Searches can be done.", action='store_true')
     advparser.add_argument("--remotetunnel", help="Uses Cloudflare to create a remote tunnel, allowing you to access koboldcpp remotely over the internet even behind a firewall.", action='store_true')
     advparser.add_argument("--highpriority", help="Experimental flag. If set, increases the process CPU priority, potentially speeding up generation. Use caution.", action='store_true')
     advparser.add_argument("--foreground", help="Windows only. Sends the terminal to the foreground every time a new prompt is generated. This helps avoid some idle slowdown issues.", action='store_true')
