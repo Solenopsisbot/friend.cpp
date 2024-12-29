@@ -1378,11 +1378,11 @@ def websearch(query):
                 if matches.size > 100 and desclen-matches.size < 50: #good enough match
                     # expand description by some chars both sides
                     expandamtbefore = 250
-                    expandamtafter = 600
+                    expandamtafter = 750
                     startpt = matches.a - expandamtbefore
                     startpt = 0 if startpt < 0 else startpt
                     endpt =  matches.a + expandamtafter + desclen
-                    pagedesc = scraped[startpt:endpt]
+                    pagedesc = scraped[startpt:endpt].strip()
             except Exception:
                 pass
             searchresults.append({"title":title,"url":url,"desc":desc,"content":pagedesc})

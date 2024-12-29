@@ -67,6 +67,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 			--img_corpo_retry:url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAA7AAAAOwBeShxvQAAADZQTFRFAAAAmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYB0vbbgAAABJ0Uk5TAP+OCnz5/ZjdwtU8JsqwVWW2UONGYgAAAOZJREFUeJy9U4sOgyAMBFosguj8/59dAXmOuWRZdokJXI8+8BDit9geiI/tXdR5LSO0d7PDRjYwL2lwYXoxJ9Fu4hIFrCuUOIXM6toDhVoKpcRynglf5QIsE/yp3B4n3fuSZ2wlC7g/PzZlG4Hj+tBFARU1grXmEoVpS2i5wFxwpHx8L0MDXCLguLbKzq72H3Amz3bEjnCYJFxfoo5rprWPwyJ1Wqm5gAoTBTSWAP7lrhHYsUVbuVTi7OM7m2qrguiP1jBe9nbCkEVTb7kqD+a8TLsTndm0AzZ7b3vx8eGkNLdP70s8ASe+BWpoHN76AAAAAElFTkSuQmCC');
 			--img_corpo_delete:url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAA7AAAAOwBeShxvQAAADxQTFRFAAAAmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZa/DskgAAABR0Uk5TAP8ZE8/k2cbhH56BdA9kAixGQ1txX8NpAAAAuElEQVR4nL2TyRbDIAhFAxqTOiQd/v9fmzikgNhd60qQd8F3dJr+s54+JpkzMdzb/gEAzvBznI9kq/DHHhZWgfbMhRqFM2CMrAfYWrsVOKPowSWRWJHpaVMsDItUrwyVGYqeMVQ9Zeh6whjoCWOgpwxd/7k/zDg4v1rY2zd9ZigV7f5lDtdVXP7VQskg/qHGYP4rDOF/xzDSf8nw/ZMrDF9DO3q0S42i4n9mxBrsm/JxUvSvXSZ/s96e2ATDYcXDVgAAAABJRU5ErkJggg==');
 			--img_corpo_theme:url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAOxAAADsQBlSsOGwAAAEtQTFRFAAAAmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZCNPppgAAABl0Uk5TAP9EmbvlZocD/vsGPIjPfaJbLtdJl+Y6R35RHH0AAACySURBVHictZPJFoMgDEV5WoqA89D6/19aLIg1yaq1d4OPc48Jk1IX4JsHIrrxLAYaHBgWAxrP9K8amsUAkKttnyReIlhUaaKClYQJXRHpMEnCYPOy7CAJquhvkb7gLXEEYTRlxIyiMLvcg5slocVyjyxolXIfq3bvkcwcfrn5vCipKHR17vmbha9531ZRIDvPBXJ2XCCnz4V/XDmNOk2ka3+KAXN+KSQGvNH7WzOexd95AaOkBtmsQk/EAAAAAElFTkSuQmCC');
+			--img_corpo_clip:url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgBAMAAACBVGfHAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAA7AAAAOwBeShxvQAAAC1QTFRFAAAA////////////////////////////////////////////////////////oUirmwAAAA90Uk5TAP6GZ90GEyLL6J1QL7RBWlveQAAAALlJREFUeJxjYMABghtFliPzeRoFBQVNkQRSBLt0Jwoj+KwXhQNYTwgeQOgQXMrAwDdxAVyAGSx5cQKUW6HKJBjA3hSgKAAVMHRjEmRgFikYLgIJTCIJSALcgst3yiJ8u3E660VBQTmGhbDwOCjNkCsoacra2AAViJQIYCh+ysAnaAAPQFUQdVIkABbmjUIJwDBuRETDScHushxFiDpILDQKTpkoODkALsBQ5CgoKPuUAQnEaSknMGAHAC9ZNIJ+mLnNAAAAAElFTkSuQmCC');
 			--img_gear:url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAA7AAAAOwBeShxvQAAADxQTFRFiYmJAAAAiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJ1owGHwAAABR0Uk5T/wAOBObNRLP0Fih22YC+ZVE1n4prfQ+hAAAA7UlEQVR4nJWT2xaEIAhFEbxk2v3//3WsmUCLVmt4It15kCNgXgIkpZ4uSQNgsuDinkUHNuEVmC2UyDPinPfM+hYY4BZbA3R3APoacG/Aet+35h8ArSKxCEBB2QeHP6CfuMTgI3qm8xR3YJJ/0lc28UI3F2Dkz3C2VxTHAmT+OrtrPC/lAkgT2SAUDR2IDSAteJCoiqRbkaEAixg10MV7uxydRF4JHqPnI8NCpxdVsyRWErNIMavD2m7FLde8h/EFQO1N1hJR2YdYS/BFszsPG5oajD/u4cpLxu1o0WVw6tEzqbOJp1MbXkPa8D7FB+prBiyq3W6BAAAAAElFTkSuQmCC');
 			--img_corpo_left:url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAMAAADXqc3KAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAAnQAAAJ0Bj3LnbgAAADxQTFRFAAAAmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZa/DskgAAABR0Uk5TAP0C1vSFKA1oFwjrPK3DS6DRtVwhct1aAAAAhUlEQVR4nKWRyRIDIQhEaXfFZdT//9eY68CkkgrH1w3VANF/ZYK3Pv4gHM6wQeGXA/uscD48mBuP9YKz0l9qY8yUFb/Kn/wUuoPdUXAKDPQqN6OYLLBqkUp+K63KWSbuqfeYnCZcG8q0kqbDHEq0Mk7ovrWefZQlz35Sj8VNnJE+vPabegE7dATMPe9UFwAAAABJRU5ErkJggg==');
 			--img_corpo_right:url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAMAAADXqc3KAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAAnQAAAJ0Bj3LnbgAAADxQTFRFAAAAmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZa/DskgAAABR0Uk5TAP0C1oUoDfRoFwjqPK3DS6DRtVyphxJ2AAAAg0lEQVR4nJ2RSxLEIAhERVRE/ES9/13H2QYyVRmW/eyiW5z7b1LAEP0bEBHEJBwE6DKIj4eIRY4HCa6atIfzBGm1PJBHD5metBGoR6NO7QCiQakLALNa4mv76my+nzvdO5bRCGbmm+7TOFFnVlHL7ifo0BXiOvrWuuMma+jP+HHBN/MBKVwEvjDYz2QAAAAASUVORK5CYII=');
@@ -1648,10 +1649,20 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 			width:308px;
 			height:462px;
 		}
+		.zoomedimg.portrait_long
+		{
+			width:231px;
+			height:462px;
+		}
 		.zoomedimg.landscape
 		{
 			width:462px;
 			height:308px;
+		}
+		.zoomedimg.landscape_long
+		{
+			width:462px;
+			height:231px;
 		}
 
 		@media (max-width: 620px) {
@@ -1668,6 +1679,16 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 			{
 				width:min(96vw, 420px);
 				height:min(64vw, 280px);
+			}
+			.zoomedimg.portrait_long
+			{
+				width:min(48vw, 210px);
+				height:min(96vw, 420px);
+			}
+			.zoomedimg.landscape_long
+			{
+				width:min(96vw, 420px);
+				height:min(48vw, 210px);
 			}
 		}
 		.mdlpicker::-webkit-calendar-picker-indicator {
@@ -2135,7 +2156,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 		margin-left: auto;
 		margin-right: auto;
 		border-radius: 16px;
-		padding-left: 12px;
+		padding-left: 52px;
 		padding-right: 52px;
 		padding-top: 8px;
         border: 1px solid #bbbbbbaa;
@@ -2164,6 +2185,29 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 		color: #dddddd;
 	}
 
+	.corpo_chat_img_btn {
+		background: #000000 none repeat scroll 0 0;
+		border:none;
+		border-radius: 50%;
+		color: #fff;
+		cursor: pointer;
+		font-size: 15px;
+		height: 33px;
+		position: absolute;
+		left: 12px;
+		bottom: 10px;
+		width: 33px;
+		background-size: 50% !important;
+		background-repeat: no-repeat !important;
+ 		background-position: center !important;
+		background-image: var(--img_corpo_clip) !important;
+	}
+	.corpo_chat_img_btn:hover {
+		background: #555555 none repeat scroll 0 0;
+	}
+	.corpo_chat_img_btn:disabled {
+		background: #838383 none repeat scroll 0 0;
+	}
 	.corpo_chat_send_btn {
 		background: #000000 none repeat scroll 0 0;
 		border:none;
@@ -2521,7 +2565,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 		const favivon_normal = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAAXNSR0IB2cksfwAAAAlwSFlzAAALEwAACxMBAJqcGAAAAEtQTFRFAAAA+XJ0l09PsVdXcTw842hqw2hmTi4vMCQlb2eUgWtl+tGpBAMDEw4NPCkoFw8PJBgXt5WBVkxW4Nvf7Lia3Z+MpJnAZ05HnJOTYIS/NAAAABl0Uk5TAv////v//vT9//3/Nna08qf+///////a/hkcROQAAAGUSURBVHiclZLRcoQgDEULBAKoIKjI/39pL4i7nbUPbcYZwJyES5Kvr3/YvIx1nn9zL4G4EwuTXX7xs4QFGEklOT6SBENERguhsWHFD2AVRhL8IEgawY8b5L4fYtg+TSl8+NMEu4G2P34Q67r6I+37dLyBfU/4PY/sInG2MR8vIHG01h9mHfq1hUUQtwYcLEcp+ltmwqutdy5HMwAfc8ExKtVSLEZZW13Jxb4Azq7UHFnFrtGItLliS1UDYOfctm3JhEtlEH5zzpZNDsC63AB1VysY3gqC3C2ytsNW6Q3IjCt91Qr9QK8MiFL4nUEpEyNLYmodxYo3RquVHWUmbbRu0QCbKWwNfil5zYeENrRRqtZrGEQYqdtW8FWHLl4bgZDLFLZdbS/UzP2AEGTufkt3xWSvwzJeh4GxHWD5qlgXOZ/n2ULuC/od4Pk8x9xhCekD0Bqd/DmXgbpEumRgrMPn1K6ecs4pJc/V0nE+x35KtfTJTJufpvPTD2DyNZ3e4wP3zDCHevg+yYvf09PfkHuK7/Vv9g2CjBTdqv3bFgAAAABJRU5ErkJggg==";
 		const compressed_scenario_db = ["XQAAAQCkKgAAAAAAAAA9iIqG1FTp3Td41VnWyuXTp3Lb95KmIEizGvJcmkqrV2FY5cKEeSxCwbqBRjHVjL7PUH9wCoW89dPxjDNZvgp6okMOelpy7_1P6GV-mfJV4jz42_DXqYfET4aYlAT13M95gkcA14f0NLvI_p6B9CyG8EbkhRxsk3uyf_KgTV5kwqzAcr5C4JQ_pJr77GnYCHQI8h6F765-lcqrvw1Xu1GHhcN3lj7s9PhMvLnmGPZbQMrTo5sqPJDzYO6lytxmNSHSXMICpN2kFJB6kqyL5lBxNAH3Au_F_JIC85GqwLXWEy8wZms5KmAdp1s3EA1yabPGqqF0G5RxBp3aXzm7h6QUJPy1qSr6JJAo4fi2gCPaLkdn2pKqNDR1Ww8FA6AVHOyMgCTmmrQxWVYgXY9TdhHKcRcrIsoHNXEeWSqMGJNQ8lzVfc26teZdBdPLhqcClG8wUThPtyobTMz8Fgom88nTv7VT-mZhwH9Nc4ghoCL8dMR0Skf-EYDZ0Uvz03_GTn5OB8yuX6FmsD1XQJv_CKBAUHeDKd7n_bC7WOnlAINHPX9Bh5TnwjeLYO-UAL2ClMJTFzR-k2cjVHGQnLB7hZ48L1nToRG1gSVN7dP3Zysw7riwIxnfG4MMNXtEbHyxrCvz2zRTUEqbHLrwIzdJRpJ5s5XfTlY1CPZkQCwxbA6rrUt27D6a-YDKavbg0hubpViPRYbnEDXr9gL-7in4f_K2cOZdQ26Q--hk0xzEtgBNFI6inHA2nA4LofUpWjl835qg6CUyz9EzQkw0cDgPVjYXehC9oC_3H0U2O9YC-Ah8VpdPdCHUFuaQr7oXgePUub_Be1XQyCA5TaqrJxVxUG2hZA4rOVJHZ_AahfiJN7z6QcVEp-8xf-wHcv1lpWjjNdXFWDqVQZkdOaKf63dtjP35SmC5eCw2_BNX_t-db_FCCAhm2Vn2WI3q4k00p4l_ocCrJIdRID6muBVZQXCzxcRf5m8kcGwrTB-XVS-XSSPZInaBxZjgimOl5bLwJvdMC-HNYtU-yUDjXvDjPraZ_7ZV_-knU1GbHf1BpI9-rNbl_3bbA7KbmL7Q_goV1Clvi6gLYgjbXGQMTFjQEoodZX3fK_bDhVsrA1fWMJMWwfY3ua-j8HNuyRDfhPBpbTK0Gvz5-GWbIRF3v4zwR9HzIjz2frY7luy3ApQ6QJw7K6ITvD80u5VLfpHYReVCLpgs-lvPStklgnGXj3j5vuaH9f-wFohB19vwzRnthvgdplXPQ9jMy3ieb80sELS0WiGD-E2L_HhNXUcpTdeBp3HQFK4QubJOiIeKuZDVR7PxvtwBj26m-pLXLzKc6WqQlt07TsRo_72SlAaZodyyFRXf8636HCAyEHcVEhR6uZ1lDu00BHvsyVe6BdG7zvjNdmLluA0qBJQ9FO3ipHezadlwCPnEBDQAAZRgHKUvRCJNOQH_jcqFLLtmDADXoLvcK8_lN0LEeisA4B1LH0X2x0Q6NqLgngh9M1y_cBEBaazMa_UIZwoL6eZGU0QhlpvysBi1wKDybNcF_uKrIxdQwn8L_QRFHtDn39-hw-GDs_6zbnRlwrBEwrMtAQfc62FLSzGUMAzww-aTGvUuQvP-D9m0r-eDbSATlSsrIYobVUDUdDWsMDUsjKfYOW_Rp0GMjk40BQxcdzjNjLCYaTEN5cMhsWyfTbhIHDP7-wfbvJG7Al7Z-nH2Pa-QXPte687xVanKT0d3Er07vOV9HoI09mtuhxE4g0VaLm4TMqxSMRBX3EB60W1U2sX9sHjAgmwfpUNXRNj03QeJe4cg0pndf-hhKkTsfNQMU_N6-Zt8IrM2xtzFfvKB4BpFyWmaYu_X7bGwgSZjzrBNE10fx001fMr2fmrVy_sj7mW7WhlWXa3N5eMe4pqkA4EawmGzhuIwAqZNmtvnL_N2nt4T4ZyqkAAyXMMKb60UJAXkqLjUisD1bnNt1qD9otg8mGNzQxlaY5Bfm7286vNmjyxGY4UVrn0RV0DSFFb5_NYEW5y5YYxiabWABr8k0ezTM8R_qQ7NxdUOj0qhBKOqGyzyuVgKNnB6-ZzpKVGbB7RYJXwfEtkKNuUc3UWmbwxcsCTuW4TOScqJUh4dA5vlgLjB3-Q79yEMRYB8n6jetkR4z25RkYRXvTxkHIVQd2qr8BchdUcmHsZvG_tXI0-bxx_f_TGyfgi8ol7L5SRfWfOtYHCXSVHOCwnDj7GN4rIrwt3qWRcPkdTMw1RguDZW0eTpCpZyCJH_z3xVfpVh5lgf7Nu4tH-CpFRrOaJc79K1lSuIZs8yvjh5dbYAH4rKQ28OOFRu2MmU7Ko8Of4CECcJMhohFtVW6nTCB48-Pl8owiGM5_2uBJOJRAsyu3fHHbKqKvZ-0kYmN9ypyTAxQjgDiCOE3J1txPiqRRRRSaFZgLPNacdyjGO2y2SpWwzYudx8tEq3tBDAPBCXwWqwefcG__iN5OMRgCIAvr-9qfl2iSaVR5LZ-kBluVoW27o0hIUtgdry03bmUN50ob4hwCz8xVoupcHjI3Cy0nLpgiGixjo4afafQPE_TXJf-NixlWN-cH2a4ZzU6Qc5KKzIciwnt6Hx-iRQzB_uK-pBDjC8boVXolOsFyaqWsoLgkghTo2qCFZuxP2GKzS9wQ5sBWxTMEPGryHxaylpXXmUjlBJ-j9p4vJN9YxjQEbyuTVYy0PxmtDbyh6g_n3Lr09ttCg40hqfWBhCT9P4-uFoAjozUciHQFBfI8t04dKZnobLbVq-f_HJGzUZu5zHRHsPI939tJxODDJxiflfHLwxXjQS2cq9Vj-kvn1pgXAN5unYh8Y7-nqepxc0KkO2v8mU-r8fYFmUFJdZu6HR23P2y7ndsozZEKdUAVay36pmW_gvVQuSA_jzLwXn3Ee2y-A7G-w96bTe82gJG95PsSOt2L6AcuF8mqWL_EVBjIZJMN63T__0UHh9VPDCRTUITwn35t7Z0aGYHnssPVAxXLh7y2LhCaIN0u6lnbiDlKAdKc1-4qYbr1sHORC8tjSG8cjWLkgBcNkFo7rqhKQSNtU1H44aT8ceG08a8cSpze8aC6dMVaz6DxEaFIZ-aRqfqO0QV6ty2-6hrcRVedypt1Twd7UEkXZM5Erjb-_8jq4RzshqXVzKEqPfIYpmtHqkmeJq8BLfc1GT9UGrmPpYO4-K8LM-u7aOpcxcagPn2S3McsWI3a8CWkU9t4g9WEPNH-5s8VqF-3rSmgi5kk40Y7HjEyA-6clhNhl9lbP6hIbf9TKHO9fWwzTz8NieUPNZZPgrBrULggzHXPrfJIxl8eLSrKuD8n2Pbumu2k4ljMV_WIq9qCJ1wPofdIoWHWiz7oV2snLve1CFPUCdAhLkHQ8KpO6xvSi6mKY9WsOhOLxKm92vsWLv-rfM2CW4XUja5arRpGynr7cF9CDuEGWIxkPjOF_5x8ZXg2x1TJcrgvLDO_S4u2zKl2tQGRW4NHU1zF9h_3SQkpbwWH5KOPisP6c8vb5rg_rZ5laFedxQQSpguSq5el9-ddzvlr4C8Q22eDQvwUEO_P6c6VZN5A2QWBGZsJoaZ4gZ8UArmGLxSihBj_5oOdDdUcbUOhGUIWrtYrs4PJKxpnHDFUZaYwIbtnLyAoORKYvq8LgAH0SP57KeeYkZzUGP1f0jkDzAmwV4ZHE0pnZhEo3XkXVuIHc6MXZ-RniZaS_vaoY3Bq6XHrKoWZdLiCoU6aqPc-ZpPnvXmnKHyLLs4e96M1wGKIyT28_VCR6EDRJPxbZ9Ig1kN8TIHCF3tE8y2It5hkz1-zNYT6uw3SDkFSdrV_DRiAVqUhxrQdUPhpD92zVgsWdJR0TZLU7CBLlOuBVwyfmtHMUBL6dIvYie47Kr47nOJ5i2ka8EZGZf-Y8aD6xv6hpBbybU_5oGfYLRG4MiNRhML4u90tQ3hBxBbGYK8sWOzui2UEx0ynB_a8jz8eEs7u_9ylTD1v1f-gC8JYQMNAZIm46pvl2s1X07B8Gf7Laj4aozcWqg8DgC_8aLypoTffyxjWw4Fpd8LWn1fRPsFOdeV0UrS7FNtUakvYq_qxphGu5mNuINIJIMJzgI3giGnyCbr2IrsJ1ITmEGnggLQYes1t3j44v1quvVwQXqHX6HhSnoJlN2IlT5DuZ2kx6-pb68nK62xVJaOS-wDeeJnQ8zzhqJACstuF7g-jidRoJmGc8yChHfCN8ZFOhT0poNQB-Jf5IUZ7aSCXmceYN4VUhmB_w-Db1XZUNHOJqGiTgcT1KzejzNpN49b0QUjcRJiOpEhJp_LzBUiRQSnweOSFrWlTs5Jf9p3wqN9zFYZ_3Xz6IR2klwyLQXc-LbBd1QFwkB17HTYMspUXjrSpJULdQ90OxzbSEafF4RKvgIL4sAU1pCMTa2bVrcUmY2MiECVIbwPNN0CjZeoEAd1dP5FFjlwGG7xUNRO1E20CqHZJ1oqeEur06ZXvPK1zy3SlF-_lKF6eRfNClzR2ERGYqf-zEQwwkPNiMNnURPcdt64pw4kcjTKBIkorum3ruuqJZMitcZx0YiANx7ssy8dMuVteEFFCQnmglgTCsEZTK_xzigPie_f8Q5p1vsJPje5Z2cugsaW-vOXbuOE471n6LuIyoII2dWq0m8H3_8pxlErkZ5E7OY--w3InCuSCv2ubxaZ9AbaNuuyGw49fI3zvRurTYespYO-Aj1FcjDrxqRB3bihJm_u3a56fwnoyOeE0071TY_AlVlq1RYauV4-7L-RAFJZo0wKnPZM9Hs7VB_cCwJ_oPe1y0XBF95agtAQdicj42KdstIlpjWtdGb4LpHgVQI_56G3As0H81-uj47VuBourA2hUay0BpHAvcwbNLyu8OcZB31I6dfy2797wGlrWwAN-Xt3M3CVW9SvIN_GMlg0RB75rUEtgPkR-VPRdPH_Jb19wVoFPPpwjP6cYzVW1U_iRymFKaNpMo4CWFN6t54wshlCVwkfZKbhSP14z74oMKxy-qqt-WKNhkOr1uh_sevNa57iHBnFlHzt_eaZoPNTsCmzqnC4boOlK9o5_hFn8hiw33R3NQC-RD-w1XEl8-hpdZYdCcnexwRYd9sH2LMHySL59Kp_09yIwAE_ukVMDa6Yd9OHrbSCycQNZSI_0fMnF5s9oWTXnsxecDpRKgSWJQIQPUb6dlOdGOT0-MnebivpKgbDxzx52Zr0EMS7aU5eJxEdO9rdiFda8kQk5IeBgr1QcqIFs_1UIp6oQneXgwTlpXXxLHs16ShDG1qkLmDZjb4vrb_Ha2YCBIqid6wVKjec-UwEwWyvfV4UAPFgiNRJN7TdQNRxbSZJ8XWeA2gor9PN5JkMS0l_qGKoke3sbWDsp-G_B0KUjwUBTtPsKRhdnc0JyV_akuZ8jxAmXDDydxOy_EqNMgrDGN_4FuSY7XNLy2OXXJG3bB9a_lxEzdVNPWzM0cijTQFLzIiAKAyWTfwPNagcvgLUAeHxlQ22E0V37-sFwkstvpJ-s8C2yqxQKcv4GfMZOfSYEaZAhiO_y8EXgFknGGwjLB7K3CgvGwBRWWcgx-eqXYs9rAygf_X2_7-rBG_7Rxj3GW957PwwzwZjZDkdRHik8sj0htIkDRAyHo2EsPwObKXK-W32JKUX3VSgiY8AzCUhUUIWwFVVLXEvB1jtU7G7wRaj5_z9QywvgoIqnOTmpm4TTRA0cCJkiYoJcl8BOIHoWuYznL89zWjWy_ZQDKaYAsHugQYXaKI_UaaLV4gVFjDNqZCgqjAFyMjG4qZR64jkaI71mefUaDLLwsqIiLpOWZi8BlvP0YcOVeTyo2mJbq3EXfjXyDvPuZuZ9SAjqwCdLr902yzLm4DdzYRyfPbpt8rGUu-Uw27Ix2oZRe_zj0G_3FdCw0"];
 
-		const defaultmodels = ["gpt4all","supercot","pygmalion-6","pygmalion-v8","pygmalion-2","hermes","airoboros","chrono","wizard","mantis","vicuna","manticore","alpaca","myth","xwin","spicyboros","mlewd","mxlewd","llama","mistral","maid","mixtral","estopia","fighter","fimbul","euryale","nemo","gemma","lunaris","stheno","magnum","cydonia","qwen2.5-32b","behemoth"];
+		const defaultmodels = ["gpt4all","supercot","pygmalion-6","pygmalion-v8","pygmalion-2","hermes","airoboros","chrono","wizard","mantis","vicuna","manticore","alpaca","myth","xwin","spicyboros","mlewd","mxlewd","llama","mistral","maid","mixtral","estopia","fighter","fimbul","euryale","nemo","gemma","lunaris","stheno","magnum","cydonia","qwen2.5-32b","behemoth","exaone"];
 		const ignoredmodels = ["tinyllama","debug-"];
 
 		const instructstartplaceholder = "\n{{[INPUT]}}\n";
@@ -4192,9 +4236,8 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 	const XTTS_ID = 1000;
 	const ALLTALK_ID = 1001;
 	const OAI_TTS_ID = 1002;
-	const BIG_HD_RES_PX = 512; //when saving oversized images, could be 640?
-	const HD_RES_PX = 512;
-	const NO_HD_RES_PX = 320;
+	const HD_RES_PX = 768;
+	const NO_HD_RES_PX = 512;
 	const SAVE_SLOTS = 6;
 
 	//all configurable globals
@@ -4383,7 +4426,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 		img_clipskip: -1,
 		img_steps: 20,
 		img_sampler: "Euler",
-		img_aspect:0, //0=square,1=portrait,2=landscape,3=bigsquare
+		img_aspect:0, //0=square,1=portrait,2=landscape,3=bigsquare,4=portrait_long,5=landscape_long
 		save_images: true,
 		save_remote_images: false,
 		prompt_for_savename: false,
@@ -5507,7 +5550,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 				let nimgtag = "[<|p|" + imgid + "|p|>]";
 				gametext_arr.push(nimgtag);
 				image_db[imgid] = { done: false, queue: "Generating", result: "", prompt:prompt, poll_category:2 };
-				image_db[imgid].aspect = (req_payload.params.width>req_payload.params.height?2:(req_payload.params.width<req_payload.params.height?1:0));
+				image_db[imgid].aspect = (req_payload.params.width>=req_payload.params.height*2?5:(req_payload.params.height>=req_payload.params.width*2?4:(req_payload.params.width>req_payload.params.height?2:(req_payload.params.width<req_payload.params.height?1:0))));
 				image_db[imgid].imsource = 0; //0=generated,1=uploaded
 			}else{
 				console.log("Generation Error!");
@@ -11936,11 +11979,13 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 		generate_new_image(sentence, base64img);
 		document.getElementById("btn_genimg").disabled = true;
 		document.getElementById("btn_genimg2").disabled = true;
-		//disable it for 8 sec to prevent spam
+		document.getElementById("corpo_chat_img_btn").disabled = true;
+		//disable it for 5 sec to prevent spam
 		setTimeout(() => {
 			document.getElementById("btn_genimg").disabled = false;
 			document.getElementById("btn_genimg2").disabled = false;
-		}, 8000);
+			document.getElementById("corpo_chat_img_btn").disabled = false;
+		}, 5000);
 	}
 
 	function do_auto_gen_image(truncated_context)
@@ -11994,9 +12039,17 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 		compressImage(origImg, (newDataUri, outAspect) => {
 			image_db[imgid].done = true;
 			image_db[imgid].result = newDataUri;
-			if(outAspect<0.7)
+			if(outAspect<=0.5)
+			{
+				image_db[imgid].aspect = 4; //portrait_long
+			}
+			else if(outAspect<0.7)
 			{
 				image_db[imgid].aspect = 1; //portrait
+			}
+			else if(outAspect>=2)
+			{
+				image_db[imgid].aspect = 5; //landscape_long
 			}
 			else if(outAspect>1.4)
 			{
@@ -13105,7 +13158,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 				}
 			}
 
-			// Document DB Long term memory minisearch
+			// TextDocuDB Long term memory minisearch
 			if (documentdb_enabled)
 			{
 				// Finds the relevant memory fragments, formats them in a similar way to an authors note and inserts them before WI
@@ -14242,6 +14295,19 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 			iwidth = 768;
 			iheight = 768;
 		}
+		else if(localsettings.img_aspect==4)
+		{
+			iheight = 1024;
+		}
+		else if(localsettings.img_aspect==5)
+		{
+			iwidth = 1024;
+		}
+		else if(localsettings.img_aspect==6)
+		{
+			iwidth = 1024;
+			iheight = 1024;
+		}
 
 		let genimg_payload = {
 			"prompt": (sentence + negprompt),
@@ -14293,7 +14359,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 					let nimgtag = "[<|p|" + data.id + "|p|>]";
 					gametext_arr.push(nimgtag);
 					image_db[data.id] = { done: false, queue: "Starting", result: "", prompt:sentence, poll_category:1 };
-					image_db[data.id].aspect = (iwidth>iheight?2:(iwidth<iheight?1:0));
+					image_db[data.id].aspect = (iwidth>=iheight*2?5:(iheight>=iwidth*2?4:(iwidth>iheight?2:(iwidth<iheight?1:0))));
 					image_db[data.id].imsource = 0; //0=generated,1=uploaded
 					console.log("New image queued " + nimgtag);
 				}
@@ -14315,14 +14381,14 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 			let nimgtag = "[<|p|" + imgid + "|p|>]";
 			gametext_arr.push(nimgtag);
 			image_db[imgid] = { done: false, queue: "Generating", result: "", prompt:sentence, poll_category:0 };
-			image_db[imgid].aspect = (iwidth>iheight?2:(iwidth<iheight?1:0));
+			image_db[imgid].aspect = (iwidth>=iheight*2?5:(iheight>=iwidth*2?4:(iwidth>iheight?2:(iwidth<iheight?1:0))));
 			image_db[imgid].imsource = 0; //0=generated,1=uploaded
 			generate_a1111_image(genimg_payload,(outputimg)=>{
 				if(outputimg)
 				{
 					//console.log(outputimg);
 					let origImg = "data:image/jpeg;base64," + outputimg;
-					let imgres = localsettings.img_allowhd?(localsettings.img_aspect==0?HD_RES_PX:BIG_HD_RES_PX):NO_HD_RES_PX;
+					let imgres = localsettings.img_allowhd?(localsettings.img_aspect==0?NO_HD_RES_PX:HD_RES_PX):NO_HD_RES_PX;
 					compressImage(origImg, (newDataUri) => {
 						image_db[imgid].done = true;
 						image_db[imgid].result = newDataUri;
@@ -14352,7 +14418,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 					{
 						//console.log(outputimg);
 						let origImg = "data:image/jpeg;base64," + outputimg;
-						let imgres = localsettings.img_allowhd?(localsettings.img_aspect==0?HD_RES_PX:BIG_HD_RES_PX):NO_HD_RES_PX;
+						let imgres = localsettings.img_allowhd?HD_RES_PX:NO_HD_RES_PX;
 						compressImage(origImg, (newDataUri) => {
 							image_db[imgid].done = true;
 							image_db[imgid].result = newDataUri;
@@ -14486,6 +14552,8 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 		{
 			document.getElementById("zoomedimg").classList.remove("portrait");
 			document.getElementById("zoomedimg").classList.remove("landscape");
+			document.getElementById("zoomedimg").classList.remove("portrait_long");
+			document.getElementById("zoomedimg").classList.remove("landscape_long");
 			if(savedmeta.aspect==1)
 			{
 				document.getElementById("zoomedimg").classList.add("portrait");
@@ -14493,6 +14561,14 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 			else if(savedmeta.aspect==2)
 			{
 				document.getElementById("zoomedimg").classList.add("landscape");
+			}
+			else if(savedmeta.aspect==4)
+			{
+				document.getElementById("zoomedimg").classList.add("portrait_long");
+			}
+			else if(savedmeta.aspect==5)
+			{
+				document.getElementById("zoomedimg").classList.add("landscape_long");
 			}
 
 			if(!savedmeta.visionmode)
@@ -14625,6 +14701,16 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 				{
 					dimW *= 1.35;
 					dimH *= 0.9;
+				}
+				else if(completed_imgs_meta[imghash].aspect==4) //portrait_long
+				{
+					dimH *= 1.5;
+					dimW *= 0.75;
+				}
+				else if(completed_imgs_meta[imghash].aspect==5) //landscape_long
+				{
+					dimW *= 1.5;
+					dimH *= 0.75;
 				}
 			}
 			return prefix + `<div class="`+siclass+reinvertcolor+`"><img src="` + data + `" width=` + dimW + ` height=` + dimH + ` title="`+alttxt+`" style="border-radius: 6%; cursor: pointer;" onclick="return click_image(this,\'`+imghash+`\');"></div>` + suffix;
@@ -15028,7 +15114,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 										img.queue = 0;
 										let origImg = "data:image/jpeg;base64," + finalimg.generations[0].img;
 										//console.log("Original image: " + origImg);
-										let imgres = localsettings.img_allowhd?(localsettings.img_aspect==0?HD_RES_PX:BIG_HD_RES_PX):NO_HD_RES_PX;
+										let imgres = localsettings.img_allowhd?(localsettings.img_aspect==0?NO_HD_RES_PX:HD_RES_PX):NO_HD_RES_PX;
 										compressImage(origImg, (newDataUri) => {
 											img.result = newDataUri;
 										}, true, false, imgres,0.35,false);
@@ -15078,7 +15164,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 							reader.onloadend = () => {
 								img.queue = 0;
 								let origImg = reader.result;
-								let imgres = localsettings.img_allowhd?(localsettings.img_aspect==0?HD_RES_PX:BIG_HD_RES_PX):NO_HD_RES_PX;
+								let imgres = localsettings.img_allowhd?(localsettings.img_aspect==0?NO_HD_RES_PX:HD_RES_PX):NO_HD_RES_PX;
 								compressImage(origImg, (newDataUri) => {
 									img.result = newDataUri;
 								}, true, false, imgres,0.35,false);
@@ -15174,12 +15260,26 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 				let minsizeW = Math.min(origW, origH);
 				let minsizeH = Math.min(origW, origH);
 
-				if(aspectratio<0.7)
+				if(aspectratio<=0.5)
+				{
+					//portrait
+					minsizeH *= 2;
+					canvas.width = wantedWidth = maxSize/2;
+					canvas.height = wantedHeight = maxSize;
+				}
+				else if(aspectratio<0.7)
 				{
 					//portrait
 					minsizeH *= 1.5;
 					canvas.width = wantedWidth = maxSize/1.5;
 					canvas.height = wantedHeight = maxSize;
+				}
+				else if(aspectratio>=2)
+				{
+					//landscape
+					minsizeW *= 2;
+					canvas.width = wantedWidth = maxSize;
+					canvas.height = wantedHeight = maxSize/2;
 				}
 				else if(aspectratio>1.4)
 				{
@@ -18866,7 +18966,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 		document.getElementById('aesthetic_text_preview').innerHTML = render_aesthetic_ui(preview,true);
 	}
 
-	//LTM DocumentDB Memsnipper searching
+	//LTM TextDocuDB Memsnipper searching
 	//searches dbText for searchStr and recentTextStr, returns up to 3 results
 	function DatabaseMinisearch(dbText, searchStr, recentTextStr)
 	{	//predefined minisearch constants
@@ -19229,6 +19329,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 					</div>
 					<div class="corpomainbtm">
 						<div class="corpo_chat_outer">
+							<button title="Image" onclick="add_img_btn_menu()" id="corpo_chat_img_btn" class="corpo_chat_img_btn mainnav" type="button"></button>
 							<div class="corpo_chat_inner" id="corpo_cht_inp_lengthtester" style="white-space: nowrap; visibility: hidden; height: 0px; position:absolute; width: auto;"></div>
 							<textarea title="User Input" class="corpo_chat_inner mainnav" id="corpo_cht_inp" type="text" name="crpchtinp"  role="presentation" autocomplete="noppynop" spellcheck="true" rows="1" wrap="on" placeholder="Message KoboldAI" value="" oninput="update_submit_button();chat_resize_input();" onkeypress="return chat_handle_typing(event)"/></textarea>
 							<button title="Submit" onclick="submit_generation_button(true)" id="corpo_chat_send_btn" class="corpo_chat_send_btn mainnav" type="button"></button>
@@ -20395,14 +20496,17 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 								</select>
 							</div>
 							<div class="inlinelabel">
-								<div class="justifyleft rowitem">Aspect Ratio <span class="helpicon">?
-									<span class="helptext">Square is recommended. Changing aspect ratio will affect the resolution used to generate. This may impact quality or memory usage.</span>
+								<div class="justifyleft rowitem">Resolution <span class="helpicon">?
+									<span class="helptext">Changing resolution will affect the aspect ratio used to generate. This may impact quality or memory usage.</span>
 								</span>: </div>
-								<select title="Image Aspect Ratio" style="padding:1px; font-size:12px; height:20px; width: 100px;" class="form-control" id="img_aspect">
-									<option value="0">Square</option>
-									<option value="1">Portrait</option>
-									<option value="2">Landscape</option>
-									<option value="3">BigSquare</option>
+								<select title="Resolution" style="padding:1px; font-size:12px; height:20px; width: 180px;" class="form-control" id="img_aspect">
+									<option value="0">512 x 512 (Square)</option>
+									<option value="1">512 x 768 (Portrait)</option>
+									<option value="2">768 x 512 (Landscape)</option>
+									<option value="3">768 x 768 (BigSquare)</option>
+									<option value="4">512 x 1024 (TallPortrait)</option>
+									<option value="5">1024 x 512 (LongLandscape)</option>
+									<option value="6">1024 x 1024 (HugeSquare)</option>
 								</select>
 							</div>
 							<div class="inlinelabel">
@@ -20595,7 +20699,7 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 			<div><ul class="nav nav-tabs settingsnav">
 				<li id="memory_tab" class="active"><a class="" href="#" onclick="display_memory_tab(0)">Memory</a></li>
 				<li id="wi_tab"><a class="" href="#" onclick="display_memory_tab(1)">World Info</a></li>
-				<li id="documentdb_tab"><a class="" href="#" onclick="display_memory_tab(2)">Document DB</a></li>
+				<li id="documentdb_tab"><a class="" href="#" onclick="display_memory_tab(2)">TextDocuDB</a></li>
 				<li id="token_tab"><a class="" href="#" onclick="display_memory_tab(3)">Tokens</a></li>
 			  </ul></div>
 
@@ -20683,8 +20787,8 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 			<div class="memtabcontainer" id="documentdb_tab_container">
 				<div class="settinglabel" style="padding: 4px;">Automatically search and include relevant snippets from uploaded documents or history.</div>
 				<div class="settinglabel" style="padding: 4px;">
-					<div class="justifyleft settingsmall" title="Enable Document DB">Enable Document DB </div>
-					<input title="Enable Document DB" type="checkbox" id="documentdb_enabled" style="margin:0px 0 0;">
+					<div class="justifyleft settingsmall" title="Enable TextDocuDB">Enable TextDocuDB </div>
+					<input title="Enable TextDocuDB" type="checkbox" id="documentdb_enabled" style="margin:0px 0 0;">
 				</div>
 
 				<div class="settinglabel" style="padding: 4px;">
@@ -20717,11 +20821,11 @@ pre code,td,th{padding:0}pre code,table{background-color:transparent}.table,inpu
 						min="0" step="1" pattern="\d+" placeholder="" value="" id="documentdb_chunksize">
 				</div>
 				<div class="settinglabel">
-					<div class="justifyleft"><br>DocumentDB Storage<span class="helpicon">?<span
-						class="helptext">Paste as much raw text data here as you like. E.g. background information, reference documents, etc. This text will populate the database that will be chunked and searched by DocumentDB.</span></span></div>
+					<div class="justifyleft"><br>TextDocuDB Storage<span class="helpicon">?<span
+						class="helptext">Paste as much raw text data here as you like. E.g. background information, reference documents, etc. This text will populate the database that will be chunked and searched by TextDocuDB.</span></span></div>
 				</div>
-				<textarea title="Edit DocumentDB" class="form-control" id="documentdb_data" style="height: 120px;"
-					placeholder="Paste as much text data here as you like. This text will populate the database that will be searched by DocumentDB."></textarea>
+				<textarea title="Edit TextDocuDB" class="form-control" id="documentdb_data" style="height: 120px;"
+					placeholder="Paste as much text data here as you like. This text will populate the database that will be searched by TextDocuDB."></textarea>
 			</div>
 
 			<div class="memtabcontainer" id="token_tab_container">
