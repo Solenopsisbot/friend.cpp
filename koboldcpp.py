@@ -83,6 +83,8 @@ multiplayer_turn_major = 1 # to keep track of when a client needs to sync their 
 multiplayer_turn_minor = 1
 multiplayer_dataformat = "" # used to tell what is the data payload in saved story. set by client
 multiplayer_lastactive = {} # timestamp of last activity for each unique player
+websearch_lastquery = ""
+websearch_lastresponse = []
 preloaded_story = None
 chatcompl_adapter = None
 embedded_kailite = None
@@ -1272,8 +1274,14 @@ def detokenize_ids(tokids):
 
 # Performs a web search using DuckDuckGo and extracts text content from the top results.
 def websearch(query):
+    global websearch_lastquery
+    global websearch_lastresponse
     if not query or query=="":
         return []
+    query = query[:300] # only search first 300 chars, due to search engine limits
+    if query==websearch_lastquery:
+        print("Returning cached websearch...")
+        return websearch_lastresponse
     import urllib.parse
     import urllib.request
     import difflib
@@ -1282,7 +1290,7 @@ def websearch(query):
     num_results = 3
     searchresults = []
     if args.debugmode != -1 and not args.quiet:
-        print("Performing websearch...")
+        print("Performing new websearch...")
 
     def fetch_searched_webpage(url):
         if args.debugmode:
@@ -1420,6 +1428,9 @@ def websearch(query):
         if args.debugmode != -1 and not args.quiet:
             print(f"Error fetching URL {search_url}: {e}")
         return ""
+    if len(searchresults) > 0:
+        websearch_lastquery = query
+        websearch_lastresponse = searchresults
     return searchresults
 
 #################################################################
