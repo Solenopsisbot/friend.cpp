@@ -1281,6 +1281,8 @@ def websearch(query):
     from concurrent.futures import ThreadPoolExecutor
     num_results = 3
     searchresults = []
+    if args.debugmode != -1 and not args.quiet:
+        print("Performing websearch...")
 
     def fetch_searched_webpage(url):
         if args.debugmode:
@@ -1312,7 +1314,7 @@ def websearch(query):
 
     def normalize_page_text(text):
         text = re.sub(r'\s+([.,!?])', r'\1', text)  # Remove spaces before punctuation
-        text = re.sub(r'([.,!?])([^\s])', r'\1 \2', text) # Ensure a single space follows punctuation, if not at the end of a line
+        # text = re.sub(r'([.,!?])([^\s])', r'\1 \2', text) # Ensure a single space follows punctuation, if not at the end of a line
         return text
 
     class VisibleTextParser(HTMLParser):
@@ -2084,7 +2086,8 @@ Enter Prompt:<br>
             has_vision = (mmprojpath!="")
             has_password = (password!="")
             has_whisper = (fullwhispermodelpath!="")
-            response_body = (json.dumps({"result":"KoboldCpp","version":KcppVersion, "protected":has_password ,"txt2img":has_txt2img,"vision":has_vision,"transcribe":has_whisper,"multiplayer":has_multiplayer}).encode())
+            has_search = True if args.websearch else False
+            response_body = (json.dumps({"result":"KoboldCpp","version":KcppVersion, "protected":has_password ,"txt2img":has_txt2img,"vision":has_vision,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search}).encode())
 
         elif self.path.endswith(('/api/extra/perf')):
             global last_req_time, start_time
@@ -2171,32 +2174,6 @@ Enter Prompt:<br>
                     "n_ctx": maxctx,
                 },
             }).encode())
-
-        elif self.path.startswith(("/websearch")):
-            if args.websearch:
-                # ensure authorized
-                auth_ok = True
-                if password and password !="":
-                    auth_header = None
-                    auth_ok = False
-                    if 'Authorization' in self.headers:
-                        auth_header = self.headers['Authorization']
-                    elif 'authorization' in self.headers:
-                        auth_header = self.headers['authorization']
-                    if auth_header is not None and auth_header.startswith('Bearer '):
-                        token = auth_header[len('Bearer '):].strip()
-                        if token==password:
-                            auth_ok = True
-                if auth_ok:
-                    parsed_url = urlparse.urlparse(self.path)
-                    parsed_dict = urlparse.parse_qs(parsed_url.query)
-                    searchstr = (parsed_dict['q'][0]) if 'q' in parsed_dict else ""
-                    searchres = websearch(searchstr)
-                    response_body = (json.dumps(searchres).encode())
-                else:
-                    response_body = (json.dumps([]).encode())
-            else:
-                response_body = (json.dumps([]).encode())
 
         elif self.path=="/api" or self.path=="/docs" or self.path.startswith(('/api/?json=','/api?json=','/docs/?json=','/docs?json=')):
             content_type = 'text/html'
@@ -2445,6 +2422,22 @@ Enter Prompt:<br>
                     utfprint("Multiplayer Set Story - Body Error: " + str(e))
                     response_code = 400
                     response_body = (json.dumps({"success": False, "error":"Submitted story invalid!"}).encode())
+
+        elif self.path.startswith(("/api/extra/websearch")):
+            if not self.secure_endpoint():
+                return
+            if args.websearch:
+                try:
+                    tempbody = json.loads(body)
+                    searchstr = tempbody.get('q', "")
+                    searchres = websearch(searchstr)
+                    response_body = (json.dumps(searchres).encode())
+                except Exception as e:
+                    utfprint("WebSearch Parse Error: " + str(e))
+                    response_code = 400
+                    response_body = (json.dumps([]).encode())
+            else:
+                response_body = (json.dumps([]).encode())
 
         if response_body is not None:
             self.send_response(response_code)
