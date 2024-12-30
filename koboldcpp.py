@@ -58,7 +58,7 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.80.3"
+KcppVersion = "1.81"
 showdebug = True
 guimode = False
 showsamplerwarning = True
@@ -1310,6 +1310,11 @@ def websearch(query):
             results = list(executor.map(fetch_searched_webpage, urls))
         return results
 
+    def normalize_page_text(text):
+        text = re.sub(r'\s+([.,!?])', r'\1', text)  # Remove spaces before punctuation
+        text = re.sub(r'([.,!?])([^\s])', r'\1 \2', text) # Ensure a single space follows punctuation, if not at the end of a line
+        return text
+
     class VisibleTextParser(HTMLParser):
         def __init__(self):
             super().__init__()
@@ -1393,12 +1398,14 @@ def websearch(query):
                 parser2 = VisibleTextParser()
                 parser2.feed(html_content)
                 scraped = parser2.get_text().strip()
+                scraped = normalize_page_text(scraped)
+                desc = normalize_page_text(desc)
                 s = difflib.SequenceMatcher(None, scraped.lower(), desc.lower(), autojunk=False)
                 matches = s.find_longest_match(0, len(scraped), 0, desclen)
                 if matches.size > 100 and desclen-matches.size < 100: #good enough match
                     # expand description by some chars both sides
-                    expandamtbefore = 250
-                    expandamtafter = 750
+                    expandamtbefore = 200
+                    expandamtafter = 800
                     startpt = matches.a - expandamtbefore
                     startpt = 0 if startpt < 0 else startpt
                     endpt =  matches.a + expandamtafter + desclen
