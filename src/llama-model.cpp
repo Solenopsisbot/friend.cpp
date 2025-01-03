@@ -11,6 +11,10 @@
 #include <sstream>
 #include <stdexcept>
 
+#if defined(GGML_USE_CLBLAST)
+#  include "ggml_v3b-opencl.h"
+#endif
+
 static const size_t kiB = 1024;
 static const size_t MiB = 1024*kiB;
 static const size_t GiB = 1024*MiB;
@@ -150,6 +154,9 @@ static bool buft_supported(ggml_backend_buffer_type_t buft, ggml_backend_dev_t d
         throw std::runtime_error(format("failed to create ggml context"));
     }
 
+    #if defined(GGML_USE_CLBLAST)
+    ggml_cl_init();
+    #endif
     ggml_backend_buffer_ptr buf { ggml_backend_buft_alloc_buffer(buft, 0) };
     ggml_tensor * op_tensor = fn(ctx.get());
     for (int i = 0; i < GGML_MAX_SRC; i++) {
@@ -1153,6 +1160,16 @@ void llm_load_vocab(llama_model_loader & ml, llama_model & model) {
             const int n_merges = gguf_get_arr_n(ctx, merges_keyidx);
             for (int i = 0; i < n_merges; i++) {
                 const std::string word = gguf_get_arr_str(ctx, merges_keyidx, i);
+                if (!OldBPETokenizerMode)
+                {
+                    auto validcodepoints = unicode_cpts_from_utf8(word).size() > 0;
+                    GGML_ASSERT_CONTINUE(validcodepoints);
+                    if(!validcodepoints)
+                    {
+                        OldBPETokenizerMode = true;
+                        printf("\nFalling Back to older tokenizer...");
+                    }
+                }
                 GGML_ASSERT(unicode_cpts_from_utf8(word).size() > 0);
 
                 std::string first;
@@ -1398,9 +1415,12 @@ void llm_load_vocab(llama_model_loader & ml, llama_model & model) {
 
     for (uint32_t i = 0; i < n_vocab; i++) {
         std::string word = gguf_get_arr_str(ctx, token_idx, i);
-        if (word.empty()) {
+       if (!OldBPETokenizerMode)
+        {
+            if (word.empty()) {
             LLAMA_LOG_WARN("%s: empty token at index %u\n", __func__, i);
             word = "[EMPTY_" + std::to_string(i) + "]";
+        }
         }
 
         vocab.token_to_id[word] = i;
@@ -1424,7 +1444,7 @@ void llm_load_vocab(llama_model_loader & ml, llama_model & model) {
             }
         }
     }
-    GGML_ASSERT(vocab.id_to_token.size() == vocab.token_to_id.size());
+    GGML_ASSERT_CONTINUE(vocab.id_to_token.size() == vocab.token_to_id.size());
 
     vocab.init_tokenizer();
 
@@ -1681,8 +1701,8 @@ void llm_load_vocab(llama_model_loader & ml, llama_model & model) {
             } else {
                 // token is control, but not marked as EOG -> print a debug log
                 if (vocab.id_to_token[t.second].attr & LLAMA_TOKEN_ATTR_CONTROL && vocab.special_eog_ids.count(t.second) == 0) {
-                    LLAMA_LOG_DEBUG("%s: control token: %6d '%s' is not marked as EOG\n",
-                            __func__, t.second, t.first.c_str());
+                    // LLAMA_LOG_DEBUG("%s: control token: %6d '%s' is not marked as EOG\n",
+                    //         __func__, t.second, t.first.c_str());
                 }
             }
         }

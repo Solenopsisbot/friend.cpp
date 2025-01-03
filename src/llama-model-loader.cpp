@@ -7,6 +7,10 @@
 #include <cstring>
 #include <future>
 
+#if defined(GGML_USE_CLBLAST)
+#  include "ggml_v3b-opencl.h"
+#endif
+
 const char * llama_file_version_name(llama_fver version) {
     switch (version) {
         case GGUF_FILE_VERSION_V1: return "GGUF V1 (support until nov 2023)";
@@ -479,6 +483,7 @@ llama_model_loader::llama_model_loader(const std::string & fname, bool use_mmap,
 
     // determine file type based on the number of tensors for each quantization and print meta data
     // TODO: make optional
+    if(false) //disable this log for now
     {
         std::map<enum ggml_type, uint32_t> n_type;
 
@@ -776,6 +781,24 @@ void llama_model_loader::load_data_for(struct ggml_tensor * cur) const {
     }
 }
 
+static int clblast_offload_fallback_layers = 0;
+static int layer_name_to_number(std::string inputString)
+{
+    size_t firstDotPosition = inputString.find('.');
+    int converted = -1;
+
+    if (firstDotPosition != std::string::npos) {
+        size_t secondDotPosition = inputString.find('.', firstDotPosition + 1);
+        if (secondDotPosition != std::string::npos) {
+            std::string numbersPortion = inputString.substr(firstDotPosition + 1, secondDotPosition - firstDotPosition - 1);
+            try{converted = std::stoi(numbersPortion);}
+            catch (const std::invalid_argument& e) {}
+            catch (const std::out_of_range& e) {}
+        }
+    }
+    return converted;
+}
+
 bool llama_model_loader::load_all_data(
         struct ggml_context * ctx,
         llama_buf_map & bufs,
@@ -959,6 +982,16 @@ bool llama_model_loader::load_all_data(
                 }
             }
         }
+
+        #if defined(GGML_USE_CLBLAST)
+        int layernum = layer_name_to_number(cur->name);
+        bool shouldoffload = (layernum>=0 && clblast_offload_fallback_layers>layernum);
+        if(shouldoffload)
+        {
+            cur->backend = GGML_BACKEND_TYPE_GPU;
+            ggml_cl_transform_tensor(cur->data, cur);
+        }
+        #endif
 
         size_done += n_size;
     }
