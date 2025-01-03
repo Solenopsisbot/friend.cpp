@@ -3,15 +3,14 @@
 #include "build-info.h"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <string>
 #include <vector>
-
-#include <stdio.h>
-#include <string.h>
 #include <climits>
+
+#include <cstdio>
+#include <cstring>
 #include <stdexcept>
 
 #if defined(_WIN32)
@@ -231,9 +230,9 @@ struct split_strategy {
             if (i_split == 0) {
                 gguf_set_kv(ctx_out, ctx_gguf);
             }
-            gguf_set_val_u16(ctx_out, LLM_KV_SPLIT_NO_STR, i_split);
-            gguf_set_val_u16(ctx_out, LLM_KV_SPLIT_COUNT_STR, 0); // placeholder
-            gguf_set_val_i32(ctx_out, LLM_KV_SPLIT_TENSORS_COUNT_STR, n_tensors);
+            gguf_set_val_u16(ctx_out, LLM_KV_SPLIT_NO, i_split);
+            gguf_set_val_u16(ctx_out, LLM_KV_SPLIT_COUNT, 0); // placeholder
+            gguf_set_val_i32(ctx_out, LLM_KV_SPLIT_TENSORS_COUNT, n_tensors);
         };
 
         // initialize ctx_out for the first split
