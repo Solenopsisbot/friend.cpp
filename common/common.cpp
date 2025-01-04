@@ -1365,7 +1365,7 @@ struct llama_model * common_load_model_from_url(
             return NULL;
         }
 
-        auto key_n_split = gguf_find_key(ctx_gguf, LLM_KV_SPLIT_COUNT_STR);
+        auto key_n_split = gguf_find_key(ctx_gguf, LLM_KV_SPLIT_COUNT);
         if (key_n_split >= 0) {
             n_split = gguf_get_val_u16(ctx_gguf, key_n_split);
         }

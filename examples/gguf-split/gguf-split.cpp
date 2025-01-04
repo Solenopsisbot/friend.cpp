@@ -264,7 +264,7 @@ struct split_strategy {
 
         // set the correct n_split for all ctx_out
         for (auto & ctx : ctx_outs) {
-            gguf_set_val_u16(ctx, LLM_KV_SPLIT_COUNT_STR, ctx_outs.size());
+            gguf_set_val_u16(ctx, LLM_KV_SPLIT_COUNT, ctx_outs.size());
         }
     }
 
@@ -443,12 +443,12 @@ static void gguf_merge(const split_params & split_params) {
         ctx_metas.push_back(ctx_meta);
 
         if (i_split == 0) {
-            auto key_n_split = gguf_find_key(ctx_gguf, LLM_KV_SPLIT_COUNT_STR);
+            auto key_n_split = gguf_find_key(ctx_gguf, LLM_KV_SPLIT_COUNT);
             if (key_n_split < 0) {
                 fprintf(stderr,
                         "\n%s: input file does not contain %s metadata\n",
                         __func__,
-                        LLM_KV_SPLIT_COUNT_STR);
+                        LLM_KV_SPLIT_COUNT);
                 gguf_free(ctx_gguf);
                 ggml_free(ctx_meta);
                 gguf_free(ctx_out);
@@ -483,7 +483,7 @@ static void gguf_merge(const split_params & split_params) {
             }
 
             // Do not trigger merge if we try to merge again the output
-            gguf_set_val_u16(ctx_gguf, LLM_KV_SPLIT_COUNT_STR, 0);
+            gguf_set_val_u16(ctx_gguf, LLM_KV_SPLIT_COUNT, 0);
 
             // Set metadata from the first split
             gguf_set_kv(ctx_out, ctx_gguf);
