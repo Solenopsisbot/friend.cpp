@@ -4184,7 +4184,7 @@ def run_horde_worker(args, api_key, worker_name):
         current_id = pop['id']
         current_payload = pop['payload']
         print("") #empty newline
-        print_with_time(f"Job received from {cluster} for {current_payload.get('max_length',80)} tokens and {current_payload.get('max_context_length',1024)} max context. Starting generation...")
+        print_with_time(f"Job {current_id} received from {cluster} for {current_payload.get('max_length',80)} tokens and {current_payload.get('max_context_length',1024)} max context. Starting generation...")
 
         #do gen
         while exitcounter < 10:
