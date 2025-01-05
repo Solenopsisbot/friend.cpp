@@ -58,7 +58,7 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.81"
+KcppVersion = "1.81.1"
 showdebug = True
 guimode = False
 showsamplerwarning = True
@@ -1281,6 +1281,7 @@ def detokenize_ids(tokids):
 def websearch(query):
     global websearch_lastquery
     global websearch_lastresponse
+    global nocertify
     # sanitize query
     query = re.sub(r'[+\-\"\\/*^|<>~`]', '', query) # Remove blacklisted characters
     query = re.sub(r'\s+', ' ', query).strip() # Replace multiple spaces with a single space
@@ -1312,14 +1313,17 @@ def websearch(query):
         if args.debugmode:
             utfprint(f"WebSearch URL: {url}")
         try:
+            ssl_cert_dir = os.environ.get('SSL_CERT_DIR')
+            if not ssl_cert_dir and not nocertify and os.name != 'nt':
+                os.environ['SSL_CERT_DIR'] = '/etc/ssl/certs'
             req = urllib.request.Request(url, headers={'User-Agent': uagent})
-            with urllib.request.urlopen(req,  timeout=15) as response:
+            with urllib.request.urlopen(req, timeout=15) as response:
                 html_content = response.read().decode('utf-8', errors='ignore')
                 return html_content
         except urllib.error.HTTPError: #we got blocked? try 1 more time with a different user agent
             try:
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36'})
-                with urllib.request.urlopen(req,  timeout=15) as response:
+                with urllib.request.urlopen(req, timeout=15) as response:
                     html_content = response.read().decode('utf-8', errors='ignore')
                     return html_content
             except Exception as e:
@@ -4042,17 +4046,12 @@ def print_with_time(txt):
 
 def make_url_request(url, data, method='POST', headers={}):
     import urllib.request
-    import ssl
     global nocertify
     try:
         request = None
         ssl_cert_dir = os.environ.get('SSL_CERT_DIR')
         if not ssl_cert_dir and not nocertify and os.name != 'nt':
             os.environ['SSL_CERT_DIR'] = '/etc/ssl/certs'
-        ssl_context = ssl.create_default_context()
-        if nocertify:
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
         if method=='POST':
             json_payload = json.dumps(data).encode('utf-8')
             request = urllib.request.Request(url, data=json_payload, headers=headers, method=method)
@@ -4060,7 +4059,7 @@ def make_url_request(url, data, method='POST', headers={}):
         else:
             request = urllib.request.Request(url, headers=headers, method=method)
         response_data = ""
-        with urllib.request.urlopen(request,context=ssl_context,timeout=300) as response:
+        with urllib.request.urlopen(request,timeout=300) as response:
             response_data = response.read().decode('utf-8',"ignore")
             json_response = json.loads(response_data)
             return json_response
@@ -4741,8 +4740,10 @@ def main(launch_args,start_server=True):
         maxctx = args.contextsize
 
     if args.nocertify:
+        import ssl
         global nocertify
         nocertify = True
+        ssl._create_default_https_context = ssl._create_unverified_context
 
     if args.gpulayers:
         shouldavoidgpu = False
