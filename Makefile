@@ -149,12 +149,12 @@ ifeq ($(UNAME_M),$(filter $(UNAME_M),x86_64 i686 amd64))
 		ifdef LLAMA_PORTABLE
 		CFLAGS +=
 		NONECFLAGS +=
-		SIMPLECFLAGS += -mavx -msse3
-		SIMPLERCFLAGS += -mavx
+		SIMPLECFLAGS += -mavx -msse3 -mssse3
+		SIMPLERCFLAGS += -msse3 -mssse3
 		ifdef LLAMA_NOAVX2
-			FULLCFLAGS += -msse3 -mavx
+			FULLCFLAGS += -msse3 -mssse3 -mavx
 		else
-			FULLCFLAGS += -mavx2 -msse3 -mfma -mf16c -mavx
+			FULLCFLAGS += -mavx2 -msse3 -mssse3 -mfma -mf16c -mavx
 		endif
 		else
 		CFLAGS += -march=native -mtune=native
@@ -163,12 +163,12 @@ ifeq ($(UNAME_M),$(filter $(UNAME_M),x86_64 i686 amd64))
 		ifdef LLAMA_PORTABLE
 		CFLAGS +=
 		NONECFLAGS +=
-		SIMPLECFLAGS += -mavx -msse3
-		SIMPLERCFLAGS += -mavx
+		SIMPLECFLAGS += -mavx -msse3 -mssse3
+		SIMPLERCFLAGS += -msse3 -mssse3
 		ifdef LLAMA_NOAVX2
-			FULLCFLAGS += -msse3 -mavx
+			FULLCFLAGS += -msse3 -mssse3 -mavx
 		else
-			FULLCFLAGS += -mavx2 -msse3 -mfma -mf16c -mavx
+			FULLCFLAGS += -mavx2 -msse3 -mssse3 -mfma -mf16c -mavx
 		endif
 		else
 		CFLAGS += -march=native -mtune=native
