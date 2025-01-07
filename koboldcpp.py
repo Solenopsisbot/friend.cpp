@@ -3582,7 +3582,9 @@ def show_gui():
         filename = asksaveasfile(filetypes=file_type, defaultextension=file_type)
         if filename is None:
             return
-        file = open(str(filename.name), 'a')
+        filenamestr = str(filename.name).strip()
+        filenamestr = f"{filenamestr}.kcppt" if ".kcppt" not in filenamestr.lower() else filenamestr
+        file = open(filenamestr, 'a')
         file.write(json.dumps(savdict))
         file.close()
         pass
@@ -3936,7 +3938,9 @@ def show_gui():
         filename = asksaveasfile(filetypes=file_type, defaultextension=file_type)
         if filename is None:
             return
-        file = open(str(filename.name), 'a')
+        filenamestr = str(filename.name).strip()
+        filenamestr = f"{filenamestr}.kcpps" if ".kcpps" not in filenamestr.lower() else filenamestr
+        file = open(filenamestr, 'a')
         file.write(json.dumps(savdict))
         file.close()
         pass
