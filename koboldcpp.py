@@ -234,6 +234,7 @@ class sd_load_model_inputs(ctypes.Structure):
                 ("threads", ctypes.c_int),
                 ("quant", ctypes.c_int),
                 ("taesd", ctypes.c_bool),
+                ("notile", ctypes.c_bool),
                 ("t5xxl_filename", ctypes.c_char_p),
                 ("clipl_filename", ctypes.c_char_p),
                 ("clipg_filename", ctypes.c_char_p),
@@ -1121,6 +1122,7 @@ def sd_load_model(model_filename,vae_filename,lora_filename,t5xxl_filename,clipl
     inputs.threads = thds
     inputs.quant = quant
     inputs.taesd = True if args.sdvaeauto else False
+    inputs.notile = True if args.sdnotile else False
     inputs.vae_filename = vae_filename.encode("UTF-8")
     inputs.lora_filename = lora_filename.encode("UTF-8")
     inputs.lora_multiplier = args.sdloramult
@@ -2980,6 +2982,7 @@ def show_gui():
     sd_clipl_var = ctk.StringVar()
     sd_clipg_var = ctk.StringVar()
     sd_vaeauto_var = ctk.IntVar(value=0)
+    sd_notile_var = ctk.IntVar(value=0)
     sd_clamped_var = ctk.StringVar(value="0")
     sd_threads_var = ctk.StringVar(value=str(default_threads))
     sd_quant_var = ctk.IntVar(value=0)
@@ -3548,6 +3551,7 @@ def show_gui():
                 sdvaeitem2.grid()
                 sdvaeitem3.grid()
     makecheckbox(images_tab, "Use TAE SD (AutoFix Broken VAE)", sd_vaeauto_var, 22,command=toggletaesd,tooltiptxt="Replace VAE with TAESD. May fix bad VAE.")
+    makecheckbox(images_tab, "No VAE Tiling", sd_notile_var, 24,tooltiptxt="Disables VAE tiling, may not work for large images.")
 
     # audio tab
     audio_tab = tabcontent["Audio"]
@@ -3738,6 +3742,7 @@ def show_gui():
 
         args.sdthreads = (0 if sd_threads_var.get()=="" else int(sd_threads_var.get()))
         args.sdclamped = (0 if int(sd_clamped_var.get())<=0 else int(sd_clamped_var.get()))
+        args.sdnotile = (True if sd_notile_var.get()==1 else False)
         if sd_vaeauto_var.get()==1:
             args.sdvaeauto = True
             args.sdvae = ""
@@ -3919,6 +3924,7 @@ def show_gui():
         sd_clipl_var.set(dict["sdclipl"] if ("sdclipl" in dict and dict["sdclipl"]) else "")
         sd_clipg_var.set(dict["sdclipg"] if ("sdclipg" in dict and dict["sdclipg"]) else "")
         sd_vaeauto_var.set(1 if ("sdvaeauto" in dict and dict["sdvaeauto"]) else 0)
+        sd_notile_var.set(1 if ("sdnotile" in dict and dict["sdnotile"]) else 0)
         sd_lora_var.set(dict["sdlora"] if ("sdlora" in dict and dict["sdlora"]) else "")
         sd_loramult_var.set(str(dict["sdloramult"]) if ("sdloramult" in dict and dict["sdloramult"]) else "1.0")
 
@@ -5237,6 +5243,7 @@ if __name__ == '__main__':
     sdparsergrouplora.add_argument("--sdquant", help="If specified, loads the model quantized to save memory.", action='store_true')
     sdparsergrouplora.add_argument("--sdlora", metavar=('[filename]'), help="Specify a stable diffusion LORA safetensors model to be applied. Cannot be used with quant models.", default="")
     sdparsergroup.add_argument("--sdloramult", metavar=('[amount]'), help="Multiplier for the LORA model to be applied.", type=float, default=1.0)
+    sdparsergroup.add_argument("--sdnotile", help="Disables VAE tiling, may not work for large images.", action='store_true')
 
     whisperparsergroup = parser.add_argument_group('Whisper Transcription Commands')
     whisperparsergroup.add_argument("--whispermodel", metavar=('[filename]'), help="Specify a Whisper bin model to enable Speech-To-Text transcription.", default="")
