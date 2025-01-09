@@ -12,6 +12,7 @@
 #include "ggml-threading.h"
 // #include "amx/amx.h"
 #include "ggml.h"
+#include "gguf.h"
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #include <malloc.h> // using malloc.h with MSC/MINGW
@@ -4017,7 +4018,7 @@ static void ggml_compute_forward_add_f32(
     const int nth = params->nth;
 
     #if defined(GGML_USE_CLBLAST)
-    if (src1->backend == GGML_BACKEND_TYPE_GPU) {
+    if (src1->clblast_offload_gpu) {
         // TODO: OpenCL kernel support full broadcast
         static_assert(GGML_MAX_DIMS == 4, "GGML_MAX_DIMS is not 4 - update this function");
         GGML_ASSERT((src1->ne[0] == src0->ne[0]) && ggml_can_repeat(src1, src0));
@@ -5104,7 +5105,7 @@ static void ggml_compute_forward_mul_f32(
     const int nth = params->nth;
 
     #if defined(GGML_USE_CLBLAST)
-    if (src1->backend == GGML_BACKEND_TYPE_GPU) {
+    if (src1->clblast_offload_gpu) {
         // TODO: OpenCL kernel support full broadcast
         static_assert(GGML_MAX_DIMS == 4, "GGML_MAX_DIMS is not 4 - update this function");
         GGML_ASSERT((src1->ne[0] == src0->ne[0]) && ggml_can_repeat(src1, src0));
