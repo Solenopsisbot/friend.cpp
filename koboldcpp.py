@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 # constants
 sampler_order_max = 7
 tensor_split_max = 16
-images_max = 4
+images_max = 8
 bias_min_value = -100.0
 bias_max_value = 100.0
 logprobs_max = 5

@@ -2,7 +2,7 @@
 #include <cstdint>
 
 const int tensor_split_max = 16;
-const int images_max = 4;
+const int images_max = 8;
 const int logprobs_max = 5;
 
 // match kobold's sampler list and order
