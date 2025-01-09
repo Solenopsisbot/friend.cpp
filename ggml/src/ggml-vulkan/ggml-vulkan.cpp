@@ -2188,6 +2188,10 @@ static vk_device ggml_vk_get_device(size_t idx) {
             device->coopmat_support = false;
         }
 
+        #if !defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT) //prevent crash if we do a non-coopmat build
+                device->coopmat_support = false;
+        #endif
+
         std::vector<vk::QueueFamilyProperties> queue_family_props = device->physical_device.getQueueFamilyProperties();
 
         // Try to find a non-graphics compute queue and transfer-focused queues
