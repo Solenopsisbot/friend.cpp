@@ -27,6 +27,7 @@ import html
 import urllib.parse as urlparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 
 # constants
 sampler_order_max = 7
@@ -3604,6 +3605,8 @@ def show_gui():
     ctk.CTkButton(extra_tab , text = "Unpack KoboldCpp To Folder", command = unpack_to_dir ).grid(row=3,column=0, stick="w", padx= 8, pady=2)
     makelabel(extra_tab, "Export as launcher .kcppt template (Expert Only)", 4, 0,tooltiptxt="Creates a KoboldCpp launch template for others to use.\nEmbeds JSON files directly into exported file when saving.\nWhen loaded, forces the backend to be automatically determined.\nWarning! Not recommended for beginners!")
     ctk.CTkButton(extra_tab , text = "Generate LaunchTemplate", command = kcpp_export_template ).grid(row=5,column=0, stick="w", padx= 8, pady=2)
+    makelabel(extra_tab, "Analyze GGUF Metadata", 6, 0,tooltiptxt="Reads the metadata, weight types and tensor names in any GGUF file.")
+    ctk.CTkButton(extra_tab , text = "Analyze GGUF", command = analyze_gguf_model_wrapper ).grid(row=7,column=0, stick="w", padx= 8, pady=2)
 
     # launch
     def guilaunch():
@@ -4526,6 +4529,33 @@ def download_model_from_url(url,permitted_types=[".gguf",".safetensors"]):
             return dlfile
     return None
 
+def analyze_gguf_model(args,filename):
+    try:
+        stime = datetime.now()
+        from gguf.scripts.gguf_dump import dump_metadata
+        from gguf import GGUFReader
+        reader = GGUFReader(filename, 'r')
+        ns = argparse.Namespace()
+        ns.no_tensors = False
+        dump_metadata(reader, ns)
+        atime = (datetime.now() - stime).total_seconds()
+        print(f"---\nAnalyzing completed in {atime:.2f}s.\n---",flush=True)
+    except Exception as e:
+        print(f"Cannot Analyze File: {e}")
+    return
+
+def analyze_gguf_model_wrapper(filename=""):
+    if not filename or filename=="":
+        from tkinter.filedialog import askopenfilename
+        filename = askopenfilename(title="Select GGUF to analyze")
+    if not filename or filename=="" or not os.path.exists(filename):
+        print("Selected GGUF file not found. Please select a valid GGUF file to analyze.")
+        return
+    print("---")
+    print(f"Analyzing {filename}, please wait...\n---",flush=True)
+    dumpthread = threading.Thread(target=analyze_gguf_model, args=(args,filename))
+    dumpthread.start()
+
 def main(launch_args,start_server=True):
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
     global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath
@@ -4539,6 +4569,13 @@ def main(launch_args,start_server=True):
 
     print(f"***\nWelcome to KoboldCpp - Version {KcppVersion}") # just update version manually
     # print("Python version: " + sys.version)
+    # connect path
+    try:
+        if (Path(__file__).parent / "gguf-py").exists():
+            ggufpy_path = str(Path(__file__).parent / "gguf-py")
+            sys.path.append(ggufpy_path)
+    except Exception as e:
+        print(f"Cannot import gguf-py path: {e}")
 
     #perform some basic cleanup of old temporary directories
     try:
@@ -4548,6 +4585,10 @@ def main(launch_args,start_server=True):
 
     if args.unpack:
         unpack_to_dir(args.unpack)
+        return
+
+    if args.analyze:
+        analyze_gguf_model_wrapper(args.analyze)
         return
 
     if args.config and len(args.config)==1:
@@ -5182,6 +5223,7 @@ if __name__ == '__main__':
     #more advanced params
     advparser = parser.add_argument_group('Advanced Commands')
     advparser.add_argument("--version", help="Prints version and exits.", action='store_true')
+    advparser.add_argument("--analyze", metavar=('[filename]'), help="Reads the metadata, weight types and tensor names in any GGUF file.", default="")
     advparser.add_argument("--ropeconfig", help="If set, uses customized RoPE scaling from configured frequency scale and frequency base (e.g. --ropeconfig 0.25 10000). Otherwise, uses NTK-Aware scaling set automatically based on context size. For linear rope, simply set the freq-scale and ignore the freq-base",metavar=('[rope-freq-scale]', '[rope-freq-base]'), default=[0.0, 10000.0], type=float, nargs='+')
     advparser.add_argument("--blasbatchsize", help="Sets the batch size used in BLAS processing (default 512). Setting it to -1 disables BLAS mode, but keeps other benefits like GPU offload.", type=int,choices=[-1,32,64,128,256,512,1024,2048], default=512)
     advparser.add_argument("--blasthreads", help="Use a different number of threads during BLAS if specified. Otherwise, has the same value as --threads",metavar=('[threads]'), type=int, default=0)
