@@ -1462,10 +1462,24 @@ def websearch(query):
         websearch_lastresponse = searchresults
     return searchresults
 
-#################################################################
-### A hacky simple HTTP server simulating a kobold api by Concedo
-### we are intentionally NOT using flask, because we want MINIMAL dependencies
-#################################################################
+def is_port_in_use(portNum):
+    try:
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex(('localhost', portNum)) == 0
+    except Exception:
+        return True
+
+def is_ipv6_supported():
+    try:
+        # Attempt to create an IPv6 socket
+        sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        sock.close()
+        return True
+    except Exception:
+        return False
 
 # Used to parse json for openai tool calls
 def extract_json_from_string(input_string):
@@ -1720,6 +1734,26 @@ ws ::= | " " | "\n" [ \t]{0,20}
         genparams["prompt"] = ollamasysprompt + ollamabodyprompt
     return genparams
 
+def LaunchWebbrowser(target_url, failedmsg):
+    try:
+        import webbrowser as wb
+        if wb.open(target_url, autoraise=True):
+          return
+        raise RuntimeError("Cannot open default browser")
+    except Exception:
+        try:
+            import webbrowser as wb
+            if wb.get('xdg-open').open(target_url, autoraise=True):
+                return
+            raise RuntimeError("Cannot open xdg-open browser")
+        except Exception:
+            print(failedmsg)
+            print(f"Please manually open your browser to {target_url}")
+
+#################################################################
+### A hacky simple HTTP server simulating a kobold api by Concedo
+### we are intentionally NOT using flask, because we want MINIMAL dependencies
+#################################################################
 class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
     sys_version = ""
     server_version = "ConcedoLlamaForKoboldServer"
@@ -2671,25 +2705,6 @@ Enter Prompt:<br>
         if content_type is not None:
             self.send_header('content-type', content_type)
         return super(ServerRequestHandler, self).end_headers()
-
-def is_port_in_use(portNum):
-    try:
-        import socket
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            return s.connect_ex(('localhost', portNum)) == 0
-    except Exception:
-        return True
-
-def is_ipv6_supported():
-    try:
-        # Attempt to create an IPv6 socket
-        sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
-        sock.close()
-        return True
-    except Exception:
-        return False
 
 def RunServerMultiThreaded(addr, port):
     global exitcounter, sslvalid
@@ -3971,23 +3986,13 @@ def show_gui():
         pass
 
     def display_help():
-        try:
-            import webbrowser as wb
-            wb.open("https://github.com/LostRuins/koboldcpp/wiki")
-        except Exception:
-            print("Cannot launch help in browser.")
+        LaunchWebbrowser("https://github.com/LostRuins/koboldcpp/wiki","Cannot launch help in browser.")
+
     def display_help_models():
-        try:
-            import webbrowser as wb
-            wb.open("https://github.com/LostRuins/koboldcpp/wiki#what-models-does-koboldcpp-support-what-architectures-are-supported")
-        except Exception:
-            print("Cannot launch help in browser.")
+        LaunchWebbrowser("https://github.com/LostRuins/koboldcpp/wiki#what-models-does-koboldcpp-support-what-architectures-are-supported","Cannot launch help in browser.")
+
     def display_updates():
-        try:
-            import webbrowser as wb
-            wb.open("https://github.com/LostRuins/koboldcpp/releases/latest")
-        except Exception:
-            print("Cannot launch updates in browser.")
+        LaunchWebbrowser("https://github.com/LostRuins/koboldcpp/releases/latest","Cannot launch updates in browser.")
 
     ctk.CTkButton(tabs , text = "Launch", fg_color="#2f8d3c", hover_color="#2faa3c", command = guilaunch, width=80, height = 35 ).grid(row=1,column=1, stick="se", padx= 25, pady=5)
 
@@ -4546,8 +4551,11 @@ def analyze_gguf_model(args,filename):
 
 def analyze_gguf_model_wrapper(filename=""):
     if not filename or filename=="":
-        from tkinter.filedialog import askopenfilename
-        filename = askopenfilename(title="Select GGUF to analyze")
+        try:
+            from tkinter.filedialog import askopenfilename
+            filename = askopenfilename(title="Select GGUF to analyze")
+        except Exception as e:
+            print(f"Cannot select file to analyze: {e}")
     if not filename or filename=="" or not os.path.exists(filename):
         print("Selected GGUF file not found. Please select a valid GGUF file to analyze.")
         return
@@ -5047,11 +5055,7 @@ def main(launch_args,start_server=True):
             print(f"StableUI is available at {epurl}/sdui/")
 
     if args.launch:
-        try:
-            import webbrowser as wb
-            wb.open(epurl)
-        except Exception:
-            print("--launch was set, but could not launch web browser automatically.")
+        LaunchWebbrowser(epurl,"--launch was set, but could not launch web browser automatically.")
 
     if args.hordekey and args.hordekey!="":
         if args.hordeworkername and args.hordeworkername!="":
