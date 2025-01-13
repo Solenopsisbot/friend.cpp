@@ -21,6 +21,10 @@
 #pragma warning(disable: 4244 4267) // possible loss of data
 #endif
 
+#ifndef M_PI
+#define M_PI		3.14159265358979323846
+#endif
+
 struct wav_header {
     char riff[4] = {'R', 'I', 'F', 'F'};
     uint32_t chunk_size;
