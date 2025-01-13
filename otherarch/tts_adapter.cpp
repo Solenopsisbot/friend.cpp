@@ -697,7 +697,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
 
     if(!inputs.quiet)
     {
-        printf("\nTTS Generating (%d input tokens)...", prompt_inp.size());
+        printf("\nTTS Processing (%d input tokens)...\n", prompt_inp.size());
     }
 
     prompt_add(prompt_inp, model_ttc, "<|text_end|>\n<|audio_start|>\n", false, true);
@@ -771,6 +771,10 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
             output.status = 0;
             return output;
         }
+        if(!inputs.quiet)
+        {
+            printf("\rTTS Generating (%d AudioTokens)", n_decode);
+        }
     }
 
     if(!inputs.quiet && ttsdebugmode==1)
@@ -818,7 +822,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
             audio[i] = 0.0f;
         }
         //add some silence at the end
-        for (int i = 0; i < 24000/20; ++i) {
+        for (int i = 0; i < 24000/10; ++i) {
             audio.push_back(0.0f);
         }
 
