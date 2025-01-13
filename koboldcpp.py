@@ -783,7 +783,6 @@ def fetch_gpu_properties(testCL,testCU,testVK):
             FetchedCUdeviceMem = [line.split(",")[1].strip().split(" ")[0].strip() for line in output.splitlines()]
             FetchedCUfreeMem = [line.split(",")[2].strip().split(" ")[0].strip() for line in output.splitlines()]
         except Exception:
-            FetchedCUdevices = []
             FetchedCUdeviceMem = []
             FetchedCUfreeMem = []
             faileddetectvram = True
@@ -806,7 +805,6 @@ def fetch_gpu_properties(testCL,testCU,testVK):
                     if getamdvram:
                         FetchedCUdeviceMem = [line.split(",")[1].strip() for line in getamdvram.splitlines()[1:] if line.strip()]
             except Exception:
-                FetchedCUdevices = []
                 FetchedCUdeviceMem = []
                 FetchedCUfreeMem = []
                 faileddetectvram = True
@@ -817,6 +815,8 @@ def fetch_gpu_properties(testCL,testCU,testVK):
             for idx in range(0,4):
                 if(len(FetchedCUdevices)>idx):
                     CUDevicesNames[idx] = FetchedCUdevices[idx]
+            for idx in range(0,4):
+                if(len(FetchedCUdevices)>idx):
                     if len(FetchedCUdeviceMem)>idx:
                         dmem = int(FetchedCUdeviceMem[idx]) if AMDgpu else (int(FetchedCUdeviceMem[idx])*1024*1024)
                         lowestcumem = dmem if lowestcumem==0 else (dmem if dmem<lowestcumem else lowestcumem)
@@ -1343,12 +1343,16 @@ def tts_generate(genparams):
     is_quiet = True if (args.quiet or args.debugmode == -1) else False
     prompt = genparams.get("input", genparams.get("text", ""))
     prompt = prompt.strip()
+    voice = 1
     voicestr = genparams.get("voice", genparams.get("speaker_wav", ""))
-    voice = simple_lcg_hash(voicestr) if voicestr else 1
+    if voicestr and voicestr.strip().lower()=="kobo":
+        voice = 1
+    else:
+        voice = simple_lcg_hash(voicestr.strip()) if voicestr else 1
     inputs = tts_generation_inputs()
     inputs.prompt = prompt.encode("UTF-8")
     inputs.speaker_seed = voice
-    inputs.audio_seed = 0
+    inputs.audio_seed = -1
     inputs.quiet = is_quiet
     ret = handle.tts_generate(inputs)
     outstr = ""
