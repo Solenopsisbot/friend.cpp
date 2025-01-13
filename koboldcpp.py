@@ -622,6 +622,16 @@ def bring_terminal_to_foreground():
         ctypes.windll.user32.ShowWindow(ctypes.windll.kernel32.GetConsoleWindow(), 9)
         ctypes.windll.user32.SetForegroundWindow(ctypes.windll.kernel32.GetConsoleWindow())
 
+def simple_lcg_hash(input_string): #turns any string into a number between 10000 and 99999
+    a = 1664525
+    c = 1013904223
+    m = 89999  # Modulo
+    hash_value = 25343
+    for char in input_string:
+        hash_value = (a * hash_value + ord(char) + c) % m
+    hash_value += 10000
+    return hash_value
+
 def string_has_overlap(str_a, str_b, maxcheck):
     max_overlap = min(maxcheck, len(str_a), len(str_b))
     for i in range(1, max_overlap + 1):
@@ -1331,11 +1341,13 @@ def tts_load_model(ttc_model_filename,cts_model_filename):
 def tts_generate(genparams):
     global args
     is_quiet = True if (args.quiet or args.debugmode == -1) else False
-    prompt = genparams.get("input", "")
+    prompt = genparams.get("input", genparams.get("text", ""))
     prompt = prompt.strip()
+    voicestr = genparams.get("voice", genparams.get("speaker_wav", ""))
+    voice = simple_lcg_hash(voicestr) if voicestr else 1
     inputs = tts_generation_inputs()
     inputs.prompt = prompt.encode("UTF-8")
-    inputs.speaker_seed = 0
+    inputs.speaker_seed = voice
     inputs.audio_seed = 0
     inputs.quiet = is_quiet
     ret = handle.tts_generate(inputs)
@@ -2296,6 +2308,9 @@ Enter Prompt:<br>
         elif self.path.endswith('/sdapi/v1/upscalers'):
            response_body = (json.dumps([]).encode())
 
+        elif self.path.endswith(('/speakers_list')): #xtts compatible
+            response_body = (json.dumps(["kobo","bean","corn","spicy","lime","fire","metal","potato"]).encode()) #some random voices for them to enjoy
+
         elif self.path.endswith(('/api/tags')): #ollama compatible
             response_body = (json.dumps({"models":[{"name":"koboldcpp","model":friendlymodelname,"modified_at":"2024-07-19T15:26:55.6122841+08:00","size":394998579,"digest":"b5dc5e784f2a3ee1582373093acf69a2f4e2ac1710b253a001712b86a61f88bb","details":{"parent_model":"","format":"gguf","family":"koboldcpp","families":["koboldcpp"],"parameter_size":"128M","quantization_level":"Q4_0"}}]}).encode())
 
@@ -2671,7 +2686,7 @@ Enter Prompt:<br>
             if self.path.endswith('/api/extra/transcribe') or self.path.endswith('/v1/audio/transcriptions'):
                 is_transcribe = True
 
-            if self.path.endswith('/api/extra/tts') or self.path.endswith('/v1/audio/speech'):
+            if self.path.endswith('/api/extra/tts') or self.path.endswith('/v1/audio/speech') or self.path.endswith('/tts_to_audio'):
                 is_tts = True
 
             if is_imggen or is_transcribe or is_tts or api_format > 0:
