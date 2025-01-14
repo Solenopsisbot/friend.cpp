@@ -1356,8 +1356,10 @@ def tts_generate(genparams):
     prompt = prompt.strip()
     voice = 1
     voicestr = genparams.get("voice", genparams.get("speaker_wav", ""))
-    if voicestr and voicestr.strip().lower()=="kobo":
-        voice = 1
+    voice_mapping = ["kobo","cheery","sleepy","tutor","shouty","bored","record"]
+    normalized_voice = voicestr.strip().lower() if voicestr else ""
+    if normalized_voice in voice_mapping:
+        voice = voice_mapping.index(normalized_voice) + 1
     else:
         voice = simple_lcg_hash(voicestr.strip()) if voicestr else 1
     inputs = tts_generation_inputs()
@@ -2320,7 +2322,7 @@ Enter Prompt:<br>
            response_body = (json.dumps([]).encode())
 
         elif self.path.endswith(('/speakers_list')): #xtts compatible
-            response_body = (json.dumps(["kobo","bean","corn","spicy","lime","fire","metal","potato"]).encode()) #some random voices for them to enjoy
+            response_body = (json.dumps(["kobo","cheery","sleepy","tutor","shouty","bored","record"]).encode()) #some random voices for them to enjoy
 
         elif self.path.endswith(('/api/tags')): #ollama compatible
             response_body = (json.dumps({"models":[{"name":"koboldcpp","model":friendlymodelname,"modified_at":"2024-07-19T15:26:55.6122841+08:00","size":394998579,"digest":"b5dc5e784f2a3ee1582373093acf69a2f4e2ac1710b253a001712b86a61f88bb","details":{"parent_model":"","format":"gguf","family":"koboldcpp","families":["koboldcpp"],"parameter_size":"128M","quantization_level":"Q4_0"}}]}).encode())
