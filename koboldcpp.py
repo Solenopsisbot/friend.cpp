@@ -651,6 +651,17 @@ def string_contains_or_overlaps_sequence_substring(inputstr, sequences):
             return True
     return False
 
+def get_capabilities():
+    global has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath
+    has_llm = not (friendlymodelname=="inactive")
+    has_txt2img = not (friendlysdmodelname=="inactive" or fullsdmodelpath=="")
+    has_vision = (mmprojpath!="")
+    has_password = (password!="")
+    has_whisper = (fullwhispermodelpath!="")
+    has_search = True if args.websearch else False
+    has_tts = (ttsmodelpath!="")
+    return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":has_vision,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts}
+
 def read_gguf_metadata(file_path):
     chunk_size = 8192  # read only first 8kb of file
     try:
@@ -2199,7 +2210,7 @@ Enter Prompt:<br>
 
     def do_GET(self):
         global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
-        global has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath
+        global has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password
         self.path = self.path.rstrip('/')
         response_body = None
         content_type = 'application/json'
@@ -2252,13 +2263,8 @@ Enter Prompt:<br>
             response_body = (json.dumps({"value": maxctx}).encode())
 
         elif self.path.endswith(('/api/extra/version')):
-            has_txt2img = not (friendlysdmodelname=="inactive" or fullsdmodelpath=="")
-            has_vision = (mmprojpath!="")
-            has_password = (password!="")
-            has_whisper = (fullwhispermodelpath!="")
-            has_search = True if args.websearch else False
-            has_tts = (ttsmodelpath!="")
-            response_body = (json.dumps({"result":"KoboldCpp","version":KcppVersion, "protected":has_password ,"txt2img":has_txt2img,"vision":has_vision,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts}).encode())
+            caps = get_capabilities()
+            response_body = (json.dumps(caps).encode())
 
         elif self.path.endswith(('/api/extra/perf')):
             global last_req_time, start_time
@@ -5199,6 +5205,35 @@ def main(launch_args,start_server=True):
                 print("Embedded SDUI loaded.")
     except Exception:
         print("Could not find Embedded SDUI.")
+
+    # print enabled modules
+    caps = get_capabilities()
+    enabledmlist = []
+    disabledmlist = []
+    apimlist = ["KoboldCppApi"]
+    if "llm" in caps and caps["llm"]:
+        apimlist.append("OpenAiApi")
+        apimlist.append("OllamaApi")
+    if "txt2img" in caps and caps["txt2img"]:
+        apimlist.append("A1111ForgeApi")
+        apimlist.append("ComfyUiApi")
+    if "transcribe" in caps and caps["transcribe"]:
+        apimlist.append("WhisperTranscribeApi")
+    if "tts" in caps and caps["tts"]:
+        apimlist.append("XttsApi")
+        apimlist.append("OpenAiSpeechApi")
+    enabledmlist.append("TextGeneration") if "llm" in caps and caps["llm"] else disabledmlist.append("TextGeneration")
+    enabledmlist.append("ImageGeneration") if "txt2img" in caps and caps["txt2img"] else disabledmlist.append("ImageGeneration")
+    enabledmlist.append("VoiceRecognition") if "transcribe" in caps and caps["transcribe"] else disabledmlist.append("VoiceRecognition")
+    enabledmlist.append("MultimodalVision") if "vision" in caps and caps["vision"] else disabledmlist.append("MultimodalVision")
+    enabledmlist.append("NetworkMultiplayer") if "multiplayer" in caps and caps["multiplayer"] else disabledmlist.append("NetworkMultiplayer")
+    enabledmlist.append("ApiKeyPassword") if "protected" in caps and caps["protected"] else disabledmlist.append("ApiKeyPassword")
+    enabledmlist.append("WebSearchProxy") if "websearch" in caps and caps["websearch"] else disabledmlist.append("WebSearchProxy")
+    enabledmlist.append("TextToSpeech") if "tts" in caps and caps["tts"] else disabledmlist.append("TextToSpeech")
+
+    print(f"======\nActive Modules: {' '.join(enabledmlist)}")
+    print(f"Inactive Modules: {' '.join(disabledmlist)}")
+    print(f"Enabled APIs: {' '.join(apimlist)}")
 
     if args.port_param!=defaultport:
         args.port = args.port_param

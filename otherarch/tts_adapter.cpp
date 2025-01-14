@@ -515,7 +515,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
 
     if(ttc_ctx==nullptr || cts_ctx==nullptr)
     {
-        printf("\nWarning: KCPP TTS not initialized!\n");
+        printf("\nWarning: KCPP TTS not initialized! Make sure both TTS and WavTokenizer models are loaded.\n");
         output.data = "";
         output.status = 0;
         return output;
