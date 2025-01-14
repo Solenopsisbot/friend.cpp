@@ -1845,15 +1845,16 @@ def LaunchWebbrowser(target_url, failedmsg):
     try:
         import webbrowser as wb
         if wb.open(target_url, autoraise=True):
-            return
-        raise RuntimeError("Cannot open default browser")
-    except Exception as e:
+            return  # If successful, exit the function
+        raise RuntimeError("wb.open failed, using fallback")
+    except Exception:
         try:
-            print(f"Browser failed to launch: {e}, attempting to use xdg-open...")
-            import webbrowser as wb
-            if wb.get('xdg-open').open(target_url, autoraise=True):
-                return
-            raise RuntimeError("Cannot open xdg-open browser")
+            if os.name == "posix" and "DISPLAY" in os.environ:  # UNIX-like systems
+                import subprocess
+                result = subprocess.run(["xdg-open", target_url], check=True)
+                if result.returncode == 0:
+                    return  # fallback successful
+            raise RuntimeError("fallback failed")
         except Exception:
             print(failedmsg)
             print(f"Please manually open your browser to {target_url}")
