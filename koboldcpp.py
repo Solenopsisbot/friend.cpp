@@ -400,7 +400,7 @@ def init_library():
             libname = lib_clblast_noavx2
         elif (args.usevulkan is not None) and file_exists(lib_vulkan_noavx2):
             libname = lib_vulkan_noavx2
-        elif ((args.usecpu and args.nommap) or args.failsafe) and file_exists(lib_failsafe):
+        elif (args.failsafe) and file_exists(lib_failsafe):
             print("!!! Attempting to use FAILSAFE MODE !!!")
             libname = lib_failsafe
         elif file_exists(lib_noavx2):
@@ -923,7 +923,7 @@ def load_model(model_filename):
     inputs.use_rowsplit = (True if (args.usecublas and "rowsplit" in args.usecublas) else False)
     inputs.vulkan_info = "0".encode("UTF-8")
     inputs.blasthreads = args.blasthreads
-    inputs.use_mmap = (not args.nommap)
+    inputs.use_mmap = args.usemmap
     inputs.use_mlock = args.usemlock
     inputs.lora_filename = "".encode("UTF-8")
     inputs.lora_base = "".encode("UTF-8")
@@ -3069,7 +3069,7 @@ def show_gui():
 
     launchbrowser = ctk.IntVar(value=1)
     highpriority = ctk.IntVar()
-    disablemmap = ctk.IntVar()
+    usemmap = ctk.IntVar(value=0)
     usemlock = ctk.IntVar()
     debugmode = ctk.IntVar()
     keepforeground = ctk.IntVar()
@@ -3481,7 +3481,7 @@ def show_gui():
     # quick boxes
     quick_boxes = {
         "Launch Browser": [launchbrowser, "Launches your default browser after model loading is complete"],
-        "Disable MMAP": [disablemmap,  "Avoids using mmap to load models if enabled"],
+        "Use MMAP": [usemmap,  "Use mmap to load models if enabled, model will not be unloadable"],
         "Use ContextShift": [contextshift, "Uses Context Shifting to reduce reprocessing.\nRecommended. Check the wiki for more info."],
         "Remote Tunnel": [remotetunnel,  "Creates a trycloudflare tunnel.\nAllows you to access koboldcpp from other devices over an internet URL."],
         "Quiet Mode": [quietmode, "Prevents all generation related terminal output from being displayed."]
@@ -3534,7 +3534,7 @@ def show_gui():
     hardware_boxes = {
         "Launch Browser": [launchbrowser, "Launches your default browser after model loading is complete"],
         "High Priority": [highpriority, "Increases the koboldcpp process priority.\nMay cause lag or slowdown instead. Not recommended."],
-        "Disable MMAP": [disablemmap, "Avoids using mmap to load models if enabled"],
+        "Use MMAP": [usemmap, "Use mmap to load models if enabled, model will not be unloadable"],
         "Use mlock": [usemlock, "Enables mlock, preventing the RAM used to load the model from being paged out."],
         "Debug Mode": [debugmode, "Enables debug mode, with extra info printed to the terminal."],
         "Keep Foreground": [keepforeground, "Bring KoboldCpp to the foreground every time there is a new generation."]
@@ -3732,7 +3732,7 @@ def show_gui():
         savdict["hordeworkername"] = ""
         savdict["sdthreads"] = 0
         savdict["password"] = None
-        savdict["nommap"] = False
+        savdict["usemmap"] = False
         savdict["usemlock"] = False
         savdict["debugmode"] = 0
         savdict["ssl"] = None
@@ -3780,7 +3780,7 @@ def show_gui():
         args.debugmode  = debugmode.get()
         args.launch     = launchbrowser.get()==1
         args.highpriority = highpriority.get()==1
-        args.nommap = disablemmap.get()==1
+        args.usemmap = usemmap.get()==1
         args.smartcontext = smartcontext.get()==1
         args.flashattention = flashattention.get()==1
         args.noshift = contextshift.get()==0
@@ -3834,7 +3834,7 @@ def show_gui():
         if runopts_var.get()=="Failsafe Mode (Older CPU)":
             args.noavx2 = True
             args.usecpu = True
-            args.nommap = True
+            args.usemmap = False
             args.failsafe = True
         if tensor_split_str_vars.get()!="":
             tssv = tensor_split_str_vars.get()
@@ -3948,7 +3948,7 @@ def show_gui():
             debugmode.set(dict["debugmode"])
         launchbrowser.set(1 if "launch" in dict and dict["launch"] else 0)
         highpriority.set(1 if "highpriority" in dict and dict["highpriority"] else 0)
-        disablemmap.set(1 if "nommap" in dict and dict["nommap"] else 0)
+        usemmap.set(1 if "usemmap" in dict and dict["usemmap"] else 0)
         smartcontext.set(1 if "smartcontext" in dict and dict["smartcontext"] else 0)
         flashattention.set(1 if "flashattention" in dict and dict["flashattention"] else 0)
         contextshift.set(0 if "noshift" in dict and dict["noshift"] else 1)
@@ -5440,7 +5440,8 @@ if __name__ == '__main__':
     advparser.add_argument("--lora", help="LLAMA models only, applies a lora file on top of model. Experimental.", metavar=('[lora_filename]', '[lora_base]'), nargs='+')
     advparser.add_argument("--noshift", help="If set, do not attempt to Trim and Shift the GGUF context.", action='store_true')
     advparser.add_argument("--nofastforward", help="If set, do not attempt to fast forward GGUF context (always reprocess). Will also enable noshift", action='store_true')
-    advparser.add_argument("--nommap", help="If set, do not use mmap to load newer models", action='store_true')
+    compatgroup3 = advparser.add_mutually_exclusive_group()
+    compatgroup3.add_argument("--usemmap", help="If set, uses mmap to load model. This model will not be unloadable.", action='store_true')
     advparser.add_argument("--usemlock", help="Enables mlock, preventing the RAM used to load the model from being paged out. Not usually recommended.", action='store_true')
     advparser.add_argument("--noavx2", help="Do not use AVX2 instructions, a slower compatibility mode for older devices.", action='store_true')
     advparser.add_argument("--failsafe", help="Use failsafe mode, extremely slow CPU only compatibility mode that should work on all devices.", action='store_true')
@@ -5513,5 +5514,6 @@ if __name__ == '__main__':
     deprecatedgroup.add_argument("--hordeconfig", help=argparse.SUPPRESS, nargs='+')
     deprecatedgroup.add_argument("--sdconfig", help=argparse.SUPPRESS, nargs='+')
     compatgroup.add_argument("--noblas", help=argparse.SUPPRESS, action='store_true')
+    compatgroup3.add_argument("--nommap", help=argparse.SUPPRESS, action='store_true')
 
     main(parser.parse_args(),start_server=True)
