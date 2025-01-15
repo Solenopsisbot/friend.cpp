@@ -1365,7 +1365,12 @@ def tts_generate(genparams):
     inputs = tts_generation_inputs()
     inputs.prompt = prompt.encode("UTF-8")
     inputs.speaker_seed = voice
-    inputs.audio_seed = -1
+    aseed = -1
+    try:
+        aseed = int(genparams.get("seed", -1))
+    except Exception:
+        aseed = -1
+    inputs.audio_seed = aseed
     inputs.quiet = is_quiet
     ret = handle.tts_generate(inputs)
     outstr = ""
@@ -1847,7 +1852,10 @@ def LaunchWebbrowser(target_url, failedmsg):
     try:
         if os.name == "posix" and "DISPLAY" in os.environ:  # UNIX-like systems
             import subprocess
-            result = subprocess.run(["/usr/bin/env", "xdg-open", target_url], check=True)
+            clean_env = os.environ.copy()
+            clean_env.pop("LD_LIBRARY_PATH", None)
+            clean_env["PATH"] = "/usr/bin:/bin"
+            result = subprocess.run(["/usr/bin/env", "xdg-open", target_url], check=True, env=clean_env)
             if result.returncode == 0:
                 return  # fallback successful
         raise RuntimeError("no xdg-open")
@@ -2323,6 +2331,10 @@ Enter Prompt:<br>
 
         elif self.path.endswith(('/speakers_list')): #xtts compatible
             response_body = (json.dumps(["kobo","cheery","sleepy","tutor","shouty","bored","record"]).encode()) #some random voices for them to enjoy
+        elif self.path.endswith(('/speakers')): #xtts compatible
+            response_body = (json.dumps([{"name":"kobo","voice_id":"kobo","preview_url":""},{"name":"cheery","voice_id":"cheery","preview_url":""},{"name":"sleepy","voice_id":"sleepy","preview_url":""},{"name":"tutor","voice_id":"tutor","preview_url":""},{"name":"shouty","voice_id":"shouty","preview_url":""},{"name":"bored","voice_id":"bored","preview_url":""},{"name":"record","voice_id":"record","preview_url":""}]).encode()) #some random voices for them to enjoy
+        elif self.path.endswith(('/get_tts_settings')): #xtts compatible
+            response_body = (json.dumps({"temperature":0.75,"speed":1,"length_penalty":1,"repetition_penalty":1,"top_p":1,"top_k":4,"enable_text_splitting":True,"stream_chunk_size":100}).encode()) #some random voices for them to enjoy
 
         elif self.path.endswith(('/api/tags')): #ollama compatible
             response_body = (json.dumps({"models":[{"name":"koboldcpp","model":friendlymodelname,"modified_at":"2024-07-19T15:26:55.6122841+08:00","size":394998579,"digest":"b5dc5e784f2a3ee1582373093acf69a2f4e2ac1710b253a001712b86a61f88bb","details":{"parent_model":"","format":"gguf","family":"koboldcpp","families":["koboldcpp"],"parameter_size":"128M","quantization_level":"Q4_0"}}]}).encode())
@@ -2622,6 +2634,9 @@ Enter Prompt:<br>
             else:
                 response_body = (json.dumps([]).encode())
 
+        elif self.path.endswith('/set_tts_settings'): #return dummy response
+            response_body = (json.dumps({"message": "Settings successfully applied"}).encode())
+
         if response_body is not None:
             self.send_response(response_code)
             self.send_header('content-length', str(len(response_body)))
@@ -2802,6 +2817,7 @@ Enter Prompt:<br>
                             wav_data = base64.b64decode(gen) # Decode the Base64 string into binary data
                         self.send_response(200)
                         self.send_header('content-length', str(len(wav_data)))  # Set content length
+                        self.send_header('Content-Disposition', 'attachment; filename="output.wav"')
                         self.end_headers(content_type='audio/wav')
                         self.wfile.write(wav_data) # Write the binary WAV data to the response
                     except Exception as ex:
