@@ -1847,7 +1847,7 @@ def LaunchWebbrowser(target_url, failedmsg):
     try:
         if os.name == "posix" and "DISPLAY" in os.environ:  # UNIX-like systems
             import subprocess
-            result = subprocess.run(["xdg-open", target_url], check=True)
+            result = subprocess.run(["/usr/bin/env", "xdg-open", target_url], check=True)
             if result.returncode == 0:
                 return  # fallback successful
         raise RuntimeError("no xdg-open")
