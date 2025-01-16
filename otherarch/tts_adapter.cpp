@@ -569,7 +569,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
     {
         if(ttsdebugmode==1 || !inputs.quiet)
         {
-            printf("\nReusing Cached Audio.");
+            printf("\nReusing Cached Audio.\n");
             output.data = last_generated_audio.c_str();
             output.status = 1;
             return output;
