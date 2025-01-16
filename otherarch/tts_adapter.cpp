@@ -421,6 +421,9 @@ static llama_context * cts_ctx = nullptr; //codes to speech
 static int ttsdebugmode = 0;
 static std::string ttsplatformenv, ttsdeviceenv, ttsvulkandeviceenv;
 static std::string last_generated_audio = "";
+static std::string last_generation_settings_prompt = ""; //for caching purposes to fix ST bug
+static int last_generation_settings_speaker_seed;
+static int last_generation_settings_audio_seed;
 static std::vector<llama_token> last_speaker_codes; //will store cached speaker
 static int last_speaker_seed = -999;
 
@@ -554,6 +557,23 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
 
     std::mt19937 tts_rng(audio_seed);
     std::mt19937 speaker_rng(speaker_seed);
+
+    //if we can reuse an old generation, do so
+    if(!inputs.nocache
+    && last_generation_settings_audio_seed == inputs.audio_seed
+    && last_generation_settings_speaker_seed == inputs.speaker_seed
+    && last_generated_audio!=""
+    && last_generation_settings_prompt == std::string(inputs.prompt))
+    {
+        if(ttsdebugmode==1 || !inputs.quiet)
+        {
+            printf("\nReusing Cached Audio.");
+            output.data = last_generated_audio.c_str();
+            output.status = 1;
+            return output;
+        }
+    }
+
 
     int n_decode = 0;
     int n_predict = 2048; //will be updated later
@@ -845,17 +865,18 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
         const int n_sr = 24000; // original sampling rate
         const int t_sr = 16000; //final target sampling rate
 
-        // zero out first 0.1 seconds or 0.05 depending on whether its seeded
-        const int cutout = (speaker_seed>0?(n_sr/10):(n_sr/20));
+        // zero out first x seconds depending on whether its seeded
+        const int cutout = t_sr/4;
+
+        audio = resample_wav(audio,n_sr,t_sr); //resample to 16k
+
         for (int i = 0; i < cutout; ++i) {
             audio[i] = 0.0f;
         }
         //add some silence at the end
-        for (int i = 0; i < n_sr/10; ++i) {
+        for (int i = 0; i < t_sr/10; ++i) {
             audio.push_back(0.0f);
         }
-
-        audio = resample_wav(audio,n_sr,t_sr); //resample to 16k
 
         last_generated_audio = save_wav16_base64(audio, t_sr);
         ttstime = timer_check();
@@ -867,6 +888,11 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
 
         output.data = last_generated_audio.c_str();
         output.status = 1;
+
+        last_generation_settings_audio_seed = inputs.audio_seed;
+        last_generation_settings_speaker_seed = inputs.speaker_seed;
+        last_generation_settings_prompt = std::string(inputs.prompt);
+
         return output;
     }
 }
