@@ -346,16 +346,16 @@ static std::string process_text(const std::string & text) {
 static void prompt_add(llama_tokens & prompt, const llama_tokens & tokens) {
     prompt.insert(prompt.end(), tokens.begin(), tokens.end());
 }
-static void prompt_add(llama_tokens & prompt, const llama_model * model, const std::string & txt, bool add_special, bool parse_special) {
-    auto tmp = common_tokenize(model, txt, add_special, parse_special);
+static void prompt_add(llama_tokens & prompt, const llama_vocab * vocab, const std::string & txt, bool add_special, bool parse_special) {
+    auto tmp = common_tokenize(vocab, txt, add_special, parse_special);
     prompt_add(prompt, tmp);
 }
-static void prompt_init(llama_tokens & prompt, const llama_model * model) {
+static void prompt_init(llama_tokens & prompt, const llama_vocab * vocab) {
     prompt.clear();
-    prompt_add(prompt, model, "<|im_start|>\n", true, true);
+    prompt_add(prompt, vocab, "<|im_start|>\n", true, true);
 }
 
-static std::vector<llama_token> prepare_guide_tokens(const llama_model * model, const std::string& str)
+static std::vector<llama_token> prepare_guide_tokens(const llama_vocab * vocab, const std::string& str)
 {
     const std::string& delimiter = "<|text_sep|>";
 
@@ -365,7 +365,7 @@ static std::vector<llama_token> prepare_guide_tokens(const llama_model * model, 
 
     while (end != std::string::npos) {
         std::string current_word = str.substr(start, end - start);
-        auto tmp = common_tokenize(model, current_word, false, true);
+        auto tmp = common_tokenize(vocab, current_word, false, true);
         result.push_back(tmp[0]);
         start = end + delimiter.length();
         end = str.find(delimiter, start);
@@ -375,7 +375,7 @@ static std::vector<llama_token> prepare_guide_tokens(const llama_model * model, 
     std::string current_word = str.substr(start);
     if(current_word!="")
     {
-        auto tmp = common_tokenize(model, current_word, false, true);
+        auto tmp = common_tokenize(vocab, current_word, false, true);
         if(tmp.size()>0){
             result.push_back(tmp[0]);
         }
@@ -527,8 +527,10 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
     std::vector<llama_token> codes;
     std::vector<llama_token> guide_tokens;
     const llama_model * model_ttc = &(ttc_ctx->model);
+    const llama_vocab * ttcvocab = llama_model_get_vocab(model_ttc);
     const llama_model * model_cts = &(cts_ctx->model);
-    const int ttc_n_vocab = llama_n_vocab(model_ttc);
+    const llama_vocab * ctsvocab = llama_model_get_vocab(model_cts);
+    const int ttc_n_vocab = llama_vocab_n_tokens(ttcvocab);
     std::string prompt = inputs.prompt;
     const std::string sampletext = "but<|text_sep|>that<|text_sep|>is<|text_sep|>what<|text_sep|>it<|text_sep|>is";
 
@@ -536,8 +538,8 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
     llama_kv_cache_clear(ttc_ctx);
     llama_kv_cache_clear(cts_ctx);
     std::vector<llama_token> prompt_inp;
-    prompt_init(prompt_inp, model_ttc);
-    prompt_add(prompt_inp, model_ttc, "<|text_start|>", false, true);
+    prompt_init(prompt_inp, ttcvocab);
+    prompt_add(prompt_inp, ttcvocab, "<|text_start|>", false, true);
 
     int speaker_seed = inputs.speaker_seed;
     int audio_seed = inputs.audio_seed;
@@ -645,7 +647,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
                 speaker = "but<|t_0.31|><|code_start|><|174|><|544|><|68|><|391|><|131|><|187|><|559|><|534|><|223|><|1185|><|612|><|301|><|387|><|94|><|1224|><|1159|><|162|><|236|><|1133|><|774|><|888|><|144|><|1038|><|code_end|>\nthat<|t_0.20|><|code_start|><|223|><|77|><|1517|><|446|><|1207|><|140|><|873|><|147|><|1051|><|210|><|1216|><|147|><|1148|><|678|><|501|><|code_end|>\nis<|t_0.13|><|code_start|><|912|><|822|><|622|><|519|><|1017|><|546|><|1740|><|1823|><|1561|><|273|><|code_end|>\nwhat<|t_0.16|><|code_start|><|1571|><|1597|><|486|><|1417|><|130|><|747|><|1088|><|1045|><|580|><|239|><|431|><|40|><|code_end|>\nit<|t_0.12|><|code_start|><|1736|><|878|><|1159|><|1004|><|1168|><|594|><|544|><|77|><|1032|><|code_end|>\nis<|t_0.28|><|code_start|><|1088|><|873|><|1726|><|1099|><|1095|><|1412|><|1106|><|1317|><|1292|><|149|><|1429|><|967|><|873|><|1754|><|229|><|1046|><|1595|><|1003|><|1603|><|1529|><|101|><|code_end|>";
                 break;
             }
-            last_speaker_codes = common_tokenize(model_ttc, speaker, false, true);
+            last_speaker_codes = common_tokenize(ttcvocab, speaker, false, true);
             last_speaker_seed = speaker_seed;
             if(!inputs.quiet && ttsdebugmode==1)
             {
@@ -654,9 +656,9 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
         } else {
             //generate the voice texture of our new speaker
             last_speaker_codes.clear();
-            guide_tokens = prepare_guide_tokens(model_ttc,sampletext);
-            prompt_add(prompt_inp, model_ttc, sampletext, false, true);
-            prompt_add(prompt_inp, model_ttc, "<|text_end|>\n<|audio_start|>\n", false, true);
+            guide_tokens = prepare_guide_tokens(ttcvocab,sampletext);
+            prompt_add(prompt_inp, ttcvocab, sampletext, false, true);
+            prompt_add(prompt_inp, ttcvocab, "<|text_end|>\n<|audio_start|>\n", false, true);
             if(!inputs.quiet && ttsdebugmode==1)
             {
                 printf("\nPrepare new speaker (%d input tokens)...", prompt_inp.size());
@@ -680,7 +682,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
                 llama_token new_token_id = kcpp_quick_sample(logits,ttc_n_vocab,topk,temp,speaker_rng);
 
                 //guide tokens help prevent hallucinations by forcing the TTS to use the correct word
-                if(next_token_uses_guide_token && !llama_token_is_control(model_ttc, new_token_id) && !llama_token_is_eog(model_ttc, new_token_id))
+                if(next_token_uses_guide_token && !llama_vocab_is_control(ttcvocab, new_token_id) && !llama_vocab_is_eog(ttcvocab, new_token_id))
                 {
                     if(!guide_tokens.empty())
                     {
@@ -697,7 +699,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
                 last_speaker_codes.push_back(new_token_id);
 
                 // is it an end of generation? -> mark the stream as finished
-                if (llama_token_is_eog(model_ttc, new_token_id) || n_decode >= n_predict) {
+                if (llama_vocab_is_eog(ttcvocab, new_token_id) || n_decode >= n_predict) {
                     break;
                 }
 
@@ -730,25 +732,25 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
         }
         guide_tokens.clear();
         llama_kv_cache_clear(ttc_ctx);
-        prompt_init(prompt_inp, model_ttc);
-        prompt_add(prompt_inp, model_ttc, "<|text_start|>", false, true);
+        prompt_init(prompt_inp, ttcvocab);
+        prompt_add(prompt_inp, ttcvocab, "<|text_start|>", false, true);
         next_token_uses_guide_token = true;
     }
 
     //second pass: add the speaker before the actual prompt
-    guide_tokens = prepare_guide_tokens(model_ttc,prompt_clean);
+    guide_tokens = prepare_guide_tokens(ttcvocab,prompt_clean);
     if(speaker_seed > 0)
     {
         prompt_clean = sampletext + "<|text_sep|>" + prompt_clean;
     }
-    prompt_add(prompt_inp, model_ttc, prompt_clean, false, true);
+    prompt_add(prompt_inp, ttcvocab, prompt_clean, false, true);
 
     if(!inputs.quiet)
     {
         printf("\nTTS Processing (%d input tokens)...\n", prompt_inp.size());
     }
 
-    prompt_add(prompt_inp, model_ttc, "<|text_end|>\n<|audio_start|>\n", false, true);
+    prompt_add(prompt_inp, ttcvocab, "<|text_end|>\n<|audio_start|>\n", false, true);
 
     if(!last_speaker_codes.empty() && speaker_seed > 0) //apply speaker voice output
     {
@@ -787,7 +789,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
         llama_token new_token_id = kcpp_quick_sample(logits,ttc_n_vocab,topk,temp,tts_rng);
 
         //guide tokens help prevent hallucinations by forcing the TTS to use the correct word
-        if(next_token_uses_guide_token && !llama_token_is_control(model_ttc, new_token_id) && !llama_token_is_eog(model_ttc, new_token_id))
+        if(next_token_uses_guide_token && !llama_vocab_is_control(ttcvocab, new_token_id) && !llama_vocab_is_eog(ttcvocab, new_token_id))
         {
             if(!guide_tokens.empty())
             {
@@ -804,7 +806,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
         codes.push_back(new_token_id);
 
         // is it an end of generation? -> mark the stream as finished
-        if (llama_token_is_eog(model_ttc, new_token_id) || n_decode >= n_predict) {
+        if (llama_vocab_is_eog(ttcvocab, new_token_id) || n_decode >= n_predict) {
             break;
         }
 
@@ -858,7 +860,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
     else
     {
         // spectral operations
-        const int n_embd = llama_n_embd(model_cts);
+        const int n_embd = llama_model_n_embd(model_cts);
         const float * embd = llama_get_embeddings(cts_ctx);
         std::vector<float> audio = embd_to_audio(embd, n_codes, n_embd, 4);
 
