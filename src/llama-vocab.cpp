@@ -1443,7 +1443,6 @@ struct llama_vocab::impl {
     llama_token special_unk_id  = 0;
     llama_token special_sep_id  = LLAMA_TOKEN_NULL;
     llama_token special_pad_id  = LLAMA_TOKEN_NULL;
-    llama_token special_cls_id  = LLAMA_TOKEN_NULL; // TODO: revisit if this is really needed https://github.com/ggerganov/llama.cpp/pull/10930
     llama_token special_mask_id = LLAMA_TOKEN_NULL;
 
     llama_token linefeed_id = 13;
@@ -1577,14 +1576,14 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
             special_unk_id  = LLAMA_TOKEN_NULL;
             special_sep_id  = LLAMA_TOKEN_NULL;
             special_pad_id  = LLAMA_TOKEN_NULL;
-            special_cls_id  = LLAMA_TOKEN_NULL;
             special_mask_id = LLAMA_TOKEN_NULL;
             linefeed_id     = LLAMA_TOKEN_NULL;
 
             // read vocab size from metadata
             uint32_t n_tokens = 0;
-            if (!ml.get_key(LLM_KV_VOCAB_SIZE, n_tokens, false)) {
-                LLAMA_LOG_WARN("%s: there is no vocab_size in metadata\n", __func__);
+            if (ml.get_key(LLM_KV_VOCAB_SIZE, n_tokens, false)) {
+                LLAMA_LOG_WARN("%s: adding %u dummy tokens\n", __func__, n_tokens);
+                id_to_token.resize(n_tokens);
             }
 
             return;
@@ -1599,18 +1598,16 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
             special_unk_id  = 0;
             special_sep_id  = LLAMA_TOKEN_NULL;
             special_pad_id  = LLAMA_TOKEN_NULL;
-            special_cls_id  = LLAMA_TOKEN_NULL;
             special_mask_id = LLAMA_TOKEN_NULL;
         } else if (tokenizer_model == "bert") {
             type = LLAMA_VOCAB_TYPE_WPM;
 
             // default special tokens
-            special_bos_id  = LLAMA_TOKEN_NULL;
+            special_bos_id  = 101;
             special_eos_id  = LLAMA_TOKEN_NULL;
             special_unk_id  = 100;
             special_sep_id  = 102;
             special_pad_id  = 0;
-            special_cls_id  = 101;
             special_mask_id = 103;
         } else if (tokenizer_model == "gpt2") {
             type = LLAMA_VOCAB_TYPE_BPE;
@@ -1655,7 +1652,6 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
             special_unk_id  = LLAMA_TOKEN_NULL;
             special_sep_id  = LLAMA_TOKEN_NULL;
             special_pad_id  = LLAMA_TOKEN_NULL;
-            special_cls_id  = LLAMA_TOKEN_NULL;
             special_mask_id = LLAMA_TOKEN_NULL;
         } else if (tokenizer_model == "t5") {
             type = LLAMA_VOCAB_TYPE_UGM;
@@ -1666,7 +1662,6 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
             special_unk_id  = 2;
             special_sep_id  = LLAMA_TOKEN_NULL;
             special_pad_id  = 0;
-            special_cls_id  = LLAMA_TOKEN_NULL;
             special_mask_id = LLAMA_TOKEN_NULL;
 
             const int precompiled_charsmap_keyidx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_PRECOMPILED_CHARSMAP).c_str());
@@ -1950,7 +1945,6 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
             { LLM_KV_TOKENIZER_UNK_ID,     special_unk_id     },
             { LLM_KV_TOKENIZER_SEP_ID,     special_sep_id     },
             { LLM_KV_TOKENIZER_PAD_ID,     special_pad_id     },
-            { LLM_KV_TOKENIZER_CLS_ID,     special_cls_id     },
             { LLM_KV_TOKENIZER_MASK_ID,    special_mask_id    },
             { LLM_KV_TOKENIZER_FIM_PRE_ID, special_fim_pre_id },
             { LLM_KV_TOKENIZER_FIM_SUF_ID, special_fim_suf_id },
@@ -1974,7 +1968,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
                 continue;
             }
             if (new_id >= id_to_token.size()) {
-                LLAMA_LOG_WARN("%s: bad special token: '%s' = %ud, using default id %d\n",
+                LLAMA_LOG_WARN("%s: bad special token: '%s' = %u, using default id %d\n",
                     __func__, key.c_str(), new_id, id);
             } else {
                 id = new_id;
@@ -2673,8 +2667,8 @@ std::vector<llama_token> llama_vocab::impl::tokenize(
         case LLAMA_VOCAB_TYPE_WPM:
             {
                 if (add_special) {
-                    GGML_ASSERT(special_cls_id != LLAMA_TOKEN_NULL);
-                    output.push_back(special_cls_id);
+                    GGML_ASSERT(special_bos_id != LLAMA_TOKEN_NULL);
+                    output.push_back(special_bos_id);
                 }
 
                 llm_tokenizer_wpm_session session(vocab);
@@ -2971,7 +2965,6 @@ void llama_vocab::impl::print_info() const {
     if (special_unk_id  != LLAMA_TOKEN_NULL)    { LLAMA_LOG_INFO( "%s: UNK token        = %d '%s'\n", __func__, special_unk_id,     id_to_token[special_unk_id].text.c_str() );  }
     if (special_sep_id  != LLAMA_TOKEN_NULL)    { LLAMA_LOG_INFO( "%s: SEP token        = %d '%s'\n", __func__, special_sep_id,     id_to_token[special_sep_id].text.c_str() );  }
     if (special_pad_id  != LLAMA_TOKEN_NULL)    { LLAMA_LOG_INFO( "%s: PAD token        = %d '%s'\n", __func__, special_pad_id,     id_to_token[special_pad_id].text.c_str() );  }
-    if (special_cls_id  != LLAMA_TOKEN_NULL)    { LLAMA_LOG_INFO( "%s: CLS token        = %d '%s'\n", __func__, special_cls_id,     id_to_token[special_cls_id].text.c_str() );  }
     if (special_mask_id != LLAMA_TOKEN_NULL)    { LLAMA_LOG_INFO( "%s: MASK token       = %d '%s'\n", __func__, special_mask_id,    id_to_token[special_mask_id].text.c_str() ); }
 
     if (linefeed_id != LLAMA_TOKEN_NULL)        { LLAMA_LOG_INFO( "%s: LF token         = %d '%s'\n", __func__, linefeed_id,        id_to_token[linefeed_id].text.c_str() ); }
@@ -3106,7 +3099,7 @@ llama_token_attr llama_vocab::token_get_attr(llama_token id) const {
 }
 
 llama_token llama_vocab::token_bos() const {
-    return pimpl->type != LLAMA_VOCAB_TYPE_WPM ? pimpl->special_bos_id : pimpl->special_cls_id;
+    return pimpl->special_bos_id;
 }
 
 llama_token llama_vocab::token_eos() const {
@@ -3123,10 +3116,6 @@ llama_token llama_vocab::token_eom() const {
 
 llama_token llama_vocab::token_unk() const {
     return pimpl->special_unk_id;
-}
-
-llama_token llama_vocab::token_cls() const {
-    return pimpl->special_cls_id;
 }
 
 llama_token llama_vocab::token_sep() const {
@@ -3348,8 +3337,9 @@ llama_token llama_vocab_eot(const struct llama_vocab * vocab) {
     return vocab->token_eot();
 }
 
+// deprecated
 llama_token llama_vocab_cls(const struct llama_vocab * vocab) {
-    return vocab->token_cls();
+    return vocab->token_bos();
 }
 
 llama_token llama_vocab_sep(const struct llama_vocab * vocab) {
@@ -3438,7 +3428,8 @@ llama_token llama_token_eot(const struct llama_vocab * vocab) {
 
 // deprecated
 llama_token llama_token_cls(const struct llama_vocab * vocab) {
-    return llama_vocab_cls(vocab);
+    //return llama_vocab_cls(vocab);
+    return llama_vocab_bos(vocab); // avoid deprecation warning
 }
 
 // deprecated
