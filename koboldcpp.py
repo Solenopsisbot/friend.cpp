@@ -2933,7 +2933,7 @@ def RunServerMultiThreaded(addr, port):
     while 1:
         try:
             time.sleep(10)
-        except KeyboardInterrupt:
+        except (KeyboardInterrupt,SystemExit):
             global exitcounter
             exitcounter = 999
             for i in range(numThreads):
@@ -4177,7 +4177,7 @@ def show_gui():
     ctk.CTkButton(tabs , text = "Update", fg_color="#9900cc", hover_color="#aa11dd", command = display_updates, width=90, height = 35 ).grid(row=1,column=0, stick="sw", padx= 5, pady=5)
     ctk.CTkButton(tabs , text = "Save", fg_color="#084a66", hover_color="#085a88", command = save_config_gui, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= 5, pady=5)
     ctk.CTkButton(tabs , text = "Load", fg_color="#084a66", hover_color="#085a88", command = load_config_gui, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= 70, pady=5)
-    ctk.CTkButton(tabs , text = "Help", fg_color="#992222", hover_color="#bb3333", command = display_help, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= 135, pady=5)
+    ctk.CTkButton(tabs , text = "Help (Find Models)", fg_color="#992222", hover_color="#bb3333", command = display_help, width=100, height = 35 ).grid(row=1,column=1, stick="sw", padx= 135, pady=5)
 
     # start a thread that tries to get actual gpu names and layer counts
     gpuinfo_thread = threading.Thread(target=auto_set_backend_gui)
@@ -4189,7 +4189,13 @@ def show_gui():
             import_vars(dict)
 
     # runs main loop until closed or launch clicked
-    root.mainloop()
+    try:
+        root.mainloop()
+    except (KeyboardInterrupt,SystemExit):
+        exitcounter = 999
+        print("Exiting by user request.")
+        sys.exit(0)
+
 
     if nextstate==0:
         exitcounter = 999
