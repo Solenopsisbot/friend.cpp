@@ -465,6 +465,9 @@ static int last_generation_settings_speaker_seed;
 static int last_generation_settings_audio_seed;
 static std::vector<llama_token> last_speaker_codes; //will store cached speaker
 static int last_speaker_seed = -999;
+static int cts_offset = 151672;
+static int space_id = 151670;
+static int code_terminate_id = 151670;
 
 bool ttstype_load_model(const tts_load_model_inputs inputs)
 {
@@ -552,9 +555,21 @@ bool ttstype_load_model(const tts_load_model_inputs inputs)
     if (testoks.size() == 1) {
         ttsver = TTS_VER_3;
         printf("\nUsing v0.3 mode");
+        //note that the final word does NOT have a space at the end.
+        space_id = testoks[0];
+        testoks = common_tokenize(ttcvocab,"<|audio_end|>",false,true);
+        if (testoks.size() == 1) {
+            code_terminate_id = testoks[0];
+        }
     } else {
         ttsver = TTS_VER_2;
         printf("\nUsing v0.2 mode");
+    }
+
+    //determine offset of <|0|>
+    testoks = common_tokenize(ttcvocab,"<|0|>",false,true);
+    if (testoks.size() == 1) {
+        cts_offset = testoks[0];
     }
 
     printf("\nTTS Load Complete.\n");
@@ -711,16 +726,17 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
             {
                 printf("\nGuide Tokens (%d tokens):\n", guide_tokens.size());
                 const std::string inp_txt = common_detokenize(ttc_ctx, guide_tokens, true);
-                printf("%s", inp_txt.c_str());
+                printf("%s,", inp_txt.c_str());
                 printf("\n");
             }
             prompt_add(prompt_inp, ttcvocab, sampletext, false, true);
             prompt_add(prompt_inp, ttcvocab, "<|text_end|>\n<|audio_start|>\n", false, true);
             if(!inputs.quiet && ttsdebugmode==1)
             {
-                printf("\nPrepare new speaker (%d input tokens)...", prompt_inp.size());
+                printf("\nPrepare new speaker (%d input tokens)...\n", prompt_inp.size());
+                print_tok_vec(prompt_inp);
             }
-            kcpp_embd_batch tts_batch = kcpp_embd_batch(prompt_inp, 0, false, true);
+            kcpp_embd_batch tts_batch = kcpp_embd_batch(prompt_inp, 0, false, false);
             auto evalok = (llama_decode(ttc_ctx, tts_batch.batch)==0);
             if (!evalok) {
                 printf("\nError: TTS prompt batch processing failed\n");
@@ -773,11 +789,17 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
                 }
             }
 
-            //trim everything after final <|code_end|>
-            auto it = std::find(last_speaker_codes.rbegin(), last_speaker_codes.rend(), 151670);
+            //trim everything after final <|code_end|> for v2, or <|audio_end|> offset-1 replaced with <|space|> for v3
+            auto it = std::find(last_speaker_codes.rbegin(), last_speaker_codes.rend(), code_terminate_id);
             if (it != last_speaker_codes.rend()) {
-                // Erase elements after the found 999 (inclusive)
+                // Erase elements after the found token (inclusive)
                 last_speaker_codes.erase(it.base(), last_speaker_codes.end());
+                if(ttsver==TTS_VER_3 && last_speaker_codes.size()>2)
+                {
+                    last_speaker_codes.pop_back();
+                    last_speaker_codes.pop_back();
+                    last_speaker_codes.push_back(space_id);
+                }
             }
             last_speaker_seed = speaker_seed;
             if(!inputs.quiet && ttsdebugmode==1)
@@ -817,18 +839,20 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
 
     if(!last_speaker_codes.empty() && speaker_seed > 0) //apply speaker voice output
     {
-       prompt_add(prompt_inp, last_speaker_codes);
+        prompt_add(prompt_inp, last_speaker_codes);
+        prompt_add(prompt_inp, ttcvocab, "\n", false, true);
     }
 
     if(!inputs.quiet && ttsdebugmode==1)
     {
         printf("\nDUMP TTS PROMPT (%d tokens):\n", prompt_inp.size());
+        print_tok_vec(prompt_inp);
         const std::string inp_txt = common_detokenize(ttc_ctx, prompt_inp, true);
         printf("\n%s\n", inp_txt.c_str());
     }
 
     //create batch with tokens for decoding prompt processing
-    kcpp_embd_batch tts_batch = kcpp_embd_batch(prompt_inp, 0, false, true);
+    kcpp_embd_batch tts_batch = kcpp_embd_batch(prompt_inp, 0, false, false);
 
     auto evalok = (llama_decode(ttc_ctx, tts_batch.batch)==0);
     if (!evalok) {
@@ -897,10 +921,10 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
     }
 
     // remove all non-audio tokens (i.e. < 151672 || > 155772)
-    codes.erase(std::remove_if(codes.begin(), codes.end(), [](llama_token t) { return t < 151672 || t > 155772; }), codes.end());
+    codes.erase(std::remove_if(codes.begin(), codes.end(), [](llama_token t) { return t < cts_offset || t > (cts_offset+4100); }), codes.end());
 
     for (auto & token : codes) {
-        token -= 151672;
+        token -= cts_offset;
     }
 
     const int n_codes = codes.size();
@@ -939,7 +963,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
             audio[i] = 0.0f;
         }
         //add some silence at the end
-        for (int i = 0; i < t_sr/10; ++i) {
+        for (int i = 0; i < cutout; ++i) {
             audio.push_back(0.0f);
         }
 
