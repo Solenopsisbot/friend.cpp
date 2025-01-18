@@ -972,10 +972,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
         last_generated_audio = save_wav16_base64(audio, t_sr);
         ttstime = timer_check();
 
-        if(!inputs.quiet)
-        {
-            printf("\nTTS Generated %d audio tokens in %.2fs.\n",(int) codes.size(),ttstime);
-        }
+        printf("\nTTS Generated %d audio tokens in %.2fs.\n",(int) codes.size(),ttstime);
 
         output.data = last_generated_audio.c_str();
         output.status = 1;
