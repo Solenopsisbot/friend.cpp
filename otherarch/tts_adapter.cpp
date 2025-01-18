@@ -336,9 +336,14 @@ static std::string process_text(const std::string & text, TTS_VER ver) {
     std::transform(processed_text.begin(), processed_text.end(),
                   processed_text.begin(), ::tolower);
 
+    // replace multiple punctuation with single
+    processed_text = std::regex_replace(processed_text, std::regex(R"(([,.!?])\1+)"), "$1");
+    //handle words connected by periods, replace the matches with " dot ".
+    processed_text = std::regex_replace(processed_text, std::regex(R"((\S)\.(\S))"), "$1 dot $2");
+
     if(ver==TTS_VER_2)
     {
-        std::regex special_chars(R"([-_/,\.\\])");
+        std::regex special_chars(R"([\(\)\[\]\{\}\:-_/,\.\\])");
         processed_text = std::regex_replace(processed_text, special_chars, " ");
         std::regex non_alpha(R"([^a-z\s])");
         processed_text = std::regex_replace(processed_text, non_alpha, "");
@@ -347,7 +352,7 @@ static std::string process_text(const std::string & text, TTS_VER ver) {
         processed_text = std::regex_replace(processed_text, std::regex(R"(^\s+|\s+$)"), "");
         processed_text = std::regex_replace(processed_text, std::regex(R"(\s)"), "<|text_sep|>");
     } else {
-        std::regex special_chars(R"([-_/\\])");
+        std::regex special_chars(R"([\(\)\[\]\{\}\:-_/\\])");
         processed_text = std::regex_replace(processed_text, special_chars, " ");
         std::regex non_alpha(R"([^a-z\s.,?!])");
         processed_text = std::regex_replace(processed_text, non_alpha, "");
@@ -647,11 +652,12 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
 
     // convert the input text into the necessary format expected by OuteTTS
     std::string prompt_clean = process_text(prompt,ttsver);
+    bool empty_check = (process_text(prompt,TTS_VER_2).size()==0); //if there is no audio, will crash, so prevent that
 
     //further clean it by keeping only the last 300 words
     prompt_clean = trim_words(prompt_clean,(ttsver==TTS_VER_3?"<|space|>":"<|text_sep|>"),300);
 
-    if(prompt_clean.size()==0)
+    if(empty_check)
     {
         //no input
          if(!inputs.quiet)
