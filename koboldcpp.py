@@ -60,7 +60,7 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-KcppVersion = "1.82"
+KcppVersion = "1.82.1"
 showdebug = True
 guimode = False
 showsamplerwarning = True
@@ -291,6 +291,7 @@ class tts_load_model_inputs(ctypes.Structure):
                 ("cublas_info", ctypes.c_int),
                 ("vulkan_info", ctypes.c_char_p),
                 ("gpulayers", ctypes.c_int),
+                ("flash_attention", ctypes.c_bool),
                 ("debugmode", ctypes.c_int)]
 
 class tts_generation_inputs(ctypes.Structure):
@@ -1329,7 +1330,7 @@ def whisper_generate(genparams):
     inputs.prompt = prompt.encode("UTF-8")
     inputs.audio_data = audio_data.encode("UTF-8")
     inputs.quiet = is_quiet
-    lc = genparams.get("langcode", "auto")
+    lc = genparams.get("langcode", genparams.get("language", "auto"))
     lc = lc.strip().lower() if (lc and lc.strip().lower()!="") else "auto"
     inputs.langcode = lc.encode("UTF-8")
     inputs.suppress_non_speech = genparams.get("suppress_non_speech", False)
@@ -1347,6 +1348,7 @@ def tts_load_model(ttc_model_filename,cts_model_filename):
     inputs.ttc_model_filename = ttc_model_filename.encode("UTF-8")
     inputs.cts_model_filename = cts_model_filename.encode("UTF-8")
     inputs.gpulayers = (999 if args.ttsgpu else 0)
+    inputs.flash_attention =  args.flashattention
     thds = args.threads
     if args.ttsthreads and args.ttsthreads > 0:
         ttst = int(args.ttsthreads)
