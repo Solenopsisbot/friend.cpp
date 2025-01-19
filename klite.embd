@@ -5797,6 +5797,9 @@ initializeInstructUIFunctionality();
 						|| target_url.toLowerCase().includes("192.168.")
 						|| target_url.toLowerCase().includes("10.0.0.")
 						|| target_url.toLowerCase().includes("://10.0.")
+						|| (target_url.toLowerCase().includes(".lan:") || target_url.toLowerCase().includes(".lan?") || target_url.toLowerCase().includes(".lan/") || target_url.toLowerCase().endsWith(".lan"))
+						|| (target_url.toLowerCase().includes(".local:") || target_url.toLowerCase().includes(".local?") || target_url.toLowerCase().includes(".local/") || target_url.toLowerCase().endsWith(".local"))
+						|| (target_url.toLowerCase().includes(".internal:") || target_url.toLowerCase().includes(".internal?") || target_url.toLowerCase().includes(".internal/") || target_url.toLowerCase().endsWith(".internal"))
 						|| !target_url.toLowerCase().includes(".")); //hostname without dots cannot be wan accessible
 		return is_local;
 	}
@@ -14511,7 +14514,7 @@ initializeInstructUIFunctionality();
 		//fix alpaca leakage
 		if(localsettings.fix_alpaca_leak && (localsettings.opmode == 2 || localsettings.opmode == 3 || localsettings.opmode == 4) && get_instruct_starttag(true).toLowerCase().includes("### instruction"))
 		{
-			let matches = gentxt.match(/\n### (.+?):/g);
+			let matches = gentxt.match(/\n### ([^\s]+?):\n/g);
 			for(let m in matches)
 			{
 				let foundStop = gentxt.indexOf(matches[m]);
