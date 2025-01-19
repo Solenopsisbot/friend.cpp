@@ -1901,7 +1901,8 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             super().log_message(format, *args)
         pass
 
-    def extract_b64string_from_file_upload(self, body):
+    def extract_transcribe_from_file_upload(self, body):
+        result = {"file": None, "prompt": None, "language": None}
         try:
             if 'content-type' in self.headers and self.headers['content-type']:
                 boundary = self.headers['content-type'].split("=")[1].encode()
@@ -1914,15 +1915,27 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                             file_content_start = fpart.find(b'\r\n\r\n') + 4  # Position after headers
                             file_content_end = fpart.rfind(b'\r\n')  # Ending boundary
                             if file_content_start != -1 and file_content_end != -1:
-                                file_data = fpart[file_content_start:file_content_end]
-                                file_data_base64 = base64.b64encode(file_data).decode('utf-8',"ignore")
-                                base64_string = f"data:audio/wav;base64,{file_data_base64}"
-                                return base64_string
-            print("Uploaded file not found.")
-            return None
+                                if "file" in result and result["file"] is None:
+                                    file_data = fpart[file_content_start:file_content_end]
+                                    file_data_base64 = base64.b64encode(file_data).decode('utf-8',"ignore")
+                                    base64_string = f"data:audio/wav;base64,{file_data_base64}"
+                                    result["file"] = base64_string
+
+                        # Check for fields
+                        detected_prompt_field = re.findall(r'Content-Disposition.*name="prompt"\r\n\r\n(.*)\r\n', fpart.decode('utf-8', errors='ignore'))
+                        if detected_prompt_field and len(detected_prompt_field)>0:
+                            result["prompt"] = detected_prompt_field[0].strip()  # Extract and strip whitespace
+
+                        detected_lang_field = re.findall(r'Content-Disposition.*name="language"\r\n\r\n(.*)\r\n', fpart.decode('utf-8', errors='ignore'))
+                        if detected_lang_field and len(detected_lang_field)>0:
+                            result["language"] = detected_lang_field[0].strip()  # Extract and strip whitespace
+
+            if not ("file" in result and result["file"]):
+                print("Uploaded file not found.")
+            return result
         except Exception as e:
             print(f"File Upload Process Error: {e}")
-            return None
+            return result
 
     async def generate_text(self, genparams, api_format, stream_flag):
         global friendlymodelname, chatcompl_adapter, currfinishreason
@@ -2742,9 +2755,14 @@ Enter Prompt:<br>
                 except Exception:
                     genparams = None
                     if is_transcribe: #fallback handling of file uploads
-                        b64wav = self.extract_b64string_from_file_upload(body)
-                        if b64wav:
+                        formdata = self.extract_transcribe_from_file_upload(body)
+                        if "file" in formdata and formdata["file"]:
+                            b64wav = formdata["file"]
                             genparams = {"audio_data":b64wav}
+                            if "prompt" in formdata and formdata["prompt"]:
+                                genparams["prompt"] = formdata["prompt"]
+                            if "language" in formdata and formdata["language"]:
+                                genparams["language"] = formdata["language"]
 
                     if not genparams:
                         utfprint("Body Err: " + str(body))
