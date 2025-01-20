@@ -723,7 +723,7 @@ def dump_gguf_metadata(file_path): #if you're gonna copy this into your own proj
             return
 
         fsize = os.path.getsize(file_path)
-        if fsize < (chunk_size + 256): #ignore files under file size limit
+        if fsize < 512: #ignore files under file size limit
             print("This GGUF file is too small to analyze. Please ensure it is valid.")
             return
         with open(file_path, 'rb') as f:
