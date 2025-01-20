@@ -27,7 +27,6 @@ import html
 import urllib.parse as urlparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from pathlib import Path
 
 # constants
 sampler_order_max = 7
@@ -664,6 +663,110 @@ def get_capabilities():
     has_search = True if args.websearch else False
     has_tts = (ttsmodelpath!="")
     return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":has_vision,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts}
+
+def dump_gguf_metadata(file_path): #if you're gonna copy this into your own project at least credit concedo
+    chunk_size = 1024*1024*12  # read first 12mb of file
+    try:
+        data = None
+        fptr = 0
+        dt_table = ["u8","i8","u16","i16","u32","i32","f32","bool","str","arr","u64","i64","f64"] #13 types, else error
+        tt_table = ["f32","f16","q4_0","q4_1","q4_2","q4_3","q5_0","q5_1","q8_0","q8_1","q2_k","q3_k","q4_k","q5_k","q6_k","q8_k","iq2_xxs","iq2_xs","iq3_xxs","iq1_s","iq4_nl","iq3_s","iq2_s","iq4_xs","i8","i16","i32","i64","f64","iq1_m","bf16","q4_0_4_4","q4_0_4_8","q4_0_8_8","tq1_0","tq2_0","iq4_nl_4_4","unknown","unknown","unknown","unknown","unknown"]
+        def read_data(datatype):
+            nonlocal fptr, data, dt_table
+            if datatype=="u32":
+                val_bytes = data[fptr:fptr + 4]
+                val = struct.unpack('<I', val_bytes)[0]
+                fptr += 4
+                return val
+            if datatype=="u64":
+                val_bytes = data[fptr:fptr + 8]
+                val = struct.unpack('<Q', val_bytes)[0]
+                fptr += 8
+                return val
+            if datatype=="i32":
+                val_bytes = data[fptr:fptr + 4]
+                val = struct.unpack('<i', val_bytes)[0]
+                fptr += 4
+                return val
+            if datatype=="bool":
+                val_bytes = data[fptr:fptr + 1]
+                val = struct.unpack('<B', val_bytes)[0]
+                fptr += 1
+                return val
+            if datatype=="f32":
+                val_bytes = data[fptr:fptr + 4]
+                val = struct.unpack('<f', val_bytes)[0]
+                fptr += 4
+                return val
+            if datatype=="str":
+                val_bytes = data[fptr:fptr + 8]
+                str_len = struct.unpack('<Q', val_bytes)[0]
+                fptr += 8
+                val_bytes = data[fptr:fptr + str_len]
+                str_val = val_bytes.split(b'\0', 1)[0].decode('utf-8')
+                fptr += str_len
+                return str_val
+            if datatype=="arr":
+                val_bytes = data[fptr:fptr + 4]
+                arr_type = struct.unpack('<I', val_bytes)[0]
+                fptr += 4
+                val_bytes = data[fptr:fptr + 8]
+                arr_elems = struct.unpack('<Q', val_bytes)[0]
+                fptr += 8
+                arr_vals = []
+                for i in range(arr_elems):
+                    dt_translated = dt_table[arr_type]
+                    arr_val = read_data(dt_translated)
+                    arr_vals.append(arr_val)
+                return arr_vals
+            print(f"Unknown Datatype: {datatype}")
+            return
+
+        fsize = os.path.getsize(file_path)
+        if fsize < (chunk_size + 256): #ignore files under file size limit
+            print("This GGUF file is too small to analyze. Please ensure it is valid.")
+            return
+        with open(file_path, 'rb') as f:
+            file_header = f.read(4)
+            if file_header != b'GGUF': #file is not GGUF
+                print(f"File does not seem to be a GGUF: {file_header}")
+                return
+            data = f.read(chunk_size)
+            read_ver = read_data("u32")
+            if read_ver < 2:
+                print(f"This GGUF file is too old. Version detected: {read_ver}")
+                return
+            read_tensorcount = read_data("u64")
+            read_kvcount = read_data("u64")
+            print(f"*** GGUF FILE METADATA ***\nGGUF.version = {read_ver}\nGGUF.tensor_count = {read_tensorcount}\nGGUF.kv_count = {read_kvcount}")
+            for kn in range(read_kvcount):
+                curr_key = read_data("str")
+                curr_datatype = read_data("u32")
+                dt_translated = dt_table[curr_datatype]
+                curr_val = read_data(dt_translated)
+                if dt_translated=="arr":
+                    print(f"{dt_translated}: {curr_key} = [{len(curr_val)}]")
+                elif dt_translated=="str":
+                    print(f"{dt_translated}: {curr_key} = {curr_val[:100]}")
+                else:
+                    print(f"{dt_translated}: {curr_key} = {curr_val}")
+            print("\n*** GGUF TENSOR INFO ***")
+            for kn in range(read_tensorcount):
+                tensor_name = read_data("str")
+                dims = read_data("u32")
+                dim_val_str = "["
+                for d in range(dims):
+                    dim_val = read_data("u64")
+                    dim_val_str += f"{'' if d==0 else ', '}{dim_val}"
+                dim_val_str += "]"
+                tensor_type = read_data("u32")
+                read_data("u64") # tensor_offset not used
+                tensor_type_str = tt_table[tensor_type]
+                print(f"{kn:<3}: {tensor_type_str:<8} | {tensor_name:<30} | {dim_val_str}")
+            print(f"Metadata and TensorInfo Bytes: {fptr}")
+    except Exception as e:
+        print(f"Error Analyzing File: {e}")
+        return
 
 def read_gguf_metadata(file_path):
     chunk_size = 8192  # read only first 8kb of file
@@ -4741,12 +4844,7 @@ def download_model_from_url(url,permitted_types=[".gguf",".safetensors"]):
 def analyze_gguf_model(args,filename):
     try:
         stime = datetime.now()
-        from gguf.scripts.gguf_dump import dump_metadata
-        from gguf import GGUFReader
-        reader = GGUFReader(filename, 'r')
-        ns = argparse.Namespace()
-        ns.no_tensors = False
-        dump_metadata(reader, ns)
+        dump_gguf_metadata(filename)
         atime = (datetime.now() - stime).total_seconds()
         print(f"---\nAnalyzing completed in {atime:.2f}s.\n---",flush=True)
     except Exception as e:
@@ -4781,13 +4879,6 @@ def main(launch_args,start_server=True):
 
     print(f"***\nWelcome to KoboldCpp - Version {KcppVersion}") # just update version manually
     # print("Python version: " + sys.version)
-    # connect path
-    try:
-        if (Path(__file__).parent / "gguf-py").exists():
-            ggufpy_path = str(Path(__file__).parent / "gguf-py")
-            sys.path.append(ggufpy_path)
-    except Exception as e:
-        print(f"Cannot import gguf-py path: {e}")
 
     #perform some basic cleanup of old temporary directories
     try:
