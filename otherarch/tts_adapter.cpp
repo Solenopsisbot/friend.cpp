@@ -152,9 +152,9 @@ static std::vector<float> embd_to_audio(
         const int n_codes,
         const int n_embd,
         const int n_thread) {
-    const int n_fft = 1280;
-    const int n_hop = 320;
-    const int n_win = 1280;
+    const int n_hop = 600;
+    const int n_fft = n_hop*4; //its 1280 at 320, or 2400 at 600
+    const int n_win = n_hop*4;
     const int n_pad = (n_win - n_hop)/2;
     const int n_out = (n_codes - 1)*n_hop + n_win;
 
