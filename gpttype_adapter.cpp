@@ -601,10 +601,18 @@ static void speculative_decoding_setup(std::string spec_model_filename, const ll
             }
             else
             {
-                printf("Error: Draft model vocab of (%d) does not match base vocab of (%d). Speculative decoding cannot be used!\n",draftvocab,base_n_vocab);
-                printf("If you REALLY want to override this, run in --debugmode and this restriction will be disabled. However, you might encounter unwanted results!\n");
-                llama_free(draft_ctx);
-                draft_ctx = nullptr;
+                int diff = abs(draftvocab-base_n_vocab);
+                if(diff <= 256)
+                {
+                    //allow small differences to work
+                    printf("WARNING: Draft model vocab of (%d) does not match base vocab of (%d).\nSpeculative decoding may malfunction!\n",draftvocab,base_n_vocab);
+                } else {
+                    printf("Error: Draft model vocab of (%d) is too different from base vocab of (%d). Speculative decoding cannot be used!\n",draftvocab,base_n_vocab);
+                    printf("If you REALLY want to override this, run in --debugmode and this restriction will be disabled. However, you might encounter unwanted results!\n");
+                    llama_free(draft_ctx);
+                    draft_ctx = nullptr;
+                }
+
             }
         }
     }
