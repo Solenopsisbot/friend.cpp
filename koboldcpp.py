@@ -160,7 +160,6 @@ class load_model_inputs(ctypes.Structure):
                 ("cublas_info", ctypes.c_int),
                 ("vulkan_info", ctypes.c_char_p),
                 ("blasbatchsize", ctypes.c_int),
-                ("debugmode", ctypes.c_int),
                 ("forceversion", ctypes.c_int),
                 ("gpulayers", ctypes.c_int),
                 ("rope_freq_scale", ctypes.c_float),
@@ -169,7 +168,9 @@ class load_model_inputs(ctypes.Structure):
                 ("flash_attention", ctypes.c_bool),
                 ("tensor_split", ctypes.c_float * tensor_split_max),
                 ("quant_k", ctypes.c_int),
-                ("quant_v", ctypes.c_int)]
+                ("quant_v", ctypes.c_int),
+                ("quiet", ctypes.c_bool),
+                ("debugmode", ctypes.c_int)]
 
 class generation_inputs(ctypes.Structure):
     _fields_ = [("seed", ctypes.c_int),
@@ -202,7 +203,6 @@ class generation_inputs(ctypes.Structure):
                 ("stream_sse", ctypes.c_bool),
                 ("grammar", ctypes.c_char_p),
                 ("grammar_retain_state", ctypes.c_bool),
-                ("quiet", ctypes.c_bool),
                 ("dynatemp_range", ctypes.c_float),
                 ("dynatemp_exponent", ctypes.c_float),
                 ("smoothing_factor", ctypes.c_float),
@@ -242,6 +242,7 @@ class sd_load_model_inputs(ctypes.Structure):
                 ("vae_filename", ctypes.c_char_p),
                 ("lora_filename", ctypes.c_char_p),
                 ("lora_multiplier", ctypes.c_float),
+                ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int)]
 
 class sd_generation_inputs(ctypes.Structure):
@@ -255,8 +256,7 @@ class sd_generation_inputs(ctypes.Structure):
                 ("height", ctypes.c_int),
                 ("seed", ctypes.c_int),
                 ("sample_method", ctypes.c_char_p),
-                ("clip_skip", ctypes.c_int),
-                ("quiet", ctypes.c_bool)]
+                ("clip_skip", ctypes.c_int)]
 
 class sd_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -268,14 +268,14 @@ class whisper_load_model_inputs(ctypes.Structure):
                 ("clblast_info", ctypes.c_int),
                 ("cublas_info", ctypes.c_int),
                 ("vulkan_info", ctypes.c_char_p),
+                ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int)]
 
 class whisper_generation_inputs(ctypes.Structure):
     _fields_ = [("prompt", ctypes.c_char_p),
                 ("audio_data", ctypes.c_char_p),
                 ("suppress_non_speech", ctypes.c_bool),
-                ("langcode", ctypes.c_char_p),
-                ("quiet", ctypes.c_bool)]
+                ("langcode", ctypes.c_char_p)]
 
 class whisper_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -291,13 +291,13 @@ class tts_load_model_inputs(ctypes.Structure):
                 ("vulkan_info", ctypes.c_char_p),
                 ("gpulayers", ctypes.c_int),
                 ("flash_attention", ctypes.c_bool),
+                ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int)]
 
 class tts_generation_inputs(ctypes.Structure):
     _fields_ = [("prompt", ctypes.c_char_p),
                 ("speaker_seed", ctypes.c_int),
                 ("audio_seed", ctypes.c_int),
-                ("quiet", ctypes.c_bool),
                 ("nocache", ctypes.c_bool)]
 
 class tts_generation_outputs(ctypes.Structure):
@@ -513,6 +513,12 @@ def set_backend_props(inputs):
         inputs.vulkan_info = s.encode("UTF-8")
     else:
         inputs.vulkan_info = "".encode("UTF-8")
+
+    # set universal flags
+    inputs.quiet = args.quiet
+    inputs.debugmode = args.debugmode
+    inputs.executable_path = (getdirpath()+"/").encode("UTF-8")
+
     return inputs
 
 def end_trim_to_sentence(input_text):
@@ -1077,13 +1083,10 @@ def load_model(model_filename):
 
     inputs.moe_experts = args.moeexperts
     inputs = set_backend_props(inputs)
-
-    inputs.executable_path = (getdirpath()+"/").encode("UTF-8")
-    inputs.debugmode = args.debugmode
     ret = handle.load_model(inputs)
     return ret
 
-def generate(genparams, is_quiet=False, stream_flag=False):
+def generate(genparams, stream_flag=False):
     global maxctx, args, currentusergenkey, totalgens, pendingabortkey
 
     prompt = genparams.get('prompt', "")
@@ -1121,7 +1124,6 @@ def generate(genparams, is_quiet=False, stream_flag=False):
     grammar_retain_state = genparams.get('grammar_retain_state', False)
     genkey = genparams.get('genkey', '')
     trimstop = genparams.get('trim_stop', True)
-    quiet = is_quiet
     dynatemp_range = genparams.get('dynatemp_range', 0.0)
     dynatemp_exponent = genparams.get('dynatemp_exponent', 1.0)
     smoothing_factor = genparams.get('smoothing_factor', 0.0)
@@ -1170,7 +1172,6 @@ def generate(genparams, is_quiet=False, stream_flag=False):
     inputs.rep_pen_slope = rep_pen_slope
     inputs.presence_penalty = presence_penalty
     inputs.stream_sse = stream_sse
-    inputs.quiet = quiet
     inputs.dynatemp_range = dynatemp_range
     inputs.dynatemp_exponent = dynatemp_exponent
     inputs.smoothing_factor = smoothing_factor
@@ -1289,8 +1290,6 @@ def generate(genparams, is_quiet=False, stream_flag=False):
 def sd_load_model(model_filename,vae_filename,lora_filename,t5xxl_filename,clipl_filename,clipg_filename):
     global args
     inputs = sd_load_model_inputs()
-    inputs.debugmode = args.debugmode
-    inputs.executable_path = (getdirpath()+"/").encode("UTF-8")
     inputs.model_filename = model_filename.encode("UTF-8")
     thds = args.threads
     quant = 0
@@ -1368,7 +1367,6 @@ def sd_generate(genparams):
     height = tryparseint(genparams.get("height", 512))
     seed = tryparseint(genparams.get("seed", -1))
     sample_method = genparams.get("sampler_name", "k_euler_a")
-    is_quiet = True if (args.quiet or args.debugmode == -1) else False
     clip_skip = tryparseint(genparams.get("clip_skip", -1))
 
     #clean vars
@@ -1405,7 +1403,6 @@ def sd_generate(genparams):
     inputs.height = height
     inputs.seed = seed
     inputs.sample_method = sample_method.lower().encode("UTF-8")
-    inputs.quiet = is_quiet
     inputs.clip_skip = clip_skip
     ret = handle.sd_generate(inputs)
     outstr = ""
@@ -1417,8 +1414,6 @@ def sd_generate(genparams):
 def whisper_load_model(model_filename):
     global args
     inputs = whisper_load_model_inputs()
-    inputs.debugmode = args.debugmode
-    inputs.executable_path = (getdirpath()+"/").encode("UTF-8")
     inputs.model_filename = model_filename.encode("UTF-8")
     inputs = set_backend_props(inputs)
     ret = handle.whisper_load_model(inputs)
@@ -1426,7 +1421,6 @@ def whisper_load_model(model_filename):
 
 def whisper_generate(genparams):
     global args
-    is_quiet = True if (args.quiet or args.debugmode == -1) else False
     prompt = genparams.get("prompt", "")
     audio_data = genparams.get("audio_data", "")
     if audio_data.startswith("data:audio"):
@@ -1434,7 +1428,6 @@ def whisper_generate(genparams):
     inputs = whisper_generation_inputs()
     inputs.prompt = prompt.encode("UTF-8")
     inputs.audio_data = audio_data.encode("UTF-8")
-    inputs.quiet = is_quiet
     lc = genparams.get("langcode", genparams.get("language", "auto"))
     lc = lc.strip().lower() if (lc and lc.strip().lower()!="") else "auto"
     inputs.langcode = lc.encode("UTF-8")
@@ -1448,8 +1441,6 @@ def whisper_generate(genparams):
 def tts_load_model(ttc_model_filename,cts_model_filename):
     global args
     inputs = tts_load_model_inputs()
-    inputs.debugmode = args.debugmode
-    inputs.executable_path = (getdirpath()+"/").encode("UTF-8")
     inputs.ttc_model_filename = ttc_model_filename.encode("UTF-8")
     inputs.cts_model_filename = cts_model_filename.encode("UTF-8")
     inputs.gpulayers = (999 if args.ttsgpu else 0)
@@ -1466,7 +1457,6 @@ def tts_load_model(ttc_model_filename,cts_model_filename):
 
 def tts_generate(genparams):
     global args
-    is_quiet = True if (args.quiet or args.debugmode == -1) else False
     prompt = genparams.get("input", genparams.get("text", ""))
     prompt = prompt.strip()
     voice = 1
@@ -1486,7 +1476,6 @@ def tts_generate(genparams):
     except Exception:
         aseed = -1
     inputs.audio_seed = aseed
-    inputs.quiet = is_quiet
     inputs.nocache = genparams.get("nocache", False)
     ret = handle.tts_generate(inputs)
     outstr = ""
@@ -2044,7 +2033,6 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     async def generate_text(self, genparams, api_format, stream_flag):
         global friendlymodelname, chatcompl_adapter, currfinishreason
-        is_quiet = args.quiet
         currfinishreason = "null"
 
         def run_blocking():  # api format 1=basic,2=kai,3=oai,4=oai-chat
@@ -2054,7 +2042,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 global last_non_horde_req_time
                 last_non_horde_req_time = time.time()
 
-            return generate(genparams=genparams,is_quiet=is_quiet,stream_flag=stream_flag)
+            return generate(genparams=genparams,stream_flag=stream_flag)
 
         genout = {"text": "", "status": -1, "stopreason": -1, "prompt_tokens":0, "completion_tokens": 0, "total_tokens": 0}
         if stream_flag:
