@@ -478,6 +478,7 @@ static int cts_offset = 151672;
 static int space_id = 151670;
 static int code_terminate_id = 151670;
 static int nthreads = 4;
+static int tts_max_len = 4096;
 
 bool ttstype_load_model(const tts_load_model_inputs inputs)
 {
@@ -521,6 +522,8 @@ bool ttstype_load_model(const tts_load_model_inputs inputs)
     llama_context_params tts_ctx_params = llama_context_default_params();
 
     nthreads = inputs.threads;
+
+    tts_max_len = inputs.ttsmaxlen;
 
     tts_model_params.use_mmap = false;
     tts_model_params.use_mlock = false;
@@ -871,7 +874,7 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
 
     // main loop
     n_decode = 0;
-    n_predict = 4096; //max 4096 tokens
+    n_predict = tts_max_len; //max 4096 tokens
 
     while (n_decode <= n_predict)
     {

@@ -291,6 +291,7 @@ class tts_load_model_inputs(ctypes.Structure):
                 ("vulkan_info", ctypes.c_char_p),
                 ("gpulayers", ctypes.c_int),
                 ("flash_attention", ctypes.c_bool),
+                ("ttsmaxlen", ctypes.c_int),
                 ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int)]
 
@@ -1451,6 +1452,7 @@ def tts_load_model(ttc_model_filename,cts_model_filename):
         if ttst > 0:
             thds = ttst
     inputs.threads = thds
+    inputs.ttsmaxlen = args.ttsmaxlen if args.ttsmaxlen < 4096 else 4096
     inputs = set_backend_props(inputs)
     ret = handle.tts_load_model(inputs)
     return ret
@@ -3279,6 +3281,7 @@ def show_gui():
     wavtokenizer_var = ctk.StringVar()
     ttsgpu_var = ctk.IntVar(value=0)
     tts_threads_var = ctk.StringVar(value=str(default_threads))
+    ttsmaxlen_var = ctk.StringVar(value=str(4096))
 
     def tabbuttonaction(name):
         for t in tabcontent:
@@ -3855,6 +3858,7 @@ def show_gui():
     makefileentry(audio_tab, "WavTokenizer Model (Text-To-Speech):", "Select WavTokenizer GGUF Model File", wavtokenizer_var, 7, width=280, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select a WavTokenizer GGUF model file on disk to be loaded for Narration.")
     wavtokenizer_var.trace("w", gui_changed_modelfile)
     makecheckbox(audio_tab, "TTS Use GPU", ttsgpu_var, 9, 0,tooltiptxt="Uses the GPU for TTS.")
+    makelabelentry(audio_tab, "OuteTTS Max Tokens:" , ttsmaxlen_var, 11, 50,padx=290,singleline=True,tooltip="Max allowed audiotokens to generate per TTS request.")
     ttsgpu_var.trace("w", gui_changed_modelfile)
 
     def kcpp_export_template():
@@ -4077,6 +4081,7 @@ def show_gui():
             args.ttsmodel = tts_model_var.get()
             args.ttswavtokenizer = wavtokenizer_var.get()
             args.ttsgpu = (ttsgpu_var.get()==1)
+            args.ttsmaxlen = int(ttsmaxlen_var.get())
 
     def import_vars(dict):
         global importvars_in_progress
@@ -4242,6 +4247,7 @@ def show_gui():
         tts_model_var.set(dict["ttsmodel"] if ("ttsmodel" in dict and dict["ttsmodel"]) else "")
         wavtokenizer_var.set(dict["ttswavtokenizer"] if ("ttswavtokenizer" in dict and dict["ttswavtokenizer"]) else "")
         ttsgpu_var.set(dict["ttsgpu"] if ("ttsgpu" in dict) else 0)
+        ttsmaxlen_var.set(str(dict["ttsmaxlen"]) if ("ttsmaxlen" in dict and dict["ttsmaxlen"]) else str(4096))
 
         importvars_in_progress = False
         gui_changed_modelfile()
@@ -5646,6 +5652,7 @@ if __name__ == '__main__':
     ttsparsergroup.add_argument("--ttsmodel", metavar=('[filename]'), help="Specify the OuteTTS Text-To-Speech GGUF model.", default="")
     ttsparsergroup.add_argument("--ttswavtokenizer", metavar=('[filename]'), help="Specify the WavTokenizer GGUF model.", default="")
     ttsparsergroup.add_argument("--ttsgpu", help="Use the GPU for TTS.", action='store_true')
+    ttsparsergroup.add_argument("--ttsmaxlen", help="Limit number of audio tokens generated with TTS.",  type=int, default=4096)
     ttsparsergroup.add_argument("--ttsthreads", metavar=('[threads]'), help="Use a different number of threads for TTS if specified. Otherwise, has the same value as --threads.", type=int, default=0)
 
     deprecatedgroup = parser.add_argument_group('Deprecated Commands, DO NOT USE!')
