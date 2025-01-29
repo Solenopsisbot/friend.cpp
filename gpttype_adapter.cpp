@@ -2126,7 +2126,8 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         }
         if(file_format_meta.model_architecture == GGUFArch::ARCH_QWEN2VL)
         {
-            printf("Qwen2VL detected! Mrope will be used!\n");
+            printf("Qwen2VL detected! Mrope will be used, and context shift will be disabled!\n");
+            kcpp_data->use_contextshift = false;
         }
         model_params.main_gpu = cu_parseinfo_maindevice;
 
