@@ -99,6 +99,7 @@ static llama_context * draft_ctx = nullptr; //will remain null if speculative is
 static clip_ctx * clp_ctx = nullptr; //for llava
 static clip_image_u8 * clp_img_data = nullptr; //most recent image
 static std::vector<llava_image> llava_images;
+static std::vector<int> last_llava_mem; //for storing dummy tokens that will be consumed by llava
 static std::string llava_composite_image_signature = ""; //for identifying when the llava images change, we need to invalidate the cache
 static int current_llava_identifier = LLAVA_TOKEN_IDENTIFIER_A;
 static int vision_max_res = 2048;
@@ -2764,6 +2765,54 @@ int GetThreadsToUse(bool blasmode)
     return kcpp_data->n_threads;
 }
 
+//this function prepares the clip embds for llava. it's only needed when images change
+static void PrepareLlavaEmbds(const int nctx, const std::vector<int> & llava_sep)
+{
+    if(clp_ctx!=nullptr && clp_img_data!=nullptr)
+    {
+        int sepsize = llava_sep.size();
+        last_llava_mem.clear();
+
+        for(int i=0;i<llava_images.size();++i)
+        {
+            std::string llava_image = llava_images[i].b64data;
+            const std::vector<uint8_t> image_buffer = kcpp_base64_decode(llava_image);
+            if (!clip_image_load_from_bytes(image_buffer.data(), image_buffer.size(), clp_img_data, vision_max_res))
+            {
+                //failed to load image
+                printf("\nError: Clip image %d failed to load!",i);
+            }
+            else
+            {
+                if(debugmode==1 && !is_quiet)
+                {
+                    printf("\nCreating clip image embed...");
+                }
+                llava_images[i].clp_image_tokens = 0;
+                if (!llava_image_embed_make_with_clip_img(clp_ctx, kcpp_data->n_threads, clp_img_data, &llava_images[i].clp_img_embd, &llava_images[i].clp_image_tokens)) {
+                    printf("\nError: Clip image %d failed to create embd!",i);
+                }
+                if(debugmode==1 && !is_quiet)
+                {
+                    printf("\nLLAVA Clip Embed %i used Tokens: %d",i,llava_images[i].clp_image_tokens);
+                }
+                if(llava_images[i].clp_image_tokens>0 && llava_images[i].clp_image_tokens < nctx)
+                {
+                    int tokcnt = (i==0?(llava_images[i].clp_image_tokens):(llava_images[i].clp_image_tokens+sepsize));
+                    for(int n=0;n<tokcnt;++n)
+                    {
+                        last_llava_mem.push_back(current_llava_identifier);
+                    }
+                }
+                else
+                {
+                    printf("\nWarning: LLAVA Image excluded - Context size too low or not enough clip tokens!\n");
+                }
+            }
+        }
+    }
+}
+
 generation_outputs gpttype_generate(const generation_inputs inputs)
 {
     generation_outputs output;
@@ -2804,6 +2853,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     double time0 = 0, time1 = 0, time2 = 0;
     timer_start();
+
+    bool llava_images_changed = false;
 
     for(int x=0;x<inputs.stop_sequence_len;++x)
     {
@@ -2934,6 +2985,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         {
             printf("\nLLAVA images changed, existing cache invalidated");
         }
+        llava_images_changed = true;
     }
 
     kcpp_data->prompt = inputs.prompt;
@@ -3060,55 +3112,22 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     // tokenize the prompt
     std::vector<int> embd_inp;
     std::vector<int> embd_inp_mem; //for storing added memory
-    std::vector<int> llava_mem; //for storing dummy tokens that will be consumed by llava
     std::vector<int> llava_sep; //to separate between different llava images
+    bool llava_embds_built = false;
 
     int32_t nctx = kcpp_data->n_ctx;
 
     TokenizeString(kcpp_data->prompt, embd_inp, file_format);
+    TokenizeString("\n\n", llava_sep, file_format,false);
 
-    if(clp_ctx!=nullptr && clp_img_data!=nullptr)
+    if(llava_composite_image_signature=="")
     {
-        TokenizeString("\n\n", llava_sep, file_format,false);
-        int sepsize = llava_sep.size();
-
-        for(int i=0;i<llava_images.size();++i)
-        {
-            std::string llava_image = llava_images[i].b64data;
-            const std::vector<uint8_t> image_buffer = kcpp_base64_decode(llava_image);
-            if (!clip_image_load_from_bytes(image_buffer.data(), image_buffer.size(), clp_img_data, vision_max_res))
-            {
-                //failed to load image
-                printf("\nError: Clip image %d failed to load!",i);
-            }
-            else
-            {
-                if(debugmode==1 && !is_quiet)
-                {
-                    printf("\nCreating clip image embed...");
-                }
-                llava_images[i].clp_image_tokens = 0;
-                if (!llava_image_embed_make_with_clip_img(clp_ctx, kcpp_data->n_threads, clp_img_data, &llava_images[i].clp_img_embd, &llava_images[i].clp_image_tokens)) {
-                    printf("\nError: Clip image %d failed to create embd!",i);
-                }
-                if(debugmode==1 && !is_quiet)
-                {
-                    printf("\nLLAVA Clip Embed %i used Tokens: %d",i,llava_images[i].clp_image_tokens);
-                }
-                if(llava_images[i].clp_image_tokens>0 && llava_images[i].clp_image_tokens < nctx)
-                {
-                    int tokcnt = (i==0?(llava_images[i].clp_image_tokens):(llava_images[i].clp_image_tokens+sepsize));
-                    for(int n=0;n<tokcnt;++n)
-                    {
-                        llava_mem.push_back(current_llava_identifier);
-                    }
-                }
-                else
-                {
-                    printf("\nWarning: LLAVA Image excluded - Context size too low or not enough clip tokens!\n");
-                }
-            }
-        }
+        last_llava_mem.clear();
+    }
+    if(llava_images_changed)
+    {
+        PrepareLlavaEmbds(nctx, llava_sep);
+        llava_embds_built = true;
     }
 
     if(addedmemory!="")
@@ -3131,9 +3150,9 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         }
     }
 
-    if(llava_mem.size()>0) //stick the llava mem before the added mem
+    if(last_llava_mem.size()>0) //stick the llava mem before the added mem
     {
-        if(llava_mem.size() + kcpp_data->n_predict + 4 > nctx)
+        if(last_llava_mem.size() + kcpp_data->n_predict + 4 > nctx)
         {
             printf("\nWarning: Too many LLaVA tokens, max context exceeded! They will be ignored!\n");
         }
@@ -3149,7 +3168,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             }
 
             //append llava dummy tokens
-            embd_inp_mem.insert(embd_inp_mem.begin(), llava_mem.begin(), llava_mem.end());
+            embd_inp_mem.insert(embd_inp_mem.begin(), last_llava_mem.begin(), last_llava_mem.end());
             if (bos.size() > 0 && embd_inp_mem.size() > 0)
             {
                 embd_inp_mem.insert(embd_inp_mem.begin(), bos[0]);  //insert bos at front
@@ -3814,6 +3833,13 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 int currtoken = embd_inp[input_consumed];
                 if(currtoken==LLAVA_TOKEN_IDENTIFIER_A || currtoken==LLAVA_TOKEN_IDENTIFIER_B) //special llava token hit
                 {
+                    if(!llava_embds_built) //this should never happen! however, handle it anyway
+                    {
+                        PrepareLlavaEmbds(nctx, llava_sep);
+                        llava_embds_built = true;
+                        printf("\nSomehow vision embd was not prepared, rebuilting it...\n");
+                    }
+
                     //if partial batch, dispatch existing first
                     if(embd.size()>0)
                     {
