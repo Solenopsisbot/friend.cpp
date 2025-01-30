@@ -45,8 +45,8 @@ endif
 #
 
 # keep standard at C11 and C++17
-CFLAGS =
-CXXFLAGS =
+CFLAGS ?=
+CXXFLAGS ?=
 ifdef KCPP_DEBUG
 	CFLAGS = -g -O0
 	CXXFLAGS = -g -O0
@@ -69,15 +69,15 @@ endif
 CFLAGS   += -pthread -Wno-deprecated -Wno-deprecated-declarations -Wno-unused-variable
 CXXFLAGS += -pthread -Wno-multichar -Wno-write-strings -Wno-deprecated -Wno-deprecated-declarations -Wno-unused-variable
 
-LDFLAGS  =
+LDFLAGS  ?=
 FASTCFLAGS = $(subst -O3,-Ofast,$(CFLAGS))
 FASTCXXFLAGS = $(subst -O3,-Ofast,$(CXXFLAGS))
 
 # these are used on windows, to build some libraries with extra old device compatibility
-SIMPLECFLAGS =
-SIMPLERCFLAGS =
-FULLCFLAGS =
-NONECFLAGS =
+SIMPLECFLAGS ?=
+SIMPLERCFLAGS ?=
+FULLCFLAGS ?=
+NONECFLAGS ?=
 
 CLBLAST_FLAGS = -DGGML_USE_CLBLAST
 FAILSAFE_FLAGS = -DUSE_FAILSAFE
@@ -85,10 +85,10 @@ VULKAN_FLAGS = -DGGML_USE_VULKAN -DSD_USE_VULKAN
 ifdef LLAMA_CUBLAS
 	CUBLAS_FLAGS = -DGGML_USE_CUDA -DSD_USE_CUBLAS
 else
-	CUBLAS_FLAGS =
+	CUBLAS_FLAGS ?=
 endif
-CUBLASLD_FLAGS =
-CUBLAS_OBJS =
+CUBLASLD_FLAGS ?=
+CUBLAS_OBJS ?=
 
 OBJS_FULL += ggml-alloc.o ggml-cpu-traits.o ggml-quants.o ggml-cpu-quants.o ggml-cpu-aarch64.o unicode.o unicode-data.o ggml-threading.o ggml-cpu-cpp.o gguf.o sgemm.o common.o sampling.o kcpputils.o
 OBJS_SIMPLE += ggml-alloc.o ggml-cpu-traits.o ggml-quants_noavx2.o ggml-cpu-quants_noavx2.o ggml-cpu-aarch64_noavx2.o unicode.o unicode-data.o ggml-threading.o ggml-cpu-cpp.o gguf.o sgemm_noavx2.o common.o sampling.o kcpputils.o
@@ -147,8 +147,6 @@ ifeq ($(UNAME_M),$(filter $(UNAME_M),x86_64 i686 amd64))
 # old library NEEDS mf16c to work. so we must build with it. new one doesnt
 ifeq ($(OS),Windows_NT)
 ifdef LLAMA_PORTABLE
-	CFLAGS +=
-	NONECFLAGS +=
 	SIMPLECFLAGS += -mavx -msse3 -mssse3
 	SIMPLERCFLAGS += -msse3 -mssse3
 ifdef LLAMA_NOAVX2
@@ -161,8 +159,6 @@ else
 endif
 else
 ifdef LLAMA_PORTABLE
-	CFLAGS +=
-	NONECFLAGS +=
 	SIMPLECFLAGS += -mavx -msse3 -mssse3
 	SIMPLERCFLAGS += -msse3 -mssse3
 ifdef LLAMA_NOAVX2
@@ -221,32 +217,12 @@ else
 endif #LLAMA_PORTABLE
 endif # CUDA_DOCKER_ARCH
 
-ifdef LLAMA_CUDA_FORCE_DMMV
-	NVCCFLAGS += -DGGML_CUDA_FORCE_DMMV
-endif # LLAMA_CUDA_FORCE_DMMV
-ifdef LLAMA_CUDA_DMMV_X
-	NVCCFLAGS += -DGGML_CUDA_DMMV_X=$(LLAMA_CUDA_DMMV_X)
-else
-	NVCCFLAGS += -DGGML_CUDA_DMMV_X=32
-endif # LLAMA_CUDA_DMMV_X
-ifdef LLAMA_CUDA_MMV_Y
-	NVCCFLAGS += -DGGML_CUDA_MMV_Y=$(LLAMA_CUDA_MMV_Y)
-else ifdef LLAMA_CUDA_DMMV_Y
-	NVCCFLAGS += -DGGML_CUDA_MMV_Y=$(LLAMA_CUDA_DMMV_Y) # for backwards compatibility
-else
-	NVCCFLAGS += -DGGML_CUDA_MMV_Y=1
-endif # LLAMA_CUDA_MMV_Y
 ifdef LLAMA_CUDA_F16
 	NVCCFLAGS += -DGGML_CUDA_F16
 endif # LLAMA_CUDA_F16
 ifdef LLAMA_CUDA_DMMV_F16
 	NVCCFLAGS += -DGGML_CUDA_F16
 endif # LLAMA_CUDA_DMMV_F16
-ifdef LLAMA_CUDA_KQUANTS_ITER
-	NVCCFLAGS += -DK_QUANTS_PER_ITERATION=$(LLAMA_CUDA_KQUANTS_ITER)
-else
-	NVCCFLAGS += -DK_QUANTS_PER_ITERATION=2
-endif
 
 ifdef LLAMA_CUDA_CCBIN
 	NVCCFLAGS += -ccbin $(LLAMA_CUDA_CCBIN)
@@ -276,9 +252,6 @@ else
 	HCC         := $(ROCM_PATH)/llvm/bin/clang
 	HCXX        := $(ROCM_PATH)/llvm/bin/clang++
 endif
-	LLAMA_CUDA_DMMV_X       ?= 32
-	LLAMA_CUDA_MMV_Y        ?= 1
-	LLAMA_CUDA_KQUANTS_ITER ?= 2
 	HIPFLAGS   += -DGGML_USE_HIP -DGGML_USE_CUDA -DSD_USE_CUBLAS $(shell $(ROCM_PATH)/bin/hipconfig -C)
 	HIPLDFLAGS    += -L$(ROCM_PATH)/lib -Wl,-rpath=$(ROCM_PATH)/lib
 	HIPLDFLAGS    += -L$(ROCM_PATH)/lib64 -Wl,-rpath=$(ROCM_PATH)/lib64
@@ -288,9 +261,6 @@ endif
 	HIP_OBJS      += $(OBJS_CUDA_TEMP_INST)
 
 	HIPFLAGS2    += $(addprefix --offload-arch=,$(GPU_TARGETS))
-	HIPFLAGS2    += -DGGML_CUDA_DMMV_X=$(LLAMA_CUDA_DMMV_X)
-	HIPFLAGS2    += -DGGML_CUDA_MMV_Y=$(LLAMA_CUDA_MMV_Y)
-	HIPFLAGS2    += -DK_QUANTS_PER_ITERATION=$(LLAMA_CUDA_KQUANTS_ITER)
 
 ggml/src/ggml-cuda/%.o: ggml/src/ggml-cuda/%.cu ggml/include/ggml.h ggml/src/ggml-common.h ggml/src/ggml-cuda/common.cuh
 	$(HCXX) $(CXXFLAGS) $(HIPFLAGS) $(HIPFLAGS2) -x hip -c -o $@ $<
