@@ -9,6 +9,7 @@
 # scenarios and everything Kobold and KoboldAI Lite have to offer.
 
 import ctypes
+import multiprocessing
 import os
 import math
 import re
@@ -49,6 +50,7 @@ dry_seq_break_max = 128
 handle = None
 friendlymodelname = "inactive"
 friendlysdmodelname = "inactive"
+endpoint_url = ""
 lastgeneratedcomfyimg = b''
 fullsdmodelpath = ""  #if empty, it's not initialized
 mmprojpath = "" #if empty, it's not initialized
@@ -61,6 +63,7 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
+defaulthypervisorport = 5002
 KcppVersion = "1.83"
 showdebug = True
 guimode = False
@@ -101,6 +104,7 @@ last_non_horde_req_time = time.time()
 currfinishreason = "null"
 using_gui_launcher = False
 using_outdated_flags = False
+kcpp_instance = None #global running instance
 
 saved_stdout = None
 saved_stderr = None
@@ -1985,11 +1989,124 @@ def LaunchWebbrowser(target_url, failedmsg):
             print(failedmsg)
             print(f"Please manually open your browser to {target_url}")
 
+##############################
+### Hypervisor HTTP server ###
+##############################
+class HypervisorServerRequestHandler(http.server.SimpleHTTPRequestHandler):
+    sys_version = ""
+    server_version = "HypervisorForKoboldServer"
+
+    def __init__(self, addr, port):
+        self.addr = addr
+        self.port = port
+
+    def __call__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def log_message(self, format, *args):
+        global showdebug
+        if showdebug:
+            super().log_message(format, *args)
+        pass
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.end_headers(content_type='text/html')
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers(content_type='text/html')
+
+    def end_headers(self, content_type=None):
+        self.send_header('access-control-allow-origin', '*')
+        self.send_header('access-control-allow-methods', '*')
+        self.send_header('access-control-allow-headers', '*, Accept, Content-Type, Content-Length, Cache-Control, Accept-Encoding, X-CSRF-Token, Client-Agent, X-Fields, Content-Type, Authorization, X-Requested-With, X-HTTP-Method-Override, apikey, genkey')
+        self.send_header("cache-control", "no-store")
+        if content_type is not None:
+            self.send_header('content-type', content_type)
+        return super(HypervisorServerRequestHandler, self).end_headers()
+
+    def hypervisor_ui(self):
+        global modelbusy, sslvalid
+        parsed_url = urlparse.urlparse(self.path)
+        parsed_dict = urlparse.parse_qs(parsed_url.query)
+        authed = True
+        badpass = False
+        if args.hypervisorpassword and ("passkey" not in parsed_dict or parsed_dict["passkey"][0]!=args.hypervisorpassword):
+            authed = False
+            if "passkey" in parsed_dict and parsed_dict["passkey"][0]!="":
+                badpass = True
+        if authed and "reload_config" in parsed_dict and "reload_select" in parsed_dict: #trigger model change
+            del parsed_dict["reload_config"]
+            del parsed_dict["reload_select"]
+            updated_query_string = urlparse.urlencode(parsed_dict, doseq=True)
+            updated_path = parsed_url._replace(query=updated_query_string).geturl()
+            self.path = updated_path
+            self.send_response(302)
+            self.send_header("location", self.path)
+            self.end_headers(content_type='text/html')
+            return
+
+        styles = "body{font-family:Arial,sans-serif;background-color:#f4f4f4;display:flex;justify-content:center;align-items:center;height:100vh}.panel{background:#fff;padding:20px;border-radius:10px;box-shadow:0 0 10px rgba(0,0,0,.1);width:500px}button,select{padding:10px;border-radius:5px;margin-top:10px}input{padding:10px;width:calc(100% - 20px);border-radius:5px;margin-top:10px}select{width:100%;background:#f9f9f9}button{width:100%;background:#007bff;color:#fff;cursor:pointer}button:hover{background:#0056b3}"
+        authedblock = f'''
+<input name="passkey" type="password" placeholder="Password">
+<button type="submit">Login</button>
+{'<div style="padding:10px;text-align:center;color:red;">Wrong Password</div>' if badpass else ""}
+'''
+        if authed:
+            httpsaffix = ("https" if sslvalid else "http")
+            epurl = f"{httpsaffix}://localhost:{args.port}"
+            if args.host!="":
+                epurl = f"{httpsaffix}://{args.host}:{args.port}"
+            status = make_url_request(f'{epurl}/api/extra/health', None, method='GET', headers={}, timeout=2)
+            optl = ""
+            if args.hypervisordir and os.path.exists(args.hypervisordir):
+                dirpath = os.path.abspath(args.hypervisordir)
+                opts = [f for f in os.listdir(dirpath) if f.endswith(".kcpps") and os.path.isfile(os.path.join(dirpath, f))]
+                for opt in opts:
+                    optl += f'<option value="{opt}">{opt}</option>'
+            authedblock = f'''
+<div><strong>Status:</strong> {'<span style="color: green;">Online</span>' if status else '<span style="color: red;">Offline</span>'}</div>
+<div><strong>Uptime:</strong> <span>{f'{status["uptime"]:.2f}s' if status else "Down"}</span></div>
+<div><strong>Model:</strong> <span>{status["model"] if status else "None"}</span></div>
+<div><strong>URL:</strong> <span>{f'<a href="{status["url"]}">{status["url"]}</a>' if status else "None"}</span></div>
+<select name="reload_select" id="reload_select">
+<option value="none">[Unload All]</option>
+{optl}
+</select>
+<input name="passkey" type="hidden" value="{args.hypervisorpassword}">
+<button type="submit" name="reload_config" value="1">Reload Config</button>
+            '''
+        finalhtml = f'''
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KoboldCpp Hypervisor</title>
+<style>{styles}</style>
+</head><body><div class="panel"><h2>KoboldCpp Hypervisor</h2><form action="./">
+{authedblock}
+</form></div></body></html>
+        '''
+        finalhtml = finalhtml.encode('utf-8')
+        self.send_response(200)
+        self.send_header('content-length', str(len(finalhtml)))
+        self.end_headers(content_type='text/html')
+        self.wfile.write(finalhtml)
+
+    def do_GET(self):
+        self.path = self.path.rstrip('/')
+        if self.path in ["", "/?"] or self.path.startswith(('/?','?')): #it's possible for the root url to have ?params without /
+            self.hypervisor_ui()
+        else:
+            self.send_response(404)
+            self.end_headers(content_type='text/html')
+            rp = 'Error: KoboldCpp Hypervisor is running, but this endpoint does not exist. Please check the URL.'
+            self.wfile.write(rp.encode())
+        return
+
 #################################################################
 ### A hacky simple HTTP server simulating a kobold api by Concedo
 ### we are intentionally NOT using flask, because we want MINIMAL dependencies
 #################################################################
-class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
+class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
     sys_version = ""
     server_version = "ConcedoLlamaForKoboldServer"
 
@@ -2349,6 +2466,7 @@ Enter Prompt:<br>
 
     def do_GET(self):
         global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
+        global last_req_time, start_time
         global has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password
         self.path = self.path.rstrip('/')
         response_body = None
@@ -2405,8 +2523,11 @@ Enter Prompt:<br>
             caps = get_capabilities()
             response_body = (json.dumps(caps).encode())
 
+        elif self.path.endswith(('/api/extra/health')): #used by hypervisor to get info about a kcpp instance
+            uptime = time.time() - start_time
+            response_body = (json.dumps({"model":friendlymodelname,"url":endpoint_url, "uptime":uptime}).encode())
+
         elif self.path.endswith(('/api/extra/perf')):
-            global last_req_time, start_time
             lastp = handle.get_last_process_time()
             laste = handle.get_last_eval_time()
             lastc = handle.get_last_token_count()
@@ -2531,7 +2652,7 @@ Enter Prompt:<br>
         if response_body is None:
             self.send_response(404)
             self.end_headers(content_type='text/html')
-            rp = 'Error: HTTP Server is running, but this endpoint does not exist. Please check the URL.'
+            rp = 'Error: KoboldCpp HTTP Server is running, but this endpoint does not exist. Please check the URL.'
             self.wfile.write(rp.encode())
         else:
             self.send_response(200)
@@ -2982,9 +3103,9 @@ Enter Prompt:<br>
         self.send_header("cache-control", "no-store")
         if content_type is not None:
             self.send_header('content-type', content_type)
-        return super(ServerRequestHandler, self).end_headers()
+        return super(KcppServerRequestHandler, self).end_headers()
 
-def RunServerMultiThreaded(addr, port):
+def RunServerMultiThreaded(addr, port, server_handler):
     global exitcounter, sslvalid
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
     if is_port_in_use(port):
@@ -3028,7 +3149,7 @@ def RunServerMultiThreaded(addr, port):
 
         def run(self):
             global exitcounter
-            handler = ServerRequestHandler(addr, port)
+            handler = server_handler(addr, port)
             with http.server.HTTPServer((addr, port), handler, False) as self.httpd:
                 try:
                     if ipv6_sock:
@@ -3772,7 +3893,7 @@ def show_gui():
     network_tab = tabcontent["Network"]
 
     # interfaces
-    makelabelentry(network_tab, "Port: ", port_var, 1, 150,tooltip="Select the port to host the KoboldCPP webserver.\n(Defaults to 5001)")
+    makelabelentry(network_tab, "Port: ", port_var, 1, 150,tooltip=f"Select the port to host the KoboldCPP webserver.\n(Defaults to {defaultport})")
     makelabelentry(network_tab, "Host: ", host_var, 2, 150,tooltip="Select a specific host interface to bind to.\n(Defaults to all)")
 
     makecheckbox(network_tab, "Multiuser Mode", multiuser_var, 3,tooltiptxt="Allows requests by multiple different clients to be queued and handled in sequence.")
@@ -4386,7 +4507,7 @@ def show_gui_yesnobox(title,message):
 def print_with_time(txt):
     print(f"{datetime.now().strftime('[%H:%M:%S]')} " + txt, flush=True)
 
-def make_url_request(url, data, method='POST', headers={}):
+def make_url_request(url, data, method='POST', headers={}, timeout=300):
     import urllib.request
     global nocertify
     try:
@@ -4401,7 +4522,7 @@ def make_url_request(url, data, method='POST', headers={}):
         else:
             request = urllib.request.Request(url, headers=headers, method=method)
         response_data = ""
-        with urllib.request.urlopen(request,timeout=300) as response:
+        with urllib.request.urlopen(request,timeout=timeout) as response:
             response_data = response.read().decode('utf-8',"ignore")
             json_response = json.loads(response_data)
             return json_response
@@ -4880,18 +5001,17 @@ def analyze_gguf_model_wrapper(filename=""):
     dumpthread.start()
 
 def main(launch_args,start_server=True):
-    global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
-    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath
+    global args, showdebug, kcpp_instance
+    args = launch_args #note: these are NOT shared with the child processes!
 
-    args = launch_args
     if (args.version) and len(sys.argv) <= 2:
         print(f"{KcppVersion}") # just print version and exit
         return
+
     if (args.model_param or args.model) and args.prompt and not args.benchmark and not (args.debugmode >= 1):
         suppress_stdout()
 
     print(f"***\nWelcome to KoboldCpp - Version {KcppVersion}") # just update version manually
-    # print("Python version: " + sys.version)
 
     #perform some basic cleanup of old temporary directories
     try:
@@ -4906,6 +5026,44 @@ def main(launch_args,start_server=True):
     if args.analyze:
         analyze_gguf_model_wrapper(args.analyze)
         return
+
+    if args.debugmode != 1:
+        showdebug = False #not shared with child process!
+
+    multiprocessing.freeze_support()
+    kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "start_server": start_server})
+    kcpp_instance.daemon = True
+    kcpp_instance.start()
+
+    # start the server for the hypervisor thread
+    if args.hypervisor and args.hypervisorport:
+        if args.ssl:
+            global sslvalid
+            if len(args.ssl)==2 and isinstance(args.ssl[0], str) and os.path.exists(args.ssl[0]) and isinstance(args.ssl[1], str) and os.path.exists(args.ssl[1]):
+                sslvalid = True
+                print("SSL configuration is valid and will be used.")
+            else:
+                print("Your SSL configuration is INVALID. SSL will not be used.")
+        epurl = ""
+        httpsaffix = ("https" if sslvalid else "http")
+        if args.host=="":
+            epurl = f"{httpsaffix}://localhost:{args.hypervisorport}"
+        else:
+            epurl = f"{httpsaffix}://{args.host}:{args.hypervisorport}"
+        print(f"======\nStarting Persistent KoboldCpp Hypervisor at {epurl}", flush=True)
+        asyncio.run(RunServerMultiThreaded(args.host, args.hypervisorport, HypervisorServerRequestHandler))
+    else:
+        while True: # non-hypervisor single instance mode
+            time.sleep(1)
+            if not kcpp_instance.is_alive():
+                break
+
+def kcpp_main_process(launch_args,start_server=True):
+    global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, start_time
+    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath
+
+    args = launch_args
+    start_time = time.time()
 
     if args.config and len(args.config)==1:
         cfgname = args.config[0]
@@ -5404,27 +5562,27 @@ def main(launch_args,start_server=True):
     if args.port_param!=defaultport:
         args.port = args.port_param
 
-    global sslvalid
+    global sslvalid, endpoint_url
     if args.ssl:
         if len(args.ssl)==2 and isinstance(args.ssl[0], str) and os.path.exists(args.ssl[0]) and isinstance(args.ssl[1], str) and os.path.exists(args.ssl[1]):
             sslvalid = True
             print("SSL configuration is valid and will be used.")
         else:
             print("Your SSL configuration is INVALID. SSL will not be used.")
-    epurl = ""
+    endpoint_url = ""
     httpsaffix = ("https" if sslvalid else "http")
     if args.host=="":
-        epurl = f"{httpsaffix}://localhost:{args.port}"
+        endpoint_url = f"{httpsaffix}://localhost:{args.port}"
     else:
-        epurl = f"{httpsaffix}://{args.host}:{args.port}"
+        endpoint_url = f"{httpsaffix}://{args.host}:{args.port}"
     if not args.remotetunnel:
-        print(f"Starting Kobold API on port {args.port} at {epurl}/api/")
-        print(f"Starting OpenAI Compatible API on port {args.port} at {epurl}/v1/")
+        print(f"Starting Kobold API on port {args.port} at {endpoint_url}/api/")
+        print(f"Starting OpenAI Compatible API on port {args.port} at {endpoint_url}/v1/")
         if args.sdmodel:
-            print(f"StableUI is available at {epurl}/sdui/")
+            print(f"StableUI is available at {endpoint_url}/sdui/")
 
     if args.launch:
-        LaunchWebbrowser(epurl,"--launch was set, but could not launch web browser automatically.")
+        LaunchWebbrowser(endpoint_url,"--launch was set, but could not launch web browser automatically.")
 
     if args.hordekey and args.hordekey!="":
         if args.hordeworkername and args.hordeworkername!="":
@@ -5530,34 +5688,12 @@ def main(launch_args,start_server=True):
             setuptunnel(True if args.sdmodel else False)
         else:
             # Flush stdout for previous win32 issue so the client can see output.
-            print(f"======\nPlease connect to custom endpoint at {epurl}", flush=True)
-        asyncio.run(RunServerMultiThreaded(args.host, args.port))
+            print(f"======\nPlease connect to custom endpoint at {endpoint_url}", flush=True)
+        asyncio.run(RunServerMultiThreaded(args.host, args.port, KcppServerRequestHandler))
     else:
         # Flush stdout for previous win32 issue so the client can see output.
         if not args.prompt or args.benchmark:
             print("Server was not started, main function complete. Idling.", flush=True)
-
-def run_in_queue(launch_args, input_queue, output_queue):
-    main(launch_args, start_server=False)
-    output_queue.put({'command': 'complete'})
-    while True:
-        if not input_queue.empty():
-            while not input_queue.empty():
-                data = input_queue.get()
-                if data['command'] == 'generate':
-                    pl = data['data']
-                    genout = generate(genparams=pl)
-                    result = genout['text']
-                    output_queue.put({'command': 'generated text', 'data': result})
-        time.sleep(0.2)
-
-def start_in_seperate_process(launch_args):
-    import multiprocessing
-    input_queue = multiprocessing.Queue()
-    output_queue = multiprocessing.Queue()
-    p = multiprocessing.Process(target=run_in_queue, args=(launch_args, input_queue, output_queue))
-    p.start()
-    return (output_queue, input_queue, p)
 
 if __name__ == '__main__':
 
@@ -5577,7 +5713,7 @@ if __name__ == '__main__':
     modelgroup.add_argument("--model", metavar=('[filename]'), help="Model file to load", type=str, default="")
     modelgroup.add_argument("model_param", help="Model file to load (positional)", nargs="?")
     portgroup = parser.add_mutually_exclusive_group() #we want to be backwards compatible with the unnamed positional args
-    portgroup.add_argument("--port", metavar=('[portnumber]'), help="Port to listen on", default=defaultport, type=int, action='store')
+    portgroup.add_argument("--port", metavar=('[portnumber]'), help=f"Port to listen on. (Defaults to {defaultport})", default=defaultport, type=int, action='store')
     portgroup.add_argument("port_param", help="Port to listen on (positional)", default=defaultport, nargs="?", type=int, action='store')
     parser.add_argument("--host", metavar=('[ipaddr]'), help="Host IP to listen on. If this flag is not set, all routable interfaces are accepted.", default="")
     parser.add_argument("--launch", help="Launches a web browser when load is completed.", action='store_true')
@@ -5675,6 +5811,12 @@ if __name__ == '__main__':
     ttsparsergroup.add_argument("--ttsgpu", help="Use the GPU for TTS.", action='store_true')
     ttsparsergroup.add_argument("--ttsmaxlen", help="Limit number of audio tokens generated with TTS.",  type=int, default=default_ttsmaxlen)
     ttsparsergroup.add_argument("--ttsthreads", metavar=('[threads]'), help="Use a different number of threads for TTS if specified. Otherwise, has the same value as --threads.", type=int, default=0)
+
+    hypervisorgroup = parser.add_argument_group('Hypervisor Commands')
+    hypervisorgroup.add_argument("--hypervisor", help="Enables hypervisor mode, allowing you to unload and reload different configurations or models.", action='store_true')
+    hypervisorgroup.add_argument("--hypervisorport", metavar=('[portnumber]'), help=f"Port for the hypervisor to listen on. (Defaults to {defaulthypervisorport})", default=defaulthypervisorport, type=int, action='store')
+    hypervisorgroup.add_argument("--hypervisorpassword", metavar=('[password]'), help="Require a password to access the hypervisor. Note that password are sent in plaintext as part of the URL, and only provide rudimentary security!", default=None)
+    hypervisorgroup.add_argument("--hypervisordir", metavar=('[directory]'), help="Specify a directory to look for .kcpps configs in, which can be used to swap models.", default="")
 
     deprecatedgroup = parser.add_argument_group('Deprecated Commands, DO NOT USE!')
     deprecatedgroup.add_argument("--hordeconfig", help=argparse.SUPPRESS, nargs='+')
