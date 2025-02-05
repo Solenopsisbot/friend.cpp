@@ -63,7 +63,6 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-defaultadminport = 5002
 KcppVersion = "1.83"
 showdebug = True
 guimode = False
@@ -105,6 +104,7 @@ currfinishreason = "null"
 using_gui_launcher = False
 using_outdated_flags = False
 kcpp_instance = None #global running instance
+command_queue = None #manager command queue
 
 saved_stdout = None
 saved_stderr = None
@@ -1989,119 +1989,6 @@ def LaunchWebbrowser(target_url, failedmsg):
             print(failedmsg)
             print(f"Please manually open your browser to {target_url}")
 
-##############################
-### Admin HTTP server ###
-##############################
-class AdminServerRequestHandler(http.server.SimpleHTTPRequestHandler):
-    sys_version = ""
-    server_version = "AdminForKoboldServer"
-
-    def __init__(self, addr, port):
-        self.addr = addr
-        self.port = port
-
-    def __call__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def log_message(self, format, *args):
-        global showdebug
-        if showdebug:
-            super().log_message(format, *args)
-        pass
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.end_headers(content_type='text/html')
-
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers(content_type='text/html')
-
-    def end_headers(self, content_type=None):
-        self.send_header('access-control-allow-origin', '*')
-        self.send_header('access-control-allow-methods', '*')
-        self.send_header('access-control-allow-headers', '*, Accept, Content-Type, Content-Length, Cache-Control, Accept-Encoding, X-CSRF-Token, Client-Agent, X-Fields, Content-Type, Authorization, X-Requested-With, X-HTTP-Method-Override, apikey, genkey')
-        self.send_header("cache-control", "no-store")
-        if content_type is not None:
-            self.send_header('content-type', content_type)
-        return super(AdminServerRequestHandler, self).end_headers()
-
-    def admin_ui(self):
-        global modelbusy, sslvalid
-        parsed_url = urlparse.urlparse(self.path)
-        parsed_dict = urlparse.parse_qs(parsed_url.query)
-        authed = True
-        badpass = False
-        if args.adminpassword and ("passkey" not in parsed_dict or parsed_dict["passkey"][0]!=args.adminpassword):
-            authed = False
-            if "passkey" in parsed_dict and parsed_dict["passkey"][0]!="":
-                badpass = True
-        if authed and "reload_config" in parsed_dict and "reload_select" in parsed_dict: #trigger model change
-            del parsed_dict["reload_config"]
-            del parsed_dict["reload_select"]
-            updated_query_string = urlparse.urlencode(parsed_dict, doseq=True)
-            updated_path = parsed_url._replace(query=updated_query_string).geturl()
-            self.path = updated_path
-            self.send_response(302)
-            self.send_header("location", self.path)
-            self.end_headers(content_type='text/html')
-            return
-
-        styles = "body{font-family:Arial,sans-serif;background-color:#f4f4f4;display:flex;justify-content:center;align-items:center;height:100vh}.panel{background:#fff;padding:20px;border-radius:10px;box-shadow:0 0 10px rgba(0,0,0,.1);width:500px}button,select{padding:10px;border-radius:5px;margin-top:10px}input{padding:10px;width:calc(100% - 20px);border-radius:5px;margin-top:10px}select{width:100%;background:#f9f9f9}button{width:100%;background:#007bff;color:#fff;cursor:pointer}button:hover{background:#0056b3}"
-        authedblock = f'''
-<input name="passkey" type="password" placeholder="Password">
-<button type="submit">Login</button>
-{'<div style="padding:10px;text-align:center;color:red;">Wrong Password</div>' if badpass else ""}
-'''
-        if authed:
-            httpsaffix = ("https" if sslvalid else "http")
-            epurl = f"{httpsaffix}://localhost:{args.port}"
-            if args.host!="":
-                epurl = f"{httpsaffix}://{args.host}:{args.port}"
-            status = make_url_request(f'{epurl}/api/extra/health', None, method='GET', headers={}, timeout=2)
-            optl = ""
-            if args.admindir and os.path.exists(args.admindir):
-                dirpath = os.path.abspath(args.admindir)
-                opts = [f for f in os.listdir(dirpath) if f.endswith(".kcpps") and os.path.isfile(os.path.join(dirpath, f))]
-                for opt in opts:
-                    optl += f'<option value="{opt}">{opt}</option>'
-            authedblock = f'''
-<div><strong>Status:</strong> {'<span style="color: green;">Online</span>' if status else '<span style="color: red;">Offline</span>'}</div>
-<div><strong>Uptime:</strong> <span>{f'{status["uptime"]:.2f}s' if status else "Down"}</span></div>
-<div><strong>Model:</strong> <span>{status["model"] if status else "None"}</span></div>
-<div><strong>URL:</strong> <span>{f'<a href="{status["url"]}">{status["url"]}</a>' if status else "None"}</span></div>
-<select name="reload_select" id="reload_select">
-<option value="none">[Unload All]</option>
-{optl}
-</select>
-<input name="passkey" type="hidden" value="{args.adminpassword}">
-<button type="submit" name="reload_config" value="1">Reload Config</button>
-            '''
-        finalhtml = f'''
-<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>KoboldCpp Administration</title>
-<style>{styles}</style>
-</head><body><div class="panel"><h2>KoboldCpp Administration</h2><form action="./">
-{authedblock}
-</form></div></body></html>
-        '''
-        finalhtml = finalhtml.encode('utf-8')
-        self.send_response(200)
-        self.send_header('content-length', str(len(finalhtml)))
-        self.end_headers(content_type='text/html')
-        self.wfile.write(finalhtml)
-
-    def do_GET(self):
-        self.path = self.path.rstrip('/')
-        if self.path in ["", "/?"] or self.path.startswith(('/?','?')): #it's possible for the root url to have ?params without /
-            self.admin_ui()
-        else:
-            self.send_response(404)
-            self.end_headers(content_type='text/html')
-            rp = 'Error: KoboldCpp Admin Server is running, but this endpoint does not exist. Please check the URL.'
-            self.wfile.write(rp.encode())
-        return
-
 #################################################################
 ### A hacky simple HTTP server simulating a kobold api by Concedo
 ### we are intentionally NOT using flask, because we want MINIMAL dependencies
@@ -2523,9 +2410,8 @@ Enter Prompt:<br>
             caps = get_capabilities()
             response_body = (json.dumps(caps).encode())
 
-        elif self.path.endswith(('/api/extra/health')): #used by admin to get info about a kcpp instance
-            uptime = time.time() - start_time
-            response_body = (json.dumps({"model":friendlymodelname,"url":endpoint_url, "uptime":uptime}).encode())
+        elif self.path.endswith(('/api/admin/list_options')): #used by admin to get info about a kcpp instance
+            response_body = (json.dumps([]).encode())
 
         elif self.path.endswith(('/api/extra/perf')):
             lastp = handle.get_last_process_time()
@@ -3414,6 +3300,10 @@ def show_gui():
     tts_threads_var = ctk.StringVar(value=str(default_threads))
     ttsmaxlen_var = ctk.StringVar(value=str(default_ttsmaxlen))
 
+    admin_var = ctk.IntVar(value=0)
+    admin_dir_var = ctk.StringVar()
+    admin_password_var = ctk.StringVar()
+
     def tabbuttonaction(name):
         for t in tabcontent:
             if name == t:
@@ -3998,10 +3888,9 @@ def show_gui():
     ttsgpu_var.trace("w", gui_changed_modelfile)
 
     admin_tab = tabcontent["Admin"]
-    makecheckbox(admin_tab, "Enable Model Administration", ttsgpu_var, 1, 0,tooltiptxt="Enable a admin server, allowing you to remotely relaunch and swap models and configs.")
-    makelabelentry(admin_tab, "Admin Port: ", port_var, 3, 150,tooltip=f"Select the port to run the admin server from, must be different from the KoboldCpp server port.\n(Defaults to {defaultport})")
-    makefileentry(admin_tab, "Admin Directory:", "Select directory containing .kcpps files to relaunch from", whisper_model_var, 5, width=280, filetypes=[("*.bin","*.bin")], is_dir=True, tooltiptxt="Select a Whisper .bin model file on disk to be loaded for Voice Recognition.")
-
+    makecheckbox(admin_tab, "Enable Model Administration", admin_var, 1, 0,tooltiptxt="Enable a admin server, allowing you to remotely relaunch and swap models and configs.")
+    makefileentry(admin_tab, "Config Directory:", "Select directory containing .kcpps files to relaunch from", admin_dir_var, 3, width=280, is_dir=True, tooltiptxt="Specify a directory to look for .kcpps configs in, which can be used to swap models.")
+    makelabelentry(admin_tab, "Admin Password:" , admin_password_var, 5, 50,padx=290,singleline=True,tooltip="Require a password to access admin functions. You are strongly advised to use one for publically accessible instances!")
 
     def kcpp_export_template():
         nonlocal kcpp_exporting_template
@@ -4229,6 +4118,10 @@ def show_gui():
             args.ttsgpu = (ttsgpu_var.get()==1)
             args.ttsmaxlen = int(ttsmaxlen_var.get())
 
+        args.admin = (admin_var.get()==1)
+        args.admindir = admin_dir_var.get()
+        args.adminpassword = admin_password_var.get()
+
     def import_vars(dict):
         global importvars_in_progress
         importvars_in_progress = True
@@ -4396,6 +4289,10 @@ def show_gui():
         wavtokenizer_var.set(dict["ttswavtokenizer"] if ("ttswavtokenizer" in dict and dict["ttswavtokenizer"]) else "")
         ttsgpu_var.set(dict["ttsgpu"] if ("ttsgpu" in dict) else 0)
         ttsmaxlen_var.set(str(dict["ttsmaxlen"]) if ("ttsmaxlen" in dict and dict["ttsmaxlen"]) else str(default_ttsmaxlen))
+
+        admin_var.set(dict["admin"] if ("admin" in dict) else 0)
+        admin_dir_var.set(dict["admindir"] if ("admindir" in dict and dict["admindir"]) else "")
+        admin_password_var.set(dict["adminpassword"] if ("adminpassword" in dict and dict["adminpassword"]) else "")
 
         importvars_in_progress = False
         gui_changed_modelfile()
@@ -5017,7 +4914,7 @@ def analyze_gguf_model_wrapper(filename=""):
     dumpthread.start()
 
 def main(launch_args,start_server=True):
-    global args, showdebug, kcpp_instance, exitcounter
+    global args, showdebug, kcpp_instance, exitcounter, command_queue
     args = launch_args #note: these are NOT shared with the child processes!
 
     if (args.version) and len(sys.argv) <= 2:
@@ -5090,38 +4987,28 @@ def main(launch_args,start_server=True):
             time.sleep(3)
             sys.exit(2)
 
+    # manager command queue
+    command_queue = multiprocessing.Queue()
+
     # invoke the main koboldcpp process
     multiprocessing.freeze_support()
     kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "start_server": start_server})
     kcpp_instance.daemon = True
     kcpp_instance.start()
 
-    # start the server for the admin thread
-    args.admin = True
-    if args.admin and args.adminport:
-        if args.ssl:
-            global sslvalid
-            if len(args.ssl)==2 and isinstance(args.ssl[0], str) and os.path.exists(args.ssl[0]) and isinstance(args.ssl[1], str) and os.path.exists(args.ssl[1]):
-                sslvalid = True
-                print("SSL configuration is valid and will be used.")
-            else:
-                print("Your SSL configuration is INVALID. SSL will not be used.")
-        epurl = ""
-        httpsaffix = ("https" if sslvalid else "http")
-        if args.host=="":
-            epurl = f"{httpsaffix}://localhost:{args.adminport}"
-        else:
-            epurl = f"{httpsaffix}://{args.host}:{args.adminport}"
-        print(f"======\nStarting KoboldCpp Admin Server at {epurl}", flush=True)
-        asyncio.run(RunServerMultiThreaded(args.host, args.adminport, AdminServerRequestHandler))
-    else:
-        while True: # non-admin single instance mode
-            try:
-                if not kcpp_instance or not kcpp_instance.is_alive():
-                    break
-                time.sleep(0.2)
-            except (KeyboardInterrupt,SystemExit):
+    while True: # keep the manager alive
+        try:
+            if not kcpp_instance or not kcpp_instance.is_alive():
                 break
+            if not command_queue.empty():
+                while not command_queue.empty():
+                    data = command_queue.get()
+                    if data['command'] == 'reload':
+                        newtarget = data['data']
+                        print(f"Reloading new config: {newtarget}")
+            time.sleep(0.2)
+        except (KeyboardInterrupt,SystemExit):
+            break
 
 def kcpp_main_process(launch_args,start_server=True):
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, start_time, exitcounter
@@ -5831,8 +5718,7 @@ if __name__ == '__main__':
 
     admingroup = parser.add_argument_group('Administration Commands')
     admingroup.add_argument("--admin", help="Enables admin mode, allowing you to unload and reload different configurations or models.", action='store_true')
-    admingroup.add_argument("--adminport", metavar=('[portnumber]'), help=f"Port for the admin to listen on. (Defaults to {defaultadminport})", default=defaultadminport, type=int, action='store')
-    admingroup.add_argument("--adminpassword", metavar=('[password]'), help="Require a password to access the admin. Note that password are sent in plaintext as part of the URL, and only provide rudimentary security!", default=None)
+    admingroup.add_argument("--adminpassword", metavar=('[password]'), help="Require a password to access admin functions. You are strongly advised to use one for publically accessible instances!", default=None)
     admingroup.add_argument("--admindir", metavar=('[directory]'), help="Specify a directory to look for .kcpps configs in, which can be used to swap models.", default="")
 
     deprecatedgroup = parser.add_argument_group('Deprecated Commands, DO NOT USE!')
