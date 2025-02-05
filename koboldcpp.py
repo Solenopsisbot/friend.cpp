@@ -63,7 +63,7 @@ maxhordelen = 400
 modelbusy = threading.Lock()
 requestsinqueue = 0
 defaultport = 5001
-defaulthypervisorport = 5002
+defaultadminport = 5002
 KcppVersion = "1.83"
 showdebug = True
 guimode = False
@@ -1990,11 +1990,11 @@ def LaunchWebbrowser(target_url, failedmsg):
             print(f"Please manually open your browser to {target_url}")
 
 ##############################
-### Hypervisor HTTP server ###
+### Admin HTTP server ###
 ##############################
-class HypervisorServerRequestHandler(http.server.SimpleHTTPRequestHandler):
+class AdminServerRequestHandler(http.server.SimpleHTTPRequestHandler):
     sys_version = ""
-    server_version = "HypervisorForKoboldServer"
+    server_version = "AdminForKoboldServer"
 
     def __init__(self, addr, port):
         self.addr = addr
@@ -2023,15 +2023,15 @@ class HypervisorServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("cache-control", "no-store")
         if content_type is not None:
             self.send_header('content-type', content_type)
-        return super(HypervisorServerRequestHandler, self).end_headers()
+        return super(AdminServerRequestHandler, self).end_headers()
 
-    def hypervisor_ui(self):
+    def admin_ui(self):
         global modelbusy, sslvalid
         parsed_url = urlparse.urlparse(self.path)
         parsed_dict = urlparse.parse_qs(parsed_url.query)
         authed = True
         badpass = False
-        if args.hypervisorpassword and ("passkey" not in parsed_dict or parsed_dict["passkey"][0]!=args.hypervisorpassword):
+        if args.adminpassword and ("passkey" not in parsed_dict or parsed_dict["passkey"][0]!=args.adminpassword):
             authed = False
             if "passkey" in parsed_dict and parsed_dict["passkey"][0]!="":
                 badpass = True
@@ -2059,8 +2059,8 @@ class HypervisorServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 epurl = f"{httpsaffix}://{args.host}:{args.port}"
             status = make_url_request(f'{epurl}/api/extra/health', None, method='GET', headers={}, timeout=2)
             optl = ""
-            if args.hypervisordir and os.path.exists(args.hypervisordir):
-                dirpath = os.path.abspath(args.hypervisordir)
+            if args.admindir and os.path.exists(args.admindir):
+                dirpath = os.path.abspath(args.admindir)
                 opts = [f for f in os.listdir(dirpath) if f.endswith(".kcpps") and os.path.isfile(os.path.join(dirpath, f))]
                 for opt in opts:
                     optl += f'<option value="{opt}">{opt}</option>'
@@ -2073,15 +2073,15 @@ class HypervisorServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 <option value="none">[Unload All]</option>
 {optl}
 </select>
-<input name="passkey" type="hidden" value="{args.hypervisorpassword}">
+<input name="passkey" type="hidden" value="{args.adminpassword}">
 <button type="submit" name="reload_config" value="1">Reload Config</button>
             '''
         finalhtml = f'''
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>KoboldCpp Hypervisor</title>
+<title>KoboldCpp Administration</title>
 <style>{styles}</style>
-</head><body><div class="panel"><h2>KoboldCpp Hypervisor</h2><form action="./">
+</head><body><div class="panel"><h2>KoboldCpp Administration</h2><form action="./">
 {authedblock}
 </form></div></body></html>
         '''
@@ -2094,11 +2094,11 @@ class HypervisorServerRequestHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         self.path = self.path.rstrip('/')
         if self.path in ["", "/?"] or self.path.startswith(('/?','?')): #it's possible for the root url to have ?params without /
-            self.hypervisor_ui()
+            self.admin_ui()
         else:
             self.send_response(404)
             self.end_headers(content_type='text/html')
-            rp = 'Error: KoboldCpp Hypervisor is running, but this endpoint does not exist. Please check the URL.'
+            rp = 'Error: KoboldCpp Admin Server is running, but this endpoint does not exist. Please check the URL.'
             self.wfile.write(rp.encode())
         return
 
@@ -2523,7 +2523,7 @@ Enter Prompt:<br>
             caps = get_capabilities()
             response_body = (json.dumps(caps).encode())
 
-        elif self.path.endswith(('/api/extra/health')): #used by hypervisor to get info about a kcpp instance
+        elif self.path.endswith(('/api/extra/health')): #used by admin to get info about a kcpp instance
             uptime = time.time() - start_time
             response_body = (json.dumps({"model":friendlymodelname,"url":endpoint_url, "uptime":uptime}).encode())
 
@@ -3189,7 +3189,7 @@ def RunServerMultiThreaded(addr, port, server_handler):
 def show_gui():
     global guimode
     guimode = True
-    from tkinter.filedialog import askopenfilename
+    from tkinter.filedialog import askopenfilename, askdirectory
     from tkinter.filedialog import asksaveasfile
 
     # if args received, launch
@@ -3309,7 +3309,7 @@ def show_gui():
 
     tabs = ctk.CTkFrame(root, corner_radius = 0, width=windowwidth, height=windowheight-50)
     tabs.grid(row=0, stick="nsew")
-    tabnames= ["Quick Launch", "Hardware", "Tokens", "Model Files", "Network", "Horde Worker","Image Gen","Audio","Extra"]
+    tabnames= ["Quick Launch", "Hardware", "Tokens", "Model Files", "Network", "Horde Worker","Image Gen","Audio","Admin","Extra"]
     navbuttons = {}
     navbuttonframe = ctk.CTkFrame(tabs, width=100, height=int(tabs.cget("height")))
     navbuttonframe.grid(row=0, column=0, padx=2,pady=2)
@@ -3476,12 +3476,16 @@ def show_gui():
         entry.grid(row=row, column=(0 if singleline else 1), padx=padx, sticky="nw")
         return entry, label
 
-    def makefileentry(parent, text, searchtext, var, row=0, width=200, filetypes=[], onchoosefile=None, singlerow=False, singlecol=True, tooltiptxt=""):
+    def makefileentry(parent, text, searchtext, var, row=0, width=200, filetypes=[], onchoosefile=None, singlerow=False, singlecol=True, is_dir=False, tooltiptxt=""):
         label = makelabel(parent, text, row,0,tooltiptxt,columnspan=3)
         def getfilename(var, text):
             initialDir = os.path.dirname(var.get())
             initialDir = initialDir if os.path.isdir(initialDir) else None
-            fnam = askopenfilename(title=text,filetypes=filetypes, initialdir=initialDir)
+            fnam = None
+            if is_dir:
+                fnam = askdirectory(title=text, mustexist=True, initialdir=initialDir)
+            else:
+                fnam = askopenfilename(title=text,filetypes=filetypes, initialdir=initialDir)
             if fnam:
                 var.set(fnam)
                 if onchoosefile:
@@ -3992,6 +3996,12 @@ def show_gui():
     makecheckbox(audio_tab, "TTS Use GPU", ttsgpu_var, 9, 0,tooltiptxt="Uses the GPU for TTS.")
     makelabelentry(audio_tab, "OuteTTS Max Tokens:" , ttsmaxlen_var, 11, 50,padx=290,singleline=True,tooltip="Max allowed audiotokens to generate per TTS request.")
     ttsgpu_var.trace("w", gui_changed_modelfile)
+
+    admin_tab = tabcontent["Admin"]
+    makecheckbox(admin_tab, "Enable Model Administration", ttsgpu_var, 1, 0,tooltiptxt="Enable a admin server, allowing you to remotely relaunch and swap models and configs.")
+    makelabelentry(admin_tab, "Admin Port: ", port_var, 3, 150,tooltip=f"Select the port to run the admin server from, must be different from the KoboldCpp server port.\n(Defaults to {defaultport})")
+    makefileentry(admin_tab, "Admin Directory:", "Select directory containing .kcpps files to relaunch from", whisper_model_var, 5, width=280, filetypes=[("*.bin","*.bin")], is_dir=True, tooltiptxt="Select a Whisper .bin model file on disk to be loaded for Voice Recognition.")
+
 
     def kcpp_export_template():
         nonlocal kcpp_exporting_template
@@ -4724,6 +4734,12 @@ def convert_outdated_args(args):
     if "noblas" in dict and dict["noblas"]:
         dict["usecpu"] = True
 
+    if "failsafe" in dict and dict["failsafe"]: #failsafe implies noavx2
+        dict["noavx2"] = True
+
+    if ("model_param" not in dict or not dict["model_param"]) and ("model" in dict and dict["model"]):
+        dict["model_param"] = dict["model"]
+
     check_deprecation_warning()
     return args
 
@@ -5001,12 +5017,18 @@ def analyze_gguf_model_wrapper(filename=""):
     dumpthread.start()
 
 def main(launch_args,start_server=True):
-    global args, showdebug, kcpp_instance
+    global args, showdebug, kcpp_instance, exitcounter
     args = launch_args #note: these are NOT shared with the child processes!
 
     if (args.version) and len(sys.argv) <= 2:
         print(f"{KcppVersion}") # just print version and exit
         return
+
+    #prevent quantkv from being used without flash attn
+    if args.quantkv and args.quantkv>0 and not args.flashattention:
+        exit_with_error(1, "Error: Using --quantkv requires --flashattention")
+
+    args = convert_outdated_args(args)
 
     if (args.model_param or args.model) and args.prompt and not args.benchmark and not (args.debugmode >= 1):
         suppress_stdout()
@@ -5030,42 +5052,7 @@ def main(launch_args,start_server=True):
     if args.debugmode != 1:
         showdebug = False #not shared with child process!
 
-    multiprocessing.freeze_support()
-    kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "start_server": start_server})
-    kcpp_instance.daemon = True
-    kcpp_instance.start()
-
-    # start the server for the hypervisor thread
-    if args.hypervisor and args.hypervisorport:
-        if args.ssl:
-            global sslvalid
-            if len(args.ssl)==2 and isinstance(args.ssl[0], str) and os.path.exists(args.ssl[0]) and isinstance(args.ssl[1], str) and os.path.exists(args.ssl[1]):
-                sslvalid = True
-                print("SSL configuration is valid and will be used.")
-            else:
-                print("Your SSL configuration is INVALID. SSL will not be used.")
-        epurl = ""
-        httpsaffix = ("https" if sslvalid else "http")
-        if args.host=="":
-            epurl = f"{httpsaffix}://localhost:{args.hypervisorport}"
-        else:
-            epurl = f"{httpsaffix}://{args.host}:{args.hypervisorport}"
-        print(f"======\nStarting Persistent KoboldCpp Hypervisor at {epurl}", flush=True)
-        asyncio.run(RunServerMultiThreaded(args.host, args.hypervisorport, HypervisorServerRequestHandler))
-    else:
-        while True: # non-hypervisor single instance mode
-            time.sleep(1)
-            if not kcpp_instance.is_alive():
-                break
-
-def kcpp_main_process(launch_args,start_server=True):
-    global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, start_time
-    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath
-
-    args = launch_args
-    start_time = time.time()
-
-    if args.config and len(args.config)==1:
+    if args.config and len(args.config)==1: #handle config loading for launch
         cfgname = args.config[0]
         if isinstance(cfgname, str):
             dlfile = download_model_from_url(cfgname,[".kcpps",".kcppt"])
@@ -5076,7 +5063,6 @@ def kcpp_main_process(launch_args,start_server=True):
         elif args.ignoremissing:
             print("Ignoring missing kcpp config file...")
         else:
-            global exitcounter
             exitcounter = 999
             exit_with_error(2,"Specified kcpp config file invalid or not found.")
     args = convert_outdated_args(args)
@@ -5088,16 +5074,7 @@ def kcpp_main_process(launch_args,start_server=True):
             args.model_param = dlfile
         load_config_cli(args.model_param)
 
-    #prevent quantkv from being used without flash attn
-    if args.quantkv and args.quantkv>0 and not args.flashattention:
-        exit_with_error(1, "Error: Using --quantkv requires --flashattention")
-
-    if args.failsafe: #failsafe implies noavx2
-        args.noavx2 = True
-
-    if not args.model_param:
-        args.model_param = args.model
-
+    # lastly, show the GUI launcher if a model was not provided
     if args.showgui or (not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.nomodel):
         #give them a chance to pick a file
         print("For command line arguments, please refer to --help")
@@ -5112,6 +5089,46 @@ def kcpp_main_process(launch_args,start_server=True):
                 print("Note: In order to use --skiplauncher, you need to specify a model with --model")
             time.sleep(3)
             sys.exit(2)
+
+    # invoke the main koboldcpp process
+    multiprocessing.freeze_support()
+    kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "start_server": start_server})
+    kcpp_instance.daemon = True
+    kcpp_instance.start()
+
+    # start the server for the admin thread
+    args.admin = True
+    if args.admin and args.adminport:
+        if args.ssl:
+            global sslvalid
+            if len(args.ssl)==2 and isinstance(args.ssl[0], str) and os.path.exists(args.ssl[0]) and isinstance(args.ssl[1], str) and os.path.exists(args.ssl[1]):
+                sslvalid = True
+                print("SSL configuration is valid and will be used.")
+            else:
+                print("Your SSL configuration is INVALID. SSL will not be used.")
+        epurl = ""
+        httpsaffix = ("https" if sslvalid else "http")
+        if args.host=="":
+            epurl = f"{httpsaffix}://localhost:{args.adminport}"
+        else:
+            epurl = f"{httpsaffix}://{args.host}:{args.adminport}"
+        print(f"======\nStarting KoboldCpp Admin Server at {epurl}", flush=True)
+        asyncio.run(RunServerMultiThreaded(args.host, args.adminport, AdminServerRequestHandler))
+    else:
+        while True: # non-admin single instance mode
+            try:
+                if not kcpp_instance or not kcpp_instance.is_alive():
+                    break
+                time.sleep(0.2)
+            except (KeyboardInterrupt,SystemExit):
+                break
+
+def kcpp_main_process(launch_args,start_server=True):
+    global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, start_time, exitcounter
+    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath
+
+    args = launch_args
+    start_time = time.time()
 
     #try to read story if provided
     if args.preloadstory:
@@ -5812,11 +5829,11 @@ if __name__ == '__main__':
     ttsparsergroup.add_argument("--ttsmaxlen", help="Limit number of audio tokens generated with TTS.",  type=int, default=default_ttsmaxlen)
     ttsparsergroup.add_argument("--ttsthreads", metavar=('[threads]'), help="Use a different number of threads for TTS if specified. Otherwise, has the same value as --threads.", type=int, default=0)
 
-    hypervisorgroup = parser.add_argument_group('Hypervisor Commands')
-    hypervisorgroup.add_argument("--hypervisor", help="Enables hypervisor mode, allowing you to unload and reload different configurations or models.", action='store_true')
-    hypervisorgroup.add_argument("--hypervisorport", metavar=('[portnumber]'), help=f"Port for the hypervisor to listen on. (Defaults to {defaulthypervisorport})", default=defaulthypervisorport, type=int, action='store')
-    hypervisorgroup.add_argument("--hypervisorpassword", metavar=('[password]'), help="Require a password to access the hypervisor. Note that password are sent in plaintext as part of the URL, and only provide rudimentary security!", default=None)
-    hypervisorgroup.add_argument("--hypervisordir", metavar=('[directory]'), help="Specify a directory to look for .kcpps configs in, which can be used to swap models.", default="")
+    admingroup = parser.add_argument_group('Administration Commands')
+    admingroup.add_argument("--admin", help="Enables admin mode, allowing you to unload and reload different configurations or models.", action='store_true')
+    admingroup.add_argument("--adminport", metavar=('[portnumber]'), help=f"Port for the admin to listen on. (Defaults to {defaultadminport})", default=defaultadminport, type=int, action='store')
+    admingroup.add_argument("--adminpassword", metavar=('[password]'), help="Require a password to access the admin. Note that password are sent in plaintext as part of the URL, and only provide rudimentary security!", default=None)
+    admingroup.add_argument("--admindir", metavar=('[directory]'), help="Specify a directory to look for .kcpps configs in, which can be used to swap models.", default="")
 
     deprecatedgroup = parser.add_argument_group('Deprecated Commands, DO NOT USE!')
     deprecatedgroup.add_argument("--hordeconfig", help=argparse.SUPPRESS, nargs='+')
