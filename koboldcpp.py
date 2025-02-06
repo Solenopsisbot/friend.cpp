@@ -682,7 +682,8 @@ def get_capabilities():
     has_whisper = (fullwhispermodelpath!="")
     has_search = True if args.websearch else False
     has_tts = (ttsmodelpath!="")
-    return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":has_vision,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts}
+    admin_type = (2 if args.admin and args.admindir and args.adminpassword else (1 if args.admin and args.admindir else 0))
+    return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":has_vision,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts, "admin": admin_type}
 
 def dump_gguf_metadata(file_path): #if you're gonna copy this into your own project at least credit concedo
     chunk_size = 1024*1024*12  # read first 12mb of file
@@ -5038,8 +5039,6 @@ def main(launch_args,start_server=True):
                 restart_target = global_memory["restart_target"]
                 if restart_target!="":
                     print(f"Reloading new config: {restart_target}")
-                    break
-                if restart_target!="":
                     global_memory["restart_target"] = ""
                     time.sleep(0.5) #sleep for 0.5s then restart
                     if args.admin and args.admindir:
@@ -5056,6 +5055,7 @@ def main(launch_args,start_server=True):
                             kcpp_instance.daemon = True
                             kcpp_instance.start()
                             global_memory["restart_target"] = ""
+                            time.sleep(1)
                 else:
                     time.sleep(0.2)
             except (KeyboardInterrupt,SystemExit):
@@ -5510,6 +5510,7 @@ def kcpp_main_process(launch_args, start_server=True, g_memory=None):
     enabledmlist.append("ApiKeyPassword") if "protected" in caps and caps["protected"] else disabledmlist.append("ApiKeyPassword")
     enabledmlist.append("WebSearchProxy") if "websearch" in caps and caps["websearch"] else disabledmlist.append("WebSearchProxy")
     enabledmlist.append("TextToSpeech") if "tts" in caps and caps["tts"] else disabledmlist.append("TextToSpeech")
+    enabledmlist.append("AdminControl") if "admin" in caps and caps["admin"]!=0 else disabledmlist.append("AdminControl")
 
     print(f"======\nActive Modules: {' '.join(enabledmlist)}")
     print(f"Inactive Modules: {' '.join(disabledmlist)}")
@@ -5526,6 +5527,7 @@ def kcpp_main_process(launch_args, start_server=True, g_memory=None):
         else:
             print("Your SSL configuration is INVALID. SSL will not be used.")
     endpoint_url = ""
+    remote_url = ""
     httpsaffix = ("https" if sslvalid else "http")
     if args.host=="":
         endpoint_url = f"{httpsaffix}://localhost:{args.port}"
@@ -5540,6 +5542,7 @@ def kcpp_main_process(launch_args, start_server=True, g_memory=None):
         val = global_memory["tunnel_url"]
         if val:
             endpoint_url = val
+            remote_url = val
             print(f"Your remote Kobold API can be found at {endpoint_url}/api")
             print(f"Your remote OpenAI Compatible API can be found at {endpoint_url}/v1")
             if args.sdmodel:
@@ -5648,9 +5651,8 @@ def kcpp_main_process(launch_args, start_server=True, g_memory=None):
     check_deprecation_warning()
     if start_server:
         if args.remotetunnel:
-            if endpoint_url:
-                print("======\n")
-                print(f"Your remote tunnel is ready, please connect to {endpoint_url}", flush=True)
+            if remote_url:
+                print(f"======\nYour remote tunnel is ready, please connect to {remote_url}", flush=True)
         else:
             # Flush stdout for previous win32 issue so the client can see output.
             print(f"======\nPlease connect to custom endpoint at {endpoint_url}", flush=True)
