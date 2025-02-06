@@ -50,7 +50,6 @@ dry_seq_break_max = 128
 handle = None
 friendlymodelname = "inactive"
 friendlysdmodelname = "inactive"
-endpoint_url = ""
 lastgeneratedcomfyimg = b''
 fullsdmodelpath = ""  #if empty, it's not initialized
 mmprojpath = "" #if empty, it's not initialized
@@ -104,7 +103,7 @@ currfinishreason = "null"
 using_gui_launcher = False
 using_outdated_flags = False
 kcpp_instance = None #global running instance
-command_queue = None #manager command queue
+global_memory = None
 
 saved_stdout = None
 saved_stderr = None
@@ -2767,6 +2766,26 @@ Enter Prompt:<br>
             else:
                 response_body = (json.dumps([]).encode())
 
+        elif self.path.startswith(("/api/admin/reload_config")):
+            resp = {"success": False}
+            if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                targetfile = ""
+                try:
+                    tempbody = json.loads(body)
+                    if isinstance(tempbody, dict):
+                        targetfile = tempbody.get('filename', "")
+                except Exception:
+                    targetfile = ""
+                if targetfile and targetfile!="":
+                    dirpath = os.path.abspath(args.admindir)
+                    targetfilepath = os.path.join(dirpath, targetfile)
+                    opts = [f for f in os.listdir(dirpath) if f.endswith(".kcpps") and os.path.isfile(os.path.join(dirpath, f))]
+                    if targetfile in opts and os.path.exists(targetfilepath):
+                        print(f"Admin: Received request to reload config to {targetfile}")
+                        global_memory["restart_target"] = targetfile
+                        resp = {"success": True}
+            response_body = (json.dumps(resp).encode())
+
         elif self.path.endswith('/set_tts_settings'): #return dummy response
             response_body = (json.dumps({"message": "Settings successfully applied"}).encode())
 
@@ -2991,7 +3010,7 @@ Enter Prompt:<br>
 
 def RunServerMultiThreaded(addr, port, server_handler):
     global exitcounter, sslvalid
-    global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
+    global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, global_memory
     if is_port_in_use(port):
         print(f"Warning: Port {port} already appears to be in use by another program.")
     ipv4_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -3887,8 +3906,8 @@ def show_gui():
 
     admin_tab = tabcontent["Admin"]
     makecheckbox(admin_tab, "Enable Model Administration", admin_var, 1, 0,tooltiptxt="Enable a admin server, allowing you to remotely relaunch and swap models and configs.")
-    makefileentry(admin_tab, "Config Directory:", "Select directory containing .kcpps files to relaunch from", admin_dir_var, 3, width=280, is_dir=True, tooltiptxt="Specify a directory to look for .kcpps configs in, which can be used to swap models.")
-    makelabelentry(admin_tab, "Admin Password:" , admin_password_var, 5, 50,padx=290,singleline=True,tooltip="Require a password to access admin functions. You are strongly advised to use one for publically accessible instances!")
+    makelabelentry(admin_tab, "Admin Password:" , admin_password_var, 3, 150,padx=120,singleline=True,tooltip="Require a password to access admin functions. You are strongly advised to use one for publically accessible instances!")
+    makefileentry(admin_tab, "Config Directory:", "Select directory containing .kcpps files to relaunch from", admin_dir_var, 5, width=280, is_dir=True, tooltiptxt="Specify a directory to look for .kcpps configs in, which can be used to swap models.")
 
     def kcpp_export_template():
         nonlocal kcpp_exporting_template
@@ -4655,7 +4674,7 @@ def check_deprecation_warning():
 
 
 
-def setuptunnel(has_sd):
+def setuptunnel(global_memory, has_sd):
     # This script will help setup a cloudflared tunnel for accessing KoboldCpp over the internet
     # It should work out of the box on both linux and windows
     try:
@@ -4695,6 +4714,8 @@ def setuptunnel(has_sd):
                             print(f"StableUI is available at {tunneloutput}/sdui/")
                         print("======\n")
                         print(f"Your remote tunnel is ready, please connect to {tunneloutput}", flush=True)
+                        if global_memory:
+                            global_memory["tunnel_url"] = tunneloutput
                         return
 
             tunnel_reader_thread = threading.Thread(target=tunnel_reader)
@@ -4801,6 +4822,14 @@ def unload_libs():
         del handle.get_pending_output
         del handle
         handle = None
+
+def reload_new_config(filename): #for changing config after launch
+    with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
+        config = json.load(f)
+        args.istemplate = False
+        for key, value in config.items(): #do not overwrite certain values
+            if key not in ["remotetunnel","port","host","port_param","admin","adminpassword","admindir","ssl","nocertify","benchmark","prompt"]:
+                setattr(args, key, value)
 
 def load_config_cli(filename):
     print("Loading .kcpps configuration file...")
@@ -4912,7 +4941,7 @@ def analyze_gguf_model_wrapper(filename=""):
     dumpthread.start()
 
 def main(launch_args,start_server=True):
-    global args, showdebug, kcpp_instance, exitcounter, command_queue
+    global args, showdebug, kcpp_instance, exitcounter
     args = launch_args #note: these are NOT shared with the child processes!
 
     if (args.version) and len(sys.argv) <= 2:
@@ -4985,34 +5014,59 @@ def main(launch_args,start_server=True):
             time.sleep(3)
             sys.exit(2)
 
+    if args.model_param and (args.benchmark or args.prompt):
+        start_server = False
+
     # manager command queue
-    command_queue = multiprocessing.Queue()
-
-    # invoke the main koboldcpp process
     multiprocessing.freeze_support()
-    kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "start_server": start_server})
-    kcpp_instance.daemon = True
-    kcpp_instance.start()
+    with multiprocessing.Manager() as mp_manager:
+        global_memory = mp_manager.dict({"tunnel_url": "", "restart_target":""})
 
-    while True: # keep the manager alive
-        try:
-            if not kcpp_instance or not kcpp_instance.is_alive():
+        if start_server and args.remotetunnel:
+            setuptunnel(global_memory, True if args.sdmodel else False)
+
+        # invoke the main koboldcpp process
+        kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "start_server": start_server, "g_memory": global_memory})
+        kcpp_instance.daemon = True
+        kcpp_instance.start()
+
+        while True: # keep the manager alive
+            try:
+                restart_target = ""
+                if not kcpp_instance or not kcpp_instance.is_alive():
+                    break
+                restart_target = global_memory["restart_target"]
+                if restart_target!="":
+                    print(f"Reloading new config: {restart_target}")
+                    break
+                if restart_target!="":
+                    global_memory["restart_target"] = ""
+                    time.sleep(0.5) #sleep for 0.5s then restart
+                    if args.admin and args.admindir:
+                        dirpath = os.path.abspath(args.admindir)
+                        targetfilepath = os.path.join(dirpath, restart_target)
+                        if os.path.exists(targetfilepath):
+                            print("Terminating old process...")
+                            kcpp_instance.terminate()
+                            kcpp_instance.join(timeout=10)  # Ensure process is stopped
+                            kcpp_instance = None
+                            print("Restarting KoboldCpp...")
+                            reload_new_config(targetfilepath)
+                            kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "start_server": start_server, "g_memory": global_memory})
+                            kcpp_instance.daemon = True
+                            kcpp_instance.start()
+                            global_memory["restart_target"] = ""
+                else:
+                    time.sleep(0.2)
+            except (KeyboardInterrupt,SystemExit):
                 break
-            if not command_queue.empty():
-                while not command_queue.empty():
-                    data = command_queue.get()
-                    if data['command'] == 'reload':
-                        newtarget = data['data']
-                        print(f"Reloading new config: {newtarget}")
-            time.sleep(0.2)
-        except (KeyboardInterrupt,SystemExit):
-            break
 
-def kcpp_main_process(launch_args,start_server=True):
-    global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, start_time, exitcounter
+def kcpp_main_process(launch_args, start_server=True, g_memory=None):
+    global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, start_time, exitcounter, global_memory
     global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath
 
     args = launch_args
+    global_memory = g_memory
     start_time = time.time()
 
     #try to read story if provided
@@ -5464,7 +5518,7 @@ def kcpp_main_process(launch_args,start_server=True):
     if args.port_param!=defaultport:
         args.port = args.port_param
 
-    global sslvalid, endpoint_url
+    global sslvalid
     if args.ssl:
         if len(args.ssl)==2 and isinstance(args.ssl[0], str) and os.path.exists(args.ssl[0]) and isinstance(args.ssl[1], str) and os.path.exists(args.ssl[1]):
             sslvalid = True
@@ -5482,6 +5536,14 @@ def kcpp_main_process(launch_args,start_server=True):
         print(f"Starting OpenAI Compatible API on port {args.port} at {endpoint_url}/v1/")
         if args.sdmodel:
             print(f"StableUI is available at {endpoint_url}/sdui/")
+    elif global_memory:
+        val = global_memory["tunnel_url"]
+        if val:
+            endpoint_url = val
+            print(f"Your remote Kobold API can be found at {endpoint_url}/api")
+            print(f"Your remote OpenAI Compatible API can be found at {endpoint_url}/v1")
+            if args.sdmodel:
+                print(f"StableUI is available at {endpoint_url}/sdui/")
 
     if args.launch:
         LaunchWebbrowser(endpoint_url,"--launch was set, but could not launch web browser automatically.")
@@ -5503,8 +5565,7 @@ def kcpp_main_process(launch_args,start_server=True):
         timer_thread = threading.Timer(1, onready_subprocess) #1 second delay
         timer_thread.start()
 
-    if args.model_param and (args.benchmark or args.prompt):
-        start_server = False
+    if not start_server:
         save_to_file = (args.benchmark and args.benchmark!="stdout" and args.benchmark!="")
         benchmaxctx = maxctx
         benchlen = args.promptlimit
@@ -5587,7 +5648,9 @@ def kcpp_main_process(launch_args,start_server=True):
     check_deprecation_warning()
     if start_server:
         if args.remotetunnel:
-            setuptunnel(True if args.sdmodel else False)
+            if endpoint_url:
+                print("======\n")
+                print(f"Your remote tunnel is ready, please connect to {endpoint_url}", flush=True)
         else:
             # Flush stdout for previous win32 issue so the client can see output.
             print(f"======\nPlease connect to custom endpoint at {endpoint_url}", flush=True)
