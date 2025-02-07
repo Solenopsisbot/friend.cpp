@@ -75,7 +75,7 @@ endif()
 
 file(GLOB GGML_SOURCES_CUDA "ggml/src/ggml-cuda/*.cu")
 list(APPEND GGML_SOURCES_CUDA "ggml/src/ggml-cuda/ggml-cuda.cu")
-file(GLOB SRCS "ggml/src/ggml-cuda/template-instances/fattn-wmma*.cu")
+file(GLOB SRCS "ggml/src/ggml-cuda/template-instances/fattn-mma*.cu")
 list(APPEND GGML_SOURCES_CUDA ${SRCS})
 file(GLOB SRCS "ggml/src/ggml-cuda/template-instances/mmq*.cu")
 list(APPEND GGML_SOURCES_CUDA ${SRCS})
