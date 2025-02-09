@@ -4685,7 +4685,7 @@ def setuptunnel(global_memory, has_sd):
                     found = re.findall(pattern, line)
                     for x in found:
                         tunneloutput = x
-                        if global_memory["load_complete"]:
+                        if global_memory and global_memory["load_complete"]:
                             print(f"Your remote Kobold API can be found at {tunneloutput}/api")
                             print(f"Your remote OpenAI Compatible API can be found at {tunneloutput}/v1")
                             if has_sd:
@@ -5012,7 +5012,7 @@ def main(launch_args):
 
     if not args.admin: #run in single process mode
         if args.remotetunnel and not args.prompt and not args.benchmark:
-            setuptunnel(None, True if args.sdmodel else False)
+            setuptunnel(global_memory, True if args.sdmodel else False)
         kcpp_main_process(args,global_memory,using_gui_launcher)
         if global_memory["input_to_exit"]:
             print("===")
