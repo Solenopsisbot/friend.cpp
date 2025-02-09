@@ -5006,7 +5006,11 @@ def main(launch_args):
         if len(args.ssl)==2 and isinstance(args.ssl[0], str) and os.path.exists(args.ssl[0]) and isinstance(args.ssl[1], str) and os.path.exists(args.ssl[1]):
             sslvalid = True
 
-    if not (args.admin and args.admindir): #run in single process mode
+    if args.admin and not args.admindir:
+        args.admin = False
+        print("\nWARNING: Admin was set without selecting an admin directory. Admin cannot be used.\n")
+
+    if not args.admin: #run in single process mode
         if args.remotetunnel and not args.prompt and not args.benchmark:
             setuptunnel(None, True if args.sdmodel else False)
         kcpp_main_process(args,global_memory,using_gui_launcher)
