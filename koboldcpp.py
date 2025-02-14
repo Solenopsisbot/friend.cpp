@@ -5355,21 +5355,22 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             exitcounter = 999
             exit_with_error(3,"Could not load text model: " + modelname)
 
-    if (chatcompl_adapter is not None and isinstance(chatcompl_adapter, list) and not args.nomodel and args.model_param):
+    if (chatcompl_adapter is not None and isinstance(chatcompl_adapter, list)):
         # The chat completions adapter is a list that needs derivation from chat templates
         # Try to derive chat completions adapter from chat template, now that we have the model loaded
-        ctbytes = handle.get_chat_template()
-        chat_template = ctypes.string_at(ctbytes).decode("UTF-8","ignore")
-        candidates = chatcompl_adapter
-        chatcompl_adapter = None
-        if chat_template != "":
-            for entry in candidates:
-                if all(s in chat_template for s in entry['search']):
-                    print(f"Chat completion heuristic: {entry['name']}")
-                    chatcompl_adapter = entry['adapter']
-                    break
-        if chatcompl_adapter is None:
-            print("Chat template heuristics failed to identify chat completions format. Alpaca will be used.")
+        chatcompl_adapter = None #if no text model loaded, erase the list.
+        if not args.nomodel and args.model_param:
+            ctbytes = handle.get_chat_template()
+            chat_template = ctypes.string_at(ctbytes).decode("UTF-8","ignore")
+            candidates = chatcompl_adapter
+            if chat_template != "":
+                for entry in candidates:
+                    if all(s in chat_template for s in entry['search']):
+                        print(f"Chat completion heuristic: {entry['name']}")
+                        chatcompl_adapter = entry['adapter']
+                        break
+            if chatcompl_adapter is None:
+                print("Chat template heuristics failed to identify chat completions format. Alpaca will be used.")
 
     #handle loading image model
     if args.sdmodel and args.sdmodel!="":
