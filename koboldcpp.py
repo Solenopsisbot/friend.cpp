@@ -5360,7 +5360,6 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     if (chatcompl_adapter is not None and isinstance(chatcompl_adapter, list)):
         # The chat completions adapter is a list that needs derivation from chat templates
         # Try to derive chat completions adapter from chat template, now that we have the model loaded
-        chatcompl_adapter = None #if no text model loaded, erase the list.
         if not args.nomodel and args.model_param:
             ctbytes = handle.get_chat_template()
             chat_template = ctypes.string_at(ctbytes).decode("UTF-8","ignore")
@@ -5373,6 +5372,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                         break
             if chatcompl_adapter is None:
                 print("Chat template heuristics failed to identify chat completions format. Alpaca will be used.")
+        else:
+            chatcompl_adapter = None #if no text model loaded, erase the list.
 
     #handle loading image model
     if args.sdmodel and args.sdmodel!="":
