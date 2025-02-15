@@ -8,6 +8,7 @@
 # editing tools, save formats, memory, world info, author's note, characters,
 # scenarios and everything Kobold and KoboldAI Lite have to offer.
 
+import copy
 import ctypes
 import multiprocessing
 import os
@@ -47,7 +48,7 @@ logit_bias_max = 512
 dry_seq_break_max = 128
 
 # global vars
-KcppVersion = "1.83.1"
+KcppVersion = "1.84"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False}
@@ -4796,16 +4797,19 @@ def unload_libs():
 
 def reload_new_config(filename): #for changing config after launch
     with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
-        config = json.load(f)
-        args.istemplate = False
-        for key, value in config.items(): #do not overwrite certain values
-            if key not in ["remotetunnel","showgui","port","host","port_param","admin","adminpassword","admindir","ssl","nocertify","benchmark","prompt","config"]:
-                setattr(args, key, value)
-        setattr(args,"showgui",False)
-        setattr(args,"benchmark",False)
-        setattr(args,"prompt","")
-        setattr(args,"config",None)
-        setattr(args,"launch",None)
+        try:
+            config = json.load(f)
+            args.istemplate = False
+            for key, value in config.items(): #do not overwrite certain values
+                if key not in ["remotetunnel","showgui","port","host","port_param","admin","adminpassword","admindir","ssl","nocertify","benchmark","prompt","config"]:
+                    setattr(args, key, value)
+            setattr(args,"showgui",False)
+            setattr(args,"benchmark",False)
+            setattr(args,"prompt","")
+            setattr(args,"config",None)
+            setattr(args,"launch",None)
+        except Exception as e:
+            print(f"Reload New Config Failed: {e}")
 
 def load_config_cli(filename):
     print("Loading .kcpps configuration file...")
@@ -5023,15 +5027,36 @@ def main(launch_args):
                 setuptunnel(global_memory, True if args.sdmodel else False)
 
             # invoke the main koboldcpp process
+            original_args = copy.deepcopy(args)
+
             kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "g_memory": global_memory, "gui_launcher": using_gui_launcher})
             kcpp_instance.daemon = True
             kcpp_instance.start()
+
+            fault_recovery_mode = False #if a config reload fails, recover back to old settings
 
             while True: # keep the manager alive
                 try:
                     restart_target = ""
                     if not kcpp_instance or not kcpp_instance.is_alive():
-                        break
+                        if fault_recovery_mode:
+                            #attempt to recover
+                            print("Attempting to recover to safe mode, launching known-good config...")
+                            fault_recovery_mode = False
+                            args = copy.deepcopy(original_args) #restore known good original launcher args
+                            if kcpp_instance:
+                                kcpp_instance.terminate()
+                                kcpp_instance.join(timeout=10)  # Ensure process is stopped
+                                kcpp_instance = None
+                            kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "g_memory": global_memory, "gui_launcher": False})
+                            kcpp_instance.daemon = True
+                            kcpp_instance.start()
+                            global_memory["restart_target"] = ""
+                            time.sleep(3)
+                        else:
+                            break # kill the program
+                    if fault_recovery_mode and global_memory["load_complete"]:
+                        fault_recovery_mode = False
                     restart_target = global_memory["restart_target"]
                     if restart_target!="":
                         print(f"Reloading new config: {restart_target}")
@@ -5047,12 +5072,13 @@ def main(launch_args):
                                 kcpp_instance.join(timeout=10)  # Ensure process is stopped
                                 kcpp_instance = None
                                 print("Restarting KoboldCpp...")
+                                fault_recovery_mode = True
                                 reload_new_config(targetfilepath)
-                                kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "g_memory": global_memory, "gui_launcher": using_gui_launcher})
+                                kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "g_memory": global_memory, "gui_launcher": False})
                                 kcpp_instance.daemon = True
                                 kcpp_instance.start()
                                 global_memory["restart_target"] = ""
-                                time.sleep(1)
+                                time.sleep(3)
                     else:
                         time.sleep(0.2)
                 except (KeyboardInterrupt,SystemExit):
