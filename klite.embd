@@ -12,7 +12,7 @@ Current version indicated by LITEVER below.
 -->
 
 <script>
-	const LITEVER = 213;
+	const LITEVER = 214;
 	const urlParams = new URLSearchParams(window.location.search);
 	var localflag = true;
 	const STORAGE_PREFIX = (localflag?"e_":"")+"kaihordewebui_";
@@ -5034,7 +5034,7 @@ Current version indicated by LITEVER below.
 					ctrl.buf += chunk;
 					let evs = [];
 					let m;
-					while ((m = /^data: (.*)(\r?\n){2}/m.exec(ctrl.buf)) !== null) {
+					while ((m = /^data: ?(.*)(\r?\n){2}/m.exec(ctrl.buf)) !== null) {
 						try{evs.push({data: JSON.parse(m[1])});} catch (e) {}
 						ctrl.buf = ctrl.buf.substring(m.index + m[0].length);
 					}
@@ -5298,8 +5298,6 @@ Current version indicated by LITEVER below.
 			.replace(/<\/ul>\n<ul>/g, "")
 			.replace(/<\/li><\/ul>\n\s*?\n<ul><li>/gm, "</li>\n<li>")
 			.replace(/<\/li><\/ul>\s*?<ul><li>/gm, "</li><li>")
-			.replace(/<\/ul>\n/gm, "</ul>")
-			.replace(/<\/ol>\n/gm, "</ol>")
 
 			.replace(/\*\*\*([^\s*].*?[^\\])\*\*\*/gm, "<b><em>$1</em></b>")
 			.replace(/\*\*([^\s*].*?[^\\])\*\*/gm, "<b>$1</b>")
@@ -5315,6 +5313,7 @@ Current version indicated by LITEVER below.
 			md = replaceTabbedCodeblocks(md);
 			md = md.replace(/<\/code\><\/pre\>\n<pre\><code\>/g, "\n");
 			md = replaceLatex(md);
+			md = md.replace(/<\/ul>\n/gm, "</ul>").replace(/<\/ol>\n/gm, "</ol>");
 			md = md.replace(/\\([`_~\*\+\-\.\^\\\<\>\(\)\[\]])/gm, "$1");
 			return md;
 		};
@@ -17072,8 +17071,21 @@ Current version indicated by LITEVER below.
 					fulltxt = simpleMarkdown(fulltxt);
 				}
 
-				fulltxt = replaceAll(fulltxt, `%SpcStg%`, `<hr style="margin-top: 12px; margin-bottom: 12px;"><span class="color_cyan"><img src="`+human_square+`" style="height:38px;width:auto;padding:3px 6px 3px 3px;border-radius: 8%;"/>`);
-				fulltxt = replaceAll(fulltxt, `%SpcEtg%`, `</span><hr style="margin-top: 12px; margin-bottom: 12px;"><img src="`+niko_square+`" style="height:38px;width:auto;padding:3px 6px 3px 3px;border-radius: 8%;"/>`);
+				let instruct_turns = repack_instruct_turns(fulltxt, `%SpcStg%`,`%SpcEtg%`);
+				fulltxt = "";
+				for(let i=0;i<instruct_turns.length;++i)
+				{
+					let curr = instruct_turns[i];
+					if(curr.myturn)
+					{
+						fulltxt += `<hr style="margin-top: 12px; margin-bottom: 12px;"><span class="color_cyan"><img src="${human_square}" style="height:38px;width:auto;padding:3px 6px 3px 3px;border-radius: 8%;"/>${curr.msg}</span>`;
+					}
+					else
+					{
+						fulltxt += `<hr style="margin-top: 12px; margin-bottom: 12px;"><img src="${niko_square}" style="height:38px;width:auto;padding:3px 6px 3px 3px;border-radius: 8%;"/>${curr.msg}</span>`;
+					}
+				}
+
 				//apply stylization to time tags
 				if(localsettings.inject_timestamps && localsettings.instruct_has_markdown)
 				{
@@ -17465,30 +17477,13 @@ Current version indicated by LITEVER below.
 			</div>`;
 	}
 
-	function repack_instruct_history(input) //repack all history into individual turns
+	function repack_instruct_turns(input,usertag,aitag)
 	{
-		if(localsettings.separate_end_tags) {
-			if (get_instruct_starttag_end(true)) {
-				input = replaceAll(input, get_instruct_starttag_end(false), "");
-				input = replaceAll(input, get_instruct_starttag_end(true), "");
-			}
-			if (get_instruct_endtag_end(true)) {
-				input = replaceAll(input, get_instruct_endtag_end(false), "");
-				input = replaceAll(input, get_instruct_endtag_end(true), "");
-			}
-			if (get_instruct_systag_end(true)) {
-				input = replaceAll(input, get_instruct_systag_end(false), "");
-				input = replaceAll(input, get_instruct_systag_end(true), "");
-			}
-		}
 		let myturnchat = false; //who is currently speaking?
-		let st = get_instruct_starttag(false);
-		let et = get_instruct_endtag(false);
-
 		let chatunits = []; //parse chat body into nice chat chunks
 
 		let combined_chunks = [];
-		let turnchunks = input.split(st);
+		let turnchunks = input.split(usertag);
 		let startoppo = true;
 		for(let i=0;i<turnchunks.length;++i)
 		{
@@ -17501,7 +17496,7 @@ Current version indicated by LITEVER below.
 				}
 				continue;
 			}
-			let turnchunks2 = chnk.split(et);
+			let turnchunks2 = chnk.split(aitag);
 			for(let j=0;j<turnchunks2.length;++j)
 			{
 				if(j==0)
@@ -17548,6 +17543,30 @@ Current version indicated by LITEVER below.
 			}
 		}
 		return chatunits;
+	}
+
+	function repack_instruct_history(input) //repack all history into individual turns
+	{
+		if(localsettings.separate_end_tags) {
+			if (get_instruct_starttag_end(true)) {
+				input = replaceAll(input, get_instruct_starttag_end(false), "");
+				input = replaceAll(input, get_instruct_starttag_end(true), "");
+			}
+			if (get_instruct_endtag_end(true)) {
+				input = replaceAll(input, get_instruct_endtag_end(false), "");
+				input = replaceAll(input, get_instruct_endtag_end(true), "");
+			}
+			if (get_instruct_systag_end(true)) {
+				input = replaceAll(input, get_instruct_systag_end(false), "");
+				input = replaceAll(input, get_instruct_systag_end(true), "");
+			}
+		}
+
+		let st = get_instruct_starttag(false);
+		let et = get_instruct_endtag(false);
+
+		let turns = repack_instruct_turns(input,st,et);
+		return turns;
 	}
 
 	function corpo_chunk_prev()
