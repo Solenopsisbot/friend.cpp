@@ -48,7 +48,7 @@ logit_bias_max = 512
 dry_seq_break_max = 128
 
 # global vars
-KcppVersion = "1.84.1"
+KcppVersion = "1.84.2"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False}
@@ -95,6 +95,7 @@ websearch_lastquery = ""
 websearch_lastresponse = []
 preloaded_story = None
 chatcompl_adapter = None
+chatcompl_adapter_list = None #if using autoguess, will populate this will potential adapters
 embedded_kailite = None
 embedded_kcpp_docs = None
 embedded_kcpp_sdui = None
@@ -4951,6 +4952,9 @@ def main(launch_args):
         print(f"***\nWelcome to KoboldCpp - Version {KcppVersion}")
     if args.debugmode != 1:
         showdebug = False #not shared with child process!
+    if args.debugmode >= 1:
+        print("Debug Mode is Enabled!")
+        args.quiet = False # verbose outputs
 
     try:
         delete_old_pyinstaller()  #perform some basic cleanup of old temporary directories
@@ -5136,7 +5140,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
 
     # try to read chat completions adapter
     if args.chatcompletionsadapter:
-        global chatcompl_adapter
+        global chatcompl_adapter, chatcompl_adapter_list
         ccadapter_path = None
         canload = False
         adapt_dir = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'kcpp_adapters')
@@ -5176,6 +5180,9 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             print("Chat Completions Adapter Loaded")
         else:
             print("Warning: Chat Completions Adapter invalid or not found.")
+        if (chatcompl_adapter is not None and isinstance(chatcompl_adapter, list)):
+            chatcompl_adapter_list = chatcompl_adapter
+            chatcompl_adapter = None
 
     # handle model downloads if needed
     if args.model_param and args.model_param!="":
@@ -5383,23 +5390,20 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             exitcounter = 999
             exit_with_error(3,"Could not load text model: " + modelname)
 
-    if (chatcompl_adapter is not None and isinstance(chatcompl_adapter, list)):
+    if (chatcompl_adapter_list is not None and isinstance(chatcompl_adapter_list, list)):
         # The chat completions adapter is a list that needs derivation from chat templates
         # Try to derive chat completions adapter from chat template, now that we have the model loaded
         if not args.nomodel and args.model_param:
             ctbytes = handle.get_chat_template()
             chat_template = ctypes.string_at(ctbytes).decode("UTF-8","ignore")
-            candidates = chatcompl_adapter
             if chat_template != "":
-                for entry in candidates:
+                for entry in chatcompl_adapter_list:
                     if all(s in chat_template for s in entry['search']):
                         print(f"Chat completion heuristic: {entry['name']}")
                         chatcompl_adapter = entry['adapter']
                         break
             if chatcompl_adapter is None:
                 print("Chat template heuristics failed to identify chat completions format. Alpaca will be used.")
-        else:
-            chatcompl_adapter = None #if no text model loaded, erase the list.
 
     #handle loading image model
     if args.sdmodel and args.sdmodel!="":
