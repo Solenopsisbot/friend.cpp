@@ -4865,7 +4865,7 @@ def sanitize_string(input_string):
     sanitized_string = re.sub( r'[^\w\d\.\-_]', '', input_string)
     return sanitized_string
 
-def downloader_internal(input_url, output_filename, capture_output, min_file_size=64): #64 bytes required by default
+def downloader_internal(input_url, output_filename, capture_output, min_file_size=64): # 64 bytes required by default
     import shutil
     import subprocess
     import os
@@ -4879,19 +4879,43 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
         return output_filename
     print(f"Downloading {input_url}", flush=True)
     dl_success = False
-    if shutil.which("aria2c") is not None:
-        rc = subprocess.run(f"aria2c -x 16 -s 16 --summary-interval=30 --console-log-level=error --log-level=error --download-result=default --allow-overwrite=true --file-allocation=none -o {output_filename} {input_url}", shell=True, capture_output=capture_output, text=True, check=True, encoding='utf-8')
-        dl_success = (rc.returncode==0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
-    if not dl_success and shutil.which("curl") is not None:
-        rc = subprocess.run(f"curl -fLo {output_filename} {input_url}", shell=True, capture_output=capture_output, text=True, check=True, encoding='utf-8')
-        dl_success = (rc.returncode==0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
-    if not dl_success and shutil.which("wget") is None:
-        rc = subprocess.run(f"wget -O {output_filename} {input_url}", shell=True, capture_output=capture_output, text=True, check=True, encoding='utf-8')
-        dl_success = (rc.returncode==0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
+
+    try:
+        if shutil.which("aria2c") is not None:
+            rc = subprocess.run(
+                f"aria2c -x 16 -s 16 --summary-interval=30 --console-log-level=error --log-level=error --download-result=default --allow-overwrite=true --file-allocation=none -o {output_filename} {input_url}",
+                shell=True, capture_output=capture_output, text=True, check=True, encoding='utf-8'
+            )
+            dl_success = (rc.returncode == 0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
+    except subprocess.CalledProcessError as e:
+        print(f"aria2c failed: {e}")
+
+    try:
+        if not dl_success and shutil.which("curl") is not None:
+            rc = subprocess.run(
+                f"curl -fLo {output_filename} {input_url}",
+                shell=True, capture_output=capture_output, text=True, check=True, encoding='utf-8'
+            )
+            dl_success = (rc.returncode == 0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
+    except subprocess.CalledProcessError as e:
+        print(f"curl failed: {e}")
+
+    try:
+        if not dl_success and shutil.which("wget") is not None:
+            rc = subprocess.run(
+                f"wget -O {output_filename} {input_url}",
+                shell=True, capture_output=capture_output, text=True, check=True, encoding='utf-8'
+            )
+            dl_success = (rc.returncode == 0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
+    except subprocess.CalledProcessError as e:
+        print(f"wget failed: {e}")
+
     if not dl_success:
-        print("Could not find suitable download software, please install aria2 or curl.")
+        print("Could not find suitable download software, or all download methods failed. Please install aria2, curl, or wget.")
         return None
+
     return output_filename
+
 
 def download_model_from_url(url, permitted_types=[".gguf",".safetensors", ".ggml", ".bin"], min_file_size=64):
     if url and url!="":
