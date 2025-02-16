@@ -4551,7 +4551,7 @@ def run_horde_worker(args, api_key, worker_name):
             "name": worker_name,
             "models": [friendlymodelname],
             "max_length": maxhordelen,
-            "max_context_length": maxhordectx,
+            "max_context_length": min(maxctx,maxhordectx),
             "priority_usernames": [],
             "softprompts": [],
             "bridge_agent": BRIDGE_AGENT,
