@@ -5590,7 +5590,10 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 print(f"StableUI is available at {endpoint_url}/sdui/")
         global_memory["load_complete"] = True
     if args.launch:
-        LaunchWebbrowser(endpoint_url,"--launch was set, but could not launch web browser automatically.")
+        def launch_browser_thread():
+            LaunchWebbrowser(endpoint_url,"--launch was set, but could not launch web browser automatically.")
+        browser_thread = threading.Timer(2, launch_browser_thread) #2 second delay
+        browser_thread.start()
 
     if args.hordekey and args.hordekey!="":
         if args.hordeworkername and args.hordeworkername!="":
