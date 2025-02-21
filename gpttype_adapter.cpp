@@ -1430,6 +1430,9 @@ void sampler_typical(llama_token_data_array * cur_p, float p, size_t min_keep) {
 
 void sample_top_n_sigma(llama_token_data_array * cur_p, float nsigma) {
 
+    if (nsigma <= 0.0f || cur_p->size <= 1) {
+        return;
+    }
     // find max logit and calculate mean
     float nsigmax = cur_p->data[0].logit;
     float logits_sum = 0;
@@ -1613,10 +1616,8 @@ const std::vector<samplers> & sampler_order, llama_grammar * grammar, float dyna
         sample_grammar(file_format, n_vocab, &candidates_p, grammar);
     }
 
-    if (nsigma <= 0.0f){
-        //dry always first as logits cannot be resorted
-        sample_dry(n_ctx, dry_penalty_last_n, dry_multiplier, dry_base, dry_allowed_length, dry_sequence_breakers, &candidates_p);
-    }
+    //dry always first as logits cannot be resorted
+    sample_dry(n_ctx, dry_penalty_last_n, dry_multiplier, dry_base, dry_allowed_length, dry_sequence_breakers, &candidates_p);
 
     //prefilter to top 3k tokens for improved speed
     sample_top_k(&candidates_p, 3000);
@@ -1651,7 +1652,6 @@ const std::vector<samplers> & sampler_order, llama_grammar * grammar, float dyna
             sample_temperature(&candidates_p, temp, smoothing_factor);
         }
         sample_top_n_sigma(&candidates_p, nsigma);
-
         sample_xtc(&candidates_p, xtc_threshold, xtc_probability, rng);
         id = sample_token(&candidates_p, rng);
     }
