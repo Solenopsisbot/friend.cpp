@@ -11,6 +11,7 @@
 #include <time.h>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include "model_adapter.h"
 #include "otherarch.h"
 #include "llama.h"
@@ -1188,18 +1189,8 @@ void sample_rep_pen(int n_ctx, int rep_pen_range, float rep_pen, float rep_pen_s
     const int64_t t_start_sample_us = ggml_time_us();
 
     // Create a frequency map to count occurrences of each token in last_tokens
-    std::unordered_map<llama_token, int> token_count_near;
-    std::unordered_map<llama_token, int> token_count_far;
-    for (size_t i = 0; i < last_n_repeat; ++i) {
-        if((i*2) >= last_n_repeat)
-        {
-            token_count_near[last_tokens[i]]++;
-        }
-        else
-        {
-            token_count_far[last_tokens[i]]++;
-        }
-    }
+    std::unordered_set<llama_token> tokens_near(last_tokens + last_n_repeat / 2, last_tokens + last_n_repeat);
+    std::unordered_set<llama_token> tokens_far(last_tokens, last_tokens + last_n_repeat / 2);
 
     float rep_pen_reduced = rep_pen;
     if(rep_pen_reduced>1.0f)
@@ -1207,15 +1198,13 @@ void sample_rep_pen(int n_ctx, int rep_pen_range, float rep_pen, float rep_pen_s
        rep_pen_reduced = 1.0f + ((rep_pen-1.0f)*rep_pen_slope);
     }
     for (size_t i = 0; i < candidates->size; ++i) {
-        const auto token_in_near = token_count_near.find(candidates->data[i].id);
-        const auto token_in_far = token_count_far.find(candidates->data[i].id);
-        bool in_near = (token_in_near != token_count_near.end());
-        bool in_far = (token_in_far != token_count_far.end());
-        if (!in_near && !in_far) {
+        const bool token_in_near = tokens_near.find(candidates->data[i].id) != tokens_near.end();
+        const bool token_in_far = tokens_far.find(candidates->data[i].id) != tokens_far.end();
+        if (!token_in_near && !token_in_far) {
             continue;
         }
 
-        float penalty = (in_near?rep_pen:rep_pen_reduced);
+        float penalty = (token_in_near?rep_pen:rep_pen_reduced);
 
         // The academic publication that described this technique actually just only divided, but that would cause tokens with negative logits to become more likely, which is obviously wrong.
         // This is common fix for this problem, which is to multiply by the penalty instead of dividing.
@@ -1229,7 +1218,6 @@ void sample_rep_pen(int n_ctx, int rep_pen_range, float rep_pen, float rep_pen_s
     }
 
     candidates->sorted = false;
-
 }
 
 void sample_top_p(llama_token_data_array * cur_p, float p, size_t min_keep) {
@@ -1321,33 +1309,24 @@ void sample_tail_free(llama_token_data_array * cur_p, float z, size_t min_keep) 
     sample_softmax(cur_p);
 
     // Compute the first and second derivatives
-    std::vector<float> first_derivatives(cur_p->size - 1);
     std::vector<float> second_derivatives(cur_p->size - 2);
+    float second_derivatives_sum = 0.0f;
 
-    for (size_t i = 0; i < first_derivatives.size(); ++i) {
-        first_derivatives[i] = cur_p->data[i].p - cur_p->data[i + 1].p;
-    }
     for (size_t i = 0; i < second_derivatives.size(); ++i) {
-        second_derivatives[i] = first_derivatives[i] - first_derivatives[i + 1];
-    }
-
-    // Calculate absolute value of second derivatives
-    for (size_t i = 0; i < second_derivatives.size(); ++i) {
-        second_derivatives[i] = std::abs(second_derivatives[i]);
+        float first_derivatives_1 = cur_p->data[i].p - cur_p->data[i + 1].p;
+        float first_derivatives_2 = cur_p->data[i + 1].p - cur_p->data[i + 2].p;
+        second_derivatives[i] = std::abs(first_derivatives_1 - first_derivatives_2);
+        second_derivatives_sum += second_derivatives[i];
     }
 
     // Normalize the second derivatives
-    {
-        const float second_derivatives_sum = std::accumulate(second_derivatives.begin(), second_derivatives.end(), 0.0f);
-
-        if (second_derivatives_sum > 1e-6f) {
-            for (float & value : second_derivatives) {
-                value /= second_derivatives_sum;
-            }
-        } else {
-            for (float & value : second_derivatives) {
-                value = 1.0f / second_derivatives.size();
-            }
+    if (second_derivatives_sum > 1e-6f) {
+        for (float & value : second_derivatives) {
+            value /= second_derivatives_sum;
+        }
+    } else {
+        for (float & value : second_derivatives) {
+            value = 1.0f / second_derivatives.size();
         }
     }
 
@@ -1637,24 +1616,6 @@ const std::vector<samplers> & sampler_order, llama_grammar * grammar, float dyna
             id = sample_token_mirostat_v2(&candidates_p, rng, mirostat_tau, mirostat_eta, &mirostat_mu);
         }
     }
-    else if (nsigma > 0.0f)
-    {
-        sample_top_k(&candidates_p, top_k);
-        if (dynatemp_range > 0) {
-            float dynatemp_min = temp - dynatemp_range;
-            float dynatemp_max = temp + dynatemp_range;
-            //do not allow negative values
-            dynatemp_min       = dynatemp_min < 0 ? 0 : dynatemp_min;
-            dynatemp_max       = dynatemp_max < 0 ? 0 : dynatemp_max;
-            dynatemp_exponent  = dynatemp_exponent < 0 ? 0 : dynatemp_exponent;
-            sample_entropy(&candidates_p, dynatemp_min, dynatemp_max, dynatemp_exponent, smoothing_factor);
-        } else {
-            sample_temperature(&candidates_p, temp, smoothing_factor);
-        }
-        sample_top_n_sigma(&candidates_p, nsigma);
-        sample_xtc(&candidates_p, xtc_threshold, xtc_probability, rng);
-        id = sample_token(&candidates_p, rng);
-    }
     else
     {
         for (int i = 0; i < sampler_order.size(); i++)
@@ -1691,6 +1652,10 @@ const std::vector<samplers> & sampler_order, llama_grammar * grammar, float dyna
                     else
                     {
                         sample_temperature(&candidates_p, temp, smoothing_factor);
+                    }
+                    if (nsigma > 0.0f)
+                    {
+                        sample_top_n_sigma(&candidates_p, nsigma);
                     }
                     break;
                 case KCPP_SAMPLER_REP_PEN:
@@ -3555,7 +3520,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
             if (!evalres)
             {
-                fprintf(stderr, "\nFailed to predict at %d! Check your context buffer sizes!\n",n_past);
+                fprintf(stderr, "\nFailed to predict at token position %d! Check your context buffer sizes!\n",n_past);
                 output.text = nullptr;
                 output.status = 0;
                 output.prompt_tokens = output.completion_tokens = 0;
