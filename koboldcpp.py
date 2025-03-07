@@ -106,7 +106,7 @@ nocertify = False
 start_time = time.time()
 last_req_time = time.time()
 last_non_horde_req_time = time.time()
-currfinishreason = "null"
+currfinishreason = None
 
 
 saved_stdout = None
@@ -2053,7 +2053,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     async def generate_text(self, genparams, api_format, stream_flag):
         global friendlymodelname, chatcompl_adapter, currfinishreason
-        currfinishreason = "null"
+        currfinishreason = None
 
         def run_blocking():  # api format 1=basic,2=kai,3=oai,4=oai-chat
             # flag instance as non-idle for a while
