@@ -62,6 +62,8 @@ float last_eval_time = 0;
 int last_token_count = 0;
 int last_seed = -1;
 int total_gens = 0;
+int last_draft_success = 0;
+int last_draft_failed = 0;
 stop_reason last_stop_reason = stop_reason::INVALID;
 std::vector<std::string> generated_tokens;
 
@@ -4002,6 +4004,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     last_process_time = pt1;
     last_token_count = realnpredict;
     last_seed = kcpp_data->seed;
+    last_draft_failed = draft_failures;
+    last_draft_success = draft_successes;
     total_gens += 1;
     concat_output_mtx.lock();
     concat_output_reader_copy_res = concat_output;
