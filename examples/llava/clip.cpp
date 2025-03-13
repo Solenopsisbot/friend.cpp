@@ -3171,6 +3171,11 @@ bool clip_model_quantize(const char * fname_inp, const char * fname_out, const i
             {
                 quantize = false;
             }
+            // //temp fix for gemma3
+            // if(name.find("ffn_up.weight") != std::string::npos)
+            // {
+            //     quantize = false;
+            // }
         }
 
         if (quantize) {
