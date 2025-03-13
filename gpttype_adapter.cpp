@@ -1792,7 +1792,7 @@ void PurgeMissingTokens(llama_context * ctx, llama_context * draft_ctx, std::vec
 
     auto shared = LongestCommonSubseq(curr_ctx_without_memory, new_ctx_without_memory);
 
-    printf("\nSharedSize: %d, LCSTokThreshold: %d, ArrPass: %d\n",shared.size(),LCSTokThreshold,ArrStartWith(new_ctx_without_memory, shared));
+    // printf("\nSharedSize: %d, LCSTokThreshold: %d, ArrPass: %d\n",shared.size(),LCSTokThreshold,ArrStartWith(new_ctx_without_memory, shared));
     if (shared.size() > LCSTokThreshold && ArrStartWith(new_ctx_without_memory, shared)) // enough tokens in common
     {
         int found = ArrFindIndexOf(current_context_tokens,shared);
