@@ -45,7 +45,7 @@ jobs:
       - name: Rebuild Vulkan Shaders
         id: make_vk_shaders
         run: |
-          make vulkan_shaders_gen -j ${env:NUMBER_OF_PROCESSORS}
+          make vulkan-shaders-gen -j ${env:NUMBER_OF_PROCESSORS}
           echo "Vulkan Shaders Rebuilt"
 
       - name: Build Non-CUDA
