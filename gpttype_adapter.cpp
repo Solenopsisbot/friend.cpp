@@ -2877,15 +2877,15 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     bool llava_images_changed = false;
 
     bool add_bos_token = true; //if set to false, mmproj handling breaks
-    if(file_format == FileFormat::GGUF_GENERIC && mmproj_filename == "")
-    {
-        const llama_vocab * tmpvocab = llama_model_get_vocab(&(llama_ctx_v4->model));
-        add_bos_token = llama_vocab_get_add_bos(tmpvocab);
-        if(!add_bos_token)
-        {
-             printf("\nBOS token prefix was disabled for this model.");
-        }
-    }
+    // if(file_format == FileFormat::GGUF_GENERIC && mmproj_filename == "")
+    // {
+    //     const llama_vocab * tmpvocab = llama_model_get_vocab(&(llama_ctx_v4->model));
+    //     add_bos_token = llama_vocab_get_add_bos(tmpvocab);
+    //     if(!add_bos_token && debugmode==1)
+    //     {
+    //          printf("\nBOS token prefix was disabled for this model.");
+    //     }
+    // }
 
     for(int x=0;x<inputs.stop_sequence_len;++x)
     {
