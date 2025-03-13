@@ -1792,6 +1792,7 @@ void PurgeMissingTokens(llama_context * ctx, llama_context * draft_ctx, std::vec
 
     auto shared = LongestCommonSubseq(curr_ctx_without_memory, new_ctx_without_memory);
 
+    printf("\nSharedSize: %d, LCSTokThreshold: %d, ArrPass: %d\n",shared.size(),LCSTokThreshold,ArrStartWith(new_ctx_without_memory, shared));
     if (shared.size() > LCSTokThreshold && ArrStartWith(new_ctx_without_memory, shared)) // enough tokens in common
     {
         int found = ArrFindIndexOf(current_context_tokens,shared);
@@ -2126,6 +2127,11 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         if(file_format_meta.model_architecture == GGUFArch::ARCH_QWEN2VL)
         {
             printf("Qwen2VL detected! Mrope will be used, and context shift will be disabled!\n");
+            kcpp_data->use_contextshift = false;
+        }
+        if(file_format_meta.model_architecture == GGUFArch::ARCH_GEMMA3)
+        {
+            printf("Gemma3 detected! Context shift will be disabled!\n");
             kcpp_data->use_contextshift = false;
         }
         model_params.main_gpu = cu_parseinfo_maindevice;
