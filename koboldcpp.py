@@ -1157,6 +1157,20 @@ def generate(genparams, stream_flag=False):
     banned_tokens = genparams.get('banned_tokens', banned_strings)
     bypass_eos_token = genparams.get('bypass_eos', False)
     custom_token_bans = genparams.get('custom_token_bans', '')
+    autoguess_format = genparams.get('autoguess_format', False)
+    if autoguess_format:
+        adapter_obj = {} if chatcompl_adapter is None else chatcompl_adapter
+        system_message_start = adapter_obj.get("system_start", "\n### Instruction:\n")
+        user_message_start = adapter_obj.get("user_start", "\n### Instruction:\n")
+        user_message_end = adapter_obj.get("user_end", "")
+        assistant_message_start = adapter_obj.get("assistant_start", "\n### Response:\n")
+        assistant_message_end = adapter_obj.get("assistant_end", "")
+        prompt = prompt.replace("{{[INPUT]}}", assistant_message_end + user_message_start)
+        prompt = prompt.replace("{{[OUTPUT]}}", user_message_end + assistant_message_start)
+        prompt = prompt.replace("{{[SYSTEM]}}", system_message_start)
+        memory = memory.replace("{{[INPUT]}}", assistant_message_end + user_message_start)
+        memory = memory.replace("{{[OUTPUT]}}", user_message_end + assistant_message_start)
+        memory = memory.replace("{{[SYSTEM]}}", system_message_start)
 
     for tok in custom_token_bans.split(','):
         tok = tok.strip()  # Remove leading/trailing whitespace
@@ -1866,7 +1880,7 @@ def transform_genparams(genparams, api_format):
                 if message['role'] == "user" and message_index == len(messages_array):
                     # Check if user is passing a openai tools array, if so add to end of prompt before assistant prompt unless tool_choice has been set to None
                     tools_array = genparams.get('tools', [])
-                    if tools_array and len(tools_array) > 0 and genparams.get('tool_choice',None) is not None:
+                    if tools_array and len(tools_array) > 0 :
                         response_array = [{"id": "insert an id for the response", "type": "function", "function": {"name": "insert the name of the function you want to call", "arguments": {"first property key": "first property value", "second property key": "second property value"}}}]
                         json_formatting_instruction = " Use this style of JSON object formatting to give your answer if you think the user is asking you to perform an action: " + json.dumps(response_array, indent=0)
                         tools_string = json.dumps(tools_array, indent=0)
