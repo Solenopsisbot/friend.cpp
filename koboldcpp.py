@@ -2428,7 +2428,7 @@ Enter Prompt:<br>
             opts = []
             if args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                 dirpath = os.path.abspath(args.admindir)
-                opts = [f for f in sorted(os.listdir(dirpath)) if (f.endswith(".kcpps") or f.endswith(".kcppt")) and os.path.isfile(os.path.join(dirpath, f))]
+                opts = [f for f in sorted(os.listdir(dirpath)) if (f.endswith(".kcpps") or f.endswith(".kcppt") or f.endswith(".gguf")) and os.path.isfile(os.path.join(dirpath, f))]
             response_body = (json.dumps(opts).encode())
 
         elif self.path.endswith(('/api/extra/perf')):
@@ -2882,7 +2882,7 @@ Enter Prompt:<br>
                 if targetfile and targetfile!="":
                     dirpath = os.path.abspath(args.admindir)
                     targetfilepath = os.path.join(dirpath, targetfile)
-                    opts = [f for f in os.listdir(dirpath) if (f.endswith(".kcpps") or f.endswith(".kcppt")) and os.path.isfile(os.path.join(dirpath, f))]
+                    opts = [f for f in os.listdir(dirpath) if (f.endswith(".kcpps") or f.endswith(".kcppt") or f.endswith(".gguf")) and os.path.isfile(os.path.join(dirpath, f))]
                     if targetfile in opts and os.path.exists(targetfilepath):
                         print(f"Admin: Received request to reload config to {targetfile}")
                         global_memory["restart_target"] = targetfile
@@ -4882,19 +4882,25 @@ def unload_libs():
         del handle
         handle = None
 
+def reload_from_new_args(newargs):
+    try:
+        args.istemplate = False
+        for key, value in newargs.items(): #do not overwrite certain values
+            if key not in ["remotetunnel","showgui","port","host","port_param","admin","adminpassword","admindir","ssl","nocertify","benchmark","prompt","config"]:
+                setattr(args, key, value)
+        setattr(args,"showgui",False)
+        setattr(args,"benchmark",False)
+        setattr(args,"prompt","")
+        setattr(args,"config",None)
+        setattr(args,"launch",None)
+    except Exception as e:
+        print(f"Reload New Config Failed: {e}")
+
 def reload_new_config(filename): #for changing config after launch
     with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
         try:
             config = json.load(f)
-            args.istemplate = False
-            for key, value in config.items(): #do not overwrite certain values
-                if key not in ["remotetunnel","showgui","port","host","port_param","admin","adminpassword","admindir","ssl","nocertify","benchmark","prompt","config"]:
-                    setattr(args, key, value)
-            setattr(args,"showgui",False)
-            setattr(args,"benchmark",False)
-            setattr(args,"prompt","")
-            setattr(args,"config",None)
-            setattr(args,"launch",None)
+            reload_from_new_args(config)
         except Exception as e:
             print(f"Reload New Config Failed: {e}")
 
@@ -5078,7 +5084,7 @@ def analyze_gguf_model_wrapper(filename=""):
     dumpthread = threading.Thread(target=analyze_gguf_model, args=(args,filename))
     dumpthread.start()
 
-def main(launch_args):
+def main(launch_args, default_args):
     global args, showdebug, kcpp_instance, exitcounter, using_gui_launcher, sslvalid, global_memory
     args = launch_args #note: these are NOT shared with the child processes!
 
@@ -5216,7 +5222,7 @@ def main(launch_args):
                         fault_recovery_mode = False
                     restart_target = global_memory["restart_target"]
                     if restart_target!="":
-                        print(f"Reloading new config: {restart_target}")
+                        print(f"Reloading new model/config: {restart_target}")
                         global_memory["restart_target"] = ""
                         time.sleep(0.5) #sleep for 0.5s then restart
                         if args.admin and args.admindir:
@@ -5230,7 +5236,11 @@ def main(launch_args):
                                 kcpp_instance = None
                                 print("Restarting KoboldCpp...")
                                 fault_recovery_mode = True
-                                reload_new_config(targetfilepath)
+                                if targetfilepath.endswith(".gguf"):
+                                    reload_from_new_args(vars(default_args))
+                                    args.model_param = targetfilepath
+                                else:
+                                    reload_new_config(targetfilepath)
                                 kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "g_memory": global_memory, "gui_launcher": False})
                                 kcpp_instance.daemon = True
                                 kcpp_instance.start()
@@ -6018,4 +6028,4 @@ if __name__ == '__main__':
     compatgroup.add_argument("--noblas", help=argparse.SUPPRESS, action='store_true')
     compatgroup3.add_argument("--nommap", help=argparse.SUPPRESS, action='store_true')
 
-    main(parser.parse_args())
+    main(launch_args=parser.parse_args(),default_args=parser.parse_args([]))
