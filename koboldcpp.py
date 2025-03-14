@@ -1009,23 +1009,19 @@ def fetch_gpu_properties(testCL,testCU,testVK):
                 output = subprocess.run(["clinfo","--json"], capture_output=True, text=True, check=True, encoding='utf-8').stdout
                 data = json.loads(output)
             except Exception:
-                output = subprocess.run([((os.path.join(basepath, "winclinfo.exe")) if os.name == 'nt' else "clinfo"),"--json"], capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS, encoding='utf-8').stdout
+                output = subprocess.run([((os.path.join(basepath, "simpleclinfo.exe")) if os.name == 'nt' else "clinfo"),"--json"], capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS, encoding='utf-8').stdout
                 data = json.loads(output)
             plat = 0
             dev = 0
-            lowestclmem = 0
             for platform in data["devices"]:
                 dev = 0
                 for device in platform["online"]:
                     dname = device["CL_DEVICE_NAME"]
-                    dmem = int(device["CL_DEVICE_GLOBAL_MEM_SIZE"])
                     idx = plat+dev*2
                     if idx<len(CLDevices):
                         CLDevicesNames[idx] = dname
-                        lowestclmem = dmem if lowestclmem==0 else (dmem if dmem<lowestclmem else lowestclmem)
                     dev += 1
                 plat += 1
-            MaxMemory[0] = max(lowestclmem,MaxMemory[0])
         except Exception:
             pass
     return
