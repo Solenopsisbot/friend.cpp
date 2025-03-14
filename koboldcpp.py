@@ -1153,8 +1153,8 @@ def generate(genparams, stream_flag=False):
     banned_tokens = genparams.get('banned_tokens', banned_strings)
     bypass_eos_token = genparams.get('bypass_eos', False)
     custom_token_bans = genparams.get('custom_token_bans', '')
-    autoguess_format = genparams.get('autoguess_format', False)
-    if autoguess_format:
+    replace_instruct_placeholders = genparams.get('replace_instruct_placeholders', False)
+    if replace_instruct_placeholders:
         adapter_obj = {} if chatcompl_adapter is None else chatcompl_adapter
         system_message_start = adapter_obj.get("system_start", "\n### Instruction:\n")
         user_message_start = adapter_obj.get("user_start", "\n### Instruction:\n")
