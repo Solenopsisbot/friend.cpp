@@ -3030,7 +3030,7 @@ Enter Prompt:<br>
                             self.end_headers(content_type='application/json')
                             self.wfile.write(genresp)
                     except Exception as ex:
-                        utfprint(ex,0)
+                        utfprint(ex,1)
                         print("Generate: The response could not be sent, maybe connection was terminated?")
                         handle.abort_generate()
                         time.sleep(0.2) #short delay
@@ -3056,7 +3056,7 @@ Enter Prompt:<br>
                         self.end_headers(content_type='application/json')
                         self.wfile.write(genresp)
                     except Exception as ex:
-                        utfprint(ex,0)
+                        utfprint(ex,1)
                         print("Generate Image: The response could not be sent, maybe connection was terminated?")
                         time.sleep(0.2) #short delay
                     return
@@ -3069,7 +3069,7 @@ Enter Prompt:<br>
                         self.end_headers(content_type='application/json')
                         self.wfile.write(genresp)
                     except Exception as ex:
-                        utfprint(ex,0)
+                        utfprint(ex,1)
                         print("Transcribe: The response could not be sent, maybe connection was terminated?")
                         time.sleep(0.2) #short delay
                     return
@@ -3085,7 +3085,7 @@ Enter Prompt:<br>
                         self.end_headers(content_type='audio/wav')
                         self.wfile.write(wav_data) # Write the binary WAV data to the response
                     except Exception as ex:
-                        utfprint(ex,0)
+                        utfprint(ex,1)
                         print("TTS: The response could not be sent, maybe connection was terminated?")
                         time.sleep(0.2) #short delay
                     return
