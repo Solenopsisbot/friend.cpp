@@ -49,7 +49,7 @@ logit_bias_max = 512
 dry_seq_break_max = 128
 
 # global vars
-KcppVersion = "1.86"
+KcppVersion = "1.86.1"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False}
@@ -175,6 +175,7 @@ class load_model_inputs(ctypes.Structure):
                 ("rope_freq_scale", ctypes.c_float),
                 ("rope_freq_base", ctypes.c_float),
                 ("moe_experts", ctypes.c_int),
+                ("no_bos_token", ctypes.c_bool),
                 ("flash_attention", ctypes.c_bool),
                 ("tensor_split", ctypes.c_float * tensor_split_max),
                 ("quant_k", ctypes.c_int),
@@ -1105,6 +1106,7 @@ def load_model(model_filename):
             inputs.tensor_split[n] = 0
 
     inputs.moe_experts = args.moeexperts
+    inputs.no_bos_token = args.nobostoken
     inputs = set_backend_props(inputs)
     ret = handle.load_model(inputs)
     return ret
@@ -1116,7 +1118,7 @@ def generate(genparams, stream_flag=False):
     memory = genparams.get('memory', "")
     images = genparams.get('images', [])
     max_context_length = int(genparams.get('max_context_length', maxctx))
-    max_length = int(genparams.get('max_length', 200))
+    max_length = int(genparams.get('max_length', args.defaultgenamt))
     temperature = float(genparams.get('temperature', 0.75))
     top_k = int(genparams.get('top_k', 100))
     top_a = float(genparams.get('top_a', 0.0))
@@ -1815,8 +1817,8 @@ def transform_genparams(genparams, api_format):
 
     if api_format==1:
         genparams["prompt"] = genparams.get('text', "")
-        genparams["top_k"] = int(genparams.get('top_k', 120))
-        genparams["max_length"] = int(genparams.get('max', 200))
+        genparams["top_k"] = int(genparams.get('top_k', 100))
+        genparams["max_length"] = int(genparams.get('max', args.defaultgenamt))
 
     elif api_format==2:
         pass
@@ -1824,7 +1826,7 @@ def transform_genparams(genparams, api_format):
     elif api_format==3 or api_format==4 or api_format==7:
         default_adapter = {} if chatcompl_adapter is None else chatcompl_adapter
         adapter_obj = genparams.get('adapter', default_adapter)
-        default_max_tok = (adapter_obj.get("max_length", 512) if (api_format==4 or api_format==7) else 200)
+        default_max_tok = (adapter_obj.get("max_length", args.defaultgenamt) if (api_format==4 or api_format==7) else args.defaultgenamt)
         genparams["max_length"] = int(genparams.get('max_tokens', genparams.get('max_completion_tokens', default_max_tok)))
         presence_penalty = genparams.get('presence_penalty', genparams.get('frequency_penalty', 0.0))
         genparams["presence_penalty"] = float(presence_penalty)
@@ -1971,7 +1973,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
         ollamaopts = genparams.get('options', {})
         genparams["stop_sequence"] = genparams.get('stop', [])
         if "num_predict" in ollamaopts:
-            genparams["max_length"] = ollamaopts.get('num_predict', 200)
+            genparams["max_length"] = ollamaopts.get('num_predict', args.defaultgenamt)
         if "num_ctx" in ollamaopts:
             genparams["max_context_length"] = ollamaopts.get('num_ctx', maxctx)
         if "temperature" in ollamaopts:
@@ -3377,6 +3379,8 @@ def show_gui():
     customrope_base = ctk.StringVar(value="10000")
     chatcompletionsadapter_var = ctk.StringVar(value="AutoGuess")
     moeexperts_var = ctk.StringVar(value=str(-1))
+    defaultgenamt_var = ctk.StringVar(value=str(512))
+    nobostoken_var = ctk.IntVar(value=0)
 
     model_var = ctk.StringVar()
     lora_var = ctk.StringVar()
@@ -3868,8 +3872,9 @@ def show_gui():
     makecheckbox(tokens_tab, "Use FastForwarding", fastforward, 3,tooltiptxt="Use fast forwarding to recycle previous context (always reprocess if disabled).\nRecommended.", command=togglefastforward)
 
     # context size
-    makeslider(tokens_tab, "Context Size:",contextsize_text, context_var, 0, len(contextsize_text)-1, 20, width=280, set=5,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
+    makeslider(tokens_tab, "Context Size:",contextsize_text, context_var, 0, len(contextsize_text)-1, 18, width=280, set=5,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
     context_var.trace("w", changed_gpulayers_estimate)
+    makelabelentry(tokens_tab, "Default Gen Amt:", defaultgenamt_var, row=20, padx=120, singleline=True, tooltip="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.")
 
     customrope_scale_entry, customrope_scale_label = makelabelentry(tokens_tab, "RoPE Scale:", customrope_scale, row=23, padx=100, singleline=True, tooltip="For Linear RoPE scaling. RoPE frequency scale.")
     customrope_base_entry, customrope_base_label = makelabelentry(tokens_tab, "RoPE Base:", customrope_base, row=24, padx=100, singleline=True, tooltip="For NTK Aware Scaling. RoPE frequency base.")
@@ -3885,6 +3890,7 @@ def show_gui():
     noqkvlabel = makelabel(tokens_tab,"Requirments Not Met",31,0,"Requires FlashAttention ENABLED and ContextShift DISABLED.")
     noqkvlabel.configure(text_color="#ff5555")
     qkvslider,qkvlabel,qkvtitle = makeslider(tokens_tab, "Quantize KV Cache:", quantkv_text, quantkv_var, 0, 2, 30, set=0,tooltip="Enable quantization of KV cache.\nRequires FlashAttention and disables ContextShift.")
+    makecheckbox(tokens_tab, "No BOS Token", nobostoken_var, 33, tooltiptxt="Prevents BOS token from being added at the start of any prompt. Usually NOT recommended for most models.")
     makelabelentry(tokens_tab, "MoE Experts:", moeexperts_var, row=35, padx=100, singleline=True, tooltip="Override number of MoE experts.")
 
     togglerope(1,1,1)
@@ -4154,6 +4160,8 @@ def show_gui():
         if customrope_var.get()==1:
             args.ropeconfig = [float(customrope_scale.get()),float(customrope_base.get())]
         args.moeexperts = int(moeexperts_var.get()) if moeexperts_var.get()!="" else -1
+        args.defaultgenamt = int(defaultgenamt_var.get()) if defaultgenamt_var.get()!="" else 512
+        args.nobostoken = (nobostoken_var.get()==1)
         args.chatcompletionsadapter = None if chatcompletionsadapter_var.get() == "" else chatcompletionsadapter_var.get()
         try:
             if kcpp_exporting_template and isinstance(args.chatcompletionsadapter, str) and args.chatcompletionsadapter!="" and os.path.exists(args.chatcompletionsadapter):
@@ -4340,6 +4348,9 @@ def show_gui():
                 customrope_var.set(0)
         if "moeexperts" in dict and dict["moeexperts"]:
             moeexperts_var.set(dict["moeexperts"])
+        if "defaultgenamt" in dict and dict["defaultgenamt"]:
+            defaultgenamt_var.set(dict["defaultgenamt"])
+        nobostoken_var.set(dict["nobostoken"] if ("nobostoken" in dict) else 0)
 
         if "blasbatchsize" in dict and dict["blasbatchsize"]:
             blas_size_var.set(blasbatchsize_values.index(str(dict["blasbatchsize"])))
@@ -4679,7 +4690,7 @@ def run_horde_worker(args, api_key, worker_name):
         current_id = pop['id']
         current_payload = pop['payload']
         print("") #empty newline
-        print_with_time(f"Job {current_id} received from {cluster} for {current_payload.get('max_length',80)} tokens and {current_payload.get('max_context_length',1024)} max context. Starting generation...")
+        print_with_time(f"Job {current_id} received from {cluster} for {current_payload.get('max_length',0)} tokens and {current_payload.get('max_context_length',0)} max context. Starting generation...")
 
         #do gen
         while exitcounter < 10:
@@ -5476,6 +5487,9 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         global maxctx
         maxctx = args.contextsize
 
+    args.defaultgenamt = max(128, min(args.defaultgenamt, 2048))
+    args.defaultgenamt = min(args.defaultgenamt, maxctx / 2)
+
     if args.nocertify:
         import ssl
         global nocertify
@@ -5984,7 +5998,8 @@ if __name__ == '__main__':
     advparser.add_argument("--exporttemplate", help="Exports the current selected arguments as a .kcppt template file", metavar=('[filename]'), type=str, default="")
     advparser.add_argument("--nomodel", help="Allows you to launch the GUI alone, without selecting any model.", action='store_true')
     advparser.add_argument("--moeexperts", metavar=('[num of experts]'), help="How many experts to use for MoE models (default=follow gguf)", type=int, default=-1)
-    advparser.add_argument("--defaultgenamt", help="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.", type=check_range(int,256,2048), default=512)
+    advparser.add_argument("--defaultgenamt", help="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.", type=check_range(int,128,2048), default=512)
+    advparser.add_argument("--nobostoken", help="Prevents BOS token from being added at the start of any prompt. Usually NOT recommended for most models.", action='store_true')
     compatgroup2 = parser.add_mutually_exclusive_group()
     compatgroup2.add_argument("--showgui", help="Always show the GUI instead of launching the model right away when loading settings from a .kcpps file.", action='store_true')
     compatgroup2.add_argument("--skiplauncher", help="Doesn't display or use the GUI launcher.", action='store_true')
