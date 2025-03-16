@@ -884,9 +884,9 @@ def autoset_gpu_layers(ctxsize,sdquanted,bbs): #shitty algo to determine how man
             elif modelfile_extracted_meta[2] > 1024*1024*512: #normal sd tax
                 mem -= 1024*1024*1024*(3.25 if sdquanted else 4.25)
             if modelfile_extracted_meta[3] > 1024*1024*10: #whisper tax
-                mem -= 350*1024*1024
+                mem -= max(350*1024*1024,modelfile_extracted_meta[3]*1.5)
             if modelfile_extracted_meta[4] > 1024*1024*10: #mmproj tax
-                mem -= 350*1024*1024
+                mem -= max(350*1024*1024,modelfile_extracted_meta[4]*1.5)
             if modelfile_extracted_meta[5] > 1024*1024*10: #draft model tax
                 mem -= (modelfile_extracted_meta[5] * 1.5)
             if modelfile_extracted_meta[6] > 1024*1024*10: #tts model tax
