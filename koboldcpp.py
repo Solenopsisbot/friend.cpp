@@ -1853,6 +1853,31 @@ def transform_genparams(genparams, api_format):
             tools_message_end = adapter_obj.get("tools_end", "")
             images_added = []
 
+            # tools handling
+            tools_array = genparams.get('tools', [])
+            chosen_tool = genparams.get('tool_choice', None)
+            tool_json_formatting_instruction = " Use this style of JSON object formatting to give your answer if you think the user is asking you to perform an action: " + json.dumps([{"id": "insert an id for the response", "type": "function", "function": {"name": "insert the name of the function you want to call", "arguments": {"first property key": "first property value", "second property key": "second property value"}}}], indent=0)
+            if tools_array and len(tools_array) > 0 and chosen_tool is not None:
+                try:
+                    specified_function = ""
+                    if isinstance(chosen_tool, str):
+                        specified_function = chosen_tool
+                    elif isinstance(chosen_tool, dict): #if we can match the tool name, we must use that tool, remove all other tools
+                        specified_function = chosen_tool.get('function').get('name')
+                    located_tooljson = None
+                    #if we find the function in tools, remove all other tools except the one matching the function name
+                    for tool in tools_array:
+                        if specified_function and tool.get('type') == "function" and tool.get('function').get('name') == specified_function:
+                            located_tooljson = tool
+                            break
+                    if located_tooljson:
+                        tools_array = []
+                        tools_array.append(located_tooljson)
+                        tool_json_formatting_instruction = f"The user is asking you to use the style of this JSON object formatting to complete the parameters for the specific function named {specified_function} in the following format: " + json.dumps([{"id": "insert an id for the response", "type": "function", "function": {"name": f"{specified_function}", "arguments": {"first property key": "first property value", "second property key": "second property value"}}}], indent=0)
+                except Exception:
+                    # In case of any issues, just revert back to no specified function
+                    pass
+
             message_index = 0
             for message in messages_array:
                 message_index += 1
@@ -1881,21 +1906,10 @@ def transform_genparams(genparams, api_format):
                 # If last message, add any tools calls after message content and before message end token if any
                 if message['role'] == "user" and message_index == len(messages_array):
                     # Check if user is passing a openai tools array, if so add to end of prompt before assistant prompt unless tool_choice has been set to None
-                    tools_array = genparams.get('tools', [])
-                    if tools_array and len(tools_array) > 0 and genparams.get('tool_choice',None) is not None:
-                        response_array = [{"id": "insert an id for the response", "type": "function", "function": {"name": "insert the name of the function you want to call", "arguments": {"first property key": "first property value", "second property key": "second property value"}}}]
-                        json_formatting_instruction = " Use this style of JSON object formatting to give your answer if you think the user is asking you to perform an action: " + json.dumps(response_array, indent=0)
+                    if tools_array and len(tools_array) > 0 and chosen_tool is not None and chosen_tool!="none":
                         tools_string = json.dumps(tools_array, indent=0)
                         messages_string += tools_string
-                        specified_function = None
-                        if isinstance(genparams.get('tool_choice'), dict):
-                             try:
-                                specified_function = genparams.get('tool_choice').get('function').get('name')
-                                json_formatting_instruction = f"The user is asking you to use the style of this JSON object formatting to complete the parameters for the specific function named {specified_function} in the following format: " + json.dumps([{"id": "insert an id for the response", "type": "function", "function": {"name": f"{specified_function}", "arguments": {"first property key": "first property value", "second property key": "second property value"}}}], indent=0)
-                             except Exception:
-                                # In case of any issues, just revert back to no specified function
-                                pass
-                        messages_string += json_formatting_instruction
+                        messages_string += tool_json_formatting_instruction
 
                         # Set temperature low automatically if function calling
                         genparams["temperature"] = 0.2
