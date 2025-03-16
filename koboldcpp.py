@@ -559,6 +559,11 @@ def tryparseint(value):
         return int(value)
     except ValueError:
         return value
+def tryparsefloat(value):
+    try:
+        return float(value)
+    except ValueError:
+        return value
 
 def is_incomplete_utf8_sequence(byte_seq): #note, this will only flag INCOMPLETE sequences, corrupted ones will be ignored.
     try:
@@ -1401,8 +1406,8 @@ def sd_generate(genparams):
             prompt = forced_posprompt
     init_images_arr = genparams.get("init_images", [])
     init_images = ("" if (not init_images_arr or len(init_images_arr)==0 or not init_images_arr[0]) else init_images_arr[0])
-    denoising_strength = genparams.get("denoising_strength", 0.6)
-    cfg_scale = genparams.get("cfg_scale", 5)
+    denoising_strength = tryparsefloat(genparams.get("denoising_strength", 0.6))
+    cfg_scale = tryparsefloat(genparams.get("cfg_scale", 5))
     sample_steps = tryparseint(genparams.get("steps", 20))
     width = tryparseint(genparams.get("width", 512))
     height = tryparseint(genparams.get("height", 512))
