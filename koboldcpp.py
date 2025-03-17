@@ -2812,8 +2812,8 @@ Enter Prompt:<br>
                                 savedata_obj.pop(str(slotid))
                                 saveneeded = True
                         if saveneeded:
-                            if args.savedatafile and os.path.exists(args.savedatafile):
-                                with open(args.savedatafile, 'w+', encoding='utf-8', errors='ignore') as f:
+                            if args.savedatafile and os.path.exists(os.path.abspath(args.savedatafile)):
+                                with open(os.path.abspath(args.savedatafile), 'w+', encoding='utf-8', errors='ignore') as f:
                                     json.dump(savedata_obj, f)
                                     print(f"Data was saved to slot {slotid}")
                                 response_body = (json.dumps({"success":True, "error":""}).encode())
