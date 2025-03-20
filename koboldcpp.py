@@ -3029,7 +3029,17 @@ Enter Prompt:<br>
                         }}).encode())
                         return
 
-                utfprint("\nInput: " + json.dumps(genparams),1)
+
+                tmpimgs = genparams.get("images", []) # reduce amount of text printed to terminal when dumping large images
+                if tmpimgs and isinstance(tmpimgs, (list, tuple)) and len(tmpimgs)>0:
+                    printablegenparams = copy.deepcopy(genparams)
+                    outarr = []
+                    for img in tmpimgs:
+                        outarr.append(str(img[:512])+"...")
+                    printablegenparams["images"] = outarr
+                    utfprint("\nInput: " + json.dumps(printablegenparams),1)
+                else:
+                    utfprint("\nInput: " + json.dumps(genparams),1)
 
                 if args.foreground:
                     bring_terminal_to_foreground()
