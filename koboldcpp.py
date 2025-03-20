@@ -1905,7 +1905,7 @@ def transform_genparams(genparams, api_format):
                         if item['type']=="text":
                                 messages_string += item['text']
                         elif item['type']=="image_url":
-                            if item['image_url'] and item['image_url']['url'] and item['image_url']['url'].startswith("data:image"):
+                            if 'image_url' in item and item['image_url'] and item['image_url']['url'] and item['image_url']['url'].startswith("data:image"):
                                 images_added.append(item['image_url']['url'].split(",", 1)[1])
                 # If last message, add any tools calls after message content and before message end token if any
                 if message['role'] == "user" and message_index == len(messages_array):
