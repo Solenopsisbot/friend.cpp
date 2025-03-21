@@ -5642,11 +5642,11 @@ static const ggml::cpu::tensor_traits * ggml_aarch64_get_optimal_repack_type(con
             }
         }
     } else if (cur->type == GGML_TYPE_Q4_K) {
-        if (ggml_cpu_has_avx2()) {
-            if (cur->ne[1] % 8 == 0) {
-                return &ggml::cpu::aarch64::q4_K_8x8_q8_K;
-            }
-        }
+        // if (ggml_cpu_has_avx2()) { //we shall just use the regular avx2 handling, no repacking otherwise massive slowdown with gpu
+        //     if (cur->ne[1] % 8 == 0) {
+        //         return &ggml::cpu::aarch64::q4_K_8x8_q8_K;
+        //     }
+        // }
     } else if (cur->type == GGML_TYPE_IQ4_NL) {
         if (ggml_cpu_has_neon() && ggml_cpu_has_dotprod()) {
             if (cur->ne[1] % 4 == 0) {

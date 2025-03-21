@@ -286,7 +286,7 @@ static buft_list_t make_cpu_buft_list(const std::vector<ggml_backend_dev_t> & de
 
     // add extra buffer types, only if no GPU device is present
     // ref: https://github.com/ggml-org/llama.cpp/issues/12481#issuecomment-2743136094
-    if (!has_gpu_device) {
+    if (true) { //kcpp needs this to be true, otherwise 4_0_4_4 quants will break. avx2 repacking dont affect us cause we disabled it
         auto * cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
         auto * cpu_reg = ggml_backend_dev_backend_reg(cpu_dev);
         auto ggml_backend_dev_get_extra_bufts_fn = (ggml_backend_dev_get_extra_bufts_t)
