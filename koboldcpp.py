@@ -1891,7 +1891,7 @@ def transform_genparams(genparams, api_format):
 
             # tools handling
             tools_array = genparams.get('tools', [])
-            chosen_tool = genparams.get('tool_choice', None)
+            chosen_tool = genparams.get('tool_choice', "auto")
             tool_json_formatting_instruction = " Use this style of JSON object formatting to give your answer if you think the user is asking you to perform an action: " + json.dumps([{"id": "insert an id for the response", "type": "function", "function": {"name": "insert the name of the function you want to call", "arguments": {"first property key": "first property value", "second property key": "second property value"}}}], indent=0)
             if tools_array and len(tools_array) > 0 and chosen_tool is not None:
                 try:
@@ -1943,16 +1943,34 @@ def transform_genparams(genparams, api_format):
                 if message['role'] == "user" and message_index == len(messages_array):
                     # Check if user is passing a openai tools array, if so add to end of prompt before assistant prompt unless tool_choice has been set to None
                     if tools_array and len(tools_array) > 0 and chosen_tool is not None and chosen_tool!="none":
+                        #if auto mode, determine whether a tool is needed
                         tools_string = json.dumps(tools_array, indent=0)
-                        messages_string += tools_string
-                        messages_string += tool_json_formatting_instruction
+                        should_use_tools = True
+                        if chosen_tool=="auto":
+                            temp_poll = {
+                                "prompt": f"{messages_string}\n\nAvailable Tools:\n{tools_string}\n\nBased on the above, answer in one word only (yes or no): Should a tool be used?\n\nAnswer:\n",
+                                "max_length":4,
+                                "temperature":0.2,
+                                "top_k":10,
+                                "rep_pen":1,
+                                "ban_eos_token":False
+                                }
+                            temp_poll_result = generate(genparams=temp_poll)
+                            if temp_poll_result and "no" in temp_poll_result['text'].lower():
+                                should_use_tools = False
+                            if not args.quiet:
+                                print(f"\nDeciding if we should use a tool: {temp_poll_result['text']} ({should_use_tools})")
 
-                        # Set temperature low automatically if function calling
-                        genparams["temperature"] = 0.2
-                        genparams["using_openai_tools"] = True
+                        if should_use_tools:
+                            messages_string += tools_string
+                            messages_string += tool_json_formatting_instruction
 
-                        # Set grammar to llamacpp example grammar to force json response (see https://github.com/ggerganov/llama.cpp/blob/master/grammars/json_arr.gbnf)
-                        genparams["grammar"] = r"""
+                            # Set temperature low automatically if function calling
+                            genparams["temperature"] = 0.2
+                            genparams["using_openai_tools"] = True
+
+                            # Set grammar to llamacpp example grammar to force json response (see https://github.com/ggerganov/llama.cpp/blob/master/grammars/json_arr.gbnf)
+                            genparams["grammar"] = r"""
 root   ::= arr
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
 arr  ::=
