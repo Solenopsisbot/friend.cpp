@@ -933,7 +933,7 @@ def fetch_gpu_properties(testCL,testCU,testVK):
 
         AMDgpu = None
         try: # Get NVIDIA GPU names
-            output = subprocess.run(['nvidia-smi','--query-gpu=name,memory.total,memory.free','--format=csv,noheader'], capture_output=True, text=True, check=True, encoding='utf-8').stdout
+            output = subprocess.run(['nvidia-smi','--query-gpu=name,memory.total,memory.free','--format=csv,noheader'], capture_output=True, text=True, check=True, encoding='utf-8', timeout=10).stdout
             FetchedCUdevices = [line.split(",")[0].strip() for line in output.splitlines()]
             FetchedCUdeviceMem = [line.split(",")[1].strip().split(" ")[0].strip() for line in output.splitlines()]
             FetchedCUfreeMem = [line.split(",")[2].strip().split(" ")[0].strip() for line in output.splitlines()]
@@ -944,7 +944,7 @@ def fetch_gpu_properties(testCL,testCU,testVK):
             pass
         if len(FetchedCUdevices)==0:
             try: # Get AMD ROCm GPU names
-                output = subprocess.run(['rocminfo'], capture_output=True, text=True, check=True, encoding='utf-8').stdout
+                output = subprocess.run(['rocminfo'], capture_output=True, text=True, check=True, encoding='utf-8', timeout=10).stdout
                 device_name = None
                 for line in output.splitlines(): # read through the output line by line
                     line = line.strip()
@@ -956,7 +956,7 @@ def fetch_gpu_properties(testCL,testCU,testVK):
                     elif line.startswith("Device Type:") and "GPU" not in line:
                         device_name = None
                 if FetchedCUdevices:
-                    getamdvram = subprocess.run(['rocm-smi', '--showmeminfo', 'vram', '--csv'], capture_output=True, text=True, check=True, encoding='utf-8').stdout # fetch VRAM of devices
+                    getamdvram = subprocess.run(['rocm-smi', '--showmeminfo', 'vram', '--csv'], capture_output=True, text=True, check=True, encoding='utf-8', timeout=10).stdout # fetch VRAM of devices
                     if getamdvram:
                         FetchedCUdeviceMem = [line.split(",")[1].strip() for line in getamdvram.splitlines()[1:] if line.strip()]
             except Exception:
@@ -991,8 +991,7 @@ def fetch_gpu_properties(testCL,testCU,testVK):
 
     if testVK:
         try: # Get Vulkan names
-            output = subprocess.run(['vulkaninfo','--summary'], capture_output=True, text=True, check=True,
-                                    encoding='utf-8', timeout=5).stdout
+            output = subprocess.run(['vulkaninfo','--summary'], capture_output=True, text=True, check=True, encoding='utf-8', timeout=10).stdout
             devicelist = [line.split("=")[1].strip() for line in output.splitlines() if "deviceName" in line]
             devicetypes = [line.split("=")[1].strip() for line in output.splitlines() if "deviceType" in line]
             idx = 0
@@ -1015,10 +1014,10 @@ def fetch_gpu_properties(testCL,testCU,testVK):
             output = ""
             data = None
             try:
-                output = subprocess.run(["clinfo","--json"], capture_output=True, text=True, check=True, encoding='utf-8').stdout
+                output = subprocess.run(["clinfo","--json"], capture_output=True, text=True, check=True, encoding='utf-8', timeout=10).stdout
                 data = json.loads(output)
             except Exception:
-                output = subprocess.run([((os.path.join(basepath, "simpleclinfo.exe")) if os.name == 'nt' else "clinfo"),"--json"], capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS, encoding='utf-8').stdout
+                output = subprocess.run([((os.path.join(basepath, "simpleclinfo.exe")) if os.name == 'nt' else "clinfo"),"--json"], capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS, encoding='utf-8', timeout=10).stdout
                 data = json.loads(output)
             plat = 0
             dev = 0
