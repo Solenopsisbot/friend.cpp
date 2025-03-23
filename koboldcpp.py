@@ -1092,8 +1092,12 @@ def load_model(model_filename):
     inputs.use_fastforward = (0 if args.nofastforward else 1)
     inputs.flash_attention = args.flashattention
     if args.quantkv>0:
-        inputs.quant_k = inputs.quant_v = args.quantkv
-        inputs.flash_attention = True
+        if args.flashattention:
+            inputs.quant_k = inputs.quant_v = args.quantkv
+        else:
+            inputs.quant_k = args.quantkv
+            inputs.quant_v = 0
+            print("\nWarning: quantkv was used without flashattention! This is NOT RECOMMENDED!\nOnly K cache can be quantized, and performance can suffer.\nIn some cases, it might even use more VRAM when doing a full offload.\nYou are strongly encouraged to use flashattention if you want to use quantkv.")
     else:
         inputs.quant_k = inputs.quant_v = 0
     inputs.blasbatchsize = args.blasbatchsize
@@ -3740,25 +3744,22 @@ def show_gui():
         else:
             fastforward.set(1)
             smartcontextbox.grid_remove()
-
-        if flashattention.get()==1:
-            qkvslider.grid()
-            qkvlabel.grid()
-            noqkvlabel.grid_remove()
-        else:
-            qkvslider.grid_remove()
-            qkvlabel.grid_remove()
+        qkvslider.grid()
+        qkvlabel.grid()
+        if flashattention.get()==0 and quantkv_var.get()>0:
             noqkvlabel.grid()
+        else:
+            noqkvlabel.grid_remove()
+
 
     def toggleflashattn(a,b,c):
-        if flashattention.get()==1:
-            qkvslider.grid()
-            qkvlabel.grid()
-            noqkvlabel.grid_remove()
-        else:
-            qkvslider.grid_remove()
-            qkvlabel.grid_remove()
+        qkvslider.grid()
+        qkvlabel.grid()
+        if flashattention.get()==0 and quantkv_var.get()>0:
             noqkvlabel.grid()
+        else:
+            noqkvlabel.grid_remove()
+
 
 
     def guibench():
@@ -3965,11 +3966,12 @@ def show_gui():
                 item.grid_remove()
     makecheckbox(tokens_tab,  "Custom RoPE Config", variable=customrope_var, row=22, command=togglerope,tooltiptxt="Override the default RoPE configuration with custom RoPE scaling.")
     makecheckbox(tokens_tab, "Use FlashAttention", flashattention, 28, command=toggleflashattn,  tooltiptxt="Enable flash attention for GGUF models.")
-    noqkvlabel = makelabel(tokens_tab,"Requirments Not Met",31,0,"Requires FlashAttention ENABLED.")
+    noqkvlabel = makelabel(tokens_tab,"QuantKV works best with flash attention enabled",33,0,"WARNING: NOT RECOMMENDED.\nOnly K cache can be quantized, and performance can suffer.\nIn some cases, it might even use more VRAM when doing a full offload.")
     noqkvlabel.configure(text_color="#ff5555")
-    qkvslider,qkvlabel,qkvtitle = makeslider(tokens_tab, "Quantize KV Cache:", quantkv_text, quantkv_var, 0, 2, 30, set=0,tooltip="Enable quantization of KV cache.\nRequires FlashAttention and disables ContextShift.")
-    makecheckbox(tokens_tab, "No BOS Token", nobostoken_var, 33, tooltiptxt="Prevents BOS token from being added at the start of any prompt. Usually NOT recommended for most models.")
-    makelabelentry(tokens_tab, "MoE Experts:", moeexperts_var, row=35, padx=100, singleline=True, tooltip="Override number of MoE experts.")
+    qkvslider,qkvlabel,qkvtitle = makeslider(tokens_tab, "Quantize KV Cache:", quantkv_text, quantkv_var, 0, 2, 30, set=0,tooltip="Enable quantization of KV cache.\nRequires FlashAttention for full effect, otherwise only K cache is quantized.")
+    quantkv_var.trace("w", toggleflashattn)
+    makecheckbox(tokens_tab, "No BOS Token", nobostoken_var, 43, tooltiptxt="Prevents BOS token from being added at the start of any prompt. Usually NOT recommended for most models.")
+    makelabelentry(tokens_tab, "MoE Experts:", moeexperts_var, row=45, padx=100, singleline=True, tooltip="Override number of MoE experts.")
 
     togglerope(1,1,1)
     toggleflashattn(1,1,1)
@@ -4168,10 +4170,7 @@ def show_gui():
         args.quiet = quietmode.get()==1
         args.nocertify = nocertifymode.get()==1
         args.nomodel = nomodel.get()==1
-        if flashattention.get()==1:
-            args.quantkv = quantkv_var.get()
-        else:
-            args.quantkv = 0
+        args.quantkv = quantkv_var.get()
 
         gpuchoiceidx = 0
         args.usecpu = False
@@ -5185,10 +5184,6 @@ def main(launch_args, default_args):
         print(f"{KcppVersion}") # just print version and exit
         return
 
-    #prevent quantkv from being used without flash attn
-    if args.quantkv and args.quantkv>0 and not args.flashattention:
-        exit_with_error(1, "Error: Using --quantkv requires --flashattention")
-
     args = convert_outdated_args(args)
 
     temp_hide_print = (args.model_param and args.prompt and not args.benchmark and not (args.debugmode >= 1))
@@ -6068,7 +6063,7 @@ if __name__ == '__main__':
     advparser.add_argument("--ignoremissing", help="Ignores all missing non-essential files, just skipping them instead.", action='store_true')
     advparser.add_argument("--chatcompletionsadapter", metavar=('[filename]'), help="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.", default="AutoGuess")
     advparser.add_argument("--flashattention", help="Enables flash attention.", action='store_true')
-    advparser.add_argument("--quantkv", help="Sets the KV cache data type quantization, 0=f16, 1=q8, 2=q4. Requires Flash Attention, and disables context shifting.",metavar=('[quantization level 0/1/2]'), type=int, choices=[0,1,2], default=0)
+    advparser.add_argument("--quantkv", help="Sets the KV cache data type quantization, 0=f16, 1=q8, 2=q4. Requires Flash Attention for full effect, otherwise only K cache is quantized.",metavar=('[quantization level 0/1/2]'), type=int, choices=[0,1,2], default=0)
     advparser.add_argument("--forceversion", help="If the model file format detection fails (e.g. rogue modified model) you can set this to override the detected format (enter desired version, e.g. 401 for GPTNeoX-Type2).",metavar=('[version]'), type=int, default=0)
     advparser.add_argument("--smartcontext", help="Reserving a portion of context to try processing less frequently. Outdated. Not recommended.", action='store_true')
     advparser.add_argument("--unpack", help="Extracts the file contents of the KoboldCpp binary into a target directory.", metavar=('destination'), type=str, default="")
