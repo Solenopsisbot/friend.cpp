@@ -64,6 +64,7 @@ mmprojpath = "" #if empty, it's not initialized
 password = "" #if empty, no auth key required
 fullwhispermodelpath = "" #if empty, it's not initialized
 ttsmodelpath = "" #if empty, not initialized
+embeddingsmodelpath = "" #if empty, not initialized
 maxctx = 4096
 maxhordectx = 4096
 maxhordelen = 400
@@ -714,7 +715,7 @@ def string_contains_or_overlaps_sequence_substring(inputstr, sequences):
     return False
 
 def get_capabilities():
-    global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath
+    global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath
     has_llm = not (friendlymodelname=="inactive")
     has_txt2img = not (friendlysdmodelname=="inactive" or fullsdmodelpath=="")
     has_vision = (mmprojpath!="")
@@ -722,8 +723,9 @@ def get_capabilities():
     has_whisper = (fullwhispermodelpath!="")
     has_search = True if args.websearch else False
     has_tts = (ttsmodelpath!="")
+    has_embeddings = (embeddingsmodelpath!="")
     admin_type = (2 if args.admin and args.admindir and args.adminpassword else (1 if args.admin and args.admindir else 0))
-    return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":has_vision,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts, "savedata":(savedata_obj is not None), "admin": admin_type}
+    return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":has_vision,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts, "embeddings":has_embeddings, "savedata":(savedata_obj is not None), "admin": admin_type}
 
 def dump_gguf_metadata(file_path): #if you're gonna copy this into your own project at least credit concedo
     chunk_size = 1024*1024*12  # read first 12mb of file
@@ -1591,8 +1593,8 @@ def embeddings_load_model(model_filename):
     global args
     inputs = embeddings_load_model_inputs()
     inputs.model_filename = model_filename.encode("UTF-8")
-    inputs.gpulayers = (999 if args.ttsgpu else 0)
-    inputs.flash_attention =  args.flashattention
+    inputs.gpulayers = 0
+    inputs.flash_attention = False
     inputs.threads = args.threads
     inputs = set_backend_props(inputs)
     ret = handle.embeddings_load_model(inputs)
@@ -3024,7 +3026,7 @@ Enter Prompt:<br>
 
         reqblocking = False
         muint = int(args.multiuser)
-        if muint<=0 and ((args.whispermodel and args.whispermodel!="") or (args.sdmodel and args.sdmodel!="") or (args.ttsmodel and args.ttsmodel!="")):
+        if muint<=0 and ((args.whispermodel and args.whispermodel!="") or (args.sdmodel and args.sdmodel!="") or (args.ttsmodel and args.ttsmodel!="") or (args.embeddingsmodel and args.embeddingsmodel!="")):
             muint = 2 # this prevents errors when using voice/img together with text
         multiuserlimit = ((muint-1) if muint > 1 else 6)
         #backwards compatibility for up to 7 concurrent requests, use default limit of 7 if multiuser set to 1
@@ -3050,6 +3052,7 @@ Enter Prompt:<br>
             is_comfyui_imggen = False
             is_transcribe = False
             is_tts = False
+            is_embeddings = False
 
             if self.path.endswith('/request'):
                 api_format = 1
@@ -3095,11 +3098,14 @@ Enter Prompt:<br>
             if self.path.endswith('/api/extra/tts') or self.path.endswith('/v1/audio/speech') or self.path.endswith('/tts_to_audio'):
                 is_tts = True
 
-            if is_imggen or is_transcribe or is_tts or api_format > 0:
+            if self.path.endswith('/api/extra/embeddings') or self.path.endswith('/v1/embeddings'):
+                is_embeddings = True
+
+            if is_imggen or is_transcribe or is_tts or is_embeddings or api_format > 0:
                 global last_req_time
                 last_req_time = time.time()
 
-                if not is_imggen and not is_transcribe and not is_tts and api_format!=5:
+                if not is_imggen and not self.path.endswith('/tts_to_audio') and api_format!=5:
                     if not self.secure_endpoint():
                         return
 
@@ -3143,7 +3149,7 @@ Enter Prompt:<br>
                 if args.foreground:
                     bring_terminal_to_foreground()
 
-                if api_format > 0:#text gen
+                if api_format > 0: #text gen
                     # Check if streaming chat completions, if so, set stream mode to true
                     if (api_format == 4 or api_format == 3) and "stream" in genparams and genparams["stream"]:
                         sse_stream_flag = True
@@ -3216,6 +3222,19 @@ Enter Prompt:<br>
                     except Exception as ex:
                         utfprint(ex,1)
                         print("TTS: The response could not be sent, maybe connection was terminated?")
+                        time.sleep(0.2) #short delay
+                    return
+                elif is_embeddings:
+                    try:
+                        gen = embeddings_generate(genparams)
+                        genresp = (json.dumps({"object":"list","data":[{"object":"embedding","index":0,"embedding":[-0.003880035,-0.05006583]}],"model":"text-embedding-3-small","usage":{"prompt_tokens":2,"total_tokens":2}}).encode())
+                        self.send_response(200)
+                        self.send_header('content-length', str(len(genresp)))
+                        self.end_headers(content_type='application/json')
+                        self.wfile.write(genresp)
+                    except Exception as ex:
+                        utfprint(ex,1)
+                        print("Create Embeddings: The response could not be sent, maybe connection was terminated?")
                         time.sleep(0.2) #short delay
                     return
 
@@ -3347,7 +3366,7 @@ def show_gui():
             if dlfile:
                 args.model_param = dlfile
             load_config_cli(args.model_param)
-        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.nomodel:
+        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.nomodel:
             global exitcounter
             exitcounter = 999
             exit_with_error(2,"No gguf model or kcpps file was selected. Exiting.")
@@ -3413,6 +3432,7 @@ def show_gui():
                     togglehorde(1,1,1)
                     togglesdquant(1,1,1)
                     toggletaesd(1,1,1)
+                    tabbuttonaction(tabnames[curr_tab_idx])
 
     if sys.platform=="darwin":
         root.resizable(False,False)
@@ -3557,18 +3577,26 @@ def show_gui():
     tts_threads_var = ctk.StringVar(value=str(default_threads))
     ttsmaxlen_var = ctk.StringVar(value=str(default_ttsmaxlen))
 
+    embeddings_model_var = ctk.StringVar()
+
     admin_var = ctk.IntVar(value=0)
     admin_dir_var = ctk.StringVar()
     admin_password_var = ctk.StringVar()
 
+    curr_tab_idx = 0
+
     def tabbuttonaction(name):
+        nonlocal curr_tab_idx
+        idx = 0
         for t in tabcontent:
             if name == t:
                 tabcontent[t].grid(row=0, column=0)
                 navbuttons[t].configure(fg_color="#6f727b")
+                curr_tab_idx = idx
             else:
                 tabcontent[t].grid_remove()
                 navbuttons[t].configure(fg_color="transparent")
+            idx += 1
 
     # Dynamically create tabs + buttons based on values of [tabnames]
     for idx, name in enumerate(tabnames):
@@ -4034,8 +4062,9 @@ def show_gui():
     makelabelentry(model_tab, "Draft Amount: ", draftamount_var, 13, 50,padx=100,singleline=True,tooltip="How many tokens to draft per chunk before verifying results")
     makelabelentry(model_tab, "Splits: ", draftgpusplit_str_vars, 13, 50,padx=210,singleline=True,tooltip="Distribution of draft model layers. Leave blank to follow main model's gpu split. Only works if multi-gpu (All) selected in main model.", labelpadx=160)
     makelabelentry(model_tab, "Layers: ", draftgpulayers_var, 13, 50,padx=320,singleline=True,tooltip="How many layers to GPU offload for the draft model", labelpadx=270)
-    makefileentry(model_tab, "Preload Story:", "Select Preloaded Story File", preloadstory_var, 15,width=280,singlerow=True,tooltiptxt="Select an optional KoboldAI JSON savefile \nto be served on launch to any client.")
-    makefileentry(model_tab, "SaveData File:", "Select or Create New SaveData Database File", savedatafile_var, 17,width=280,filetypes=[("KoboldCpp SaveDB", "*.jsondb")],singlerow=True,dialog_type=1,tooltiptxt="Selecting a file will allow data to be loaded and saved persistently to this KoboldCpp server remotely. File is created if it does not exist.")
+    makefileentry(model_tab, "Embeds Model:", "Select Embeddings Model File", embeddings_model_var, 15, width=280,singlerow=True, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select an embeddings GGUF model that can be used to generate embedding vectors.")
+    makefileentry(model_tab, "Preload Story:", "Select Preloaded Story File", preloadstory_var, 17,width=280,singlerow=True,tooltiptxt="Select an optional KoboldAI JSON savefile \nto be served on launch to any client.")
+    makefileentry(model_tab, "SaveData File:", "Select or Create New SaveData Database File", savedatafile_var, 19,width=280,filetypes=[("KoboldCpp SaveDB", "*.jsondb")],singlerow=True,dialog_type=1,tooltiptxt="Selecting a file will allow data to be loaded and saved persistently to this KoboldCpp server remotely. File is created if it does not exist.")
     makefileentry(model_tab, "ChatCompletions Adapter:", "Select ChatCompletions Adapter File", chatcompletionsadapter_var, 24, width=250, filetypes=[("JSON Adapter", "*.json")], tooltiptxt="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.")
     def pickpremadetemplate():
         initialDir = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'kcpp_adapters')
@@ -4189,7 +4218,7 @@ def show_gui():
 
     # launch
     def guilaunch():
-        if model_var.get() == "" and sd_model_var.get() == "" and whisper_model_var.get() == "" and tts_model_var.get() == "" and nomodel.get()!=1:
+        if model_var.get() == "" and sd_model_var.get() == "" and whisper_model_var.get() == "" and tts_model_var.get() == "" and embeddings_model_var.get() == "" and nomodel.get()!=1:
             tmp = askopenfilename(title="Select ggml model .bin or .gguf file")
             model_var.set(tmp)
         nonlocal nextstate
@@ -4359,6 +4388,9 @@ def show_gui():
 
         if whisper_model_var.get() != "":
             args.whispermodel = whisper_model_var.get()
+
+        if embeddings_model_var.get() != "":
+            args.embeddingsmodel = embeddings_model_var.get()
 
         if tts_model_var.get() != "" and wavtokenizer_var.get() != "":
             args.ttsthreads = (0 if tts_threads_var.get()=="" else int(tts_threads_var.get()))
@@ -4543,6 +4575,8 @@ def show_gui():
         ttsgpu_var.set(dict["ttsgpu"] if ("ttsgpu" in dict) else 0)
         ttsmaxlen_var.set(str(dict["ttsmaxlen"]) if ("ttsmaxlen" in dict and dict["ttsmaxlen"]) else str(default_ttsmaxlen))
 
+        embeddings_model_var.set(dict["embeddingsmodel"] if ("embeddingsmodel" in dict and dict["embeddingsmodel"]) else "")
+
         admin_var.set(dict["admin"] if ("admin" in dict) else 0)
         admin_dir_var.set(dict["admindir"] if ("admindir" in dict and dict["admindir"]) else "")
         admin_password_var.set(dict["adminpassword"] if ("adminpassword" in dict and dict["adminpassword"]) else "")
@@ -4623,7 +4657,7 @@ def show_gui():
         kcpp_exporting_template = False
         export_vars()
 
-        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.nomodel:
+        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.nomodel:
             exitcounter = 999
             print("")
             time.sleep(0.5)
@@ -5284,7 +5318,7 @@ def main(launch_args, default_args):
         load_config_cli(args.model_param)
 
     # show the GUI launcher if a model was not provided
-    if args.showgui or (not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.nomodel):
+    if args.showgui or (not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.nomodel):
         #give them a chance to pick a file
         print("For command line arguments, please refer to --help")
         print("***")
@@ -5390,7 +5424,7 @@ def main(launch_args, default_args):
 
 def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, start_time, exitcounter, global_memory, using_gui_launcher
-    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath
+    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath
 
     start_server = True
 
@@ -5532,6 +5566,10 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         dlfile = download_model_from_url(args.ttswavtokenizer,[".gguf"],min_file_size=500000)
         if dlfile:
             args.ttswavtokenizer = dlfile
+    if args.embeddingsmodel and args.embeddingsmodel!="":
+        dlfile = download_model_from_url(args.embeddingsmodel,[".gguf"],min_file_size=500000)
+        if dlfile:
+            args.embeddingsmodel = dlfile
 
     # sanitize and replace the default vanity name. remember me....
     if args.model_param and args.model_param!="":
@@ -5822,6 +5860,24 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 exitcounter = 999
                 exit_with_error(3,"Could not load TTS model!")
 
+    #handle embeddings model
+    if args.embeddingsmodel and args.embeddingsmodel!="":
+        if not os.path.exists(args.embeddingsmodel):
+            if args.ignoremissing:
+                print("Ignoring missing TTS model files!")
+                args.embeddingsmodel = None
+            else:
+                exitcounter = 999
+                exit_with_error(2,f"Cannot find embeddings model files: {args.embeddingsmodel}")
+        else:
+            embeddingsmodelpath = args.embeddingsmodel
+            embeddingsmodelpath = os.path.abspath(embeddingsmodelpath)
+            loadok = embeddings_load_model(embeddingsmodelpath)
+            print("Load Embeddings Model OK: " + str(loadok))
+            if not loadok:
+                exitcounter = 999
+                exit_with_error(3,"Could not load Embeddings model!")
+
 
     #load embedded lite
     try:
@@ -5879,6 +5935,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     enabledmlist.append("ApiKeyPassword") if "protected" in caps and caps["protected"] else disabledmlist.append("ApiKeyPassword")
     enabledmlist.append("WebSearchProxy") if "websearch" in caps and caps["websearch"] else disabledmlist.append("WebSearchProxy")
     enabledmlist.append("TextToSpeech") if "tts" in caps and caps["tts"] else disabledmlist.append("TextToSpeech")
+    enabledmlist.append("VectorEmbeddings") if "embeddings" in caps and caps["embeddings"] else disabledmlist.append("VectorEmbeddings")
     enabledmlist.append("AdminControl") if "admin" in caps and caps["admin"]!=0 else disabledmlist.append("AdminControl")
 
     print(f"======\nActive Modules: {' '.join(enabledmlist)}")
@@ -6154,6 +6211,9 @@ if __name__ == '__main__':
     ttsparsergroup.add_argument("--ttsgpu", help="Use the GPU for TTS.", action='store_true')
     ttsparsergroup.add_argument("--ttsmaxlen", help="Limit number of audio tokens generated with TTS.",  type=int, default=default_ttsmaxlen)
     ttsparsergroup.add_argument("--ttsthreads", metavar=('[threads]'), help="Use a different number of threads for TTS if specified. Otherwise, has the same value as --threads.", type=int, default=0)
+
+    embeddingsparsergroup = parser.add_argument_group('Embeddings Model Commands')
+    embeddingsparsergroup.add_argument("--embeddingsmodel", metavar=('[filename]'), help="Specify an embeddings model to be loaded for generating embedding vectors.", default="")
 
     admingroup = parser.add_argument_group('Administration Commands')
     admingroup.add_argument("--admin", help="Enables admin mode, allowing you to unload and reload different configurations or models.", action='store_true')
