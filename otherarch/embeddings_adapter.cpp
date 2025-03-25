@@ -24,7 +24,7 @@
 static llama_context * embeddings_ctx = nullptr; //text to codes ctx
 static std::string ttsplatformenv, ttsdeviceenv, ttsvulkandeviceenv;
 bool embeddings_debug = false;
-const int max_batchsize = 2048;
+static int max_batchsize = 512;
 static std::string last_output = "";
 
 static void batch_add_seq(llama_batch & batch, const std::vector<int32_t> & tokens, llama_seq_id seq_id) {
@@ -128,16 +128,20 @@ bool embeddingstype_load_model(const embeddings_load_model_inputs inputs)
     model_params.use_mlock = false;
     model_params.n_gpu_layers = inputs.gpulayers; //offload if possible
     model_params.split_mode = llama_split_mode::LLAMA_SPLIT_MODE_LAYER;
+
+    llama_model * embeddingsmodel = llama_model_load_from_file(modelfile.c_str(), model_params);
+    const int n_ctx_train = llama_model_n_ctx_train(embeddingsmodel);
+
+    max_batchsize = n_ctx_train;
     ctx_params.embeddings = true;
     ctx_params.n_ubatch = ctx_params.n_ubatch = max_batchsize; //max size, must fit
-    ctx_params.n_ctx = max_batchsize + 512;
+    ctx_params.n_ctx = max_batchsize;
     ctx_params.logits_all = false;
     ctx_params.offload_kqv = true;
     ctx_params.n_threads = nthreads;
     ctx_params.n_threads_batch = nthreads;
     ctx_params.flash_attn = inputs.flash_attention;
 
-    llama_model * embeddingsmodel = llama_model_load_from_file(modelfile.c_str(), model_params);
     embeddings_ctx = llama_new_context_with_model(embeddingsmodel, ctx_params);
 
     if (embeddings_ctx == nullptr) {
@@ -156,7 +160,6 @@ bool embeddingstype_load_model(const embeddings_load_model_inputs inputs)
 
     const llama_vocab * vocab = llama_model_get_vocab(embeddingsmodel);
 
-    const int n_ctx_train = llama_model_n_ctx_train(embeddingsmodel);
     const int n_ctx = llama_n_ctx(embeddings_ctx);
 
     if (llama_model_has_encoder(embeddingsmodel) && llama_model_has_decoder(embeddingsmodel)) {
@@ -181,6 +184,7 @@ embeddings_generation_outputs embeddingstype_generate(const embeddings_generatio
         printf("\nWarning: KCPP Embeddings Model not initialized!\n");
         output.data = "";
         output.status = 0;
+        output.count = 0;
         return output;
     }
 
@@ -197,14 +201,19 @@ embeddings_generation_outputs embeddingstype_generate(const embeddings_generatio
     std::vector<std::vector<int32_t>> prompt_inputs;
     auto inp = common_tokenize(embeddings_ctx, prompt, true, true);
     if (inp.size() > n_batch) {
-        printf("\n%s: number of tokens in input line (%lld) exceeds batch size (%lld), lower token amount!\n",
+        printf("\n%s: number of tokens in an input (%lld) exceeds embedding size limit for this model (%lld), lower token amount!\n",
                 __func__, (long long int) inp.size(), (long long int) n_batch);
         output.data = "";
         output.status = 0;
+        output.count = 0;
         return output;
     }
     prompt_inputs.push_back(inp);
 
+    if(embeddings_debug)
+    {
+        print_tok_vec(inp);
+    }
     printf("\nGenerating Embeddings for %d tokens...",inp.size());
 
     // initialize batch
@@ -272,5 +281,6 @@ embeddings_generation_outputs embeddingstype_generate(const embeddings_generatio
 
     output.data = last_output.c_str();
     output.status = 1;
+    output.count = inp.size();
     return output;
 }

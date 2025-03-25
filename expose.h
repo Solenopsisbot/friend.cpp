@@ -255,6 +255,7 @@ struct embeddings_generation_inputs
 struct embeddings_generation_outputs
 {
     int status = -1;
+    int count = 0;
     const char * data = "";
 };
 

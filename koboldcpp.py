@@ -336,6 +336,7 @@ class embeddings_generation_inputs(ctypes.Structure):
 
 class embeddings_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
+                ("count", ctypes.c_int),
                 ("data", ctypes.c_char_p)]
 
 def getdirpath():
@@ -1602,14 +1603,34 @@ def embeddings_load_model(model_filename):
 
 def embeddings_generate(genparams):
     global args
-    prompt = genparams.get("input", "")
-    inputs = embeddings_generation_inputs()
-    inputs.prompt = prompt.encode("UTF-8")
-    ret = handle.embeddings_generate(inputs)
-    outstr = ""
-    if ret.status==1:
-        outstr = ret.data.decode("UTF-8","ignore")
-    return outstr
+    prompts = []
+    if isinstance(genparams.get('input',[]), list):
+        prompts = genparams.get('input',[])
+    else:
+        prompt = genparams.get("input", "")
+        if prompt:
+            prompts.append(prompt)
+
+    tokarrs = []
+    tokcnt = 0
+    for prompt in prompts:
+        tokarr = []
+        tmpcnt = 0
+        try:
+            inputs = embeddings_generation_inputs()
+            inputs.prompt = prompt.encode("UTF-8")
+            ret = handle.embeddings_generate(inputs)
+            if ret.status==1:
+                outstr = ret.data.decode("UTF-8","ignore")
+                tokarr = json.loads(outstr) if outstr else []
+                tmpcnt = ret.count
+        except Exception as e:
+            tokarr = []
+            tmpcnt = 0
+            print(f"Error: {e}")
+        tokarrs.append(tokarr)
+        tokcnt += tmpcnt
+    return {"count":tokcnt, "data":tokarrs}
 
 def tokenize_ids(countprompt,tcaddspecial):
     rawcountdata = handle.token_count(countprompt.encode("UTF-8"),tcaddspecial)
@@ -3227,7 +3248,12 @@ Enter Prompt:<br>
                 elif is_embeddings:
                     try:
                         gen = embeddings_generate(genparams)
-                        genresp = (json.dumps({"object":"list","data":[{"object":"embedding","index":0,"embedding":[-0.003880035,-0.05006583]}],"model":"text-embedding-3-small","usage":{"prompt_tokens":2,"total_tokens":2}}).encode())
+                        outdatas = []
+                        odidx = 0
+                        for od in gen["data"]:
+                            outdatas.append([{"object":"embedding","index":odidx,"embedding":od}])
+                            odidx += 1
+                        genresp = (json.dumps({"object":"list","data":outdatas,"model":"koboldcpp-embeddings","usage":{"prompt_tokens":gen["count"],"total_tokens":gen["count"]}}).encode())
                         self.send_response(200)
                         self.send_header('content-length', str(len(genresp)))
                         self.end_headers(content_type='application/json')
