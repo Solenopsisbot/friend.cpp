@@ -58,6 +58,7 @@ static void apply_binary_op(const ggml_compute_params * params, ggml_tensor * ds
     GGML_ASSERT(ggml_can_repeat(src1, src0) && ggml_are_same_shape(src0, dst));
 
     #if defined(GGML_USE_CLBLAST)
+    //do we even need this? it seems like its actually slower than just CPU
     const int ith = params->ith;
     if (op == op_add && src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32 && src1->clblast_offload_gpu) {
         // TODO: OpenCL kernel support full broadcast
@@ -73,7 +74,7 @@ static void apply_binary_op(const ggml_compute_params * params, ggml_tensor * ds
         static_assert(GGML_MAX_DIMS == 4, "GGML_MAX_DIMS is not 4 - update this function");
         GGML_ASSERT((src1->ne[0] == src0->ne[0]) && ggml_can_repeat(src1, src0));
         if (ith == 0) {
-            ggml_cl_add(src0, src1, dst);
+            ggml_cl_mul(src0, src1, dst);
         }
         return;
     }
