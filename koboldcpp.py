@@ -3206,8 +3206,10 @@ Enter Prompt:<br>
                                     toolsdata_res[0]["index"] = 0 # need to add an index for OWUI
                             except Exception:
                                 toolsdata_res = []
-                            toolsdata_p1 = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":"tool_calls","delta":{'role':'assistant','content':None, "tool_calls":toolsdata_res}}]})
+                            toolsdata_p1 = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"delta":{'role':'assistant','content':None, "tool_calls":toolsdata_res}}]})
+                            toolsdata_p2 = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":"tool_calls","delta":{}}]})
                             self.wfile.write(f'data: {toolsdata_p1}\n\n'.encode())
+                            self.wfile.write(f'data: {toolsdata_p2}\n\n'.encode())
                             self.wfile.write('data: [DONE]'.encode())
                             self.wfile.flush()
                             self.close_connection = True
