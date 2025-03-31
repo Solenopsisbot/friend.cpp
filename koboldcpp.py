@@ -2018,8 +2018,8 @@ def transform_genparams(genparams, api_format):
                         #if auto mode, determine whether a tool is needed
                         tools_string = json.dumps(tools_array, indent=0)
                         should_use_tools = True
-                        user_start = adapter_obj.get("user_start", "### Instruction:\n\n")
-                        user_end = adapter_obj.get("user_end", "\n\n### Response:\n\n")
+                        user_start = user_message_start
+                        user_end = assistant_message_start
                         if chosen_tool=="auto":
                             temp_poll = {
                                 "prompt": f"{user_start}User query:\n\n{messages_string}\n\nTool Code:\n{tools_string}Determine from the provided tool code if the user query would be best answered by a listed tool (One word: yes / no):{user_end}",
@@ -2030,7 +2030,7 @@ def transform_genparams(genparams, api_format):
                                 "ban_eos_token":False
                                 }
                             temp_poll_result = generate(genparams=temp_poll)
-                            if temp_poll_result and not "yes" in temp_poll_result['text'].lower():
+                            if temp_poll_result and "yes" not in temp_poll_result['text'].lower():
                                 should_use_tools = False
                             if not args.quiet:
                                 print(f"\nRelevant tool is listed: {temp_poll_result['text']} ({should_use_tools})")
@@ -2301,6 +2301,10 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     async def handle_sse_stream(self, genparams, api_format):
         global friendlymodelname, currfinishreason
+        # if tools, do not send anything - OAI tool calls will be handled with fakestreaming!
+        using_openai_tools = genparams.get('using_openai_tools', False)
+        if api_format == 4 and using_openai_tools:
+            return
         self.send_response(200)
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("cache-control", "no-cache")
@@ -2311,6 +2315,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         incomplete_token_buffer = bytearray()
         async_sleep_short = 0.02
         await asyncio.sleep(0.35) #anti race condition, prevent check from overtaking generate
+
         try:
             tokenReserve = "" #keeps fully formed tokens that we cannot send out yet
             while True:
@@ -3188,6 +3193,24 @@ Enter Prompt:<br>
                             self.send_header('content-length', str(len(genresp)))
                             self.end_headers(content_type='application/json')
                             self.wfile.write(genresp)
+                        elif api_format == 4 and genparams.get('using_openai_tools', False): #special case, fake streaming for openai tool calls
+                            self.send_response(200)
+                            self.send_header("X-Accel-Buffering", "no")
+                            self.send_header("cache-control", "no-cache")
+                            self.send_header("connection", "keep-alive")
+                            self.end_headers(content_type='text/event-stream')
+                            toolsdata_res = []
+                            try:
+                                toolsdata_res = gen['choices'][0]['message']['tool_calls']
+                            except Exception:
+                                toolsdata_res = []
+                            toolsdata_p1 = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"delta":{'role':'assistant','content':None, "tool_calls":toolsdata_res}}]})
+                            toolsdata_p2 = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":"tool_calls","delta":{}}]})
+                            self.wfile.write(f'data: {toolsdata_p1}\n\n'.encode())
+                            self.wfile.write(f'data: {toolsdata_p2}\n\n'.encode())
+                            self.wfile.write('data: [DONE]'.encode())
+                            self.wfile.flush()
+                            self.close_connection = True
                     except Exception as ex:
                         utfprint(ex,1)
                         print("Generate: The response could not be sent, maybe connection was terminated?")
