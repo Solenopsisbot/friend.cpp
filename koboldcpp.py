@@ -3202,6 +3202,8 @@ Enter Prompt:<br>
                             toolsdata_res = []
                             try:
                                 toolsdata_res = gen['choices'][0]['message']['tool_calls']
+                                if toolsdata_res and len(toolsdata_res)>0:
+                                    toolsdata_res[0]["index"] = 0 # need to add an index for OWUI
                             except Exception:
                                 toolsdata_res = []
                             toolsdata_p1 = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"delta":{'role':'assistant','content':None, "tool_calls":toolsdata_res}}]})
