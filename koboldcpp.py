@@ -58,6 +58,7 @@ using_gui_launcher = False
 handle = None
 friendlymodelname = "inactive"
 friendlysdmodelname = "inactive"
+friendlyembeddingsmodelname = "inactive"
 lastgeneratedcomfyimg = b''
 fullsdmodelpath = ""  #if empty, it's not initialized
 mmprojpath = "" #if empty, it's not initialized
@@ -2541,7 +2542,7 @@ Enter Prompt:<br>
     def do_GET(self):
         global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
         global last_req_time, start_time
-        global savedata_obj, has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password
+        global savedata_obj, has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, friendlyembeddingsmodelname
         self.path = self.path.rstrip('/')
         response_body = None
         content_type = 'application/json'
@@ -3289,7 +3290,7 @@ Enter Prompt:<br>
                         for od in gen["data"]:
                             outdatas.append([{"object":"embedding","index":odidx,"embedding":od}])
                             odidx += 1
-                        genresp = (json.dumps({"object":"list","data":outdatas,"model":"koboldcpp-embeddings","usage":{"prompt_tokens":gen["count"],"total_tokens":gen["count"]}}).encode())
+                        genresp = (json.dumps({"object":"list","data":outdatas,"model":friendlyembeddingsmodelname,"usage":{"prompt_tokens":gen["count"],"total_tokens":gen["count"]}}).encode())
                         self.send_response(200)
                         self.send_header('content-length', str(len(genresp)))
                         self.end_headers(content_type='application/json')
@@ -5495,7 +5496,7 @@ def main(launch_args, default_args):
 
 def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, start_time, exitcounter, global_memory, using_gui_launcher
-    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath
+    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, friendlyembeddingsmodelname
 
     start_server = True
 
@@ -5945,6 +5946,9 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             embeddingsmodelpath = os.path.abspath(embeddingsmodelpath)
             loadok = embeddings_load_model(embeddingsmodelpath)
             print("Load Embeddings Model OK: " + str(loadok))
+            friendlyembeddingsmodelname = os.path.basename(embeddingsmodelpath)
+            friendlyembeddingsmodelname = os.path.splitext(friendlyembeddingsmodelname)[0]
+            friendlyembeddingsmodelname = sanitize_string(friendlyembeddingsmodelname)
             if not loadok:
                 exitcounter = 999
                 exit_with_error(3,"Could not load Embeddings model!")
