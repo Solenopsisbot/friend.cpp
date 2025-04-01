@@ -49,7 +49,7 @@ logit_bias_max = 512
 dry_seq_break_max = 128
 
 # global vars
-KcppVersion = "1.87"
+KcppVersion = "1.87.1"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False}
@@ -332,7 +332,8 @@ class embeddings_load_model_inputs(ctypes.Structure):
                 ("debugmode", ctypes.c_int)]
 
 class embeddings_generation_inputs(ctypes.Structure):
-    _fields_ = [("prompt", ctypes.c_char_p)]
+    _fields_ = [("prompt", ctypes.c_char_p),
+                ("truncate", ctypes.c_bool)]
 
 class embeddings_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -1619,6 +1620,7 @@ def embeddings_generate(genparams):
         try:
             inputs = embeddings_generation_inputs()
             inputs.prompt = prompt.encode("UTF-8")
+            inputs.truncate = genparams.get('truncate', True)
             ret = handle.embeddings_generate(inputs)
             if ret.status==1:
                 outstr = ret.data.decode("UTF-8","ignore")
@@ -5172,6 +5174,7 @@ def convert_args_to_template(savdict):
     savdict["useclblast"] = None
     savdict["usecublas"] = None
     savdict["usevulkan"] = None
+    savdict["usecpu"] = None
     savdict["tensor_split"] = None
     savdict["draftgpusplit"] = None
     savdict["config"] = None
