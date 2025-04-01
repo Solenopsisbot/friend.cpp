@@ -1964,7 +1964,7 @@ def transform_genparams(genparams, api_format):
             # tools handling
             tools_array = genparams.get('tools', [])
             chosen_tool = genparams.get('tool_choice', "auto")
-            tool_json_formatting_instruction = " Use this style of JSON object formatting to give your answer if you think the user is asking you to perform an action: " + json.dumps([{"id": "insert an id for the response", "type": "function", "function": {"name": "insert the name of the function you want to call", "arguments": "{\"first property key\": \"first property value\", \"second property key\": \"second property value\"}"}}], indent=0)
+            tool_json_formatting_instruction = "\nUse this style of JSON object formatting to give your answer if you think the user is asking you to perform an action: " + json.dumps([{"id": "insert an id for the response", "type": "function", "function": {"name": "insert the name of the function you want to call", "arguments": {"first property key": "first property value", "second property key": "second property value"}}}], indent=0)
             if tools_array and len(tools_array) > 0 and chosen_tool is not None:
                 try:
                     specified_function = ""
@@ -1981,7 +1981,7 @@ def transform_genparams(genparams, api_format):
                     if located_tooljson:
                         tools_array = []
                         tools_array.append(located_tooljson)
-                        tool_json_formatting_instruction = f"The user is asking you to use the style of this JSON object formatting to complete the parameters for the specific function named {specified_function} in the following format: " + json.dumps([{"id": "insert an id for the response", "type": "function", "function": {"name": f"{specified_function}", "arguments": "{\"first property key\": \"first property value\", \"second property key\": \"second property value\"}"}}], indent=0)
+                        tool_json_formatting_instruction = f"\nThe user is asking you to use the style of this JSON object formatting to complete the parameters for the specific function named {specified_function} in the following format: " + json.dumps([{"id": "insert an id for the response", "type": "function", "function": {"name": f"{specified_function}", "arguments": {"first property key": "first property value", "second property key": "second property value"}}}], indent=0)
                 except Exception:
                     # In case of any issues, just revert back to no specified function
                     pass
@@ -2018,11 +2018,13 @@ def transform_genparams(genparams, api_format):
                         #if auto mode, determine whether a tool is needed
                         tools_string = json.dumps(tools_array, indent=0)
                         should_use_tools = True
-                        user_start = user_message_start
                         user_end = assistant_message_start
                         if chosen_tool=="auto":
+                            # if you want a different template, you can set 'custom_tools_prompt' in the chat completions adapter as follows
+                            custom_tools_prompt = adapter_obj.get("custom_tools_prompt", "Can the user query be answered by a listed tool? (One word response: yes or no):")
+                            # note: message string already contains the instruct start tag!
                             temp_poll = {
-                                "prompt": f"{user_start}User query:\n\n{messages_string}\n\nTool Code:\n{tools_string}Determine from the provided tool code if the user query would be best answered by a listed tool (One word: yes / no):{user_end}",
+                                "prompt": f"{messages_string}\n\nTool List:\n{tools_string}\n\n{custom_tools_prompt}{user_end}",
                                 "max_length":4,
                                 "temperature":0.1,
                                 "top_k":1,
@@ -2266,6 +2268,10 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             if using_openai_tools:
                 tool_calls = extract_json_from_string(recvtxt)
                 if tool_calls and len(tool_calls)>0:
+                    for tc in tool_calls:
+                        tcarg = tc.get("function",{}).get("arguments",None)
+                        if tcarg and not isinstance(tcarg, str):
+                            tc["function"]["arguments"] = json.dumps(tcarg)
                     recvtxt = None
                     currfinishreason = "tool_calls"
             res = {"id": "chatcmpl-A1", "object": "chat.completion", "created": int(time.time()), "model": friendlymodelname,
