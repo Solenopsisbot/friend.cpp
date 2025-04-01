@@ -3288,7 +3288,7 @@ Enter Prompt:<br>
                         outdatas = []
                         odidx = 0
                         for od in gen["data"]:
-                            outdatas.append([{"object":"embedding","index":odidx,"embedding":od}])
+                            outdatas.append({"object":"embedding","index":odidx,"embedding":od})
                             odidx += 1
                         genresp = (json.dumps({"object":"list","data":outdatas,"model":friendlyembeddingsmodelname,"usage":{"prompt_tokens":gen["count"],"total_tokens":gen["count"]}}).encode())
                         self.send_response(200)
