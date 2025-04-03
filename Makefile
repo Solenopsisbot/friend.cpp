@@ -392,6 +392,9 @@ endif
 endif
 endif
 
+ifdef NO_VULKAN_EXTENSIONS
+	VKGEN_ADD = -DNO_VULKAN_EXTENSIONS
+endif
 
 #
 # Print build information
@@ -585,7 +588,7 @@ ggml_v3-opencl.o: otherarch/ggml_v3-opencl.cpp otherarch/ggml_v3-opencl.h
 
 #vulkan
 ggml-vulkan.o: ggml/src/ggml-vulkan/ggml-vulkan.cpp ggml/include/ggml-vulkan.h ggml/src/ggml-vulkan-shaders.cpp
-	$(CXX) $(CXXFLAGS) $(VULKAN_FLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(VKGEN_ADD) $(VULKAN_FLAGS) -c $< -o $@
 
 # intermediate objects
 llama.o: src/llama.cpp ggml/include/ggml.h ggml/include/ggml-alloc.h ggml/include/ggml-backend.h ggml/include/ggml-cuda.h ggml/include/ggml-metal.h include/llama.h otherarch/llama-util.h
@@ -666,15 +669,17 @@ endif
 
 vulkan-shaders-gen: ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 	@echo 'Vulkan shaders need to be regenerated. This can only be done on Windows or Linux. Please stand by...'
-	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) $(VKGEN_ADD) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 ifeq ($(OS),Windows_NT)
 	@echo 'Now rebuilding vulkan shaders for Windows...'
 	$(shell) vulkan-shaders-gen --glslc glslc --input-dir ggml/src/ggml-vulkan/vulkan-shaders --target-hpp ggml/src/ggml-vulkan-shaders.hpp --target-cpp ggml/src/ggml-vulkan-shaders.cpp
+	@echo 'Vulkan Shaders Rebuilt for Windows...'
 else
 	@echo 'Now rebuilding vulkan shaders for Linux...'
 	${shell} chmod +x vulkan-shaders-gen
 	${shell} chmod +x glslc-linux
 	$(shell) ./vulkan-shaders-gen --glslc ./glslc-linux --input-dir ggml/src/ggml-vulkan/vulkan-shaders --target-hpp ggml/src/ggml-vulkan-shaders.hpp --target-cpp ggml/src/ggml-vulkan-shaders.cpp
+	@echo 'Vulkan Shaders Rebuilt for Linux...'
 endif
 
 #generated libraries
