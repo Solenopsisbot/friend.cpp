@@ -49,7 +49,7 @@ logit_bias_max = 512
 dry_seq_break_max = 128
 
 # global vars
-KcppVersion = "1.87.1"
+KcppVersion = "1.87.2"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False}
@@ -5678,6 +5678,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         filepath = os.path.abspath(args.savedatafile)  # Ensure it's an absolute path
         if not filepath.endswith(".jsondb"):
             filepath += ".jsondb"
+            args.savedatafile += ".jsondb"
         try:
             with open(filepath, 'r+', encoding='utf-8', errors='ignore') as f:
                 loaded = json.load(f)
