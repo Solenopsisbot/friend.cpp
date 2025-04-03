@@ -3048,7 +3048,7 @@ Enter Prompt:<br>
                 if targetfile and targetfile!="":
                     dirpath = os.path.abspath(args.admindir)
                     targetfilepath = os.path.join(dirpath, targetfile)
-                    opts = [f for f in os.listdir(dirpath) if (f.endswith(".kcpps") or f.endswith(".kcppt") or f.endswith(".gguf")) and os.path.isfile(os.path.join(dirpath, f))]
+                    opts = [f for f in os.listdir(dirpath) if (f.lower().endswith(".kcpps") or f.lower().endswith(".kcppt") or f.lower().endswith(".gguf")) and os.path.isfile(os.path.join(dirpath, f))]
                     if targetfile in opts and os.path.exists(targetfilepath):
                         print(f"Admin: Received request to reload config to {targetfile}")
                         global_memory["restart_target"] = targetfile
@@ -4268,7 +4268,8 @@ def show_gui():
         if not filename:
             return
         filenamestr = str(filename).strip()
-        filenamestr = f"{filenamestr}.kcppt" if ".kcppt" not in filenamestr.lower() else filenamestr
+        if not filenamestr.endswith(".kcppt"):
+            filenamestr += ".kcpps"
         file = open(filenamestr, 'w')
         file.write(json.dumps(savdict))
         file.close()
@@ -4665,8 +4666,9 @@ def show_gui():
         filename = asksaveasfilename(filetypes=file_type, defaultextension=file_type)
         if not filename:
             return
-        filenamestr = str(filename).strip()
-        filenamestr = f"{filenamestr}.kcpps" if ".kcpps" not in filenamestr.lower() else filenamestr
+        filenamestr = str(filename).strip().lower()
+        if not filenamestr.endswith(".kcpps"):
+            filenamestr += ".kcpps"
         file = open(filenamestr, 'w')
         file.write(json.dumps(savdict))
         file.close()
@@ -5192,11 +5194,14 @@ def save_config_cli(filename, template):
     if filename is None:
         return
     filenamestr = str(filename).strip()
-    filenamestr = f"{filenamestr}.kcpps" if ".kcpps" not in filenamestr.lower() else filenamestr
+    if not filenamestr.endswith(".kcpps") and not template:
+        filenamestr += ".kcpps"
+    if not filenamestr.endswith(".kcppt") and template:
+        filenamestr += ".kcppt"
     file = open(filenamestr, 'w')
     file.write(json.dumps(savdict))
     file.close()
-    print(f"\nSaved .kcpps configuration file as {filename}\nIt can be loaded with --config [filename] in future.")
+    print(f"\nSaved configuration file as {filenamestr}\nIt can be loaded with --config [filename] in future.")
     pass
 
 def delete_old_pyinstaller():
@@ -5676,7 +5681,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
 
     if args.savedatafile and isinstance(args.savedatafile, str):
         filepath = os.path.abspath(args.savedatafile)  # Ensure it's an absolute path
-        if not filepath.endswith(".jsondb"):
+        if not filepath.lower().endswith(".jsondb"):
             filepath += ".jsondb"
             args.savedatafile += ".jsondb"
         try:
