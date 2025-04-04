@@ -4666,8 +4666,8 @@ def show_gui():
         filename = asksaveasfilename(filetypes=file_type, defaultextension=file_type)
         if not filename:
             return
-        filenamestr = str(filename).strip().lower()
-        if not filenamestr.endswith(".kcpps"):
+        filenamestr = str(filename).strip()
+        if not filenamestr.lower().endswith(".kcpps"):
             filenamestr += ".kcpps"
         file = open(filenamestr, 'w')
         file.write(json.dumps(savdict))
