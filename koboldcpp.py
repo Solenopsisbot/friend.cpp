@@ -49,7 +49,7 @@ logit_bias_max = 512
 dry_seq_break_max = 128
 
 # global vars
-KcppVersion = "1.87.2"
+KcppVersion = "1.87.3"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False}
@@ -4264,7 +4264,7 @@ def show_gui():
         file_type = [("KoboldCpp LaunchTemplate", "*.kcppt")]
         #remove blacklisted fields
         savdict = convert_args_to_template(savdict)
-        filename = asksaveasfilename(filetypes=file_type, defaultextension=file_type)
+        filename = asksaveasfilename(filetypes=file_type, defaultextension=".kcppt")
         if not filename:
             return
         filenamestr = str(filename).strip()
@@ -4663,7 +4663,7 @@ def show_gui():
         export_vars()
         savdict = json.loads(json.dumps(args.__dict__))
         file_type = [("KoboldCpp Settings", "*.kcpps")]
-        filename = asksaveasfilename(filetypes=file_type, defaultextension=file_type)
+        filename = asksaveasfilename(filetypes=file_type, defaultextension=".kcpps")
         if not filename:
             return
         filenamestr = str(filename).strip()
@@ -4677,7 +4677,7 @@ def show_gui():
     def load_config_gui(): #this is used to populate the GUI with a config file, whereas load_config_cli simply overwrites cli args
         file_type = [("KoboldCpp Settings", "*.kcpps *.kcppt")]
         global runmode_untouched
-        filename = askopenfilename(filetypes=file_type, defaultextension=file_type, initialdir=None)
+        filename = askopenfilename(filetypes=file_type, defaultextension=".kcppt", initialdir=None)
         if not filename or filename=="":
             return
         runmode_untouched = False
