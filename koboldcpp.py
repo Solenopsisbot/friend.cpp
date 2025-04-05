@@ -49,7 +49,7 @@ logit_bias_max = 512
 dry_seq_break_max = 128
 
 # global vars
-KcppVersion = "1.87.3"
+KcppVersion = "1.87.4"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False}
@@ -719,6 +719,22 @@ def string_contains_or_overlaps_sequence_substring(inputstr, sequences):
         if string_has_overlap(inputstr, s, 10):
             return True
     return False
+
+def truncate_long_json(data, max_length):
+    if isinstance(data, dict):
+        new_data = {}
+        for key, value in data.items():
+            if isinstance(value, str):
+                new_data[key] = value[:max_length] + "..." if len(value) > max_length else value
+            else:
+                new_data[key] = truncate_long_json(value, max_length)
+        return new_data
+    elif isinstance(data, list):
+        return [truncate_long_json(item, max_length) for item in data]
+    elif isinstance(data, str):
+        return data[:max_length] + "..." if len(data) > max_length else data
+    else:
+        return data
 
 def get_capabilities():
     global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath
@@ -2745,11 +2761,11 @@ Enter Prompt:<br>
         body = None
         if contlenstr:
             content_length = int(contlenstr)
-            if content_length > (1024*1024*32): #32mb payload limit
+            if content_length > (1024*1024*48): #48mb payload limit
                 self.send_response(500)
                 self.end_headers(content_type='application/json')
                 self.wfile.write(json.dumps({"detail": {
-                "msg": "Payload is too big. Max payload size is 32MB.",
+                "msg": "Payload is too big. Max payload size is 48MB.",
                 "type": "bad_input",
                 }}).encode())
                 return
@@ -2765,11 +2781,11 @@ Enter Prompt:<br>
                     if line:
                         chunk_length = max(0,int(line, 16))
                         content_length += chunk_length
-                    if not line or chunklimit > 512 or content_length > (1024*1024*32): #32mb payload limit
+                    if not line or chunklimit > 512 or content_length > (1024*1024*48): #48mb payload limit
                         self.send_response(500)
                         self.end_headers(content_type='application/json')
                         self.wfile.write(json.dumps({"detail": {
-                        "msg": "Payload is too big. Max payload size is 32MB.",
+                        "msg": "Payload is too big. Max payload size is 48MB.",
                         "type": "bad_input",
                         }}).encode())
                         return
@@ -3178,17 +3194,11 @@ Enter Prompt:<br>
                         }}).encode())
                         return
 
-
-                tmpimgs = genparams.get("images", []) # reduce amount of text printed to terminal when dumping large images
-                if tmpimgs and isinstance(tmpimgs, (list, tuple)) and len(tmpimgs)>0:
-                    printablegenparams = copy.deepcopy(genparams)
-                    outarr = []
-                    for img in tmpimgs:
-                        outarr.append(str(img[:512])+"...")
-                    printablegenparams["images"] = outarr
-                    utfprint("\nInput: " + json.dumps(printablegenparams),1)
-                else:
-                    utfprint("\nInput: " + json.dumps(genparams),1)
+                trunc_len = 8000
+                if args.debugmode >= 1:
+                    trunc_len = 16000
+                printablegenparams = truncate_long_json(genparams,trunc_len)
+                utfprint("\nInput: " + json.dumps(printablegenparams),1)
 
                 if args.foreground:
                     bring_terminal_to_foreground()
