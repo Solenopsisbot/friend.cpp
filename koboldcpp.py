@@ -4311,7 +4311,7 @@ def show_gui():
 
     def export_vars():
         nonlocal kcpp_exporting_template
-        args.threads = int(threads_var.get())
+        args.threads =  (get_default_threads() if threads_var.get()=="" else int(threads_var.get()))
         args.usemlock   = usemlock.get() == 1
         args.debugmode  = debugmode.get()
         args.launch     = launchbrowser.get()==1
@@ -4363,7 +4363,7 @@ def show_gui():
             if runopts_var.get() == "Use Vulkan (Old CPU)":
                 args.noavx2 = True
         if gpulayers_var.get():
-            args.gpulayers = int(gpulayers_var.get())
+            args.gpulayers = (0 if gpulayers_var.get()=="" else int(gpulayers_var.get()))
         if runopts_var.get()=="Use CPU":
             args.usecpu = True
         if runopts_var.get()=="Use CPU (Old CPU)":
@@ -4480,7 +4480,7 @@ def show_gui():
             args.ttsmodel = tts_model_var.get()
             args.ttswavtokenizer = wavtokenizer_var.get()
             args.ttsgpu = (ttsgpu_var.get()==1)
-            args.ttsmaxlen = int(ttsmaxlen_var.get())
+            args.ttsmaxlen = (default_ttsmaxlen if ttsmaxlen_var.get()=="" else int(ttsmaxlen_var.get()))
 
         args.admin = (admin_var.get()==1 and not args.cli)
         args.admindir = admin_dir_var.get()
