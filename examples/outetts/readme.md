@@ -15,7 +15,7 @@ However, it can be slightly challenging to set it up.
 You can also create your own cloned speaker voice.
 To do that, you will need Python 3.10+ with the `outetts` package installed. You can install it with this commands:
 ```
-pip install outetts --no-deps
+pip install outetts==0.3.3 --no-deps
 pip install scipy einops pyyaml huggingface-hub encodec matplotlib transformers pytorch-lightning tensorboardX soundfile numpy jsonargparse torchcrepe librosa inflect loguru polars natsort tqdm sounddevice mecab-python3 unidic-lite uroman openai-whisper pygame accelerate
 ```
 Then after that, obtain a wav file containing a sample of the voice you want to clone.
