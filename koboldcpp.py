@@ -978,7 +978,6 @@ def fetch_gpu_properties(testCL,testCU,testVK):
         FetchedCUdevices = []
         FetchedCUdeviceMem = []
         FetchedCUfreeMem = []
-        faileddetectvram = False
 
         AMDgpu = None
         try: # Get NVIDIA GPU names
@@ -989,7 +988,6 @@ def fetch_gpu_properties(testCL,testCU,testVK):
         except Exception:
             FetchedCUdeviceMem = []
             FetchedCUfreeMem = []
-            faileddetectvram = True
             pass
         if len(FetchedCUdevices)==0:
             try: # Get AMD ROCm GPU names
@@ -1011,7 +1009,6 @@ def fetch_gpu_properties(testCL,testCU,testVK):
             except Exception:
                 FetchedCUdeviceMem = []
                 FetchedCUfreeMem = []
-                faileddetectvram = True
                 pass
         lowestcumem = 0
         lowestfreecumem = 0
@@ -1030,13 +1027,12 @@ def fetch_gpu_properties(testCL,testCU,testVK):
         except Exception:
             lowestcumem = 0
             lowestfreecumem = 0
-            faileddetectvram = True
-
-        if faileddetectvram:
-            print("Unable to detect VRAM, please set layers manually.")
 
         MaxMemory[0] = max(lowestcumem,MaxMemory[0])
         MaxFreeMemory[0] = max(lowestfreecumem,MaxFreeMemory[0])
+
+        if MaxMemory[0] < (1024*1024*256):
+            print("Unable to detect VRAM, please set layers manually.")
 
     if testVK:
         try: # Get Vulkan names
