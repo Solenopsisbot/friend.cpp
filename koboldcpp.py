@@ -5180,6 +5180,8 @@ def reload_from_new_args(newargs):
         setattr(args,"prompt","")
         setattr(args,"config",None)
         setattr(args,"launch",None)
+        if "istemplate" in newargs and newargs["istemplate"]:
+            auto_set_backend_cli()
     except Exception as e:
         print(f"Reload New Config Failed: {e}")
 
