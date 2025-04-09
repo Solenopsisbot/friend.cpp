@@ -263,6 +263,7 @@ class sd_generation_inputs(ctypes.Structure):
     _fields_ = [("prompt", ctypes.c_char_p),
                 ("negative_prompt", ctypes.c_char_p),
                 ("init_images", ctypes.c_char_p),
+                ("mask", ctypes.c_char_p),
                 ("denoising_strength", ctypes.c_float),
                 ("cfg_scale", ctypes.c_float),
                 ("sample_steps", ctypes.c_int),
@@ -1484,6 +1485,7 @@ def sd_generate(genparams):
             prompt = forced_posprompt
     init_images_arr = genparams.get("init_images", [])
     init_images = ("" if (not init_images_arr or len(init_images_arr)==0 or not init_images_arr[0]) else init_images_arr[0])
+    mask = genparams.get("mask", "")
     denoising_strength = tryparsefloat(genparams.get("denoising_strength", 0.6))
     cfg_scale = tryparsefloat(genparams.get("cfg_scale", 5))
     sample_steps = tryparseint(genparams.get("steps", 20))
@@ -1520,6 +1522,7 @@ def sd_generate(genparams):
     inputs.prompt = prompt.encode("UTF-8")
     inputs.negative_prompt = negative_prompt.encode("UTF-8")
     inputs.init_images = init_images.encode("UTF-8")
+    inputs.mask = "".encode("UTF-8") if not mask else mask.encode("UTF-8")
     inputs.cfg_scale = cfg_scale
     inputs.denoising_strength = denoising_strength
     inputs.sample_steps = sample_steps

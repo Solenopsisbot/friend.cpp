@@ -160,6 +160,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     {
         printf("With Custom Clip-G Model: %s\n",clipg_filename.c_str());
     }
+    printf("\n");
 
     //duplicated from expose.cpp
     int cl_parseinfo = inputs.clblast_info; //first digit is whether configured, second is platform, third is devices
@@ -320,7 +321,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     std::string cleanprompt = clean_input_prompt(inputs.prompt);
     std::string cleannegprompt = clean_input_prompt(inputs.negative_prompt);
     std::string img2img_data = std::string(inputs.init_images);
-    std::string img2img_mask = "";
+    std::string img2img_mask = std::string(inputs.mask);
     std::string sampler = inputs.sample_method;
 
     sd_params->prompt = cleanprompt;
@@ -506,9 +507,9 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         if(img2img_mask!="")
         {
             image_mask_buffer = kcpp_base64_decode(img2img_mask);
-            input_mask_buffer = stbi_load_from_memory(image_mask_buffer.data(), image_mask_buffer.size(), &nx2, &ny2, &nc2, 3);
+            input_mask_buffer = stbi_load_from_memory(image_mask_buffer.data(), image_mask_buffer.size(), &nx2, &ny2, &nc2, 1);
             // Resize the image
-            int resok = stbir_resize_uint8(input_mask_buffer, nx, ny, 0, resized_mask_buf.data(), img2imgW, img2imgH, 0, img2imgC);
+            int resok = stbir_resize_uint8(input_mask_buffer, nx2, ny2, 0, resized_mask_buf.data(), img2imgW, img2imgH, 0, 1);
             if (!resok) {
                 printf("\nKCPP SD: resize image failed!\n");
                 output.data = "";

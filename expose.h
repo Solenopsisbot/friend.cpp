@@ -168,6 +168,7 @@ struct sd_generation_inputs
     const char * prompt = nullptr;
     const char * negative_prompt = nullptr;
     const char * init_images = "";
+    const char * mask = "";
     const float denoising_strength = 0.0f;
     const float cfg_scale = 0.0f;
     const int sample_steps = 0;
