@@ -160,7 +160,6 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     {
         printf("With Custom Clip-G Model: %s\n",clipg_filename.c_str());
     }
-    printf("\n");
 
     //duplicated from expose.cpp
     int cl_parseinfo = inputs.clblast_info; //first digit is whether configured, second is platform, third is devices
@@ -515,6 +514,13 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                 output.data = "";
                 output.status = 0;
                 return output;
+            }
+            if(inputs.flip_mask)
+            {
+                int bufsiz = resized_mask_buf.size();
+                for (int i = 0; i < bufsiz; ++i) {
+                    resized_mask_buf[i] = 255 - resized_mask_buf[i];
+                }
             }
         }
 
