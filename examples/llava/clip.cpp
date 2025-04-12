@@ -411,6 +411,7 @@ struct clip_ctx {
         gguf_free(ctx_gguf);
         ggml_backend_buffer_free(buf);
         ggml_backend_free(backend);
+        clip_image_size_free(load_image_size);
     }
 };
 
@@ -1255,9 +1256,7 @@ struct clip_model_loader {
 
         // print gguf info
         try {
-            int ftype = -1;
-            get_u32(KEY_FTYPE, ftype, false);
-            const std::string ftype_str = ggml_type_name(static_cast<ggml_type>(ftype));
+        
             std::string name;
             get_string(KEY_NAME, name, false);
             std::string description;
@@ -1268,7 +1267,6 @@ struct clip_model_loader {
             LOG_INF("%s: alignment:    %zu\n", __func__, gguf_get_alignment(ctx_gguf.get()));
             LOG_INF("%s: n_tensors:    %d\n",  __func__, n_tensors);
             LOG_INF("%s: n_kv:         %d\n",  __func__, (int)gguf_get_n_kv(ctx_gguf.get()));
-            LOG_INF("%s: ftype:        %s\n",  __func__, ftype_str.c_str());
             LOG_INF("\n");
         } catch (std::runtime_error & /*e*/) {
             LOG_INF("Could not list CLIP model properties.\n");
@@ -1740,6 +1738,12 @@ struct clip_image_f32 * clip_image_f32_init() {
     return new clip_image_f32();
 }
 
+void clip_image_size_free(struct clip_image_size * load_image_size) {
+    if (load_image_size == nullptr) {
+        return;
+    }
+    delete load_image_size;
+}
 void clip_image_u8_free(struct clip_image_u8  * img) { delete img; }
 void clip_image_f32_free(struct clip_image_f32 * img) { delete img; }
 void clip_image_u8_batch_free(struct clip_image_u8_batch  * batch) {
@@ -2479,6 +2483,9 @@ ggml_tensor * clip_get_newline_tensor(const struct clip_ctx * ctx) {
 }
 
 void clip_free(clip_ctx * ctx) {
+    if (ctx == nullptr) {
+        return;
+    }
     delete ctx;
 }
 
@@ -3192,8 +3199,17 @@ int clip_is_minicpmv(const struct clip_ctx * ctx) {
 bool clip_is_glm(const struct clip_ctx * ctx) {
     return ctx->has_glm_projector;
 }
+
 bool clip_is_qwen2vl(const struct clip_ctx * ctx) {
     return ctx->has_qwen2vl_merger;
+}
+
+bool clip_is_llava(const struct clip_ctx * ctx) {
+    return ctx->has_llava_projector;
+}
+
+bool clip_is_gemma3(const struct clip_ctx * ctx) {
+    return ctx->proj_type == PROJECTOR_TYPE_GEMMA3;
 }
 
 // Determine the number of encoder layers to iterate over
