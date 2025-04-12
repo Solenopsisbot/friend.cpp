@@ -351,7 +351,7 @@ struct clip_ctx {
     std::vector<ggml_backend_t> backend_ptrs;
     std::vector<ggml_backend_buffer_type_t> backend_buft;
 
-    ggml_backend_t backend;
+    ggml_backend_t backend = nullptr;
 
     ggml_backend_buffer_ptr buf;
 
