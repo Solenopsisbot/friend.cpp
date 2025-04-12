@@ -4134,8 +4134,10 @@ def show_gui():
             tensor_split_label.grid(row=8, column=0, padx = 8, pady=1, stick="nw")
             tensor_split_entry.grid(row=8, column=1, padx=8, pady=1, stick="nw")
             quick_use_flashattn.grid_remove()
+            use_flashattn.grid_remove()
         else:
             quick_use_flashattn.grid(row=22, column=1, padx=8, pady=1,  stick="nw")
+            use_flashattn.grid(row=28, column=0, padx=8, pady=1,  stick="nw")
 
         if index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CLBlast" or index == "Use CLBlast (Old CPU)" or index == "Use CLBlast (Older CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
             gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
@@ -4256,11 +4258,6 @@ def show_gui():
     ctk.CTkButton(hardware_tab , text = "Run Benchmark", command = guibench ).grid(row=110,column=0, stick="se", padx= 0, pady=2)
 
 
-    runopts_var.trace('w', changerunmode)
-    changerunmode(1,1,1)
-    global runmode_untouched
-    runmode_untouched = True
-
     # Tokens Tab
     tokens_tab = tabcontent["Tokens"]
     # tokens checkboxes
@@ -4283,17 +4280,13 @@ def show_gui():
             else:
                 item.grid_remove()
     makecheckbox(tokens_tab,  "Custom RoPE Config", variable=customrope_var, row=22, command=togglerope,tooltiptxt="Override the default RoPE configuration with custom RoPE scaling.")
-    makecheckbox(tokens_tab, "Use FlashAttention", flashattention, 28, command=toggleflashattn,  tooltiptxt="Enable flash attention for GGUF models.")
+    use_flashattn = makecheckbox(tokens_tab, "Use FlashAttention", flashattention, 28, command=toggleflashattn,  tooltiptxt="Enable flash attention for GGUF models.")
     noqkvlabel = makelabel(tokens_tab,"QuantKV works best with flash attention enabled",33,0,"WARNING: NOT RECOMMENDED.\nOnly K cache can be quantized, and performance can suffer.\nIn some cases, it might even use more VRAM when doing a full offload.")
     noqkvlabel.configure(text_color="#ff5555")
     qkvslider,qkvlabel,qkvtitle = makeslider(tokens_tab, "Quantize KV Cache:", quantkv_text, quantkv_var, 0, 2, 30, set=0,tooltip="Enable quantization of KV cache.\nRequires FlashAttention for full effect, otherwise only K cache is quantized.")
     quantkv_var.trace("w", toggleflashattn)
     makecheckbox(tokens_tab, "No BOS Token", nobostoken_var, 43, tooltiptxt="Prevents BOS token from being added at the start of any prompt. Usually NOT recommended for most models.")
     makelabelentry(tokens_tab, "MoE Experts:", moeexperts_var, row=45, padx=100, singleline=True, tooltip="Override number of MoE experts.")
-
-    togglerope(1,1,1)
-    toggleflashattn(1,1,1)
-    togglectxshift(1,1,1)
 
     # Model Tab
     model_tab = tabcontent["Loaded Files"]
@@ -4370,7 +4363,6 @@ def show_gui():
             horde_name_var.set(sanitize_string(os.path.splitext(basefile)[0]))
 
     makecheckbox(horde_tab, "Configure for Horde", usehorde_var, 19, command=togglehorde,tooltiptxt="Enable the embedded AI Horde worker.")
-    togglehorde(1,1,1)
 
     # Image Gen Tab
 
@@ -4470,6 +4462,16 @@ def show_gui():
             zenity_permitted = (nozenity_var.get()==0)
         makecheckbox(extra_tab, "Use Classic FilePicker", nozenity_var, 20, tooltiptxt="Use the classic TKinter file picker instead.")
         nozenity_var.trace("w", togglezenity)
+
+    # refresh
+    runopts_var.trace('w', changerunmode)
+    changerunmode(1,1,1)
+    global runmode_untouched
+    runmode_untouched = True
+    togglerope(1,1,1)
+    toggleflashattn(1,1,1)
+    togglectxshift(1,1,1)
+    togglehorde(1,1,1)
 
     # launch
     def guilaunch():
@@ -6008,6 +6010,9 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
 
         if not args.blasthreads or args.blasthreads <= 0:
             args.blasthreads = args.threads
+        if args.flashattention and (args.usevulkan is not None):
+            print("FlashAttention should not be used with Vulkan as it is not fully implemented. Disabling flash attention.")
+            args.flashattention = False
 
         modelname = os.path.abspath(args.model_param)
         print(args)
