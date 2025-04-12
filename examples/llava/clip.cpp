@@ -1211,7 +1211,7 @@ struct clip_model_loader {
     clip_ctx & ctx_clip;
     std::string fname;
 
-    size_t model_size; // in bytes
+    size_t model_size = 0; // in bytes
 
     // TODO @ngxson : we should not pass clip_ctx here, it should be clip_vision_model
     clip_model_loader(const char * fname, clip_ctx & ctx_clip) : ctx_clip(ctx_clip), fname(fname) {
@@ -1258,8 +1258,8 @@ struct clip_model_loader {
                 struct ggml_tensor * cur = ggml_get_tensor(meta, name);
                 size_t tensor_size = ggml_nbytes(cur);
                 model_size += tensor_size;
-                LOG_DBG("%s: tensor[%d]: n_dims = %d, name = %s, tensor_size=%zu, offset=%zu, shape:[%" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 "], type = %s\n",
-                    __func__, i, ggml_n_dims(cur), cur->name, tensor_size, offset, cur->ne[0], cur->ne[1], cur->ne[2], cur->ne[3], ggml_type_name(type));
+                // LOG_DBG("%s: tensor[%d]: n_dims = %d, name = %s, tensor_size=%zu, offset=%zu, shape:[%" PRIu64 ", %" PRIu64 ", %" PRIu64 ", %" PRIu64 "], type = %s\n",
+                //     __func__, i, ggml_n_dims(cur), cur->name, tensor_size, offset, cur->ne[0], cur->ne[1], cur->ne[2], cur->ne[3], ggml_type_name(type));
             }
         }
     }
