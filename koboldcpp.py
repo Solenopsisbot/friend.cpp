@@ -739,6 +739,23 @@ def truncate_long_json(data, max_length):
     else:
         return data
 
+def convert_json_to_gbnf(json_obj):
+    try:
+        from json_to_gbnf import SchemaConverter
+        prop_order = []
+        converter = SchemaConverter(
+        prop_order={name: idx for idx, name in enumerate(prop_order)},
+        allow_fetch=False,
+        dotall=False,
+        raw_pattern=False)
+        schema = json.loads(json.dumps(json_obj))
+        converter.visit(schema, '')
+        outstr = converter.format_grammar()
+        return outstr
+    except Exception as e:
+        print(f"JSON to GBNF failed: {e}")
+        return ""
+
 def get_capabilities():
     global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath
     has_llm = not (friendlymodelname=="inactive")
@@ -2864,6 +2881,19 @@ Enter Prompt:<br>
                 response_body = (json.dumps({"result": detokstr,"success":True}).encode())
             except Exception as e:
                 utfprint("Detokenize Error: " + str(e))
+                response_code = 400
+                response_body = (json.dumps({"result": "","success":False}).encode())
+
+        elif self.path.endswith('/api/extra/json_to_grammar'):
+            if not self.secure_endpoint():
+                return
+            try:
+                genparams = json.loads(body)
+                schema = genparams.get('schema', {})
+                decoded = convert_json_to_gbnf(schema)
+                response_body = (json.dumps({"result": decoded,"success":(True if decoded else False)}).encode())
+            except Exception as e:
+                utfprint("JSON to Grammar Error: " + str(e))
                 response_code = 400
                 response_body = (json.dumps({"result": "","success":False}).encode())
 
