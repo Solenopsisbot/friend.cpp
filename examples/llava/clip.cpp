@@ -351,7 +351,8 @@ struct clip_ctx {
     std::vector<ggml_backend_t> backend_ptrs;
     std::vector<ggml_backend_buffer_type_t> backend_buft;
 
-    ggml_backend_ptr backend;
+    ggml_backend_t backend;
+
     ggml_backend_buffer_ptr buf;
 
     ggml_backend_sched_ptr sched;
@@ -363,30 +364,34 @@ struct clip_ctx {
         if(enable_gpu_clip)
         {
         #ifdef GGML_USE_CUDA
-            backend = ggml_backend_ptr(ggml_backend_cuda_init(0));
+            backend = ggml_backend_cuda_init(0);
             LOG_INF("%s: CLIP using CUDA backend\n", __func__);
         #endif
         #ifdef GGML_USE_METAL
-            backend = ggml_backend_ptr(ggml_backend_metal_init());
+            backend = ggml_backend_metal_init();
             LOG_INF("%s: CLIP using Metal backend\n", __func__);
         #endif
         #ifdef GGML_USE_VULKAN
-            backend = ggml_backend_ptr(ggml_backend_vk_init(0));
+            backend = ggml_backend_vk_init(0);
             LOG_INF("%s: CLIP using Vulkan backend\n", __func__);
         #endif
         }
 
         if (!backend) {
-            backend = ggml_backend_ptr(ggml_backend_cpu_init());
+            backend = ggml_backend_cpu_init();
             LOG_INF("%s: CLIP using CPU backend\n", __func__);
         }
 
-        backend_ptrs.push_back(backend.get());
-        backend_buft.push_back(ggml_backend_get_default_buffer_type(backend.get()));
+        backend_ptrs.push_back(backend);
+        backend_buft.push_back(ggml_backend_get_default_buffer_type(backend));
 
         sched.reset(
             ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), 8192, false)
         );
+    }
+
+    ~clip_ctx() {
+        ggml_backend_free(backend);
     }
 };
 
@@ -1555,7 +1560,7 @@ struct clip_model_loader {
             }
 
             // alloc memory and offload data
-            ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(ctx_clip.backend.get());
+            ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type(ctx_clip.backend);
             ctx_clip.buf.reset(ggml_backend_alloc_ctx_tensors_from_buft(ctx_clip.ctx_data.get(), buft));
             ggml_backend_buffer_set_usage(ctx_clip.buf.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
             for (auto & t : tensors_to_load) {
@@ -2950,8 +2955,8 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         if (window_mask) ggml_backend_tensor_set(window_mask, mask.data(), 0, ggml_nbytes(window_mask));
     }
 
-    if (ggml_backend_is_cpu(ctx->backend.get())) {
-        ggml_backend_cpu_set_n_threads(ctx->backend.get(), n_threads);
+    if (ggml_backend_is_cpu(ctx->backend)) {
+        ggml_backend_cpu_set_n_threads(ctx->backend, n_threads);
     }
 
     auto status = ggml_backend_sched_graph_compute(ctx->sched.get(), gf);
