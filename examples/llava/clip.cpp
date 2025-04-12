@@ -363,26 +363,26 @@ struct clip_ctx {
         if(enable_gpu_clip)
         {
         #ifdef GGML_USE_CUDA
-            backend = ggml_backend_cuda_init(0);
+            backend = ggml_backend_ptr(ggml_backend_cuda_init(0));
             LOG_INF("%s: CLIP using CUDA backend\n", __func__);
         #endif
         #ifdef GGML_USE_METAL
-            backend = ggml_backend_metal_init();
+            backend = ggml_backend_ptr(ggml_backend_metal_init());
             LOG_INF("%s: CLIP using Metal backend\n", __func__);
         #endif
         #ifdef GGML_USE_VULKAN
-            backend = ggml_backend_vk_init(0);
+            backend = ggml_backend_ptr(ggml_backend_vk_init(0));
             LOG_INF("%s: CLIP using Vulkan backend\n", __func__);
         #endif
         }
 
         if (!backend) {
-            backend = ggml_backend_cpu_init();
+            backend = ggml_backend_ptr(ggml_backend_cpu_init());
             LOG_INF("%s: CLIP using CPU backend\n", __func__);
         }
 
-        backend_ptrs.push_back(backend);
-        backend_buft.push_back(ggml_backend_get_default_buffer_type(backend));
+        backend_ptrs.push_back(backend.get());
+        backend_buft.push_back(ggml_backend_get_default_buffer_type(backend.get()));
 
         sched.reset(
             ggml_backend_sched_new(backend_ptrs.data(), backend_buft.data(), backend_ptrs.size(), 8192, false)
@@ -1228,7 +1228,7 @@ struct clip_model_loader {
 
         // print gguf info
         try {
-        
+
             std::string name;
             get_string(KEY_NAME, name, false);
             std::string description;
@@ -2950,8 +2950,8 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         if (window_mask) ggml_backend_tensor_set(window_mask, mask.data(), 0, ggml_nbytes(window_mask));
     }
 
-    if (ggml_backend_is_cpu(ctx->backend)) {
-        ggml_backend_cpu_set_n_threads(ctx->backend, n_threads);
+    if (ggml_backend_is_cpu(ctx->backend.get())) {
+        ggml_backend_cpu_set_n_threads(ctx->backend.get(), n_threads);
     }
 
     auto status = ggml_backend_sched_graph_compute(ctx->sched.get(), gf);
