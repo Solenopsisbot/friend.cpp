@@ -64,6 +64,17 @@
         "assistant_end": "<|eot_id|>\n\n"
     }
 }, {
+    "search": ["<|header_start|>assistant<|header_end|>"],
+    "name": "Llama 4",
+    "adapter": {
+        "system_start": "<|header_start|>system<|header_end|>\n\n",
+        "system_end": "<|eot|>",
+        "user_start": "<|header_start|>user<|header_end|>\n\n",
+        "user_end": "<|eot|>",
+        "assistant_start": "<|header_start|>assistant<|header_end|>\n\n",
+        "assistant_end": "<|eot|>"
+    }
+}, {
     "search": ["[/INST]", "[SYSTEM_PROMPT]"],
     "name": "Mistral V7 (with system prompt)",
     "adapter": {
