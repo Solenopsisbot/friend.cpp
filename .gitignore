@@ -22,6 +22,8 @@ ggml/src/ggml-vulkan-shaders-noext.cpp
 ggml/src/ggml-vulkan-shaders-noext.hpp
 vulkan-shaders-gen-noext.exe
 vulkan-shaders-gen-noext
+vulkan-spv-tmp/*
+vulkan-spv-noext-tmp/*
 
 lcov-report/
 gcovr-report/
