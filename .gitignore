@@ -18,6 +18,10 @@ ggml/src/ggml-vulkan-shaders.cpp
 ggml/src/ggml-vulkan-shaders.hpp
 vulkan-shaders-gen.exe
 vulkan-shaders-gen
+ggml/src/ggml-vulkan-shaders-noext.cpp
+ggml/src/ggml-vulkan-shaders-noext.hpp
+vulkan-shaders-gen-noext.exe
+vulkan-shaders-gen-noext
 
 lcov-report/
 gcovr-report/
