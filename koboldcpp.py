@@ -3513,6 +3513,20 @@ def zenity(filetypes=None, initialdir="", initialfile="", **kwargs) -> Tuple[int
         .replace("?", "\\?").replace("&", "&amp;").replace("|", "&#124;").replace("<", "&lt;").replace(">", "&gt;")\
         .replace("(", "\\(").replace(")", "\\)").replace("[", "\\[").replace("]", "\\]").replace("{", "\\{").replace("}", "\\}")
 
+    def zenity_sanity_check(): #make sure zenity is sane
+        nonlocal zenity_bin
+        try: # Run `zenity --help` and pipe to grep
+            result = subprocess.run(f"{zenity_bin} --help | grep Usage", shell=True, capture_output=True, text=True)
+            if result.returncode == 0 and "Usage" in result.stdout:
+                return True
+            else:
+                return False
+        except FileNotFoundError:
+            return False
+
+    if not zenity_sanity_check():
+        raise Exception("Zenity not working correctly, falling back to TK GUI.")
+
     # Build args based on keywords
     args = ['/usr/bin/env', zenity_bin, '--file-selection']
     for k, v in kwargs.items():
