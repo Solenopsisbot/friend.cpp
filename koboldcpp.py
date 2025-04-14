@@ -992,7 +992,8 @@ def autoset_gpu_layers(ctxsize,sdquanted,bbs): #shitty algo to determine how man
 def fetch_gpu_properties(testCL,testCU,testVK):
     import subprocess
 
-    gpumem_ignore_limit = 1024*1024*600
+    gpumem_ignore_limit_min = 1024*1024*600 #600 mb min
+    gpumem_ignore_limit_max = 1024*1024*1024*300 #300 gb max
 
     if testCU:
         FetchedCUdevices = []
@@ -1088,7 +1089,7 @@ def fetch_gpu_properties(testCL,testCU,testVK):
                             match = re.search(r"size\s*=\s*(\d+)", snippet)
                             if match:
                                 dmem = int(match.group(1))
-                                if dmem > gpumem_ignore_limit:
+                                if dmem > gpumem_ignore_limit_min and dmem < gpumem_ignore_limit_max:
                                     lowestvkmem = dmem if lowestvkmem==0 else (dmem if dmem<lowestvkmem else lowestvkmem)
                         gpuidx += 1
                 except Exception: # failed to get vulkan vram
@@ -1119,13 +1120,17 @@ def fetch_gpu_properties(testCL,testCU,testVK):
                     idx = plat+dev*2
                     if idx<len(CLDevices):
                         CLDevicesNames[idx] = dname
-                        if dmem > gpumem_ignore_limit:
+                        if dmem > gpumem_ignore_limit_min and dmem < gpumem_ignore_limit_max:
                             lowestclmem = dmem if lowestclmem==0 else (dmem if dmem<lowestclmem else lowestclmem)
                     dev += 1
                 plat += 1
             MaxMemory[0] = max(lowestclmem,MaxMemory[0])
         except Exception:
             pass
+    if MaxMemory[0]>0:
+        print(f"Auto Detected Free GPU Memory: {int(MaxMemory[0]/1024/1024)} MB (Set GPU layers manually if incorrect)")
+    else:
+        print("Unable to determine GPU Memory")
     return
 
 def auto_set_backend_cli():
