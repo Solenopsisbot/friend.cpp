@@ -6308,10 +6308,12 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 suppress_stdout()
                 genout = generate(genparams=payload)
                 restore_stdout()
-                result = genout["text"]
+                result = (genout["text"] if "text" in genout else "")
                 if result:
                     lastturns.append({"role":"assistant","content":result})
-                print(result.strip() + "\n", flush=True)
+                    print(result.strip() + "\n", flush=True)
+                else:
+                    print("(No Response Received)\n", flush=True)
         else:
             save_to_file = (args.benchmark and args.benchmark!="stdout" and args.benchmark!="")
             benchmaxctx = maxctx
