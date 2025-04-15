@@ -6305,9 +6305,11 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 lastturns.append({"role":"user","content":lastuserinput})
                 payload = {"messages":lastturns,"rep_pen":1.07,"temperature":0.8}
                 payload = transform_genparams(payload, 4) #to chat completions
-                suppress_stdout()
+                if args.debugmode < 1:
+                    suppress_stdout()
                 genout = generate(genparams=payload)
-                restore_stdout()
+                if args.debugmode < 1:
+                    restore_stdout()
                 result = (genout["text"] if "text" in genout else "")
                 if result:
                     lastturns.append({"role":"assistant","content":result})
