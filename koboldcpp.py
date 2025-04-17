@@ -180,6 +180,7 @@ class load_model_inputs(ctypes.Structure):
                 ("rope_freq_base", ctypes.c_float),
                 ("moe_experts", ctypes.c_int),
                 ("no_bos_token", ctypes.c_bool),
+                ("override_kv", ctypes.c_char_p),
                 ("flash_attention", ctypes.c_bool),
                 ("tensor_split", ctypes.c_float * tensor_split_max),
                 ("quant_k", ctypes.c_int),
@@ -1128,7 +1129,7 @@ def fetch_gpu_properties(testCL,testCU,testVK):
         except Exception:
             pass
     if MaxMemory[0]>0:
-        print(f"Auto Detected Free GPU Memory: {int(MaxMemory[0]/1024/1024)} MB (Set GPU layers manually if incorrect)")
+        print(f"Detected Free GPU Memory: {int(MaxMemory[0]/1024/1024)} MB (Set GPU layers manually if incorrect)")
     else:
         print("Unable to determine GPU Memory")
     return
@@ -1212,6 +1213,7 @@ def load_model(model_filename):
 
     inputs.moe_experts = args.moeexperts
     inputs.no_bos_token = args.nobostoken
+    inputs.override_kv = args.overridekv.encode("UTF-8") if args.overridekv else "".encode("UTF-8")
     inputs = set_backend_props(inputs)
     ret = handle.load_model(inputs)
     return ret
@@ -3788,6 +3790,7 @@ def show_gui():
     moeexperts_var = ctk.StringVar(value=str(-1))
     defaultgenamt_var = ctk.StringVar(value=str(512))
     nobostoken_var = ctk.IntVar(value=0)
+    override_kv_var = ctk.StringVar(value="")
 
     model_var = ctk.StringVar()
     lora_var = ctk.StringVar()
@@ -4314,6 +4317,7 @@ def show_gui():
     quantkv_var.trace("w", toggleflashattn)
     makecheckbox(tokens_tab, "No BOS Token", nobostoken_var, 43, tooltiptxt="Prevents BOS token from being added at the start of any prompt. Usually NOT recommended for most models.")
     makelabelentry(tokens_tab, "MoE Experts:", moeexperts_var, row=45, padx=100, singleline=True, tooltip="Override number of MoE experts.")
+    makelabelentry(tokens_tab, "Override KV:", override_kv_var, row=47, padx=100, singleline=True, width=150, tooltip="Advanced option to override model metadata by key, same as in llama.cpp. Mainly for debugging, not intended for general use. Types: int, float, bool, str")
 
     # Model Tab
     model_tab = tabcontent["Loaded Files"]
@@ -4585,6 +4589,7 @@ def show_gui():
         args.moeexperts = int(moeexperts_var.get()) if moeexperts_var.get()!="" else -1
         args.defaultgenamt = int(defaultgenamt_var.get()) if defaultgenamt_var.get()!="" else 512
         args.nobostoken = (nobostoken_var.get()==1)
+        args.overridekv = None if override_kv_var.get() == "" else override_kv_var.get()
         args.chatcompletionsadapter = None if chatcompletionsadapter_var.get() == "" else chatcompletionsadapter_var.get()
         try:
             if kcpp_exporting_template and isinstance(args.chatcompletionsadapter, str) and args.chatcompletionsadapter!="" and os.path.exists(args.chatcompletionsadapter):
@@ -4777,6 +4782,8 @@ def show_gui():
         if "defaultgenamt" in dict and dict["defaultgenamt"]:
             defaultgenamt_var.set(dict["defaultgenamt"])
         nobostoken_var.set(dict["nobostoken"] if ("nobostoken" in dict) else 0)
+        if "overridekv" in dict and dict["overridekv"]:
+            override_kv_var.set(dict["overridekv"])
 
         if "blasbatchsize" in dict and dict["blasbatchsize"]:
             blas_size_var.set(blasbatchsize_values.index(str(dict["blasbatchsize"])))
@@ -6496,6 +6503,7 @@ if __name__ == '__main__':
     advparser.add_argument("--defaultgenamt", help="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.", type=check_range(int,128,2048), default=512)
     advparser.add_argument("--nobostoken", help="Prevents BOS token from being added at the start of any prompt. Usually NOT recommended for most models.", action='store_true')
     advparser.add_argument("--maxrequestsize", metavar=('[size in MB]'), help="Specify a max request payload size. Any requests to the server larger than this size will be dropped. Do not change if unsure.", type=int, default=32)
+    advparser.add_argument("--overridekv", metavar=('[name=type:value]'), help="Advanced option to override a metadata by key, same as in llama.cpp. Mainly for debugging, not intended for general use. Types: int, float, bool, str", default="")
     compatgroup2 = parser.add_mutually_exclusive_group()
     compatgroup2.add_argument("--showgui", help="Always show the GUI instead of launching the model right away when loading settings from a .kcpps file.", action='store_true')
     compatgroup2.add_argument("--skiplauncher", help="Doesn't display or use the GUI launcher.", action='store_true')
