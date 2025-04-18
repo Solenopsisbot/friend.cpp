@@ -41,7 +41,7 @@ logprobs_max = 5
 default_draft_amount = 8
 default_ttsmaxlen = 4096
 default_visionmaxres = 1024
-net_save_slots = 8
+net_save_slots = 10
 
 # abuse prevention
 stop_token_max = 256
