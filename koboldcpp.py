@@ -3518,7 +3518,7 @@ def zenity(filetypes=None, initialdir="", initialfile="", **kwargs) -> Tuple[int
     def zenity_sanity_check(): #make sure zenity is sane
         nonlocal zenity_bin
         try: # Run `zenity --help` and pipe to grep
-            result = subprocess.run(f"{zenity_bin} --help | grep Usage", shell=True, capture_output=True, text=True)
+            result = subprocess.run(f"{zenity_bin} --help | grep Usage", shell=True, capture_output=True, text=True, encoding='utf-8', timeout=10)
             if result.returncode == 0 and "Usage" in result.stdout:
                 return True
             else:
@@ -3582,15 +3582,6 @@ def zentk_askopenfilename(**options):
     except Exception:
         from tkinter.filedialog import askopenfilename
         result = askopenfilename(**options)
-    return result
-
-def zentk_askopenmultiplefilenames(**options):
-    try:
-        files = zenity(filetypes=options.get("filetypes"), initialdir=options.get("initialdir"), title=options.get("title"), multiple=True, separator="\n")[1].splitlines()
-        result = tuple(filter(os.path.isfile, files))
-    except Exception:
-        from tkinter.filedialog import askopenfilenames
-        result = askopenfilenames(**options)
     return result
 
 def zentk_askdirectory(**options):
@@ -3994,7 +3985,7 @@ def show_gui():
         changed_gpu_choice_var()
 
     def on_picked_model_file(filepath):
-        if filepath.lower().endswith('.kcpps') or filepath.lower().endswith('.kcppt'):
+        if filepath and (filepath.lower().endswith('.kcpps') or filepath.lower().endswith('.kcppt')):
             #load it as a config file instead
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                 dict = json.load(f)
