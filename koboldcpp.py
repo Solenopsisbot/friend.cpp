@@ -3549,9 +3549,9 @@ def zenity(filetypes=None, initialdir="", initialfile="", **kwargs) -> Tuple[int
         raise Exception("Zenity disabled, attempting to use TK GUI.")
     if sys.platform != "linux":
         raise Exception("Zenity GUI is only usable on Linux, attempting to use TK GUI.")
-    zenity_bin = shutil.which("zenity")
+    zenity_bin = shutil.which("yad")
     if not zenity_bin:
-        zenity_bin = shutil.which("yad")
+        zenity_bin = shutil.which("zenity")
     if not zenity_bin:
         raise Exception("Zenity not present, falling back to TK GUI.")
 
@@ -4922,9 +4922,14 @@ def show_gui():
 
     def load_config_gui(): #this is used to populate the GUI with a config file, whereas load_config_cli simply overwrites cli args
         file_type = [("KoboldCpp Settings", "*.kcpps *.kcppt")]
-        global runmode_untouched
+        global runmode_untouched, zenity_permitted
         filename = zentk_askopenfilename(filetypes=file_type, defaultextension=".kcppt", initialdir=None)
         if not filename or filename=="":
+            return
+        if not os.path.exists(filename) or os.path.getsize(filename)<4 or os.path.getsize(filename)>50000000: #for sanity, check invaid kcpps
+            print("The selected config file seems to be invalid.")
+            if zenity_permitted:
+                print("You can try using the legacy filepicker instead (in Extra).")
             return
         runmode_untouched = False
         with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
