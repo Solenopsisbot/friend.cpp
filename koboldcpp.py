@@ -2555,16 +2555,19 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         genbtnval = (parsed_dict['generate'][0] if 'generate' in parsed_dict else "")
         gencommand = (genbtnval=="Generate" or genbtnval=="Send")
         chatmode = int(parsed_dict['chatmode'][0]) if 'chatmode' in parsed_dict else 0
+        human_name = str(parsed_dict['human_name'][0]) if 'human_name' in parsed_dict else "User"
+        bot_name = str(parsed_dict['bot_name'][0]) if 'bot_name' in parsed_dict else "Assistant"
         stops = []
         prefix = ""
         if chatmode:
             ban_eos_token = False
+            prompt = prompt.replace("1HdNl1","\n")
             if chatmsg:
-                prompt += f"\nUser: {chatmsg}\nAssistant:"
+                prompt += f"\n{human_name}: {chatmsg}\n{bot_name}:"
             else:
                 gencommand = False
-            stops = ["\nUser:","\nAssistant:"]
-            prefix = "[This is a chat conversation log between User and Assistant.]\n"
+            stops = [f"\n{human_name}:",f"\n{bot_name}:"]
+            prefix = f"[This is a chat conversation log between {human_name} and {bot_name}.]\n"
 
         if modelbusy.locked():
             status = "Model is currently busy, try again later."
@@ -2601,12 +2604,17 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers(content_type='text/html')
             return
 
-        bodycontent = f'''<b>{"Chat Mode" if chatmode else "Story Mode"}</b><br>'''
+        bodycontent = f'''<b><u>{"Chat Mode" if chatmode else "Story Mode"}</u></b><br>'''
         if chatmode:
-            tmp = prompt.strip().replace("\n","<br>")
-            bodycontent += f'''<p>{"No History Yet. Talk to the AI." if prompt=="" else tmp}</p>
+            oldconvo = prompt.strip().replace(f"{human_name}:",f"<b>{human_name}:</b>").replace(f"{bot_name}:",f"<b>{bot_name}:</b>").replace("\n","<br>")
+            oldconvo += f'''<input type="hidden" name="human_name" value="{human_name}"><input type="hidden" name="bot_name" value="{bot_name}">'''
+            newconvo = '''Start a new conversation.<br>
+            <label>Your Name: </label> <input type="text" size="10" value="User" name="human_name"><br>
+            <label>Bot Name: </label> <input type="text" size="10" value="Assistant" name="bot_name"><br>'''
+            clnprompt = prompt.replace("\n","1HdNl1")
+            bodycontent += f'''<p>{newconvo if prompt=="" else oldconvo}</p>
+            <input type="hidden" name="prompt" value="{clnprompt}">
             <label>Say: </label><input type="text" size="40" value="" name="chatmsg">
-            <input type="hidden" name="prompt" value="{prompt}">
             <input type="submit" name="generate" value="Send"> (Be patient)'''
         else:
             bodycontent += f'''
