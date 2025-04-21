@@ -26,6 +26,7 @@ import asyncio
 import socket
 import threading
 import html
+import random
 import urllib.parse as urlparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -1750,7 +1751,6 @@ def websearch(query):
     import urllib.parse
     import urllib.request
     import difflib
-    import random
     from html.parser import HTMLParser
     from concurrent.futures import ThreadPoolExecutor
     num_results = 3
@@ -2617,7 +2617,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             updated_query_string = urlparse.urlencode(parsed_dict, doseq=True)
             updated_path = parsed_url._replace(query=updated_query_string).geturl()
             self.path = updated_path
-            time.sleep(0.2) #short delay
+            time.sleep(0.3) #short delay
             self.send_response(302)
             self.send_header("location", self.path)
             self.end_headers(content_type='text/html')
@@ -2631,8 +2631,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         bodycontent = f'''<b><u>{"Image Mode" if imgmode else ("Chat Mode" if chatmode else "Story Mode")}</u></b><br>'''
         optionscontent = ""
         if imgmode:
+            randimg = f'<img src="view_image{random.randint(100, 999)}.png" width="320" width="320">'
             bodycontent += f'''<p>Generated Image: {prompt if prompt else "None"}</p>
-            {'<img src="view.png" width="320" width="320">' if prompt else ""}<br>
+            {randimg if prompt else ""}<br>
             <label>Image Prompt: </label><input type="text" size="40" value="" name="imgprompt">
             <input type="hidden" name="generate" value="Generate" />
             <input type="submit" value="Generate"> (Be patient)'''
@@ -2834,7 +2835,7 @@ Change Mode<br>
                 response_body = (json.dumps([]).encode())
             else:
                 response_body = (json.dumps([friendlysdmodelname]).encode())
-        elif self.path=='/view' or self.path=='/view.png' or self.path=='/api/view' or self.path.startswith('/view?') or self.path.startswith('/api/view?'): #emulate comfyui
+        elif self.path=='/view' or self.path=='/view.png' or self.path=='/api/view' or self.path.startswith('/view_image') or self.path.startswith('/view?') or self.path.startswith('/api/view?'): #emulate comfyui
             content_type = 'image/png'
             response_body = lastgeneratedcomfyimg
         elif self.path=='/history' or self.path=='/api/history' or self.path.startswith('/api/history/') or self.path.startswith('/history/'): #emulate comfyui
