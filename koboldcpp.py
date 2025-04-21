@@ -935,7 +935,7 @@ def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,
             fsize = os.path.getsize(filepath)
             if fsize>10000000: #dont bother with models < 10mb as they are probably bad
                 ggufmeta = read_gguf_metadata(filepath)
-                modelfile_extracted_meta = [ggufmeta,fsize,sdfsize,whisperfsize,mmprojsize,draftmodelsize,ttsmodelsize] #extract done. note that meta may be null
+                modelfile_extracted_meta = [filepath,ggufmeta,fsize,sdfsize,whisperfsize,mmprojsize,draftmodelsize,ttsmodelsize] #extract done. note that meta may be null
         except Exception:
             modelfile_extracted_meta = None
 
@@ -953,28 +953,36 @@ def autoset_gpu_layers(ctxsize,sdquanted,bbs): #shitty algo to determine how man
         if not modelfile_extracted_meta:
             return 0
         layerlimit = 0
-        fsize = modelfile_extracted_meta[1]
+        fsize = modelfile_extracted_meta[2]
+        fname = modelfile_extracted_meta[0]
         if fsize>10000000: #dont bother with models < 10mb
             cs = ctxsize
             mem = gpumem
-            if modelfile_extracted_meta[2] > 1024*1024*1024*5: #sdxl tax
+            if "-00001-of-000" in fname:
+                match = re.search(r'-(\d{5})-of-(\d{5})\.', fname)
+                if match:
+                    total_parts = int(match.group(2))
+                    if total_parts > 1 and total_parts < 99:
+                        print("Multi-Part GGUF detected. Layer estimates may not be very accurate - recommend setting layers manually.")
+                        fsize *= total_parts
+            if modelfile_extracted_meta[3] > 1024*1024*1024*5: #sdxl tax
                 mem -= 1024*1024*1024*(6 if sdquanted else 9)
-            elif modelfile_extracted_meta[2] > 1024*1024*512: #normal sd tax
+            elif modelfile_extracted_meta[3] > 1024*1024*512: #normal sd tax
                 mem -= 1024*1024*1024*(3.25 if sdquanted else 4.25)
-            if modelfile_extracted_meta[3] > 1024*1024*10: #whisper tax
-                mem -= max(350*1024*1024,modelfile_extracted_meta[3]*1.5)
-            if modelfile_extracted_meta[4] > 1024*1024*10: #mmproj tax
+            if modelfile_extracted_meta[4] > 1024*1024*10: #whisper tax
                 mem -= max(350*1024*1024,modelfile_extracted_meta[4]*1.5)
-            if modelfile_extracted_meta[5] > 1024*1024*10: #draft model tax
-                mem -= (modelfile_extracted_meta[5] * 1.5)
-            if modelfile_extracted_meta[6] > 1024*1024*10: #tts model tax
-                mem -= max(600*1024*1024, modelfile_extracted_meta[6] * 3)
+            if modelfile_extracted_meta[5] > 1024*1024*10: #mmproj tax
+                mem -= max(350*1024*1024,modelfile_extracted_meta[5]*1.5)
+            if modelfile_extracted_meta[6] > 1024*1024*10: #draft model tax
+                mem -= (modelfile_extracted_meta[6] * 1.5)
+            if modelfile_extracted_meta[7] > 1024*1024*10: #tts model tax
+                mem -= max(600*1024*1024, modelfile_extracted_meta[7] * 3)
             mem = 0 if mem < 0 else mem
 
             csmul = 1.0
             if cs:
                 csmul = (cs/4096) if cs >= 8192 else 1.8 if cs > 4096 else 1.2 if cs > 2048 else 1.0
-            ggufmeta = modelfile_extracted_meta[0]
+            ggufmeta = modelfile_extracted_meta[1]
             if not ggufmeta or ggufmeta[0]==0: #fail to read or no layers
                 sizeperlayer = fsize*csmul*0.052
                 layerlimit = int(min(200,(mem-usedmem)/sizeperlayer))
@@ -4114,7 +4122,7 @@ def show_gui():
 
     def changed_gpulayers_estimate(*args):
         predicted_gpu_layers = autoset_gpu_layers(int(contextsize_text[context_var.get()]),(sd_quant_var.get()==1),int(blasbatchsize_values[int(blas_size_var.get())]))
-        max_gpu_layers = (f"/{modelfile_extracted_meta[0][0]+3}" if (modelfile_extracted_meta and modelfile_extracted_meta[0] and modelfile_extracted_meta[0][0]!=0) else "")
+        max_gpu_layers = (f"/{modelfile_extracted_meta[1][0]+3}" if (modelfile_extracted_meta and modelfile_extracted_meta[1] and modelfile_extracted_meta[1][0]!=0) else "")
         index = runopts_var.get()
         gpu_be = (index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CLBlast" or index == "Use CLBlast (Old CPU)" or index == "Use CLBlast (Older CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)")
         layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
@@ -4125,7 +4133,7 @@ def show_gui():
         elif gpu_be and gpulayers_var.get()=="-1" and predicted_gpu_layers>0:
             quick_layercounter_label.configure(text=f"(Auto: {predicted_gpu_layers}{max_gpu_layers} Layers)")
             layercounter_label.configure(text=f"(Auto: {predicted_gpu_layers}{max_gpu_layers} Layers)")
-        elif gpu_be and gpulayers_var.get()=="-1" and predicted_gpu_layers<=0 and (modelfile_extracted_meta and modelfile_extracted_meta[1]):
+        elif gpu_be and gpulayers_var.get()=="-1" and predicted_gpu_layers<=0 and (modelfile_extracted_meta and modelfile_extracted_meta[2]):
             quick_layercounter_label.configure(text="(Auto: No Offload)")
             layercounter_label.configure(text="(Auto: No Offload)")
         elif gpu_be and gpulayers_var.get()=="":
