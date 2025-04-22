@@ -2117,7 +2117,7 @@ def transform_genparams(genparams, api_format):
                             # note: message string already contains the instruct start tag!
                             temp_poll = {
                                 "prompt": f"{messages_string}\n\nTool List:\n{tools_string}\n\n{custom_tools_prompt}{user_end}",
-                                "max_length":4,
+                                "max_length":6,
                                 "temperature":0.1,
                                 "top_k":1,
                                 "rep_pen":1,
