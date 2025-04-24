@@ -566,7 +566,7 @@ int32_t mtmd_helper_eval(mtmd_context * ctx,
 
 int32_t mtmd_helper_bitmap_init_from_buf(const unsigned char * buf, size_t len, mtmd_bitmap & output) {
     clip_image_u8_ptr img_u8(clip_image_u8_init());
-    bool ok = clip_image_load_from_bytes(buf, len, img_u8.get());
+    bool ok = clip_image_load_from_bytes(buf, len, img_u8.get(),2048);
     if (!ok) {
         LOG_ERR("Unable to load image from buffer\n");
         return 1;
