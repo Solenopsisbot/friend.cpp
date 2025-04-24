@@ -3560,6 +3560,10 @@ bool clip_is_gemma3(const struct clip_ctx * ctx) {
     return ctx->proj_type == PROJECTOR_TYPE_GEMMA3;
 }
 
+bool clip_is_pixtral(const struct clip_ctx * ctx) {
+    return ctx->proj_type == PROJECTOR_TYPE_PIXTRAL;
+}
+
 // Determine the number of encoder layers to iterate over
 int get_deepest_feature_layer(const struct clip_ctx * ctx) {
     // Get the index of the second to last layer; this is the
