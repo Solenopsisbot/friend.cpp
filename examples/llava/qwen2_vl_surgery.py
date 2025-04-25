@@ -140,7 +140,6 @@ def main(args):
     fout.add_bool("clip.has_text_encoder", False)
     fout.add_bool("clip.has_vision_encoder", True)
     fout.add_bool("clip.has_qwen2vl_merger", True)
-    fout.add_string("clip.projector_type", "qwen2vl_merger")
 
     print(cfg.vision_config)
     if 'silu' in cfg.vision_config.hidden_act.lower():
@@ -159,7 +158,9 @@ def main(args):
         fout.add_uint32("clip.vision.window_size", vcfg.window_size)
         fout.add_uint32(k(KEY_EMBEDDING_LENGTH, VISION), vcfg.hidden_size)
         fout.add_uint32("clip.vision.projection_dim", vcfg.out_hidden_size)
+        fout.add_string("clip.projector_type", "qwen2.5vl_merger")
     else:
+        fout.add_string("clip.projector_type", "qwen2vl_merger")
         fout.add_uint32(k(KEY_EMBEDDING_LENGTH, VISION), vcfg.embed_dim)
         fout.add_uint32("clip.vision.projection_dim", vcfg.hidden_size)
 
