@@ -1,5 +1,5 @@
 import argparse
-from typing import Dict
+from typing import Dict, List, Optional
 
 import torch
 import numpy as np
@@ -19,6 +19,20 @@ VISION = "clip.vision"
 
 def k(raw_key: str, arch: str) -> str:
     return raw_key.format(arch=arch)
+
+
+def get_n_wa_pattern(fullatt_block_indexes: Optional[List[int]]):
+    if fullatt_block_indexes is None:
+        return 0
+    n_wa = fullatt_block_indexes[0]
+    for a, b in zip(fullatt_block_indexes, fullatt_block_indexes[1:]):
+        if b - a - 1 != n_wa:
+            raise ValueError(
+                f"window/full attention layer should have fix pattern of "
+                f"for each full-attention layer followed by {n_wa} window-attention layers"
+            )
+    return n_wa + 1
+
 
 class VL2:
 
@@ -152,7 +166,7 @@ def main(args):
         raise ValueError()
 
     if args.model_type == "qwen2.5vl":
-        fout.add_array("clip.vision.fullatt_block_indexes", vcfg.fullatt_block_indexes)
+        fout.add_uint32("clip.vision.n_wa_pattern", get_n_wa_pattern(vcfg.fullatt_block_indexes))
         fout.add_uint32("clip.vision.window_size", vcfg.window_size)
         fout.add_uint32(k(KEY_EMBEDDING_LENGTH, VISION), vcfg.hidden_size)
         fout.add_uint32("clip.vision.projection_dim", vcfg.out_hidden_size)
