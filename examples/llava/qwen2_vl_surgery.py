@@ -152,8 +152,6 @@ def main(args):
         raise ValueError()
 
     if args.model_type == "qwen2.5vl":
-        fout.add_bool("clip.use_glu_mlp", True)  # gate linear unit MLP layer in vision model
-        fout.add_bool("clip.use_rms_norm", True)
         fout.add_array("clip.vision.fullatt_block_indexes", vcfg.fullatt_block_indexes)
         fout.add_uint32("clip.vision.window_size", vcfg.window_size)
         fout.add_uint32(k(KEY_EMBEDDING_LENGTH, VISION), vcfg.hidden_size)
