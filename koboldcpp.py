@@ -878,7 +878,7 @@ def dump_gguf_metadata(file_path): #if you're gonna copy this into your own proj
         return
 
 def read_gguf_metadata(file_path):
-    chunk_size = 8192  # read only first 8kb of file
+    chunk_size = 16384  # read only first 16kb of file
     try:
         def read_gguf_key(keyname,data,maxval):
             keylen = len(keyname)
@@ -897,7 +897,7 @@ def read_gguf_metadata(file_path):
                 return 0 #not found
 
         fsize = os.path.getsize(file_path)
-        if fsize < 10000: #ignore files under 10kb
+        if fsize < (chunk_size+256): #ignore files under 16kb
             return None
         with open(file_path, 'rb') as f:
             file_header = f.read(4)
@@ -939,7 +939,7 @@ def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,
         except Exception:
             modelfile_extracted_meta = None
 
-def autoset_gpu_layers(ctxsize,sdquanted,bbs): #shitty algo to determine how many layers to use
+def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to determine how many layers to use
     global showusedmemwarning, modelfile_extracted_meta # reference cached values instead
     gpumem = MaxMemory[0]
     usedmem = 0
@@ -948,14 +948,14 @@ def autoset_gpu_layers(ctxsize,sdquanted,bbs): #shitty algo to determine how man
         if showusedmemwarning and usedmem > (2.5*1024*1024*1024):
             showusedmemwarning = False
             print(f"Note: KoboldCpp has detected that a significant amount of GPU VRAM ({usedmem/1024/1024} MB) is currently used by another application.\nFor best results, you may wish to close that application and then restart KoboldCpp.\n***")
-    reservedmem = max(1.3*1024*1024*1024,(0.5*1024*1024*1024 + usedmem)) # determine vram overhead
+    reservedmem = max(1.25*1024*1024*1024,(0.5*1024*1024*1024 + usedmem)) # determine vram overhead
     try:
         if not modelfile_extracted_meta:
             return 0
         layerlimit = 0
         fsize = modelfile_extracted_meta[2]
         fname = modelfile_extracted_meta[0]
-        if fsize>10000000: #dont bother with models < 10mb
+        if fsize > (10*1024*1024): #dont bother with models < 10mb
             cs = ctxsize
             mem = gpumem
             if "-00001-of-000" in fname:
@@ -979,9 +979,7 @@ def autoset_gpu_layers(ctxsize,sdquanted,bbs): #shitty algo to determine how man
                 mem -= max(600*1024*1024, modelfile_extracted_meta[7] * 3)
             mem = 0 if mem < 0 else mem
 
-            csmul = 1.0
-            if cs:
-                csmul = (cs/4096) if cs >= 8192 else 1.8 if cs > 4096 else 1.2 if cs > 2048 else 1.0
+            csmul = (cs/4096) if cs >= 8192 else 1.8 if cs > 4096 else 1.2 if cs > 2048 else 1.0
             ggufmeta = modelfile_extracted_meta[1]
             if not ggufmeta or ggufmeta[0]==0: #fail to read or no layers
                 sizeperlayer = fsize*csmul*0.052
@@ -991,10 +989,12 @@ def autoset_gpu_layers(ctxsize,sdquanted,bbs): #shitty algo to determine how man
                 headcount = ggufmeta[1]
                 headkvlen = (ggufmeta[2] if ggufmeta[2] > 0 else 128)
                 ratio = (mem-usedmem)/(fsize*csmul*1.6*(1.0 if bbs <= 512 else 1.2))
-                computemem = layers*(4 if bbs <= 512 else (bbs/128))*headkvlen*cs*4*1.55 # apply blasbatchsize calculations if over 512
-                contextmem = layers*headcount*headkvlen*cs*4*1.15
                 if headcount > 0:
-                    ratio = max(ratio, (mem - reservedmem - computemem) / (fsize + contextmem))
+                    # rubbish random formula. apply blasbatchsize calculations if over 512
+                    fattn_discount = 1.0/(3.2 if qkv_level==2 else (1.6 if qkv_level==1 else 1.0))
+                    mem1 = layers*(4 if bbs <= 512 else (bbs/128))*headkvlen*cs*fattn_discount*4*1.45
+                    mem2 = layers*headcount*headkvlen*cs*fattn_discount*4*1.15
+                    ratio = (mem - reservedmem - mem1) / (fsize + mem2)
                 layerlimit = min(int(ratio*layers), (layers + 3))
         layerlimit = (0 if layerlimit<=2 else layerlimit)
         return layerlimit
@@ -4150,7 +4150,7 @@ def show_gui():
         pass
 
     def changed_gpulayers_estimate(*args):
-        predicted_gpu_layers = autoset_gpu_layers(int(contextsize_text[context_var.get()]),(sd_quant_var.get()==1),int(blasbatchsize_values[int(blas_size_var.get())]))
+        predicted_gpu_layers = autoset_gpu_layers(int(contextsize_text[context_var.get()]),(sd_quant_var.get()==1),int(blasbatchsize_values[int(blas_size_var.get())]),(quantkv_var.get() if flashattention.get()==1 else 0))
         max_gpu_layers = (f"/{modelfile_extracted_meta[1][0]+3}" if (modelfile_extracted_meta and modelfile_extracted_meta[1] and modelfile_extracted_meta[1][0]!=0) else "")
         index = runopts_var.get()
         gpu_be = (index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CLBlast" or index == "Use CLBlast (Old CPU)" or index == "Use CLBlast (Older CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)")
@@ -4227,6 +4227,7 @@ def show_gui():
         else:
             noqkvlabel.grid_remove()
         vulkan_fa_lbl()
+        changed_gpulayers_estimate()
 
     def guibench():
         args.benchmark = "stdout"
@@ -4399,7 +4400,7 @@ def show_gui():
     # blas thread specifier
     makelabelentry(hardware_tab, "BLAS threads:" , blas_threads_var, 14, 50,tooltip="How many threads to use during BLAS processing.\nIf left blank, uses same value as regular thread count.")
     # blas batch size
-    makeslider(hardware_tab, "BLAS Batch Size:", blasbatchsize_text, blas_size_var, 0, 7, 16,width=200, set=5,tooltip="How many tokens to process at once per batch.\nLarger values use more memory.")
+    makeslider(hardware_tab, "BLAS Batch Size:", blasbatchsize_text, blas_size_var, 0, len(blasbatchsize_values)-1, 16,width=200, set=6,tooltip="How many tokens to process at once per batch.\nLarger values use more memory.")
     blas_size_var.trace("w", changed_gpulayers_estimate)
 
     # force version
@@ -6097,7 +6098,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             if args.gpulayers==-1:
                 if MaxMemory[0] > 0 and (not args.usecpu) and ((args.usecublas is not None) or (args.usevulkan is not None) or (args.useclblast is not None) or sys.platform=="darwin"):
                     extract_modelfile_params(args.model_param,args.sdmodel,args.whispermodel,args.mmproj,args.draftmodel,args.ttsmodel if args.ttsgpu else "")
-                    layeramt = autoset_gpu_layers(args.contextsize,args.sdquant,args.blasbatchsize)
+                    layeramt = autoset_gpu_layers(args.contextsize,args.sdquant,args.blasbatchsize,(args.quantkv if args.flashattention else 0))
                     print(f"Auto Recommended GPU Layers: {layeramt}")
                     args.gpulayers = layeramt
                 else:
