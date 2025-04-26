@@ -778,16 +778,12 @@ static ggml_cgraph * clip_image_build_graph_pixtral(clip_ctx * ctx, const clip_i
     return gf;
 }
 
-static ggml_cgraph * clip_image_build_graph_qwen2_5_vl(clip_ctx * ctx, const clip_image_f32_batch & imgs) {
+static ggml_cgraph * clip_image_build_graph_qwen25vl(clip_ctx * ctx, const clip_image_f32_batch & imgs) {
     const auto & model = ctx->vision_model;
     const auto & hparams = model.hparams;
 
-    const int image_size = hparams.image_size;
-    int image_size_width  = image_size;
-    int image_size_height = image_size;
-
-    image_size_width  = imgs.entries[0]->nx;
-    image_size_height = imgs.entries[0]->ny;
+    const int image_size_width  = imgs.entries[0]->nx;
+    const int image_size_height = imgs.entries[0]->ny;
 
     const int patch_size           = hparams.patch_size;
     const int num_patches          = ((image_size_width / patch_size) * (image_size_height / patch_size));
@@ -823,7 +819,7 @@ static ggml_cgraph * clip_image_build_graph_qwen2_5_vl(clip_ctx * ctx, const cli
 
     struct ggml_tensor * inp = ggml_conv_2d(ctx0, model.patch_embeddings_0, inp_raw, patch_size, patch_size, 0, 0, 1, 1);
 
-    GGML_ASSERT(image_size_width % (patch_size * 2) == 0);
+    GGML_ASSERT(image_size_width  % (patch_size * 2) == 0);
     GGML_ASSERT(image_size_height % (patch_size * 2) == 0);
 
     auto inp_1 = ggml_conv_2d(ctx0, model.patch_embeddings_1, inp_raw, patch_size, patch_size, 0, 0, 1, 1);
@@ -862,9 +858,6 @@ static ggml_cgraph * clip_image_build_graph_qwen2_5_vl(clip_ctx * ctx, const cli
         embeddings = ggml_mul(ctx0, embeddings, model.pre_ln_w);
     }
 
-    std::vector<struct ggml_tensor *> embedding_stack;
-    const auto & vision_feature_layer = hparams.vision_feature_layer;
-
     if (use_window_attn) {
         // handle window attention inputs
         inv_window_idx = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, num_positions / 4);
@@ -885,12 +878,6 @@ static ggml_cgraph * clip_image_build_graph_qwen2_5_vl(clip_ctx * ctx, const cli
     // loop over layers
     for (int il = 0; il < ctx->max_feature_layer; il++) {
         struct ggml_tensor * cur = embeddings; // embeddings = residual, cur = hidden_states
-
-        // If this is an embedding feature layer, save the output.
-        // NOTE: 0 index here refers to the input to the encoder.
-        if (vision_feature_layer.find(il) != vision_feature_layer.end()) {
-            embedding_stack.push_back(embeddings);
-        }
 
         // rmsnorm1
         cur = ggml_rms_norm(ctx0, cur, eps);
@@ -960,6 +947,7 @@ static ggml_cgraph * clip_image_build_graph_qwen2_5_vl(clip_ctx * ctx, const cli
 
         auto cur_gate = ggml_mul_mat(ctx0, model.layers[il].ff_g_w, cur);
         cur_gate = ggml_add(ctx0, cur_gate, model.layers[il].ff_g_b);
+        // TODO : only 2 of these 3 are actually used, should we remove one of them?
         if (ctx->use_gelu) {
             cur_gate = ggml_gelu_inplace(ctx0, cur_gate);
         } else if (ctx->use_silu) {
@@ -985,19 +973,6 @@ static ggml_cgraph * clip_image_build_graph_qwen2_5_vl(clip_ctx * ctx, const cli
         ggml_set_name(embeddings, "post_ln");
 
         embeddings = ggml_mul(ctx0, embeddings, model.post_ln_w);
-    }
-
-    // final layer is a vision feature layer
-    if (vision_feature_layer.find(ctx->max_feature_layer) != vision_feature_layer.end()) {
-        embedding_stack.push_back(embeddings);
-    }
-
-    // If feature layers are explicitly set, stack them (if we have multiple)
-    if (!embedding_stack.empty()) {
-        embeddings = embedding_stack[0];
-        for (size_t i = 1; i < embedding_stack.size(); i++) {
-            embeddings = ggml_concat(ctx0, embeddings, embedding_stack[i], 0);
-        }
     }
 
     embeddings = ggml_reshape_3d(ctx0, embeddings, hidden_size * 4, num_positions / 4, batch_size);
@@ -1608,9 +1583,9 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
             {
                 res = clip_image_build_graph_pixtral(ctx, imgs);
             } break;
-        case PROJECTOR_TYPE_QWEN2_5_VL:
+        case PROJECTOR_TYPE_QWEN25VL:
             {
-                res = clip_image_build_graph_qwen2_5_vl(ctx, imgs);
+                res = clip_image_build_graph_qwen25vl(ctx, imgs);
             } break;
         default:
             {
@@ -1720,7 +1695,7 @@ struct clip_model_loader {
             get_u32(KEY_IMAGE_SIZE, hparams.image_size);
             get_u32(KEY_PATCH_SIZE, hparams.patch_size);
             get_u32(KEY_IMAGE_CROP_RESOLUTION, hparams.image_crop_resolution, false);
-            get_u32(KEY_WIN_ATTN_PATTERN, hparams.n_wa_pattern, ctx_clip.proj_type == PROJECTOR_TYPE_QWEN2_5_VL);
+            get_u32(KEY_WIN_ATTN_PATTERN, hparams.n_wa_pattern, ctx_clip.proj_type == PROJECTOR_TYPE_QWEN25VL);
             get_arr_int(KEY_IMAGE_GRID_PINPOINTS, hparams.image_grid_pinpoints, false);
 
             {
@@ -1969,7 +1944,7 @@ struct clip_model_loader {
                     vision_model.mm_model_mlp_3_w = get_tensor(string_format(TN_GLM_ADAPTER_D_4H_2_H,"weight"));
                 } break;
             case PROJECTOR_TYPE_MERGER:
-            case PROJECTOR_TYPE_QWEN2_5_VL:
+            case PROJECTOR_TYPE_QWEN25VL:
                 {
                     vision_model.mm_0_w = get_tensor(string_format(TN_LLAVA_PROJ, 0, "weight"));
                     vision_model.mm_0_b = get_tensor(string_format(TN_LLAVA_PROJ, 0, "bias"));
@@ -2923,7 +2898,7 @@ int clip_n_patches_by_img(const struct clip_ctx * ctx, struct clip_image_f32 * i
         else if (ctx->minicpmv_version == 4) {
             n_patches = 64;
         }
-    } else if (ctx->proj_type == PROJECTOR_TYPE_MERGER || ctx->proj_type == PROJECTOR_TYPE_QWEN2_5_VL) {
+    } else if (ctx->proj_type == PROJECTOR_TYPE_MERGER || ctx->proj_type == PROJECTOR_TYPE_QWEN25VL) {
         int patch_size = params.patch_size * 2;
         int x_patch = img->nx / patch_size + (int)(img->nx % patch_size > 0);
         int y_patch = img->ny / patch_size + (int)(img->ny % patch_size > 0);
@@ -3196,24 +3171,22 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         }
 
         if (ctx->has_qwen2vl_merger) {
-            /*
-            pw * ph = number of tokens output by ViT after apply patch merger
-            ipw * ipw = number of vision token been processed inside ViT
-            */
+            // pw * ph = number of tokens output by ViT after apply patch merger
+            // ipw * ipw = number of vision token been processed inside ViT
             const int merge_ratio = 2;
-            const int pw = image_size_width / patch_size / merge_ratio;
-            const int ph = image_size_height / patch_size / merge_ratio;
-            const int ipw = image_size_width / patch_size;
+            const int pw  = image_size_width  / patch_size / merge_ratio;
+            const int ph  = image_size_height / patch_size / merge_ratio;
+            const int ipw = image_size_width  / patch_size;
             const int iph = image_size_height / patch_size;
 
-            std::vector<int> idx(ph * pw);
+            std::vector<int> idx    (ph * pw);
             std::vector<int> inv_idx(ph * pw);
 
             if (use_window_attn) {
                 const int attn_window_size = 112;
-                struct ggml_tensor * window_idx = ggml_graph_get_tensor(gf, "window_idx");
+                struct ggml_tensor * window_idx     = ggml_graph_get_tensor(gf, "window_idx");
                 struct ggml_tensor * inv_window_idx = ggml_graph_get_tensor(gf, "inv_window_idx");
-                struct ggml_tensor * window_mask = ggml_graph_get_tensor(gf, "window_mask");
+                struct ggml_tensor * window_mask    = ggml_graph_get_tensor(gf, "window_mask");
 
                 const int grid_window = attn_window_size / patch_size / merge_ratio;
                 int dst = 0;
@@ -3221,9 +3194,9 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
                 std::vector<float> mask(pow(ipw * iph, 2), std::numeric_limits<float>::lowest());
                 int mask_row = 0;
 
-                for (int y = 0; y < ph; y+=grid_window)
+                for (int y = 0; y < ph; y += grid_window)
                 {
-                    for (int x = 0; x < pw; x+=grid_window)
+                    for (int x = 0; x < pw; x += grid_window)
                     {
                         const int win_h = std::min(grid_window, ph - y);
                         const int win_w = std::min(grid_window, pw - x);
@@ -3234,7 +3207,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
                                 const int src = (y + dy) * pw + (x + dx);
                                 assert(src < (int)idx.size());
                                 assert(dst < (int)inv_idx.size());
-                                idx[src] = dst;
+                                idx    [src] = dst;
                                 inv_idx[dst] = src;
                                 dst++;
                             }
@@ -3251,40 +3224,40 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
                     }
                 }
 
-                if (window_idx) ggml_backend_tensor_set(window_idx, idx.data(), 0, ggml_nbytes(window_idx));
-                if (inv_window_idx) ggml_backend_tensor_set(inv_window_idx, inv_idx.data(), 0, ggml_nbytes(inv_window_idx));
-                if (window_mask) ggml_backend_tensor_set(window_mask, mask.data(), 0, ggml_nbytes(window_mask));
+                ggml_backend_tensor_set(window_idx,     idx.data(),     0, ggml_nbytes(window_idx));
+                ggml_backend_tensor_set(inv_window_idx, inv_idx.data(), 0, ggml_nbytes(inv_window_idx));
+                ggml_backend_tensor_set(window_mask,    mask.data(),    0, ggml_nbytes(window_mask));
             } else {
                 std::iota(idx.begin(), idx.end(), 0);
                 std::iota(inv_idx.begin(), inv_idx.end(), 0);
             }
 
             struct ggml_tensor * positions = ggml_graph_get_tensor(gf, "positions");
-            const int mpow = (merge_ratio * merge_ratio);
-            int* positions_data = (int*)malloc(ggml_nbytes(positions));
+            const int mpow = merge_ratio * merge_ratio;
+            std::vector<int> positions_data(ggml_nelements(positions));
+            int * data = positions_data.data();
 
             int ptr = 0;
-            for (int y = 0; y < iph; y+=merge_ratio)
+            for (int y = 0; y < iph; y += merge_ratio)
             {
-                for (int x = 0; x < ipw; x+=merge_ratio)
+                for (int x = 0; x < ipw; x += merge_ratio)
                 {
                     for (int dy = 0; dy < 2; dy++) {
                         for (int dx = 0; dx < 2; dx++) {
                             auto remap = idx[ptr / mpow];
                             remap = remap * mpow + (ptr % mpow);
 
-                            positions_data[remap]                   = y + dy;
-                            positions_data[num_patches + remap]     = x + dx;
-                            positions_data[num_patches * 2 + remap] = y + dy;
-                            positions_data[num_patches * 3 + remap] = x + dx;
+                            data[                  remap] = y + dy;
+                            data[    num_patches + remap] = x + dx;
+                            data[2 * num_patches + remap] = y + dy;
+                            data[3 * num_patches + remap] = x + dx;
                             ptr++;
                         }
                     }
                 }
             }
 
-            ggml_backend_tensor_set(positions, positions_data, 0, ggml_nbytes(positions));
-            free(positions_data);
+            ggml_backend_tensor_set(positions, data, 0, ggml_nbytes(positions));
         }
         else if (ctx->proj_type == PROJECTOR_TYPE_GEMMA3) {
             // do nothing
@@ -3336,7 +3309,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         }
     }
 
-    if (use_window_attn && ctx->proj_type == PROJECTOR_TYPE_QWEN2_5_VL) {
+    if (use_window_attn && ctx->proj_type == PROJECTOR_TYPE_QWEN25VL) {
         struct ggml_tensor * window_idx = ggml_graph_get_tensor(gf, "window_idx");
         struct ggml_tensor * inv_window_idx = ggml_graph_get_tensor(gf, "inv_window_idx");
         struct ggml_tensor * window_mask = ggml_graph_get_tensor(gf, "window_mask");
@@ -3570,7 +3543,7 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
         case PROJECTOR_TYPE_GLM_EDGE:
             return ctx->vision_model.mm_model_mlp_3_w->ne[1];
         case PROJECTOR_TYPE_MERGER:
-        case PROJECTOR_TYPE_QWEN2_5_VL:
+        case PROJECTOR_TYPE_QWEN25VL:
             return ctx->vision_model.mm_1_b->ne[0];
         case PROJECTOR_TYPE_GEMMA3:
             return ctx->vision_model.mm_input_proj_w->ne[0];

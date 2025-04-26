@@ -107,7 +107,7 @@ enum projector_type {
     PROJECTOR_TYPE_GEMMA3,
     PROJECTOR_TYPE_IDEFICS3,
     PROJECTOR_TYPE_PIXTRAL,
-    PROJECTOR_TYPE_QWEN2_5_VL,
+    PROJECTOR_TYPE_QWEN25VL,
     PROJECTOR_TYPE_UNKNOWN,
 };
 
@@ -118,7 +118,7 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
     { PROJECTOR_TYPE_RESAMPLER, "resampler"},
     { PROJECTOR_TYPE_GLM_EDGE,  "adapter"},
     { PROJECTOR_TYPE_MERGER,    "qwen2vl_merger"},
-    { PROJECTOR_TYPE_QWEN2_5_VL,"qwen2.5vl_merger"},
+    { PROJECTOR_TYPE_QWEN25VL,  "qwen2.5vl_merger"},
     { PROJECTOR_TYPE_GEMMA3,    "gemma3"},
     { PROJECTOR_TYPE_IDEFICS3,  "idefics3"},
     { PROJECTOR_TYPE_PIXTRAL,   "pixtral"},
