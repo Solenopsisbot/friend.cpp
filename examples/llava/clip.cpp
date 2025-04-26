@@ -776,18 +776,21 @@ static ggml_cgraph * clip_image_build_graph_qwen25vl(clip_ctx * ctx, const clip_
     const int image_size_width  = imgs.entries[0]->nx;
     const int image_size_height = imgs.entries[0]->ny;
 
+    const bool use_mrope       = ctx->proj_type == PROJECTOR_TYPE_QWEN2VL || ctx->proj_type == PROJECTOR_TYPE_QWEN25VL;
+    const bool use_window_attn = hparams.n_wa_pattern > 0;
+
+    const int n_wa_pattern         = hparams.n_wa_pattern;
     const int patch_size           = hparams.patch_size;
     const int num_patches          = ((image_size_width / patch_size) * (image_size_height / patch_size));
     const int patches_w            = image_size_width / patch_size;
     const int patches_h            = image_size_height / patch_size;
     const int num_positions        = num_patches + (model.class_embedding ? 1 : 0);
-    const int num_position_ids     = ctx->has_qwen2vl_merger ? num_positions * 4 : num_positions;
+    const int num_position_ids     = use_mrope ? num_positions * 4 : num_positions;
     const int hidden_size          = hparams.hidden_size;
     const int n_head               = hparams.n_head;
     const int d_head               = hidden_size / n_head;
     const float eps                = hparams.eps;
-    const int n_wa_pattern         = hparams.n_wa_pattern;
-    const bool use_window_attn     = hparams.n_wa_pattern > 0;
+
     int mrope_sections[4] = {d_head/4, d_head/4, d_head/4, d_head/4};
 
     const int batch_size = imgs.entries.size();
