@@ -1720,8 +1720,7 @@ struct clip_model_loader {
             get_u32(KEY_IMAGE_SIZE, hparams.image_size);
             get_u32(KEY_PATCH_SIZE, hparams.patch_size);
             get_u32(KEY_IMAGE_CROP_RESOLUTION, hparams.image_crop_resolution, false);
-            get_u32(KEY_ATTN_WINDOW_SIZE, hparams.attn_window_size, false);
-            get_u32(KEY_WIN_ATTN_PATTERN, hparams.n_wa_pattern, false);
+            get_u32(KEY_WIN_ATTN_PATTERN, hparams.n_wa_pattern, ctx_clip.proj_type == PROJECTOR_TYPE_QWEN2_5_VL);
             get_arr_int(KEY_IMAGE_GRID_PINPOINTS, hparams.image_grid_pinpoints, false);
 
             {
@@ -3210,12 +3209,13 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
             std::vector<int> idx(ph * pw);
             std::vector<int> inv_idx(ph * pw);
 
-            if (hparams.attn_window_size > 0) {
+            if (use_window_attn) {
+                const int attn_window_size = 112;
                 struct ggml_tensor * window_idx = ggml_graph_get_tensor(gf, "window_idx");
                 struct ggml_tensor * inv_window_idx = ggml_graph_get_tensor(gf, "inv_window_idx");
                 struct ggml_tensor * window_mask = ggml_graph_get_tensor(gf, "window_mask");
 
-                const int grid_window = hparams.attn_window_size / patch_size / merge_ratio;
+                const int grid_window = attn_window_size / patch_size / merge_ratio;
                 int dst = 0;
                 // [num_vision_tokens, num_vision_tokens] attention mask tensor
                 std::vector<float> mask(pow(ipw * iph, 2), std::numeric_limits<float>::lowest());
@@ -3342,9 +3342,10 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         struct ggml_tensor * window_mask = ggml_graph_get_tensor(gf, "window_mask");
 
         const int merge_ratio = 2;
+        const int attn_window_size = 112;
         const int pw = image_size_width / patch_size / merge_ratio;
         const int ph = image_size_height / patch_size / merge_ratio;
-        const int grid_window = hparams.attn_window_size / patch_size / merge_ratio;
+        const int grid_window = attn_window_size / patch_size / merge_ratio;
         const int ipw = image_size_width / patch_size;
         const int iph = image_size_height / patch_size;
         /*

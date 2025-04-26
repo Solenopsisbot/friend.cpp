@@ -167,7 +167,6 @@ def main(args):
 
     if args.model_type == "qwen2.5vl":
         fout.add_uint32("clip.vision.n_wa_pattern", get_n_wa_pattern(vcfg.fullatt_block_indexes))
-        fout.add_uint32("clip.vision.window_size", vcfg.window_size)
         fout.add_uint32(k(KEY_EMBEDDING_LENGTH, VISION), vcfg.hidden_size)
         fout.add_uint32("clip.vision.projection_dim", vcfg.out_hidden_size)
         fout.add_string("clip.projector_type", "qwen2.5vl_merger")
