@@ -2379,6 +2379,9 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         {
             printf("\nLLAMA EVAL returned nonzero: %d\n",er);
         }
+        tmp = {1};
+        llama_kv_self_clear(llama_ctx_v4);
+        er = llama_decode(llama_ctx_v4, llama_batch_get_one(tmp.data(), tmp.size()));
         return ModelLoadResult::SUCCESS;
     }
     else if (file_format == FileFormat::RWKV_1 || file_format==FileFormat::RWKV_2)
