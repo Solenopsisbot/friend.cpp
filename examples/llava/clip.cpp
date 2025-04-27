@@ -1663,8 +1663,24 @@ struct clip_model_loader {
         }
     }
 
+    bool handle_older_qwen25vl(projector_type & proj_type)
+    {
+        bool check1 = false;
+        bool check2 = false;
+        get_bool(KEY_USE_GLU_MLP, check1, false);
+        get_bool(KEY_USE_RMS_NORM, check2, false);
+        if(proj_type==PROJECTOR_TYPE_QWEN2VL && check1 && check2)
+        {
+            printf("\nWARNING: OLD QWEN2.5VL PROJECTOR DETECTED! Trying to patch in support, but please obtain a new Qwen2.5VL Projector!\n\n");
+            proj_type = PROJECTOR_TYPE_QWEN25VL;
+            return true;
+        }
+        return false;
+    }
+
     void load_hparams() {
         auto & hparams = ctx_clip.vision_model.hparams;
+        bool q25vl_migrated = false; //we try to port old q25vl files if we can
 
         // projector type
         std::string proj_type;
@@ -1700,6 +1716,8 @@ struct clip_model_loader {
                                         || ctx_clip.proj_type == PROJECTOR_TYPE_MLP_NORM
                                         || ctx_clip.proj_type == PROJECTOR_TYPE_LDP
                                         || ctx_clip.proj_type == PROJECTOR_TYPE_LDPV2;
+
+            q25vl_migrated = handle_older_qwen25vl(ctx_clip.proj_type);
 
             {
                 std::string mm_patch_merge_type;
@@ -1776,7 +1794,11 @@ struct clip_model_loader {
                     } break;
                 case PROJECTOR_TYPE_QWEN25VL:
                     {
-                        get_u32(KEY_WIN_ATTN_PATTERN, hparams.n_wa_pattern);
+                        if (q25vl_migrated) {
+                            hparams.n_wa_pattern = 8;
+                        } else {
+                            get_u32(KEY_WIN_ATTN_PATTERN, hparams.n_wa_pattern);
+                        }
                     } break;
                 default:
                     break;
