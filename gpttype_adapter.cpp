@@ -1917,7 +1917,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     add_bos_token = !inputs.no_bos_token;
     if(!add_bos_token)
     {
-        printf("\n======\nBOS token prefix was disabled! Your output may be degraded!\n======\n");
+        printf("\n======\nBOS token prefix was disabled! Your output may be degraded unless model was designed for it!\n======\n");
     }
 
     neox_ctx_v2.hparams.n_ctx  = neox_ctx_v3.hparams.n_ctx
