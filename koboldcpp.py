@@ -860,7 +860,7 @@ def dump_gguf_metadata(file_path): #if you're gonna copy this into your own proj
                 if dt_translated=="arr":
                     print(f"{dt_translated}: {curr_key} = [{len(curr_val)}]")
                 elif dt_translated=="str":
-                    print(f"{dt_translated}: {curr_key} = {curr_val[:100]}")
+                    print(f"{dt_translated}: {curr_key} = {curr_val[:256]}")
                 else:
                     print(f"{dt_translated}: {curr_key} = {curr_val}")
             print("\n*** GGUF TENSOR INFO ***")
