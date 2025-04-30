@@ -1908,8 +1908,14 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         clamped_max_context_length = 16384;
     }
     if (isGguf && file_format_meta.model_architecture == GGUFArch::ARCH_GLM4 && kcpp_data->n_batch > 16) {
-        printf("GLM-4 is broken on larger batch sizes. Clamping batch size to 16.\n");
-        kcpp_data->n_batch = kcpp_data->n_ubatch = 16;
+        if(debugmode==1)
+        {
+            printf("GLM-4 is broken on larger batch sizes. Clamp ignored in debug.\n");
+        } else {
+            printf("GLM-4 is broken on larger batch sizes. Clamping batch size to 16.\n");
+            kcpp_data->n_batch = kcpp_data->n_ubatch = 16;
+        }
+
     }
 
     kcpp_data->n_ctx = clamped_max_context_length;
