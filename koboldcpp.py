@@ -3639,9 +3639,12 @@ def zenity(filetypes=None, initialdir="", initialfile="", **kwargs) -> Tuple[int
     if sys.platform != "linux":
         raise Exception("Zenity GUI is only usable on Linux, attempting to use TK GUI.")
     zenity_bin = shutil.which("yad")
+    using_yad = True
     if not zenity_bin:
         zenity_bin = shutil.which("zenity")
+        using_yad = False
     if not zenity_bin:
+        using_yad = False
         raise Exception("Zenity not present, falling back to TK GUI.")
 
     def zenity_clean(txt: str):
@@ -3670,7 +3673,7 @@ def zenity(filetypes=None, initialdir="", initialfile="", **kwargs) -> Tuple[int
         raise Exception("Zenity not working correctly, falling back to TK GUI.")
 
     # Build args based on keywords
-    args = ['/usr/bin/env', zenity_bin, '--file-selection']
+    args = ['/usr/bin/env', zenity_bin, ('--file' if using_yad else '--file-selection')]
     for k, v in kwargs.items():
         if v is True:
             args.append(f'--{k.replace("_", "-").strip("-")}')
