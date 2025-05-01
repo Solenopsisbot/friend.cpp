@@ -27,6 +27,7 @@ import socket
 import threading
 import html
 import random
+import hashlib
 import urllib.parse as urlparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -2886,7 +2887,31 @@ Change Mode<br>
         elif self.path=='/history' or self.path=='/api/history' or self.path.startswith('/api/history/') or self.path.startswith('/history/'): #emulate comfyui
             imgdone = (False if lastgeneratedcomfyimg==b'' else True)
             response_body = (json.dumps({"12345678-0000-0000-0000-000000000001":{"prompt":[0,"12345678-0000-0000-0000-000000000001",{"3":{"class_type":"KSampler","inputs":{"cfg":5.0,"denoise":1.0,"latent_image":["5",0],"model":["4",0],"negative":["7",0],"positive":["6",0],"sampler_name":"euler","scheduler":"normal","seed":1,"steps":20}},"4":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":friendlysdmodelname}},"5":{"class_type":"EmptyLatentImage","inputs":{"batch_size":1,"height":512,"width":512}},"6":{"class_type":"CLIPTextEncode","inputs":{"clip":["4",1],"text":"prompt"}},"7":{"class_type":"CLIPTextEncode","inputs":{"clip":["4",1],"text":""}},"8":{"class_type":"VAEDecode","inputs":{"samples":["3",0],"vae":["4",2]}},"9":{"class_type":"SaveImage","inputs":{"filename_prefix":"kliteimg","images":["8",0]}}},{},["9"]],"outputs":{"9":{"images":[{"filename":"kliteimg_00001_.png","subfolder":"","type":"output"}]}},"status":{"status_str":"success","completed":imgdone,"messages":[["execution_start",{"prompt_id":"12345678-0000-0000-0000-000000000001","timestamp":1}],["execution_cached",{"nodes":[],"prompt_id":"12345678-0000-0000-0000-000000000001","timestamp":1}],["execution_success",{"prompt_id":"12345678-0000-0000-0000-000000000001","timestamp":1}]]},"meta":{"9":{"node_id":"9","display_node":"9","parent_node":None,"real_node_id":"9"}}}}).encode())
-
+        elif self.path.startswith('/ws?clientId') and ('Upgrade' in self.headers and self.headers['Upgrade'].lower() == 'websocket' and
+            'Sec-WebSocket-Key' in self.headers):
+            ws_key = self.headers['Sec-WebSocket-Key']
+            ws_accept = base64.b64encode(hashlib.sha1((ws_key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()).digest()).decode()
+            self.protocol_version = "HTTP/1.1"
+            self.send_response(101) #fake websocket response, Switching Protocols
+            self.send_header('Upgrade', 'websocket')
+            self.send_header('Connection', 'Upgrade')
+            self.send_header('Sec-WebSocket-Accept', ws_accept)
+            self.end_headers()
+            try:
+                # Send a dummy WebSocket text frame: empty string
+                payload = '{"type":"dummy"}'.encode("utf-8")
+                header = struct.pack("!BB", 0x81, len(payload))  # FIN + text frame, no mask
+                self.connection.sendall(header + payload)
+                time.sleep(0.1) #short delay before replying
+                # Send close frame with status code 1000 (Normal Closure)
+                close_payload = struct.pack("!H", 1000)
+                close_frame = struct.pack("!BB", 0x88, len(close_payload)) + close_payload
+                self.connection.sendall(close_frame)
+                time.sleep(0.1) #short delay before replying
+            except Exception as e:
+                print(f"WebSocket send error: {e}")
+            self.connection.close()
+            return
         elif self.path.endswith(('/.well-known/serviceinfo')):
             response_body = (json.dumps({"version":"0.2","software":{"name":"KoboldCpp","version":KcppVersion,"repository":"https://github.com/LostRuins/koboldcpp","homepage":"https://github.com/LostRuins/koboldcpp","logo":"https://raw.githubusercontent.com/LostRuins/koboldcpp/refs/heads/concedo/niko.ico"},"api":{"koboldai":{"name":"KoboldAI API","rel_url":"/api","documentation":"https://lite.koboldai.net/koboldcpp_api","version":KcppVersion},"openai":{"name":"OpenAI API","rel_url ":"/v1","documentation":"https://openai.com/documentation/api","version":KcppVersion}}}).encode())
 
@@ -6035,6 +6060,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
 
     if args.debugmode != 1:
         showdebug = False
+    else:
+        showdebug = True
 
     if args.multiplayer:
         has_multiplayer = True
