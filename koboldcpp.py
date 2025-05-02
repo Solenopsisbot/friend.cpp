@@ -52,7 +52,7 @@ logit_bias_max = 512
 dry_seq_break_max = 128
 
 # global vars
-KcppVersion = "1.90.1"
+KcppVersion = "1.90.2"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False}
@@ -4849,6 +4849,8 @@ def show_gui():
         args.contextsize = int(contextsize_text[context_var.get()])
         if customrope_var.get()==1:
             args.ropeconfig = [float(customrope_scale.get()),float(customrope_base.get())]
+        else:
+            args.ropeconfig = [0.0, 10000.0]
         args.moeexperts = int(moeexperts_var.get()) if moeexperts_var.get()!="" else -1
         args.defaultgenamt = int(defaultgenamt_var.get()) if defaultgenamt_var.get()!="" else 512
         args.nobostoken = (nobostoken_var.get()==1)
