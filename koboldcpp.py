@@ -1507,10 +1507,30 @@ def sd_comfyui_tranform_params(genparams):
         genparams["height"] = temp.get("height", 512)
         temp = promptobj.get('6', {})
         temp = temp.get('inputs', {})
-        genparams["prompt"] = temp.get("text", "high quality")
+        genparams["prompt"] = temp.get("text", "")
         temp = promptobj.get('7', {})
         temp = temp.get('inputs', {})
         genparams["negative_prompt"] = temp.get("text", "")
+
+        #okay, if the prompt is empty something likely went wrong. try find the prompt node dynamically
+        if genparams.get("prompt","")=="":
+            for node_id, node_data in promptobj.items():
+                class_type = node_data.get("class_type","")
+                if class_type == "KSampler" or class_type == "KSamplerAdvanced":
+                    inp = node_data.get("inputs",{})
+                    pos = inp.get("positive",[])
+                    neg = inp.get("negative",[])
+                    if neg and isinstance(neg, list) and len(neg) > 0:
+                        temp = promptobj.get(str(neg[0]), {})
+                        temp = temp.get('inputs', {})
+                        genparams["negative_prompt"] = temp.get("text", "")
+                    if pos and isinstance(pos, list) and len(pos) > 0:
+                        temp = promptobj.get(str(pos[0]), {})
+                        temp = temp.get('inputs', {})
+                        genparams["prompt"] = temp.get("text", "")
+                        break
+        if genparams.get("prompt","")=="": #give up, set generic prompt
+            genparams["prompt"] = "high quality"
     else:
         print("Warning: ComfyUI Payload Missing!")
     return genparams
@@ -2899,7 +2919,7 @@ Change Mode<br>
             self.end_headers()
             try:
                 # Send a dummy WebSocket text frame: empty string
-                payload = '{"type":"dummy"}'.encode("utf-8")
+                payload = json.dumps({"type": "status", "data": {"status": {"exec_info": {"queue_remaining": 0}}, "sid": "ffff000012345678ffff000012345678"}}).encode("utf-8")
                 header = struct.pack("!BB", 0x81, len(payload))  # FIN + text frame, no mask
                 self.connection.sendall(header + payload)
                 time.sleep(0.1) #short delay before replying
@@ -4118,6 +4138,83 @@ def show_gui():
                 button.grid(row=row+1, column=1, columnspan=1, padx=8, stick="nw")
         return label, entry, button
 
+    def model_searcher():
+        searchbox1 = None
+        modelsearch1_var = ctk.StringVar(value="")
+        modelsearch2_var = ctk.StringVar(value="")
+        # Create popup window
+        popup = ctk.CTkToplevel(root)
+        popup.title("Model File Browser")
+        popup.geometry("400x400")
+
+        def confirm_search_model_choice():
+            nonlocal modelsearch1_var, modelsearch2_var, model_var
+            if modelsearch1_var.get()!="" and modelsearch2_var.get()!="":
+                model_var.set(f"https://huggingface.co/{modelsearch1_var.get()}/resolve/main/{modelsearch2_var.get()}")
+            popup.destroy()
+        def fetch_search_quants(a,b,c):
+            nonlocal modelsearch1_var, modelsearch2_var
+            try:
+                if modelsearch1_var.get()=="":
+                    return
+                searchedmodels = []
+                resp = make_url_request(f"https://huggingface.co/api/models/{modelsearch1_var.get()}",None,'GET',{},10)
+                for m in resp["siblings"]:
+                    if ".gguf" in m["rfilename"]:
+                        searchedmodels.append(m["rfilename"])
+                searchbox2.configure(values=searchedmodels)
+                if len(searchedmodels)>0:
+                    modelsearch2_var.set(searchedmodels[0])
+                else:
+                    modelsearch2_var.set("")
+            except Exception as e:
+                modelsearch1_var.set("")
+                modelsearch2_var.set("")
+                print(f"Error: {e}")
+
+        def fetch_search_models():
+            from tkinter import messagebox
+            nonlocal searchbox1, modelsearch1_var, modelsearch2_var
+            try:
+                modelsearch1_var.set("")
+                modelsearch2_var.set("")
+                searchedmodels = []
+                search = "GGUF " + model_search.get()
+                urlcode = urlparse.urlencode({"search":search,"limit":10}, doseq=True)
+                resp = make_url_request(f"https://huggingface.co/api/models?{urlcode}",None,'GET',{},10)
+                if len(resp)==0:
+                    messagebox.showinfo("No Results Found", "Search found no results")
+                for m in resp:
+                    searchedmodels.append(m["id"])
+                searchbox1.configure(values=searchedmodels)
+                if len(searchedmodels)>0:
+                    modelsearch1_var.set(searchedmodels[0])
+                else:
+                    modelsearch1_var.set("")
+            except Exception as e:
+                modelsearch1_var.set("")
+                modelsearch2_var.set("")
+                print(f"Error: {e}")
+
+        ctk.CTkLabel(popup, text="Enter Search String:").pack(pady=(10, 0))
+        model_search = ctk.CTkEntry(popup, width=300)
+        model_search.pack(pady=5)
+        model_search.insert(0, "")
+
+        ctk.CTkButton(popup, text="Search Huggingface", command=fetch_search_models).pack(pady=5)
+
+        ctk.CTkLabel(popup, text="Selected Model:").pack(pady=(10, 0))
+        searchbox1 = ctk.CTkComboBox(popup, values=[], width=340, variable=modelsearch1_var, state="readonly")
+        searchbox1.pack(pady=5)
+        ctk.CTkLabel(popup, text="Selected Quant:").pack(pady=(10, 0))
+        searchbox2 = ctk.CTkComboBox(popup, values=[], width=340, variable=modelsearch2_var, state="readonly")
+        searchbox2.pack(pady=5)
+        modelsearch1_var.trace("w", fetch_search_quants)
+
+        ctk.CTkButton(popup, text="Confirm Selection", command=confirm_search_model_choice).pack(pady=5)
+
+        popup.transient(root)
+
     # decided to follow yellowrose's and kalomaze's suggestions, this function will automatically try to determine GPU identifiers
     # run in new thread so it doesnt block. does not return anything, instead overwrites specific values and redraws GUI
     def auto_set_backend_gui(manual_select=False):
@@ -4391,6 +4488,7 @@ def show_gui():
     # load model
     makefileentry(quick_tab, "GGUF Text Model:", "Select GGUF or GGML Model File", model_var, 40, 280, onchoosefile=on_picked_model_file,tooltiptxt="Select a GGUF or GGML model file on disk to be loaded.")
     model_var.trace("w", gui_changed_modelfile)
+    ctk.CTkButton(quick_tab, width=70, text = "HF Search", command = model_searcher ).grid(row=41,column=1, stick="sw", padx= 202)
 
     # Hardware Tab
     hardware_tab = tabcontent["Hardware"]
@@ -4485,7 +4583,8 @@ def show_gui():
     # Model Tab
     model_tab = tabcontent["Loaded Files"]
 
-    makefileentry(model_tab, "Text Model:", "Select GGUF or GGML Model File", model_var, 1,width=280,singlerow=True, onchoosefile=on_picked_model_file,tooltiptxt="Select a GGUF or GGML model file on disk to be loaded.")
+    makefileentry(model_tab, "Text Model:", "Select GGUF or GGML Model File", model_var, 1,width=205,singlerow=True, onchoosefile=on_picked_model_file,tooltiptxt="Select a GGUF or GGML model file on disk to be loaded.")
+    ctk.CTkButton(model_tab, width=70, text = "HF Search", command = model_searcher ).grid(row=1,column=0, stick="nw", padx=370)
     makefileentry(model_tab, "Text Lora:", "Select Lora File",lora_var, 3,width=280,singlerow=True,tooltiptxt="Select an optional GGML Text LoRA adapter to use.\nLeave blank to skip.")
     makefileentry(model_tab, "Lora Base:", "Select Lora Base File", lora_base_var, 5,width=280,singlerow=True,tooltiptxt="Select an optional F16 GGML Text LoRA base file to use.\nLeave blank to skip.")
     makefileentry(model_tab, "Vision mmproj:", "Select Vision mmproj File", mmproj_var, 7,width=280,singlerow=True,tooltiptxt="Select a mmproj file to use for vision models like LLaVA.\nLeave blank to skip.")
@@ -5079,90 +5178,12 @@ def show_gui():
     def display_updates():
         LaunchWebbrowser("https://github.com/LostRuins/koboldcpp/releases/latest","Cannot launch updates in browser.")
 
-    def model_searcher():
-        searchbox1 = None
-        modelsearch1_var = ctk.StringVar(value="")
-        modelsearch2_var = ctk.StringVar(value="")
-        # Create popup window
-        popup = ctk.CTkToplevel(root)
-        popup.title("Model File Browser")
-        popup.geometry("400x400")
-
-        def confirm_search_model_choice():
-            nonlocal modelsearch1_var, modelsearch2_var, model_var
-            if modelsearch1_var.get()!="" and modelsearch2_var.get()!="":
-                model_var.set(f"https://huggingface.co/{modelsearch1_var.get()}/resolve/main/{modelsearch2_var.get()}")
-            popup.destroy()
-        def fetch_search_quants(a,b,c):
-            nonlocal modelsearch1_var, modelsearch2_var
-            try:
-                if modelsearch1_var.get()=="":
-                    return
-                searchedmodels = []
-                resp = make_url_request(f"https://huggingface.co/api/models/{modelsearch1_var.get()}",None,'GET',{},10)
-                for m in resp["siblings"]:
-                    if ".gguf" in m["rfilename"]:
-                        searchedmodels.append(m["rfilename"])
-                searchbox2.configure(values=searchedmodels)
-                if len(searchedmodels)>0:
-                    modelsearch2_var.set(searchedmodels[0])
-                else:
-                    modelsearch2_var.set("")
-            except Exception as e:
-                modelsearch1_var.set("")
-                modelsearch2_var.set("")
-                print(f"Error: {e}")
-        def fetch_search_models():
-            from tkinter import messagebox
-            nonlocal searchbox1, modelsearch1_var, modelsearch2_var
-            try:
-                modelsearch1_var.set("")
-                modelsearch2_var.set("")
-                searchedmodels = []
-                search = "GGUF " + model_search.get()
-                urlcode = urlparse.urlencode({"search":search,"limit":10}, doseq=True)
-                resp = make_url_request(f"https://huggingface.co/api/models?{urlcode}",None,'GET',{},10)
-                if len(resp)==0:
-                    messagebox.showinfo("No Results Found", "Search found no results")
-                for m in resp:
-                    searchedmodels.append(m["id"])
-                searchbox1.configure(values=searchedmodels)
-                if len(searchedmodels)>0:
-                    modelsearch1_var.set(searchedmodels[0])
-                else:
-                    modelsearch1_var.set("")
-            except Exception as e:
-                modelsearch1_var.set("")
-                modelsearch2_var.set("")
-                print(f"Error: {e}")
-
-        ctk.CTkLabel(popup, text="Enter Search String:").pack(pady=(10, 0))
-        model_search = ctk.CTkEntry(popup, width=300)
-        model_search.pack(pady=5)
-        model_search.insert(0, "")
-
-        ctk.CTkButton(popup, text="Search Huggingface", command=fetch_search_models).pack(pady=5)
-
-        ctk.CTkLabel(popup, text="Selected Model:").pack(pady=(10, 0))
-        searchbox1 = ctk.CTkComboBox(popup, values=[], width=340, variable=modelsearch1_var, state="readonly")
-        searchbox1.pack(pady=5)
-        ctk.CTkLabel(popup, text="Selected Quant:").pack(pady=(10, 0))
-        searchbox2 = ctk.CTkComboBox(popup, values=[], width=340, variable=modelsearch2_var, state="readonly")
-        searchbox2.pack(pady=5)
-        modelsearch1_var.trace("w", fetch_search_quants)
-
-        ctk.CTkButton(popup, text="Confirm Selection", command=confirm_search_model_choice).pack(pady=5)
-
-        popup.transient(root)
-
-
     ctk.CTkButton(tabs , text = "Launch", fg_color="#2f8d3c", hover_color="#2faa3c", command = guilaunch, width=80, height = 35 ).grid(row=1,column=1, stick="se", padx= 25, pady=5)
 
     ctk.CTkButton(tabs , text = "Update", fg_color="#9900cc", hover_color="#aa11dd", command = display_updates, width=90, height = 35 ).grid(row=1,column=0, stick="sw", padx= 5, pady=5)
     ctk.CTkButton(tabs , text = "Save", fg_color="#084a66", hover_color="#085a88", command = save_config_gui, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= 5, pady=5)
     ctk.CTkButton(tabs , text = "Load", fg_color="#084a66", hover_color="#085a88", command = load_config_gui, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= 70, pady=5)
     ctk.CTkButton(tabs , text = "Help", fg_color="#992222", hover_color="#bb3333", command = display_help, width=50, height = 35 ).grid(row=1,column=1, stick="sw", padx= 135, pady=5)
-    ctk.CTkButton(tabs , text = "Model Search", fg_color="#2222aa", hover_color="#3333cc", command = model_searcher, width=90, height = 35 ).grid(row=1,column=1, stick="sw", padx= 190, pady=5)
 
     # start a thread that tries to get actual gpu names and layer counts
     gpuinfo_thread = threading.Thread(target=auto_set_backend_gui)
