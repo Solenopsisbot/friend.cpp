@@ -963,11 +963,11 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to dete
         if fsize > (10*1024*1024): #dont bother with models < 10mb
             cs = ctxsize
             mem = gpumem
-            if "-00001-of-000" in fname:
+            if "-00001-of-0000" in fname:
                 match = re.search(r'-(\d{5})-of-(\d{5})\.', fname)
                 if match:
                     total_parts = int(match.group(2))
-                    if total_parts > 1 and total_parts < 99:
+                    if total_parts > 1 and total_parts <= 9:
                         print("Multi-Part GGUF detected. Layer estimates may not be very accurate - recommend setting layers manually.")
                         fsize *= total_parts
             if modelfile_extracted_meta[3] > 1024*1024*1024*5: #sdxl tax
@@ -4161,10 +4161,23 @@ def show_gui():
                 resp = make_url_request(f"https://huggingface.co/api/models/{modelsearch1_var.get()}",None,'GET',{},10)
                 for m in resp["siblings"]:
                     if ".gguf" in m["rfilename"]:
+                        if "-of-0" in m["rfilename"] and "00001" not in m["rfilename"]:
+                            continue
                         searchedmodels.append(m["rfilename"])
                 searchbox2.configure(values=searchedmodels)
                 if len(searchedmodels)>0:
-                    modelsearch2_var.set(searchedmodels[0])
+                    quants = ["q4k","q4_k","q4", "q3", "q5", "q6", "q8"] #autopick priority
+                    chosen_model = searchedmodels[0]
+                    found_good = False
+                    for quant in quants:
+                        for filename in searchedmodels:
+                            if quant in filename.lower():
+                                chosen_model = filename
+                                found_good = True
+                                break
+                        if found_good:
+                            break
+                    modelsearch2_var.set(chosen_model)
                 else:
                     modelsearch2_var.set("")
             except Exception as e:
@@ -5779,7 +5792,7 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
     return output_filename
 
 
-def download_model_from_url(url, permitted_types=[".gguf",".safetensors", ".ggml", ".bin"], min_file_size=64):
+def download_model_from_url(url, permitted_types=[".gguf",".safetensors", ".ggml", ".bin"], min_file_size=64,handle_multipart=False):
     if url and url!="":
         if url.endswith("?download=true"):
             url = url.replace("?download=true","")
@@ -5790,6 +5803,17 @@ def download_model_from_url(url, permitted_types=[".gguf",".safetensors", ".ggml
                 break
         if ((url.startswith("http://") or url.startswith("https://")) and end_ext_ok):
             dlfile = downloader_internal(url, "auto", False, min_file_size)
+            if handle_multipart and "-00001-of-0000" in url: #handle multipart files up to 9 parts
+                match = re.search(r'-(\d{5})-of-(\d{5})\.', url)
+                if match:
+                    total_parts = int(match.group(2))
+                    if total_parts > 1 and total_parts <= 9:
+                        current_part = 1
+                        base_url = url
+                        for part_num in range(current_part + 1, total_parts + 1):
+                            part_str = f"-{part_num:05d}-of-{total_parts:05d}"
+                            new_url = re.sub(r'-(\d{5})-of-(\d{5})', part_str, base_url)
+                            downloader_internal(new_url, "auto", False, min_file_size)
             return dlfile
     return None
 
@@ -6082,7 +6106,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
 
     # handle model downloads if needed
     if args.model_param and args.model_param!="":
-        dlfile = download_model_from_url(args.model_param,[".gguf",".bin", ".ggml"],min_file_size=500000)
+        dlfile = download_model_from_url(args.model_param,[".gguf",".bin", ".ggml"],min_file_size=500000,handle_multipart=True)
         if dlfile:
             args.model_param = dlfile
         if args.model and isinstance(args.model, list) and len(args.model)>1: #handle multi file downloading
