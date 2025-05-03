@@ -3705,13 +3705,13 @@ def zenity(filetypes=None, initialdir="", initialfile="", **kwargs) -> Tuple[int
             scargs = ['/usr/bin/env', zenity_bin, '--help']
             result = subprocess.run(scargs, env=sc_clean_env, capture_output=True, text=True, encoding="utf-8", timeout=10)
 
-            if result.returncode == 0 and "Usage" in result.stdout:
+            if result.returncode == 0 and "--file" in result.stdout:
                 return True
             else:
-                print(f"Zenity/YAD sanity check failed - ReturnCode={result.returncode}")
+                utfprint(f"Zenity/YAD sanity check failed - ReturnCode={result.returncode}",0)
                 return False
         except FileNotFoundError:
-            print(f"Zenity/YAD sanity check failed - {zenity_bin} not found")
+            utfprint(f"Zenity/YAD sanity check failed - {zenity_bin} not found",0)
             return False
 
     if not zenity_sanity_check(zenity_bin):
