@@ -355,10 +355,8 @@ void llama_kv_cache_unified::restore() {
 
 void llama_kv_cache_unified::commit() {
     if (pending.ranges.empty()) {
-        if (!recurrent) {
         LLAMA_LOG_WARN("%s: no pending KV cache updates to commit - might indicate a bug (ref: %s)\n",
                 __func__, "https://github.com/ggml-org/llama.cpp/pull/12695");
-        }
         return;
     }
 
