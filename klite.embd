@@ -9615,7 +9615,7 @@ Current version indicated by LITEVER below.
 			let is_local = is_local_url(desired_oai_ep);
 			desired_oai_ep = (is_local?"http://":"https://") + desired_oai_ep;
 		}
-		if (document.getElementById("oaiaddversion").checked && !desired_oai_ep.toLowerCase().includes("pollinations.ai"))
+		if (document.getElementById("oaiaddversion").checked && !desired_oai_ep.toLowerCase().includes("text.pollinations.ai"))
 		{
 			//fix incorrect paths
 			if(desired_oai_ep!="" && desired_oai_ep.toLowerCase().endsWith("/chat/completions")) {
@@ -14990,6 +14990,14 @@ Current version indicated by LITEVER below.
 						oai_payload.messages.push({ "role": "assistant", "content": mainoaibody, "prefix":true });
 						oaiemulatecompletionscontent = mainoaibody;
 					}
+
+					if(targetep.toLowerCase().includes("text.pollinations.ai"))
+					{
+						if(localsettings.opmode==1)
+						{
+							oai_payload.messages.unshift({ "role": "system", "content": "Please continue this story directly from where it stopped. Just respond with a direct partial continuation of the story immediately from the latest word." });
+						}
+					}
 				}
 				else
 				{
@@ -19168,7 +19176,7 @@ Current version indicated by LITEVER below.
 			}else if(custom_oai_endpoint.toLowerCase().includes("api.x.ai"))
 			{
 				localsettings.prev_custom_endpoint_type = 9;
-			}else if(custom_oai_endpoint.toLowerCase().includes("pollinations.ai"))
+			}else if(custom_oai_endpoint.toLowerCase().includes("text.pollinations.ai"))
 			{
 				localsettings.prev_custom_endpoint_type = 10;
 			}
@@ -22712,7 +22720,7 @@ Current version indicated by LITEVER below.
 				</span>
 				<span id="pollinationsdesc" class="hidden">
 				Pollinations.ai API is free to use without any key required.<br><br>
-				Note that KoboldAI Lite takes no responsibility for your usage or consequences of this feature.<br>Only Temperature, Top-P, Top-K and Repetition Penalty samplers are used.<br><br>
+				Note that KoboldAI Lite takes no responsibility for your usage or consequences of this feature. This service is ad driven, ads may appear in the output.<br>Only Temperature, Top-P, Top-K and Repetition Penalty samplers are used.<br><br>
 				<span class="color_green" style="font-weight: bold;">No Key Required.</span><br><br>
 				</span>
 
