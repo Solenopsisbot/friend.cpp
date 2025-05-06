@@ -78,6 +78,8 @@ struct generation_inputs
     const int seed = 0;
     const char * prompt = nullptr;
     const char * memory = nullptr;
+    const char * negative_prompt = nullptr;
+    const float guidance_scale = 1;
     const char * images[images_max] = {};
     const int max_context_length = 0;
     const int max_length = 0;
