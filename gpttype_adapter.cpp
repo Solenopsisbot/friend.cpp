@@ -40,8 +40,8 @@
 #include "neox_v2.cpp"
 #include "neox_v3.cpp"
 #include "mpt_v3.cpp"
-#include "tools/llava/clip.h"
-#include "tools/llava/llava.h"
+#include "tools/mtmd/clip.h"
+#include "tools/mtmd/llava.h"
 #include "common/common.h"
 
 //const
