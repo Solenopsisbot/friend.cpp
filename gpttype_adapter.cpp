@@ -3451,7 +3451,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         //eval the guidance prompt
         printf("Preparing Negative Prompt (%zu tokens)\n", guidance_embd.size());
         kcpp_embd_batch batch = kcpp_embd_batch(guidance_embd, 0, use_mrope, false);
-        auto er = (llama_decode(guidance_ctx, batch.batch)==0);
+        auto er = llama_decode(guidance_ctx, batch.batch);
         if(er!=0)
         {
             printf("\nProcess Negative Prompt Failed! (code:%d)\n",er);
