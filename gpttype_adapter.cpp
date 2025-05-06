@@ -136,6 +136,7 @@ static std::string concat_output_reader_copy_res = ""; //for gen response
 static std::vector<logit_bias> logit_biases;
 static bool add_bos_token = true; // if set to false, mmproj handling breaks. dont disable unless you know what you're doing
 static bool load_guidance = false; //whether to enable cfg for negative prompts
+static bool check_slowness = false; //will display a suggestion to use highpriority if slow
 
 static int delayed_generated_tokens_limit = 0;
 std::deque<std::string> delayed_generated_tokens; //for use with antislop sampling
@@ -1927,6 +1928,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     max_context_limit_at_load = clamped_max_context_length;
     add_bos_token = !inputs.no_bos_token;
     load_guidance = inputs.load_guidance;
+    check_slowness = inputs.check_slowness;
 
     if(!add_bos_token)
     {
@@ -4163,6 +4165,14 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     if(debugmode==1 && !is_quiet && (draft_successes+draft_failures)>0)
     {
         printf("\n(Draft Results - Success:%d, Failure:%d)",draft_successes,draft_failures);
+    }
+    if(check_slowness && ts2<2.0f)
+    {
+        check_slowness = false;
+        if(!is_quiet)
+        {
+            printf("\n======\nNote: Your generation speed appears rather slow. You can try relaunching KoboldCpp with the high priority toggle (or --highpriority) to see if it helps.\n======\n");
+        }
     }
     fflush(stdout);
     output.status = 1;
