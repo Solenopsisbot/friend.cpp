@@ -2392,6 +2392,13 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             printf("\nThis architecture has explicitly disabled the BOS token - if you need it, you must add it manually.\n");
             add_bos_token = false;
         }
+        if (file_format == FileFormat::GGUF_GENERIC && file_format_meta.model_architecture == GGUFArch::ARCH_GLM4) {
+            std::string temp = gpttype_get_chat_template();
+            if (temp.find("[gMASK]<sop>") != std::string::npos) {
+                printf("GLM-4 special BOS handling used.\n");
+                add_bos_token = false;
+            }
+        }
 
         //warmup at least 33 tokens to trigger batch
         std::vector<int> tmp;
@@ -3216,7 +3223,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 if (kcpp_data->prompt.rfind("<sop>", 0) == 0) {  //check startswith
                     kcpp_data->prompt.erase(0, 5);
                 }
-                addedmemory = "<sop>";
+                addedmemory = "[gMASK]<sop>";
             } else {
                 if (addedmemory.rfind("[gMASK]", 0) == 0) {  //check startswith
                     addedmemory.erase(0, 7);
@@ -3224,7 +3231,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 if (addedmemory.rfind("<sop>", 0) == 0) {  //check startswith
                     addedmemory.erase(0, 5);
                 }
-                addedmemory = "<sop>" + addedmemory;
+                addedmemory = "[gMASK]<sop>" + addedmemory;
             }
         }
     }
