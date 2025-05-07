@@ -1911,7 +1911,9 @@ static void ggml_vk_load_shaders(vk_device& device) {
         auto rows_cols = fa_rows_cols(scalar, D, clamp, type, small_rows);
 
         // D_split can't be larger than a subgroup because we use subgroupShuffle to reduce it.
-        const uint32_t D_split = std::min(device->subgroup_size, 16u);
+        // D_split can't be larger than the LSB of D divided by 4 due to vectorization in the shader.
+        const uint32_t D_lsb = D ^ (D & (D-1));
+        uint32_t D_split = std::min(std::min(device->subgroup_size, 16u), D_lsb / 4);
 
         // mask dim1 is padded to 64, we rely on this to avoid clamping mask loads
         GGML_ASSERT((GGML_KQ_MASK_PAD % rows_cols[0]) == 0);
