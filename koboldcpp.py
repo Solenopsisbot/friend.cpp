@@ -78,6 +78,7 @@ defaultport = 5001
 showsamplerwarning = True
 showmaxctxwarning = True
 showusedmemwarning = True
+showmultigpuwarning = True
 session_kudos_earned = 0
 session_jobs = 0
 session_starttime = None
@@ -950,7 +951,7 @@ def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,
             modelfile_extracted_meta = None
 
 def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to determine how many layers to use
-    global showusedmemwarning, modelfile_extracted_meta # reference cached values instead
+    global showusedmemwarning, showmultigpuwarning, modelfile_extracted_meta # reference cached values instead
     gpumem = MaxMemory[0]
     usedmem = 0
     if MaxFreeMemory[0]>0:
@@ -973,7 +974,9 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to dete
                 if match:
                     total_parts = int(match.group(2))
                     if total_parts > 1 and total_parts <= 9:
-                        print("Multi-Part GGUF detected. Layer estimates may not be very accurate - recommend setting layers manually.")
+                        if showmultigpuwarning:
+                            showmultigpuwarning = False
+                            print("Multi-Part GGUF detected. Layer estimates may not be very accurate - recommend setting layers manually.")
                         fsize *= total_parts
             if modelfile_extracted_meta[3] > 1024*1024*1024*5: #sdxl tax
                 mem -= 1024*1024*1024*(6 if sdquanted else 9)
