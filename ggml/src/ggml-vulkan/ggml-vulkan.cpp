@@ -5726,9 +5726,9 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
     assert(k->type == v->type);
 
     vk_pipeline *pipelines;
-    // XXX TODO other backends may be changing accumulator precision to default to f32 soon
-    bool f32acc = dst->op_params[3] == GGML_PREC_F32;
     bool scalar = !ctx->device->coopmat2;
+    // XXX TODO other backends may be changing accumulator precision to default to f32 soon
+    bool f32acc = scalar || dst->op_params[3] == GGML_PREC_F32;
     bool small_rows = N <= get_fa_num_small_rows(scalar);
 
     if (scalar) {
