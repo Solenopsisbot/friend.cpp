@@ -1590,7 +1590,7 @@ static void ggml_vk_wait_events(vk_context& ctx, std::vector<vk::Event>&& events
 
 // number of rows/cols for flash attention shader
 static constexpr uint32_t flash_attention_num_small_rows = 32;
-static constexpr uint32_t scalar_flash_attention_num_small_rows = 4;
+static constexpr uint32_t scalar_flash_attention_num_small_rows = 8;
 
 static uint32_t get_fa_num_small_rows(bool scalar) {
     return scalar ? scalar_flash_attention_num_small_rows : flash_attention_num_small_rows;
@@ -1601,7 +1601,7 @@ static std::array<uint32_t, 2> fa_rows_cols(bool scalar, uint32_t D, uint32_t cl
 
     // small rows, large cols
     if (small_rows || scalar) {
-        return {get_fa_num_small_rows(scalar), 64};
+        return {get_fa_num_small_rows(scalar), 32};
     }
 
     // small cols to reduce register count
@@ -1913,7 +1913,7 @@ static void ggml_vk_load_shaders(vk_device& device) {
         // D_split can't be larger than a subgroup because we use subgroupShuffle to reduce it.
         // D_split can't be larger than the LSB of D divided by 4 due to vectorization in the shader.
         const uint32_t D_lsb = D ^ (D & (D-1));
-        uint32_t D_split = std::min(std::min(device->subgroup_size, 16u), D_lsb / 4);
+        uint32_t D_split = std::min(std::min(device->subgroup_size, 8u), D_lsb / 4);
 
         // mask dim1 is padded to 64, we rely on this to avoid clamping mask loads
         GGML_ASSERT((GGML_KQ_MASK_PAD % rows_cols[0]) == 0);

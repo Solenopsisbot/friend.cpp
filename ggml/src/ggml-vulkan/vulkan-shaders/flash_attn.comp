@@ -105,6 +105,7 @@ ACC_TYPE perElemOpComputeSlope(const in uint32_t r, const in uint32_t c, const i
 }
 
 shared FLOAT_TYPE tmpsh[gl_WorkGroupSize.x];
+shared vec4 tmpshv4[gl_WorkGroupSize.x];
 
 shared float16_t masksh[Bc][Br];
 shared vec4 Qf[Br][D / 4];
@@ -168,13 +169,15 @@ void main() {
 
     uint32_t q_offset = (iq2*p.nb02+iq3*p.nb03) / 4;
 
-    [[unroll]] for (uint32_t r = 0; r < Br; ++r) {
-        if (i * Br + r < N) {
-            [[unroll]] for (uint32_t d = 0; d < D_per_thread / 4; ++d) {
-                Qf[r][d * D_split + d_tid] = vec4(data_qv4[q_offset / 4 + (i * Br + r) * q_stride / 4 + d * D_split + d_tid]) * p.scale;
-            }
+    [[unroll]] for (uint32_t idx = 0; idx < Br * D / 4; idx += gl_WorkGroupSize.x) {
+        uint32_t d = (idx + tid) % (D / 4);
+        uint32_t r = (idx + tid) / (D / 4);
+        if (r < Br && d < D / 4 &&
+            i * Br + r < N) {
+            Qf[r][d] = vec4(data_qv4[q_offset / 4 + (i * Br + r) * q_stride / 4 + d]) * p.scale;
         }
     }
+    barrier();
 
     vec4 Of[Br][D_per_thread / 4];
     [[unroll]] for (uint32_t d = 0; d < D_per_thread / 4; ++d) {
@@ -350,20 +353,18 @@ void main() {
         [[unroll]] for (uint32_t d = 0; d < D_per_thread / 4; ++d) {
 
             Of[r][d] = eMf * Of[r][d];
-            [[unroll]] for (uint32_t c = 0; c < 4; ++c) {
-                tmpsh[tid] = Of[r][d][c];
+            tmpshv4[tid] = Of[r][d];
 
-                barrier();
-                [[unroll]] for (int s = int(gl_WorkGroupSize.x) / 2; s >= D_split; s >>= 1) {
-                    if (tid < s) {
-                        Of[r][d][c] += tmpsh[tid + s];
-                        tmpsh[tid] = Of[r][d][c];
-                    }
-                    barrier();
+            barrier();
+            [[unroll]] for (int s = int(gl_WorkGroupSize.x) / 2; s >= D_split; s >>= 1) {
+                if (tid < s) {
+                    Of[r][d] += tmpshv4[tid + s];
+                    tmpshv4[tid] = Of[r][d];
                 }
-                Of[r][d][c] = tmpsh[d_tid];
                 barrier();
             }
+            Of[r][d] = tmpshv4[d_tid];
+            barrier();
         }
     }
 
