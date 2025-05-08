@@ -295,7 +295,9 @@ void main() {
             [[unroll]] for (uint32_t idx = 0; idx < Bc * Br; idx += gl_WorkGroupSize.x) {
                 uint32_t c = (idx + tid) % Bc;
                 uint32_t r = (idx + tid) / Bc;
-                masksh[c][r] = data_m[(i * Br + r) * m_stride + (j * Bc + c)];
+                if (idx + tid < Bc * Br) {
+                    masksh[c][r] = data_m[(i * Br + r) * m_stride + (j * Bc + c)];
+                }
             }
             barrier();
 
