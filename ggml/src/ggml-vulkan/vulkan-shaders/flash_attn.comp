@@ -72,6 +72,36 @@ layout (binding = 2) readonly buffer VV4 {f16vec4 data_vv4[];};
 layout (binding = 3) readonly buffer M {float16_t data_m[];};
 layout (binding = 4) writeonly buffer O {D_TYPE data_o[];};
 
+#if defined(A_TYPE_PACKED16)
+#define BINDING_IDX_K 0
+#define BINDING_IDX_V 1
+layout (binding = 1) readonly buffer KV_PACKED16 {A_TYPE_PACKED16 data_packed16[];} kv_packed[2];
+#endif
+
+#if defined(DATA_A_Q4_0)
+#define BLOCK_BYTE_SIZE 18
+
+vec4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+    uint vui_lo = uint(kv_packed[binding_idx].data_packed16[a_offset + ib].qs[(iqs & 0xF) / 2 + 0]);
+    uint vui_hi = uint(kv_packed[binding_idx].data_packed16[a_offset + ib].qs[(iqs & 0xF) / 2 + 1]);
+    uint shift = (iqs & 0x10) >> 2;
+    vui_lo >>= shift;
+    vui_hi >>= shift;
+
+    return float(kv_packed[binding_idx].data_packed16[a_offset + ib].d) * (vec4(vui_lo & 0xF, (vui_lo >> 8) & 0xF, vui_hi & 0xF, (vui_hi >> 8) & 0xF) - 8.0f);
+}
+#endif
+
+#if defined(DATA_A_Q8_0)
+#define BLOCK_BYTE_SIZE 34
+vec4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+    const i8vec2 v0 = unpack8(int32_t(kv_packed[binding_idx].data_packed16[a_offset + ib].qs[iqs / 2])).xy; // vec4 used due to #12147
+    const i8vec2 v1 = unpack8(int32_t(kv_packed[binding_idx].data_packed16[a_offset + ib].qs[iqs / 2 + 1])).xy;
+
+    return float(kv_packed[binding_idx].data_packed16[a_offset + ib].d) * vec4(v0.x, v0.y, v1.x, v1.y);
+}
+#endif
+
 #define CEIL_DIV(a, b) (((a) + (b) - 1) / (b))
 
 // Store the output when doing grouped query attention.
@@ -208,6 +238,14 @@ void main() {
         }
     }
 
+#if BLOCK_SIZE > 1
+    uint32_t k_offset = (ik2*p.nb12 + ik3*p.nb13) / BLOCK_BYTE_SIZE;
+    uint32_t v_offset = (iv2*p.nb22 + iv3*p.nb23) / BLOCK_BYTE_SIZE;
+#else
+    uint32_t k_offset = (ik2*p.nb12 + ik3*p.nb13) / 2;
+    uint32_t v_offset = (iv2*p.nb22 + iv3*p.nb23) / 2;
+#endif
+
     [[dont_unroll]]
     for (uint32_t j = start_j; j < end_j; ++j) {
 
@@ -218,11 +256,17 @@ void main() {
             }
         }
 
-        uint32_t k_offset = (ik2*p.nb12 + ik3*p.nb13) / 2;
 
         [[unroll]] for (uint32_t c = 0; c < cols_per_thread; ++c) {
             [[unroll]] for (uint32_t d = 0; d < D_per_thread / 4; ++d) {
+#if BLOCK_SIZE > 1
+                uint coord = (j * Bc + c * cols_per_iter + col_tid) * k_stride * BLOCK_SIZE + 4 * (d * D_split + d_tid);
+                uint ib = coord / BLOCK_SIZE;
+                uint iqs = (coord % BLOCK_SIZE);
+                vec4 K_Tf = dequantize4(ib, iqs, k_offset, BINDING_IDX_K);
+#else
                 vec4 K_Tf = vec4(data_kv4[k_offset / 4 + (j * Bc + c * cols_per_iter + col_tid) * k_stride / 4 + d * D_split + d_tid]);
+#endif
                 [[unroll]] for (uint32_t r = 0; r < Br; ++r) {
                     Sf[r][c] += dot(Qf[r][d * D_split + d_tid], K_Tf);
                 }
@@ -297,11 +341,16 @@ void main() {
             }
         }
 
-        uint32_t v_offset = (iv2*p.nb22 + iv3*p.nb23) / 2;
-
         [[unroll]] for (uint32_t c = 0; c < cols_per_thread; ++c) {
             [[unroll]] for (uint32_t d = 0; d < D_per_thread / 4; ++d) {
+#if BLOCK_SIZE > 1
+                uint coord = (j * Bc + c * cols_per_iter + col_tid) * v_stride * BLOCK_SIZE + 4 * (d * D_split + d_tid);
+                uint ib = coord / BLOCK_SIZE;
+                uint iqs = (coord % BLOCK_SIZE);
+                vec4 Vf = dequantize4(ib, iqs, v_offset, BINDING_IDX_V);
+#else
                 vec4 Vf = vec4(data_vv4[v_offset / 4 + (j * Bc + c * cols_per_iter + col_tid) * v_stride / 4 + d * D_split + d_tid]);
+#endif
                 [[unroll]] for (uint32_t r = 0; r < Br; ++r) {
                     Of[r][d] += Pf[r][c] * Vf;
                 }
