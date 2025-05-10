@@ -4213,18 +4213,28 @@ def show_gui():
 
         def fetch_search_models():
             from tkinter import messagebox
-            nonlocal searchbox1, modelsearch1_var, modelsearch2_var
+            nonlocal searchbox1, searchbox2, modelsearch1_var, modelsearch2_var
             try:
                 modelsearch1_var.set("")
                 modelsearch2_var.set("")
+                searchbox1.configure(values=[])
+                searchbox2.configure(values=[])
                 searchedmodels = []
-                search = "GGUF " + model_search.get()
-                urlcode = urlparse.urlencode({"search":search,"limit":10}, doseq=True)
+                searchbase = model_search.get()
+                if searchbase.strip()=="":
+                    return
+                urlcode = urlparse.urlencode({"search":( "GGUF " + searchbase),"limit":10}, doseq=True)
+                urlcode2 = urlparse.urlencode({"search":searchbase,"limit":6}, doseq=True)
                 resp = make_url_request(f"https://huggingface.co/api/models?{urlcode}",None,'GET',{},10)
-                if len(resp)==0:
-                    messagebox.showinfo("No Results Found", "Search found no results")
                 for m in resp:
                     searchedmodels.append(m["id"])
+                if len(resp)<=3: #too few results, repeat search without GGUF in the string
+                    resp2 = make_url_request(f"https://huggingface.co/api/models?{urlcode2}",None,'GET',{},10)
+                    for m in resp2:
+                        searchedmodels.append(m["id"])
+
+                if len(searchedmodels)==0:
+                    messagebox.showinfo("No Results Found", "Search found no results")
                 searchbox1.configure(values=searchedmodels)
                 if len(searchedmodels)>0:
                     modelsearch1_var.set(searchedmodels[0])
