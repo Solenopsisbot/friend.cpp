@@ -183,7 +183,7 @@ ifdef LLAMA_CUBLAS
 	CUBLAS_OBJS += $(patsubst %.cu,%.o,$(filter-out ggml/src/ggml-cuda/ggml-cuda.cu, $(wildcard ggml/src/ggml-cuda/*.cu)))
 	CUBLAS_OBJS += $(OBJS_CUDA_TEMP_INST)
 	NVCC      = nvcc
-	NVCCFLAGS = --forward-unknown-to-host-compiler -use_fast_math
+	NVCCFLAGS = --forward-unknown-to-host-compiler -use_fast_math -extended-lambda
 
 ifdef LLAMA_ADD_CONDA_PATHS
 	CUBLASLD_FLAGS += -Lconda/envs/linux/lib -Lconda/envs/linux/lib/stubs
