@@ -1942,8 +1942,8 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         {
             printf("GLM-4 is broken on larger batch sizes in Vulkan. Clamp ignored in debug.\n");
         } else {
-            printf("GLM-4 is broken on larger batch sizes in Vulkan. Clamping ubatch size to 16.\n");
-            kcpp_data->n_ubatch = 16;
+            printf("GLM-4 is broken on larger batch sizes in Vulkan. Clamping ubatch size to 8.\n");
+            kcpp_data->n_ubatch = 8;
         }
     }
     #endif
