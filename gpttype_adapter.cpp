@@ -2440,6 +2440,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
                 add_bos_token = false;
             }
         }
+        printf("Starting model warm up, please wait a moment...\n");
 
         //warmup at least 33 tokens to trigger batch
         std::vector<int> tmp;
