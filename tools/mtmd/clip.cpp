@@ -3762,6 +3762,11 @@ bool clip_model_quantize(const char * fname_inp, const char * fname_out, const i
     for (int i = 0; i < n_tensors; ++i) {
         const char * name = gguf_get_tensor_name(ctx_src, i);
         ggml_tensor * cur = ggml_get_tensor(ctx_data, name);
+        if(cur==nullptr)
+        {
+            printf("\nSkipped missing %s tensor!\n",name);
+            continue;
+        }
         gguf_add_tensor(ctx_out, cur);
     }
 
@@ -3783,6 +3788,11 @@ bool clip_model_quantize(const char * fname_inp, const char * fname_out, const i
     for (int i = 0; i < n_tensors; ++i) {
         const std::string name = gguf_get_tensor_name(ctx_src, i);
         ggml_tensor * cur = ggml_get_tensor(ctx_data, name.c_str());
+        if(cur==nullptr)
+        {
+            printf("\nSkipped missing %s tensor!\n",name.c_str());
+            continue;
+        }
 
         enum ggml_type new_type;
         void * new_data;
