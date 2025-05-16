@@ -12322,6 +12322,9 @@ struct llm_build_granite : public llm_graph_context {
 
         // inp_pos - built only if rope enabled
         ggml_tensor * inp_pos = nullptr;
+        if (use_rope) {
+            inp_pos = build_inp_pos();
+        }
 
         auto * inp_attn = build_attn_inp_kv_unified();
 
@@ -12364,10 +12367,6 @@ struct llm_build_granite : public llm_graph_context {
                 Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
 
                 if (use_rope) {
-
-                    if (!inp_pos) {
-                        inp_pos = build_inp_pos();
-                    }
                     ggml_tensor * rope_factors = model.get_rope_factors(n_ctx_per_seq, il);
                     Qcur = ggml_rope_ext(
                             ctx0, Qcur, inp_pos, rope_factors,
