@@ -5019,7 +5019,7 @@ def show_gui():
     def import_vars(dict):
         global importvars_in_progress
         importvars_in_progress = True
-        dict = convert_outdated_args(dict)
+        dict = convert_invalid_args(dict)
 
         if "threads" in dict:
             threads_var.set(dict["threads"])
@@ -5517,7 +5517,7 @@ def run_horde_worker(args, api_key, worker_name):
     time.sleep(3)
     sys.exit(2)
 
-def convert_outdated_args(args):
+def convert_invalid_args(args):
     dict = args
     if isinstance(args, argparse.Namespace):
         dict = vars(args)
@@ -5542,6 +5542,8 @@ def convert_outdated_args(args):
         dict["usecpu"] = True
     if "failsafe" in dict and dict["failsafe"]: #failsafe implies noavx2
         dict["noavx2"] = True
+    if "skiplauncher" in dict and dict["skiplauncher"]:
+        dict["showgui"] = False
     if ("model_param" not in dict or not dict["model_param"]) and ("model" in dict):
         model_value = dict["model"] #may be null, empty/non-empty string, empty/non empty array
         if isinstance(model_value, str) and model_value:  # Non-empty string
@@ -5870,7 +5872,7 @@ def main(launch_args, default_args):
     if (args.nomodel or args.benchmark or args.launch or args.admin) and args.cli:
         exit_with_error(1, "Error: --cli cannot be combined with --launch, --nomodel, --admin or --benchmark")
 
-    args = convert_outdated_args(args)
+    args = convert_invalid_args(args)
 
     temp_hide_print = (args.model_param and (args.prompt and not args.cli) and not args.benchmark and not (args.debugmode >= 1))
 
@@ -5915,7 +5917,7 @@ def main(launch_args, default_args):
         else:
             exitcounter = 999
             exit_with_error(2,"Specified kcpp config file invalid or not found.")
-    args = convert_outdated_args(args)
+    args = convert_invalid_args(args)
 
     #positional handling for kcpps files (drag and drop)
     if args.model_param and args.model_param!="" and (args.model_param.lower().endswith('.kcpps') or args.model_param.lower().endswith('.kcppt') or args.model_param.lower().endswith('.kcpps?download=true') or args.model_param.lower().endswith('.kcppt?download=true')):
@@ -6829,7 +6831,7 @@ if __name__ == '__main__':
     advparser.add_argument("--overridetensors", metavar=('[tensor name pattern=buffer type]'), help="Advanced option to override tensor backend selection, same as in llama.cpp.", default="")
     compatgroup2 = parser.add_mutually_exclusive_group()
     compatgroup2.add_argument("--showgui", help="Always show the GUI instead of launching the model right away when loading settings from a .kcpps file.", action='store_true')
-    compatgroup2.add_argument("--skiplauncher", help="Doesn't display or use the GUI launcher.", action='store_true')
+    compatgroup2.add_argument("--skiplauncher", help="Doesn't display or use the GUI launcher. Overrides showgui.", action='store_true')
 
     hordeparsergroup = parser.add_argument_group('Horde Worker Commands')
     hordeparsergroup.add_argument("--hordemodelname", metavar=('[name]'), help="Sets your AI Horde display model name.", default="")
