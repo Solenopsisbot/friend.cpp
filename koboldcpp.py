@@ -4433,8 +4433,8 @@ def show_gui():
             except Exception:
                 pass
         else:
-            quick_gpuname_label.configure(text="")
-            gpuname_label.configure(text="")
+            quick_gpuname_label.configure(text="(dGPUs only, tensor split sets ratio)")
+            gpuname_label.configure(text="(dGPUs only, tensor split sets ratio)")
 
     gpu_choice_var.trace("w", changed_gpu_choice_var)
     gpulayers_var.trace("w", changed_gpulayers_estimate)
