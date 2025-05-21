@@ -2439,7 +2439,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         if (file_format == FileFormat::GGUF_GENERIC && file_format_meta.model_architecture == GGUFArch::ARCH_GLM4) {
             std::string temp = gpttype_get_chat_template();
             if (temp.find("[gMASK]<sop>") != std::string::npos) {
-                printf("GLM-4 special BOS handling used.\n");
+                printf("GLM-4 will have no automatic BOS token.\n");
                 add_bos_token = false;
             }
         }
@@ -3261,30 +3261,6 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             }
         }
     }
-
-    //need to add a cursed hack to get coherency for GLM4, by ensuring injection for both sop and gmask
-    // if (file_format == FileFormat::GGUF_GENERIC && file_format_meta.model_architecture == GGUFArch::ARCH_GLM4) {
-    //     std::string temp = gpttype_get_chat_template();
-    //     if (temp.find("[gMASK]<sop>") != std::string::npos) {
-    //         if (addedmemory == "") {
-    //             if (kcpp_data->prompt.rfind("[gMASK]", 0) == 0) {  //check startswith
-    //                 kcpp_data->prompt.erase(0, 7);
-    //             }
-    //             if (kcpp_data->prompt.rfind("<sop>", 0) == 0) {  //check startswith
-    //                 kcpp_data->prompt.erase(0, 5);
-    //             }
-    //             addedmemory = "[gMASK]<sop>";
-    //         } else {
-    //             if (addedmemory.rfind("[gMASK]", 0) == 0) {  //check startswith
-    //                 addedmemory.erase(0, 7);
-    //             }
-    //             if (addedmemory.rfind("<sop>", 0) == 0) {  //check startswith
-    //                 addedmemory.erase(0, 5);
-    //             }
-    //             addedmemory = "[gMASK]<sop>" + addedmemory;
-    //         }
-    //     }
-    // }
 
     bool stream_sse = inputs.stream_sse;
     bool allow_regular_prints = (!is_quiet && debugmode!=-1);
