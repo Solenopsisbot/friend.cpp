@@ -4367,6 +4367,9 @@ def show_gui():
     def on_picked_model_file(filepath):
         if filepath and (filepath.lower().endswith('.kcpps') or filepath.lower().endswith('.kcppt')):
             #load it as a config file instead
+            if filepath.lower().endswith('.kcpps'):
+                global runmode_untouched
+                runmode_untouched = False
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                 dict = json.load(f)
                 import_vars(dict)
