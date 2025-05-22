@@ -3256,6 +3256,37 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         }
     }
 
+    //need to add a cursed hack to improve coherency for GLM4, by ensuring injection for gmask, sop and an extra space
+    //any complaints please direct them to henky
+    if (file_format == FileFormat::GGUF_GENERIC && file_format_meta.model_architecture == GGUFArch::ARCH_GLM4) {
+        std::string temp = gpttype_get_chat_template();
+        if (temp.find("[gMASK]<sop>") != std::string::npos) {
+            if (addedmemory == "") {
+                if (!kcpp_data->prompt.empty() && kcpp_data->prompt.rfind("[gMASK]", 0) == 0) {  //check startswith
+                    kcpp_data->prompt.erase(0, 7);
+                }
+                if (!kcpp_data->prompt.empty() && kcpp_data->prompt.rfind("<sop>", 0) == 0) {  //check startswith
+                    kcpp_data->prompt.erase(0, 5);
+                }
+                if (!kcpp_data->prompt.empty() && kcpp_data->prompt[0] == ' ') {  // check for leading space
+                    kcpp_data->prompt.erase(0, 1);
+                }
+                addedmemory = "[gMASK]<sop> ";
+            } else {
+                if (!addedmemory.empty() && addedmemory.rfind("[gMASK]", 0) == 0) {  //check startswith
+                    addedmemory.erase(0, 7);
+                }
+                if (!addedmemory.empty() && addedmemory.rfind("<sop>", 0) == 0) {  //check startswith
+                    addedmemory.erase(0, 5);
+                }
+                if (!addedmemory.empty() && addedmemory[0] == ' ') {  // check for leading space
+                    addedmemory.erase(0, 1);
+                }
+                addedmemory = "[gMASK]<sop> " + addedmemory;
+            }
+        }
+    }
+
     bool stream_sse = inputs.stream_sse;
     bool allow_regular_prints = (!is_quiet && debugmode!=-1);
 
