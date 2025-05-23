@@ -3134,7 +3134,9 @@ Change Mode<br>
                 return
             try:
                 genparams = json.loads(body)
-                schema = genparams.get('schema', {})
+                schema = genparams.get('schema', None)
+                if not schema:
+                    schema = genparams
                 decoded = convert_json_to_gbnf(schema)
                 response_body = (json.dumps({"result": decoded,"success":(True if decoded else False)}).encode())
             except Exception as e:
