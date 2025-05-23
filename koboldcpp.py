@@ -192,6 +192,7 @@ class load_model_inputs(ctypes.Structure):
                 ("quant_k", ctypes.c_int),
                 ("quant_v", ctypes.c_int),
                 ("check_slowness", ctypes.c_bool),
+                ("swa_support", ctypes.c_bool),
                 ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int)]
 
@@ -1248,6 +1249,7 @@ def load_model(model_filename):
     inputs.override_kv = args.overridekv.encode("UTF-8") if args.overridekv else "".encode("UTF-8")
     inputs.override_tensors = args.overridetensors.encode("UTF-8") if args.overridetensors else "".encode("UTF-8")
     inputs.check_slowness = (not args.highpriority and os.name == 'nt' and 'Intel' in platform.processor())
+    inputs.swa_support = args.experiment_swa
     inputs = set_backend_props(inputs)
     ret = handle.load_model(inputs)
     return ret
@@ -6906,6 +6908,9 @@ if __name__ == '__main__':
     admingroup.add_argument("--admin", help="Enables admin mode, allowing you to unload and reload different configurations or models.", action='store_true')
     admingroup.add_argument("--adminpassword", metavar=('[password]'), help="Require a password to access admin functions. You are strongly advised to use one for publically accessible instances!", default=None)
     admingroup.add_argument("--admindir", metavar=('[directory]'), help="Specify a directory to look for .kcpps configs in, which can be used to swap models.", default="")
+
+    experimentgroup = parser.add_argument_group('Experimental Commands, can change or break any time!')
+    experimentgroup.add_argument("--experiment_swa", help="Enables SWA mode. There are no safety checks.", action='store_true')
 
     deprecatedgroup = parser.add_argument_group('Deprecated Commands, DO NOT USE!')
     deprecatedgroup.add_argument("--hordeconfig", help=argparse.SUPPRESS, nargs='+')
