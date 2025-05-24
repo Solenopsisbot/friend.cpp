@@ -1538,6 +1538,7 @@ struct llama_vocab::impl {
     bool is_user_defined(llama_token id) const;
     bool is_unused      (llama_token id) const;
     bool is_eog         (llama_token id) const;
+    std::set<int> get_eogs() const;
 
     uint8_t token_to_byte(llama_token id) const;
 
@@ -2396,6 +2397,10 @@ bool llama_vocab::impl::is_eog(llama_token id) const {
     return id != LLAMA_TOKEN_NULL && special_eog_ids.count(id) > 0;
 }
 
+std::set<int> llama_vocab::impl::get_eogs() const {
+    return special_eog_ids;
+}
+
 uint8_t llama_vocab::impl::token_to_byte(llama_token id) const {
     GGML_ASSERT(get_type() != LLAMA_VOCAB_TYPE_NONE);
     GGML_ASSERT(is_byte(id));
@@ -3121,6 +3126,10 @@ bool llama_vocab::is_eog(llama_token id) const {
     return pimpl->is_eog(id);
 }
 
+std::set<int> llama_vocab::get_eogs() const {
+    return pimpl->get_eogs();
+}
+
 uint8_t llama_vocab::token_to_byte(llama_token id) const {
     return pimpl->token_to_byte(id);
 }
@@ -3429,6 +3438,11 @@ llama_token llama_vocab_eos(const struct llama_vocab * vocab) {
 
 llama_token llama_vocab_eot(const struct llama_vocab * vocab) {
     return vocab->token_eot();
+}
+
+std::set<int> llama_vocab_get_eogs(const struct llama_vocab * vocab)
+{
+    return vocab->get_eogs();
 }
 
 // deprecated
