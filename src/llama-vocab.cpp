@@ -3440,11 +3440,6 @@ llama_token llama_vocab_eot(const struct llama_vocab * vocab) {
     return vocab->token_eot();
 }
 
-std::set<int> llama_vocab_get_eogs(const struct llama_vocab * vocab)
-{
-    return vocab->get_eogs();
-}
-
 // deprecated
 llama_token llama_vocab_cls(const struct llama_vocab * vocab) {
     return vocab->token_bos();
