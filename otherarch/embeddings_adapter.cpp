@@ -114,7 +114,6 @@ bool embeddingstype_load_model(const embeddings_load_model_inputs inputs)
 
     embeddings_debug = (inputs.debugmode>0);
 
-    // tts init
     llama_model_params model_params = llama_model_default_params();
     llama_context_params ctx_params = llama_context_default_params();
     const int nthreads = inputs.threads;
@@ -130,7 +129,7 @@ bool embeddingstype_load_model(const embeddings_load_model_inputs inputs)
     ctx_params.embeddings = true;
     ctx_params.n_ubatch = ctx_params.n_ubatch = max_batchsize; //max size, must fit
     ctx_params.n_ctx = max_batchsize;
-    ctx_params.offload_kqv = true;
+    ctx_params.offload_kqv = false;
     ctx_params.n_threads = nthreads;
     ctx_params.n_threads_batch = nthreads;
     ctx_params.flash_attn = inputs.flash_attention;
