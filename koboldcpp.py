@@ -2946,6 +2946,7 @@ Change Mode<br>
             if args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                 dirpath = os.path.abspath(args.admindir)
                 opts = [f for f in sorted(os.listdir(dirpath)) if (f.endswith(".kcpps") or f.endswith(".kcppt") or f.endswith(".gguf")) and os.path.isfile(os.path.join(dirpath, f))]
+                opts.append("unload_model")
             response_body = (json.dumps(opts).encode())
 
         elif self.path.endswith(('/api/extra/perf')):
@@ -3437,13 +3438,18 @@ Change Mode<br>
                 except Exception:
                     targetfile = ""
                 if targetfile and targetfile!="":
-                    dirpath = os.path.abspath(args.admindir)
-                    targetfilepath = os.path.join(dirpath, targetfile)
-                    opts = [f for f in os.listdir(dirpath) if (f.lower().endswith(".kcpps") or f.lower().endswith(".kcppt") or f.lower().endswith(".gguf")) and os.path.isfile(os.path.join(dirpath, f))]
-                    if targetfile in opts and os.path.exists(targetfilepath):
-                        print(f"Admin: Received request to reload config to {targetfile}")
-                        global_memory["restart_target"] = targetfile
+                    if targetfile=="unload_model": #special request to simply unload model
+                        print("Admin: Received request to unload model")
+                        global_memory["restart_target"] = "unload_model"
                         resp = {"success": True}
+                    else:
+                        dirpath = os.path.abspath(args.admindir)
+                        targetfilepath = os.path.join(dirpath, targetfile)
+                        opts = [f for f in os.listdir(dirpath) if (f.lower().endswith(".kcpps") or f.lower().endswith(".kcppt") or f.lower().endswith(".gguf")) and os.path.isfile(os.path.join(dirpath, f))]
+                        if targetfile in opts and os.path.exists(targetfilepath):
+                            print(f"Admin: Received request to reload config to {targetfile}")
+                            global_memory["restart_target"] = targetfile
+                            resp = {"success": True}
             response_body = (json.dumps(resp).encode())
 
         elif self.path.endswith('/set_tts_settings'): #return dummy response
@@ -6139,7 +6145,7 @@ def main(launch_args, default_args):
                         if args.admin and args.admindir:
                             dirpath = os.path.abspath(args.admindir)
                             targetfilepath = os.path.join(dirpath, restart_target)
-                            if os.path.exists(targetfilepath):
+                            if os.path.exists(targetfilepath) or restart_target=="unload_model":
                                 print("Terminating old process...")
                                 global_memory["load_complete"] = False
                                 kcpp_instance.terminate()
@@ -6147,7 +6153,12 @@ def main(launch_args, default_args):
                                 kcpp_instance = None
                                 print("Restarting KoboldCpp...")
                                 fault_recovery_mode = True
-                                if targetfilepath.endswith(".gguf"):
+                                if restart_target=="unload_model":
+                                    reload_from_new_args(vars(default_args))
+                                    args.model_param = None
+                                    args.model = None
+                                    args.nomodel = True
+                                elif targetfilepath.endswith(".gguf"):
                                     reload_from_new_args(vars(default_args))
                                     args.model_param = targetfilepath
                                 else:
