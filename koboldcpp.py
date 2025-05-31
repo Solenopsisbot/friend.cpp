@@ -3449,6 +3449,25 @@ Change Mode<br>
         elif self.path.endswith('/set_tts_settings'): #return dummy response
             response_body = (json.dumps({"message": "Settings successfully applied"}).encode())
 
+        elif self.path=="/api/extra/shutdown":
+            # if args.singleinstance:
+            client_ip = self.client_address[0]
+            is_local = client_ip in ('127.0.0.1', '::1', 'localhost')
+            if is_local and args.singleinstance:
+                response_body = (json.dumps({"success": True}).encode())
+                self.send_response(response_code)
+                self.send_header('content-length', str(len(response_body)))
+                self.end_headers(content_type='application/json')
+                self.wfile.write(response_body)
+                print("\nReceived Shutdown Command! Shutting down...\n")
+                time.sleep(1)
+                global exitcounter
+                exitcounter = 999
+                sys.exit(0)
+                return
+            else:
+                response_body = (json.dumps({"success": False}).encode())
+
         if response_body is not None:
             self.send_response(response_code)
             self.send_header('content-length', str(len(response_body)))
@@ -3727,6 +3746,14 @@ def RunServerMultiThreaded(addr, port, server_handler):
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, global_memory
     if is_port_in_use(port):
         print(f"Warning: Port {port} already appears to be in use by another program.")
+        if args.singleinstance:
+            print(f"Attempting to request shutdown of previous instance on port {port}...")
+            shutdownreq = make_url_request(f'http://localhost:{port}/api/extra/shutdown',{})
+            shutdownok = (shutdownreq and "success" in shutdownreq and shutdownreq["success"] is True)
+            time.sleep(2)
+            print("Shutdown existing successful!" if shutdownok else "Shutdown existing failed!")
+            time.sleep(1)
+
     ipv4_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     ipv4_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     ipv6_sock = None
@@ -4164,6 +4191,7 @@ def show_gui():
     admin_var = ctk.IntVar(value=0)
     admin_dir_var = ctk.StringVar()
     admin_password_var = ctk.StringVar()
+    singleinstance_var = ctk.IntVar(value=0)
 
     nozenity_var = ctk.IntVar(value=0)
 
@@ -4879,6 +4907,7 @@ def show_gui():
     makecheckbox(admin_tab, "Enable Model Administration", admin_var, 1, 0,tooltiptxt="Enable a admin server, allowing you to remotely relaunch and swap models and configs.")
     makelabelentry(admin_tab, "Admin Password:" , admin_password_var, 3, 150,padx=120,singleline=True,tooltip="Require a password to access admin functions. You are strongly advised to use one for publically accessible instances!")
     makefileentry(admin_tab, "Config Directory:", "Select directory containing .kcpps files to relaunch from", admin_dir_var, 5, width=280, dialog_type=2, tooltiptxt="Specify a directory to look for .kcpps configs in, which can be used to swap models.")
+    makecheckbox(admin_tab, "SingleInstance Mode", singleinstance_var, 10, 0,tooltiptxt="Allows this server to be shut down by another KoboldCpp instance with singleinstance starting on the same port.")
 
     def kcpp_export_template():
         nonlocal kcpp_exporting_template
@@ -5118,6 +5147,7 @@ def show_gui():
         args.admin = (admin_var.get()==1 and not args.cli)
         args.admindir = admin_dir_var.get()
         args.adminpassword = admin_password_var.get()
+        args.singleinstance = (singleinstance_var.get()==1)
 
     def import_vars(dict):
         global importvars_in_progress
@@ -5306,6 +5336,7 @@ def show_gui():
         admin_var.set(dict["admin"] if ("admin" in dict) else 0)
         admin_dir_var.set(dict["admindir"] if ("admindir" in dict and dict["admindir"]) else "")
         admin_password_var.set(dict["adminpassword"] if ("adminpassword" in dict and dict["adminpassword"]) else "")
+        singleinstance_var.set(dict["singleinstance"] if ("singleinstance" in dict) else 0)
 
         importvars_in_progress = False
         gui_changed_modelfile()
@@ -6937,6 +6968,7 @@ if __name__ == '__main__':
     compatgroup2 = parser.add_mutually_exclusive_group()
     compatgroup2.add_argument("--showgui", help="Always show the GUI instead of launching the model right away when loading settings from a .kcpps file.", action='store_true')
     compatgroup2.add_argument("--skiplauncher", help="Doesn't display or use the GUI launcher. Overrides showgui.", action='store_true')
+    advparser.add_argument("--singleinstance", help="Allows this KoboldCpp instance to be shut down by any new instance requesting the same port, preventing duplicate servers from clashing on a port.", action='store_true')
 
     hordeparsergroup = parser.add_argument_group('Horde Worker Commands')
     hordeparsergroup.add_argument("--hordemodelname", metavar=('[name]'), help="Sets your AI Horde display model name.", default="")
