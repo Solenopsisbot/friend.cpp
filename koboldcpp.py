@@ -4943,6 +4943,10 @@ def show_gui():
     ctk.CTkButton(extra_tab , text = "Generate LaunchTemplate", command = kcpp_export_template ).grid(row=4,column=0, stick="w", padx= 170, pady=2)
     makelabel(extra_tab, "Analyze GGUF Metadata", 6, 0,tooltiptxt="Reads the metadata, weight types and tensor names in any GGUF file.")
     ctk.CTkButton(extra_tab , text = "Analyze GGUF", command = analyze_gguf_model_wrapper ).grid(row=6,column=0, stick="w", padx= 170, pady=2)
+    if os.name == 'nt':
+        makelabel(extra_tab, "File Extensions Handler", 10, 0,tooltiptxt="Makes KoboldCpp the default handler for .kcpps, .kcppt, .ggml and .gguf files.")
+        ctk.CTkButton(extra_tab , text = "Register", width=90, command = register_koboldcpp ).grid(row=10,column=0, stick="w", padx= 170, pady=2)
+        ctk.CTkButton(extra_tab , text = "Unregister", width=90, command = unregister_koboldcpp ).grid(row=10,column=0, stick="w", padx= 264, pady=2)
     if sys.platform == "linux":
         def togglezenity(a,b,c):
             global zenity_permitted
@@ -5444,24 +5448,24 @@ def show_gui_msgbox(title,message):
     try:
         from tkinter import messagebox
         import tkinter as tk
-        root = tk.Tk()
-        root.attributes("-alpha", 0)
+        root2 = tk.Tk()
+        root2.attributes("-alpha", 0)
         messagebox.showerror(title=title, message=message)
-        root.withdraw()
-        root.quit()
+        root2.withdraw()
+        root2.destroy()
     except Exception:
         pass
 
-def show_gui_yesnobox(title,message):
+def show_gui_yesnobox(title,message,icon='error'):
     print(title + ": " + message, flush=True)
     try:
         from tkinter import messagebox
         import tkinter as tk
-        root = tk.Tk()
-        root.attributes("-alpha", 0)
-        result = messagebox.askquestion(title=title, message=message,icon='error')
-        root.withdraw()
-        root.quit()
+        root2 = tk.Tk()
+        root2.attributes("-alpha", 0)
+        result = messagebox.askquestion(title=title, message=message,icon=icon)
+        root2.withdraw()
+        root2.destroy()
         return result
     except Exception:
         return False
@@ -6000,6 +6004,65 @@ def analyze_gguf_model_wrapper(filename=""):
     print(f"Analyzing {filename}, please wait...\n---",flush=True)
     dumpthread = threading.Thread(target=analyze_gguf_model, args=(args,filename))
     dumpthread.start()
+
+
+def register_koboldcpp():
+    try:
+        exe_path = ""
+        if getattr(sys, 'frozen', False):
+            exe_path = sys.executable
+        if os.name == 'nt' and exe_path!="":
+            confirmyes = show_gui_yesnobox("Confirm Add File Extensions","Do you want to register KoboldCpp as the default file associations for .gguf, .kcpps, .kcppt and .ggml files?",icon="question")
+            if confirmyes == 'yes':
+                import winreg
+                print(f"Registering file associations to {exe_path}")
+                entries = [
+                    (r"Software\Classes\KoboldCpp\DefaultIcon", "", f"{exe_path},0"),
+                    (r"Software\Classes\KoboldCpp\shell\Open\command", "", f'"{exe_path}" "%1" --singleinstance'),
+                    (r"Software\Classes\KoboldCpp\shell\Edit\command", "", f'"{exe_path}" "%1" --singleinstance --showgui'),
+                    (r"Software\Classes\.gguf", "", "KoboldCpp"),
+                    (r"Software\Classes\.kcpps", "", "KoboldCpp"),
+                    (r"Software\Classes\.kcppt", "", "KoboldCpp"),
+                    (r"Software\Classes\.ggml", "", "KoboldCpp"),
+                ]
+                for key_path, value_name, value_data in entries:
+                    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+                        winreg.SetValueEx(key, value_name, 0, winreg.REG_SZ, value_data)
+                print("KoboldCpp file associations registered successfully.")
+        else:
+            show_gui_msgbox("Cannot Set File Association","File Associations only available for Windows standalone executables.")
+    except Exception as e:
+        print(f"Register Extensions: An error occurred: {e}")
+
+def unregister_koboldcpp():
+    try:
+        if os.name == 'nt':
+            confirmyes = show_gui_yesnobox("Confirm Remove File Extensions","Do you want to unregister KoboldCpp as the default file associations for .gguf, .kcpps, .kcppt and .ggml files?",icon="question")
+            if confirmyes == 'yes':
+                import winreg
+                keys_to_delete = [
+                    r"Software\Classes\KoboldCpp\shell\Edit\command",
+                    r"Software\Classes\KoboldCpp\shell\Edit",
+                    r"Software\Classes\KoboldCpp\shell\Open\command",
+                    r"Software\Classes\KoboldCpp\shell\Open",
+                    r"Software\Classes\KoboldCpp\shell",
+                    r"Software\Classes\KoboldCpp\DefaultIcon",
+                    r"Software\Classes\KoboldCpp",
+                    r"Software\Classes\.gguf",
+                    r"Software\Classes\.kcpps",
+                    r"Software\Classes\.kcppt",
+                    r"Software\Classes\.ggml",
+                ]
+                for key_path in keys_to_delete:
+                    try:
+                        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+                    except Exception:
+                        print(f"Failed to delete registry key: {key_path}")
+                print("KoboldCpp file associations unregistered.")
+        else:
+            show_gui_msgbox("Cannot Set File Association","File Associations only available for Windows standalone executables.")
+    except Exception as e:
+        print(f"Unregister Extensions: An error occurred: {e}")
 
 def main(launch_args, default_args):
     global args, showdebug, kcpp_instance, exitcounter, using_gui_launcher, sslvalid, global_memory
