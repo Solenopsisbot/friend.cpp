@@ -2394,7 +2394,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
                 fprintf(stderr, "%s: error: failed to apply lora adapter\n", __func__);
                 return ModelLoadResult::FAIL;
             }
-            llama_set_adapter_lora(llama_ctx_v4, adapter, 1.0f);
+            llama_set_adapter_lora(llama_ctx_v4, adapter, inputs.lora_multiplier);
         }
 
         if(mmproj_filename != "" && file_format==FileFormat::GGUF_GENERIC)
