@@ -161,7 +161,6 @@ class load_model_inputs(ctypes.Structure):
                 ("executable_path", ctypes.c_char_p),
                 ("model_filename", ctypes.c_char_p),
                 ("lora_filename", ctypes.c_char_p),
-                ("lora_base", ctypes.c_char_p),
                 ("draftmodel_filename", ctypes.c_char_p),
                 ("draft_amount", ctypes.c_int),
                 ("draft_gpulayers", ctypes.c_int),
@@ -1198,13 +1197,10 @@ def load_model(model_filename):
     inputs.use_mmap = args.usemmap
     inputs.use_mlock = args.usemlock
     inputs.lora_filename = "".encode("UTF-8")
-    inputs.lora_base = "".encode("UTF-8")
     inputs.lora_multiplier = args.loramult
     if args.lora:
         inputs.lora_filename = args.lora[0].encode("UTF-8")
         inputs.use_mmap = False
-        if len(args.lora) > 1:
-            inputs.lora_base = args.lora[1].encode("UTF-8")
 
     inputs.draftmodel_filename = args.draftmodel.encode("UTF-8") if args.draftmodel else "".encode("UTF-8")
     inputs.draft_amount = args.draftamount
@@ -4146,7 +4142,6 @@ def show_gui():
 
     model_var = ctk.StringVar()
     lora_var = ctk.StringVar()
-    lora_base_var = ctk.StringVar()
     loramult_var = ctk.StringVar(value="1.0")
     preloadstory_var = ctk.StringVar()
     savedatafile_var = ctk.StringVar()
@@ -4796,7 +4791,6 @@ def show_gui():
     ctk.CTkButton(model_tab, width=70, text = "HF Search", command = model_searcher ).grid(row=1,column=0, stick="nw", padx=370)
     makefileentry(model_tab, "Text Lora:", "Select Lora File",lora_var, 3,width=160,singlerow=True,tooltiptxt="Select an optional GGML Text LoRA adapter to use.\nLeave blank to skip.")
     makelabelentry(model_tab, "Multiplier: ", loramult_var, 3, 50,padx=390,singleline=True,tooltip="Scale multiplier for Text LoRA Strength. Default is 1.0", labelpadx=330)
-    makefileentry(model_tab, "Lora Base:", "Select Lora Base File", lora_base_var, 5,width=280,singlerow=True,tooltiptxt="Select an optional F16 GGML Text LoRA base file to use.\nLeave blank to skip.")
     makefileentry(model_tab, "Vision mmproj:", "Select Vision mmproj File", mmproj_var, 7,width=280,singlerow=True,tooltiptxt="Select a mmproj file to use for vision models like LLaVA.\nLeave blank to skip.")
     makecheckbox(model_tab, "Vision Force CPU", mmprojcpu_var, 9, tooltiptxt="Force CLIP for Vision mmproj always on CPU.")
     makelabelentry(model_tab, "Vision MaxRes:", visionmaxres_var, 9, padx=320, singleline=True, tooltip=f"Clamp MMProj vision maximum allowed resolution. Allowed values are between 512 to 2048 px (default {default_visionmaxres}).", labelpadx=220)
@@ -5082,7 +5076,7 @@ def show_gui():
             pass
 
         args.model_param = None if model_var.get() == "" else model_var.get()
-        args.lora = None if lora_var.get() == "" else ([lora_var.get()] if lora_base_var.get()=="" else [lora_var.get(), lora_base_var.get()])
+        args.lora = None if lora_var.get() == "" else ([lora_var.get()])
         args.loramult = (float(loramult_var.get()) if loramult_var.get()!="" else 1.0)
         args.preloadstory = None if preloadstory_var.get() == "" else preloadstory_var.get()
         args.savedatafile = None if savedatafile_var.get() == "" else savedatafile_var.get()
@@ -5281,11 +5275,9 @@ def show_gui():
         model_var.set(dict["model_param"] if ("model_param" in dict and dict["model_param"]) else "")
 
         lora_var.set("")
-        lora_base_var.set("")
         if "lora" in dict and dict["lora"]:
             if len(dict["lora"]) > 1:
                 lora_var.set(dict["lora"][0])
-                lora_base_var.set(dict["lora"][1])
             else:
                 lora_var.set(dict["lora"][0])
         loramult_var.set(str(dict["loramult"]) if ("loramult" in dict and dict["loramult"]) else "1.0")
@@ -6994,7 +6986,7 @@ if __name__ == '__main__':
     advparser.add_argument("--ropeconfig", help="If set, uses customized RoPE scaling from configured frequency scale and frequency base (e.g. --ropeconfig 0.25 10000). Otherwise, uses NTK-Aware scaling set automatically based on context size. For linear rope, simply set the freq-scale and ignore the freq-base",metavar=('[rope-freq-scale]', '[rope-freq-base]'), default=[0.0, 10000.0], type=float, nargs='+')
     advparser.add_argument("--blasbatchsize", help="Sets the batch size used in BLAS processing (default 512). Setting it to -1 disables BLAS mode, but keeps other benefits like GPU offload.", type=int,choices=[-1,16,32,64,128,256,512,1024,2048], default=512)
     advparser.add_argument("--blasthreads", help="Use a different number of threads during BLAS if specified. Otherwise, has the same value as --threads",metavar=('[threads]'), type=int, default=0)
-    advparser.add_argument("--lora", help="GGUF models only, applies a lora file on top of model.", metavar=('[lora_filename]', '[lora_base]'), nargs='+')
+    advparser.add_argument("--lora", help="GGUF models only, applies a lora file on top of model.", metavar=('[lora_filename]'), nargs='+')
     advparser.add_argument("--loramult", metavar=('[amount]'), help="Multiplier for the Text LORA model to be applied.", type=float, default=1.0)
     advparser.add_argument("--noshift", help="If set, do not attempt to Trim and Shift the GGUF context.", action='store_true')
     advparser.add_argument("--nofastforward", help="If set, do not attempt to fast forward GGUF context (always reprocess). Will also enable noshift", action='store_true')

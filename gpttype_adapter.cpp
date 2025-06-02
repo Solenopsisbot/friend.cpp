@@ -52,7 +52,6 @@ const int LLAVA_TOKEN_IDENTIFIER_B = -999;
 //shared
 std::string executable_path = "";
 std::string lora_filename = "";
-std::string lora_base = "";
 std::string mmproj_filename = "";
 std::string draftmodel_filename = "";
 int speculative_chunk_amt = 8; //do it in chunks of this many tokens
@@ -2058,15 +2057,9 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         {
             printf("\nAttempting to apply LORA adapter: %s\n", lora_filename.c_str());
 
-            const char * lora_base_arg = NULL;
-            if (lora_base != "") {
-                printf("Using LORA base model: %s\n", lora_base.c_str());
-                lora_base_arg = lora_base.c_str();
-            }
-
             int err = llama_v2_apply_lora_from_file(llama_ctx_v2,
                                                  lora_filename.c_str(),
-                                                 lora_base_arg,
+                                                 nullptr,
                                                  kcpp_data->n_threads);
             if (err != 0)
             {
@@ -2125,15 +2118,9 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         {
             printf("\nAttempting to apply LORA adapter: %s\n", lora_filename.c_str());
 
-            const char * lora_base_arg = NULL;
-            if (lora_base != "") {
-                printf("Using LORA base model: %s\n", lora_base.c_str());
-                lora_base_arg = lora_base.c_str();
-            }
-
             int err = llama_v3_apply_lora_from_file(llama_ctx_v3,
                                                  lora_filename.c_str(),
-                                                 lora_base_arg,
+                                                 nullptr,
                                                  kcpp_data->n_threads);
             if (err != 0)
             {
@@ -2382,13 +2369,6 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         if (lora_filename != "")
         {
             printf("\nAttempting to apply LORA adapter: %s\n", lora_filename.c_str());
-
-            const char * lora_base_arg = NULL;
-            if (lora_base != "") {
-                printf("Using LORA base model: %s\n", lora_base.c_str());
-                lora_base_arg = lora_base.c_str();
-            }
-
             auto adapter = llama_adapter_lora_init(llamamodel, lora_filename.c_str());
             if (adapter == nullptr) {
                 fprintf(stderr, "%s: error: failed to apply lora adapter\n", __func__);
