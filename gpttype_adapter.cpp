@@ -136,6 +136,7 @@ static std::vector<logit_bias> logit_biases;
 static bool add_bos_token = true; // if set to false, mmproj handling breaks. dont disable unless you know what you're doing
 static bool load_guidance = false; //whether to enable cfg for negative prompts
 static bool check_slowness = false; //will display a suggestion to use highpriority if slow
+static bool highpriority = false;
 
 static int delayed_generated_tokens_limit = 0;
 std::deque<std::string> delayed_generated_tokens; //for use with antislop sampling
@@ -1972,6 +1973,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     add_bos_token = !inputs.no_bos_token;
     load_guidance = inputs.load_guidance;
     check_slowness = inputs.check_slowness;
+    highpriority = inputs.highpriority;
 
     if(!add_bos_token)
     {
@@ -2356,6 +2358,11 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         ggml_threadpool_params threadpool1_params, threadpool2_params;
         ggml_threadpool_params_init(&threadpool1_params,kcpp_data->n_threads);
         ggml_threadpool_params_init(&threadpool2_params,kcpp_data->n_blasthreads);
+        if(inputs.highpriority)
+        {
+            threadpool1_params.prio = GGML_SCHED_PRIO_HIGH;
+            threadpool2_params.prio = GGML_SCHED_PRIO_HIGH;
+        }
 
         printf("Threadpool set to %d threads and %d blasthreads...\n", kcpp_data->n_threads,kcpp_data->n_blasthreads);
         struct ggml_threadpool * threadpool1 = ggml_threadpool_new(&threadpool1_params);
