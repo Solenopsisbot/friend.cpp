@@ -523,7 +523,9 @@ def init_library():
     handle.get_chat_template.restype = ctypes.c_char_p
     handle.calc_new_state_kv.restype = ctypes.c_size_t
     handle.calc_old_state_kv.restype = ctypes.c_size_t
-    handle.save_state_kv.restype = ctypes.c_bool
+    handle.calc_new_state_tokencount.restype = ctypes.c_size_t
+    handle.calc_old_state_tokencount.restype = ctypes.c_size_t
+    handle.save_state_kv.restype = ctypes.c_size_t
     handle.load_state_kv.restype = ctypes.c_bool
     handle.clear_state_kv.restype = ctypes.c_bool
     handle.sd_load_model.argtypes = [sd_load_model_inputs]
@@ -3090,7 +3092,7 @@ Change Mode<br>
 
         elif self.path=="/v1":
             content_type = 'text/html'
-            response_body = ("KoboldCpp OpenAI compatible endpoint is running!\n\nFor usage reference, see https://platform.openai.com/docs/api-reference").encode()
+            response_body = ("KoboldCpp OpenAI compatible endpoint is running!<br>For usage reference, see <a href='https://platform.openai.com/docs/api-reference'>https://platform.openai.com/docs/api-reference</a><br>For other endpoints, see <a href='/api'>KoboldCpp API Documentation</a>").encode()
 
         elif self.path=="/api/extra/preloadstory":
             if preloaded_story is None:
@@ -3457,32 +3459,6 @@ Change Mode<br>
                             resp = {"success": True}
             response_body = (json.dumps(resp).encode())
 
-        elif self.path.endswith('/api/admin/check_state'):
-            if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
-                newstate = handle.calc_new_state_kv()
-                oldstate = handle.calc_old_state_kv()
-                response_body = (json.dumps({"success": True, "old_state":oldstate, "new_state":newstate}).encode())
-            else:
-                response_body = (json.dumps({"success": False}).encode())
-        elif self.path.endswith('/api/admin/load_state'):
-            if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
-                result = handle.load_state_kv()
-                response_body = (json.dumps({"success": result}).encode())
-            else:
-                response_body = (json.dumps({"success": False}).encode())
-        elif self.path.endswith('/api/admin/save_state'):
-            if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
-                result = handle.save_state_kv()
-                response_body = (json.dumps({"success": result}).encode())
-            else:
-                response_body = (json.dumps({"success": False}).encode())
-        elif self.path.endswith('/api/admin/clear_state'):
-            if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
-                result = handle.clear_state_kv()
-                response_body = (json.dumps({"success": result}).encode())
-            else:
-                response_body = (json.dumps({"success": False}).encode())
-
         elif self.path.endswith('/set_tts_settings'): #return dummy response
             response_body = (json.dumps({"message": "Settings successfully applied"}).encode())
 
@@ -3532,33 +3508,58 @@ Change Mode<br>
         if reqblocking:
             requestsinqueue = (requestsinqueue - 1) if requestsinqueue > 0 else 0
 
+        # handle endpoints that require mutex locking and handle actual gens
         try:
             sse_stream_flag = False
-
             api_format = 0 #1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat
             is_imggen = False
             is_comfyui_imggen = False
             is_transcribe = False
             is_tts = False
             is_embeddings = False
+            response_body = None
 
-            if self.path.endswith('/request'):
+            if self.path.endswith('/api/admin/check_state'):
+                if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                    newstate = handle.calc_new_state_kv()
+                    oldstate = handle.calc_old_state_kv()
+                    newtokencnt = handle.calc_new_state_tokencount()
+                    oldtokencnt = handle.calc_old_state_tokencount()
+                    response_body = (json.dumps({"success": True, "old_state_size":oldstate, "old_tokens":oldtokencnt, "new_state_size":newstate, "new_tokens":newtokencnt}).encode())
+                else:
+                    response_body = (json.dumps({"success": False, "old_state_size":0, "old_tokens":0, "new_state_size":0, "new_tokens":0}).encode())
+            elif self.path.endswith('/api/admin/load_state'):
+                if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                    result = handle.load_state_kv()
+                    tokencnt = handle.calc_new_state_tokencount()
+                    response_body = (json.dumps({"success": result, "new_tokens":tokencnt}).encode())
+                else:
+                    response_body = (json.dumps({"success": False, "new_tokens":0}).encode())
+            elif self.path.endswith('/api/admin/save_state'):
+                if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                    result = handle.save_state_kv()
+                    tokencnt = handle.calc_new_state_tokencount()
+                    response_body = (json.dumps({"success": (result>0), "new_state_size":result, "new_tokens":tokencnt}).encode())
+                else:
+                    response_body = (json.dumps({"success": False, "new_state_size":0, "new_tokens":0}).encode())
+            elif self.path.endswith('/api/admin/clear_state'):
+                if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                    result = handle.clear_state_kv()
+                    response_body = (json.dumps({"success": result}).encode())
+                else:
+                    response_body = (json.dumps({"success": False}).encode())
+            elif self.path.endswith('/request'):
                 api_format = 1
-
-            if self.path.endswith(('/api/v1/generate', '/api/latest/generate')):
+            elif self.path.endswith(('/api/v1/generate', '/api/latest/generate')):
                 api_format = 2
-
-            if self.path.endswith('/api/extra/generate/stream'):
+            elif self.path.endswith('/api/extra/generate/stream'):
                 api_format = 2
                 sse_stream_flag = True
-
-            if self.path.endswith('/v1/completions') or self.path.endswith('/v1/completion'):
+            elif self.path.endswith('/v1/completions') or self.path.endswith('/v1/completion'):
                 api_format = 3
-
-            if self.path.endswith('/v1/chat/completions'):
+            elif self.path.endswith('/v1/chat/completions'):
                 api_format = 4
-
-            if self.path.endswith('/sdapi/v1/interrogate'):
+            elif self.path.endswith('/sdapi/v1/interrogate'):
                 has_vision = (mmprojpath!="")
                 if not has_vision:
                     self.send_response(503)
@@ -3569,27 +3570,27 @@ Change Mode<br>
                         }}).encode())
                     return
                 api_format = 5
-
-            if self.path.endswith('/api/generate'):
+            elif self.path.endswith('/api/generate'):
                 api_format = 6
-            if self.path.endswith('/api/chat'):
+            elif self.path.endswith('/api/chat'):
                 api_format = 7
-
-            if self.path=="/prompt" or self.path.endswith('/sdapi/v1/txt2img') or self.path.endswith('/sdapi/v1/img2img'):
+            elif self.path=="/prompt" or self.path.endswith('/sdapi/v1/txt2img') or self.path.endswith('/sdapi/v1/img2img'):
                 is_imggen = True
                 if self.path=="/prompt":
                     is_comfyui_imggen = True
-
-            if self.path.endswith('/api/extra/transcribe') or self.path.endswith('/v1/audio/transcriptions'):
+            elif self.path.endswith('/api/extra/transcribe') or self.path.endswith('/v1/audio/transcriptions'):
                 is_transcribe = True
-
-            if self.path.endswith('/api/extra/tts') or self.path.endswith('/v1/audio/speech') or self.path.endswith('/tts_to_audio'):
+            elif self.path.endswith('/api/extra/tts') or self.path.endswith('/v1/audio/speech') or self.path.endswith('/tts_to_audio'):
                 is_tts = True
-
-            if self.path.endswith('/api/extra/embeddings') or self.path.endswith('/v1/embeddings'):
+            elif self.path.endswith('/api/extra/embeddings') or self.path.endswith('/v1/embeddings'):
                 is_embeddings = True
 
-            if is_imggen or is_transcribe or is_tts or is_embeddings or api_format > 0:
+            if response_body is not None:
+                self.send_response(response_code)
+                self.send_header('content-length', str(len(response_body)))
+                self.end_headers(content_type='application/json')
+                self.wfile.write(response_body)
+            elif is_imggen or is_transcribe or is_tts or is_embeddings or api_format > 0:
                 global last_req_time
                 last_req_time = time.time()
 

@@ -130,7 +130,9 @@ void ContextFastForward(std::vector<int> &current_context_tokens, std::vector<in
  const bool useSmartContext, const bool requireFullSubset);
 
 size_t gpttype_calc_new_state_kv();
+size_t gpttype_calc_new_state_tokencount();
 size_t gpttype_calc_old_state_kv();
-bool gpttype_save_state_kv();
+size_t gpttype_calc_old_state_tokencount();
+size_t gpttype_save_state_kv();
 bool gpttype_load_state_kv();
-bool gpttype_clear_state_kv();
+bool gpttype_clear_state_kv(bool shrink);
