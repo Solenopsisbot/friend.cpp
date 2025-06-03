@@ -521,6 +521,11 @@ def init_library():
     handle.token_count.restype = token_count_outputs
     handle.get_pending_output.restype = ctypes.c_char_p
     handle.get_chat_template.restype = ctypes.c_char_p
+    handle.calc_new_state_kv.restype = ctypes.c_size_t
+    handle.calc_old_state_kv.restype = ctypes.c_size_t
+    handle.save_state_kv.restype = ctypes.c_bool
+    handle.load_state_kv.restype = ctypes.c_bool
+    handle.clear_state_kv.restype = ctypes.c_bool
     handle.sd_load_model.argtypes = [sd_load_model_inputs]
     handle.sd_load_model.restype = ctypes.c_bool
     handle.sd_generate.argtypes = [sd_generation_inputs]
@@ -3451,6 +3456,32 @@ Change Mode<br>
                             global_memory["restart_target"] = targetfile
                             resp = {"success": True}
             response_body = (json.dumps(resp).encode())
+
+        elif self.path.endswith('/api/admin/check_state'):
+            if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                newstate = handle.calc_new_state_kv()
+                oldstate = handle.calc_old_state_kv()
+                response_body = (json.dumps({"success": True, "old_state":oldstate, "new_state":newstate}).encode())
+            else:
+                response_body = (json.dumps({"success": False}).encode())
+        elif self.path.endswith('/api/admin/load_state'):
+            if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                result = handle.load_state_kv()
+                response_body = (json.dumps({"success": result}).encode())
+            else:
+                response_body = (json.dumps({"success": False}).encode())
+        elif self.path.endswith('/api/admin/save_state'):
+            if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                result = handle.save_state_kv()
+                response_body = (json.dumps({"success": result}).encode())
+            else:
+                response_body = (json.dumps({"success": False}).encode())
+        elif self.path.endswith('/api/admin/clear_state'):
+            if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                result = handle.clear_state_kv()
+                response_body = (json.dumps({"success": result}).encode())
+            else:
+                response_body = (json.dumps({"success": False}).encode())
 
         elif self.path.endswith('/set_tts_settings'): #return dummy response
             response_body = (json.dumps({"message": "Settings successfully applied"}).encode())

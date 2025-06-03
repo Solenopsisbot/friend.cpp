@@ -1900,6 +1900,132 @@
                       ]
                    }
                 },
+                "/api/admin/check_state": {
+                   "post": {
+                      "description": "Gets the number of bytes taken for existing save state, and predicts the bytes required for a new save state.",
+                      "responses": {
+                         "200": {
+                            "content": {
+                                 "application/json": {
+                                  "example": {
+                                     "success": true,
+                                     "old_state": 0,
+                                     "new_state": 0
+                                  },
+                                  "schema": {
+                                     "properties": {
+                                        "success": {
+                                           "type": "boolean",
+                                           "description": "Whether the operation was successful."
+                                        },
+                                        "old_state": {
+                                           "type": "number",
+                                           "description": "Bytes currently in used for existing save state."
+                                        },
+                                        "new_state": {
+                                           "type": "number",
+                                           "description": "Bytes a new save state is estimated to consume."
+                                        }
+                                     }
+                                  }
+                               }
+                           },
+                            "description": "Successful request"
+                         }
+                      },
+                      "summary": "Gets the number of bytes taken for existing save state, and predicts the bytes required for a new save state.",
+                      "tags": [
+                         "api/admin"
+                      ]
+                   }
+                },
+                "/api/admin/save_state": {
+                   "post": {
+                      "description": "Creates a new KV cache save state in memory. Overwrites any existing saved state.",
+                      "responses": {
+                         "200": {
+                            "content": {
+                                 "application/json": {
+                                  "example": {
+                                     "success": true
+                                  },
+                                  "schema": {
+                                     "properties": {
+                                        "success": {
+                                           "type": "boolean",
+                                           "description": "Whether the operation was successful."
+                                        }
+                                     }
+                                  }
+                               }
+                           },
+                            "description": "Successful request"
+                         }
+                      },
+                      "summary": "Creates a new KV cache save state in memory. Overwrites any existing saved state.",
+                      "tags": [
+                         "api/admin"
+                      ]
+                   }
+                },
+                "/api/admin/load_state": {
+                   "post": {
+                      "description": "Reloads a previous KV cache save state into context.",
+                      "responses": {
+                         "200": {
+                            "content": {
+                                 "application/json": {
+                                  "example": {
+                                     "success": true
+                                  },
+                                  "schema": {
+                                     "properties": {
+                                        "success": {
+                                           "type": "boolean",
+                                           "description": "Whether the operation was successful."
+                                        }
+                                     }
+                                  }
+                               }
+                           },
+                            "description": "Successful request"
+                         }
+                      },
+                      "summary": "Reloads a previous KV cache save state into context.",
+                      "tags": [
+                         "api/admin"
+                      ]
+                   }
+                },
+                "/api/admin/clear_state": {
+                   "post": {
+                      "description": "Frees any previous KV cache save state.",
+                      "responses": {
+                         "200": {
+                            "content": {
+                                 "application/json": {
+                                  "example": {
+                                     "success": true
+                                  },
+                                  "schema": {
+                                     "properties": {
+                                        "success": {
+                                           "type": "boolean",
+                                           "description": "Whether the operation was successful."
+                                        }
+                                     }
+                                  }
+                               }
+                           },
+                            "description": "Successful request"
+                         }
+                      },
+                      "summary": "Frees any previous KV cache save state.",
+                      "tags": [
+                         "api/admin"
+                      ]
+                   }
+                },
                 "/api/extra/shutdown": {
                    "post": {
                       "description": "Shuts down the server and exits koboldcpp. Only usable from localhost! Both old and new KoboldCpp Server must have been launched with the --singleinstance flag for this to work.",
