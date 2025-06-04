@@ -44,6 +44,7 @@ default_draft_amount = 8
 default_ttsmaxlen = 4096
 default_visionmaxres = 1024
 net_save_slots = 10
+savestate_limit = 3 #3 savestate slots
 
 # abuse prevention
 stop_token_max = 256
@@ -522,10 +523,14 @@ def init_library():
     handle.get_pending_output.restype = ctypes.c_char_p
     handle.get_chat_template.restype = ctypes.c_char_p
     handle.calc_new_state_kv.restype = ctypes.c_size_t
-    handle.calc_old_state_kv.restype = ctypes.c_size_t
     handle.calc_new_state_tokencount.restype = ctypes.c_size_t
+    handle.calc_old_state_kv.argtypes = [ctypes.c_int]
+    handle.calc_old_state_kv.restype = ctypes.c_size_t
+    handle.calc_old_state_tokencount.argtypes = [ctypes.c_int]
     handle.calc_old_state_tokencount.restype = ctypes.c_size_t
+    handle.save_state_kv.argtypes = [ctypes.c_int]
     handle.save_state_kv.restype = ctypes.c_size_t
+    handle.load_state_kv.argtypes = [ctypes.c_int]
     handle.load_state_kv.restype = ctypes.c_bool
     handle.clear_state_kv.restype = ctypes.c_bool
     handle.sd_load_model.argtypes = [sd_load_model_inputs]
@@ -3524,23 +3529,42 @@ Change Mode<br>
 
             if self.path.endswith('/api/admin/check_state'):
                 if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                    cur_states = []
+                    for sl in range(savestate_limit): #0,1,2
+                        oldstate = handle.calc_old_state_kv(sl)
+                        oldtokencnt = handle.calc_old_state_tokencount(sl)
+                        cur_states.append({"tokens":oldtokencnt,"size":oldstate})
                     newstate = handle.calc_new_state_kv()
-                    oldstate = handle.calc_old_state_kv()
                     newtokencnt = handle.calc_new_state_tokencount()
-                    oldtokencnt = handle.calc_old_state_tokencount()
-                    response_body = (json.dumps({"success": True, "old_state_size":oldstate, "old_tokens":oldtokencnt, "new_state_size":newstate, "new_tokens":newtokencnt}).encode())
+                    response_body = (json.dumps({"success": True, "old_states":cur_states, "new_state_size":newstate, "new_tokens":newtokencnt}).encode())
                 else:
-                    response_body = (json.dumps({"success": False, "old_state_size":0, "old_tokens":0, "new_state_size":0, "new_tokens":0}).encode())
+                    response_body = (json.dumps({"success": False, "old_states":[], "new_state_size":0, "new_tokens":0}).encode())
             elif self.path.endswith('/api/admin/load_state'):
                 if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
-                    result = handle.load_state_kv()
+                    targetslot = 0
+                    try:
+                        tempbody = json.loads(body)
+                        if isinstance(tempbody, dict):
+                            targetslot = tempbody.get('slot', 0)
+                    except Exception:
+                        pass
+                    targetslot = (targetslot if targetslot<savestate_limit else 0)
+                    result = handle.load_state_kv(targetslot)
                     tokencnt = handle.calc_new_state_tokencount()
                     response_body = (json.dumps({"success": result, "new_tokens":tokencnt}).encode())
                 else:
                     response_body = (json.dumps({"success": False, "new_tokens":0}).encode())
             elif self.path.endswith('/api/admin/save_state'):
                 if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
-                    result = handle.save_state_kv()
+                    targetslot = 0
+                    try:
+                        tempbody = json.loads(body)
+                        if isinstance(tempbody, dict):
+                            targetslot = tempbody.get('slot', 0)
+                    except Exception:
+                        pass
+                    targetslot = (targetslot if targetslot<savestate_limit else 0)
+                    result = handle.save_state_kv(targetslot)
                     tokencnt = handle.calc_new_state_tokencount()
                     response_body = (json.dumps({"success": (result>0), "new_state_size":result, "new_tokens":tokencnt}).encode())
                 else:
