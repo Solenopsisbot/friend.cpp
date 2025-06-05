@@ -15,6 +15,8 @@ set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS 1)
 set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Release")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(LLAMA_STANDALONE ON)
+set(BUILD_SHARED_LIBS_DEFAULT ON)
 set(LLAMA_STATIC OFF)
 set(LLAMA_NATIVE OFF)
 set(LLAMA_LTO OFF)
@@ -79,6 +81,8 @@ set(GGML_V2_LEGACY_CUDA_SOURCES otherarch/ggml_v2-cuda-legacy.cu otherarch/ggml_
 
 
 if (LLAMA_CUBLAS)
+    cmake_minimum_required(VERSION 3.17)
+
     find_package(CUDAToolkit)
     if (CUDAToolkit_FOUND)
         message(STATUS "cuBLAS found")
@@ -212,6 +216,10 @@ endif()
 
 if (WIN32)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS)
+
+    if (BUILD_SHARED_LIBS)
+        set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    endif()
 endif()
 
 if (LLAMA_LTO)

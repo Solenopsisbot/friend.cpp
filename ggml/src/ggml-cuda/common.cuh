@@ -122,7 +122,7 @@ constexpr int ggml_cuda_highest_compiled_arch(const int arch) {
 }
 #else
 static int ggml_cuda_highest_compiled_arch(const int arch) {
-    return arch;
+    return (arch>__CUDA_ARCH__?__CUDA_ARCH__:arch);
 }
 #endif // __CUDA_ARCH_LIST__
 
