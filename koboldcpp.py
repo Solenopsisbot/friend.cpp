@@ -3812,13 +3812,6 @@ def RunServerMultiThreaded(addr, port, server_handler):
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, global_memory
     if is_port_in_use(port):
         print(f"Warning: Port {port} already appears to be in use by another program.")
-        if args.singleinstance:
-            print(f"Attempting to request shutdown of previous instance on port {port}...")
-            shutdownreq = make_url_request(f'http://localhost:{port}/api/extra/shutdown',{})
-            shutdownok = (shutdownreq and "success" in shutdownreq and shutdownreq["success"] is True)
-            time.sleep(2)
-            print("Shutdown existing successful!" if shutdownok else "Shutdown existing failed!")
-            time.sleep(1)
 
     ipv4_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     ipv4_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -6536,6 +6529,21 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     args.defaultgenamt = max(128, min(args.defaultgenamt, 4096))
     args.defaultgenamt = min(args.defaultgenamt, maxctx / 2)
 
+    if args.port_param!=defaultport:
+        args.port = args.port_param
+
+    if start_server and args.singleinstance and is_port_in_use(args.port):
+        try:
+            print(f"Warning: Port {args.port} already appears to be in use by another program.")
+            print(f"Attempting to request shutdown of previous instance on port {args.port}...")
+            shutdownreq = make_url_request(f'http://localhost:{args.port}/api/extra/shutdown',{},timeout=5)
+            shutdownok = (shutdownreq and "success" in shutdownreq and shutdownreq["success"] is True)
+            time.sleep(2)
+            print("Shutdown existing successful!" if shutdownok else "Shutdown existing failed!")
+            time.sleep(1)
+        except Exception:
+            pass
+
     if args.nocertify:
         import ssl
         global nocertify
@@ -6838,9 +6846,6 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     print(f"======\nActive Modules: {' '.join(enabledmlist)}")
     print(f"Inactive Modules: {' '.join(disabledmlist)}")
     print(f"Enabled APIs: {' '.join(apimlist)}")
-
-    if args.port_param!=defaultport:
-        args.port = args.port_param
 
     global sslvalid
     if args.ssl:
