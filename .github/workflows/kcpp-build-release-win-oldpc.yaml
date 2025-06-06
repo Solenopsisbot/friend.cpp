@@ -1,4 +1,4 @@
-name: Koboldcpp Windows Full Binaries
+name: Koboldcpp Windows OldPC
 
 on:
   workflow_dispatch:
@@ -89,7 +89,7 @@ jobs:
       - name: Build Non-CUDA
         id: make_build
         run: |
-          make LLAMA_CLBLAST=1 LLAMA_VULKAN=1 LLAMA_PORTABLE=1 -j ${env:NUMBER_OF_PROCESSORS}
+          make LLAMA_CLBLAST=1 LLAMA_VULKAN=1 LLAMA_PORTABLE=1 -j ${env:NUMBER_OF_PROCESSORS} LLAMA_NOAVX2=1
 
       - uses: Jimver/cuda-toolkit@v0.2.15
         id: cuda-toolkit
@@ -102,7 +102,7 @@ jobs:
         run: |
           mkdir build
           cd build
-          cmake .. -DLLAMA_CUBLAS=ON -DCMAKE_SYSTEM_VERSION="10.0.19041.0"
+          cmake .. -DLLAMA_CUBLAS=ON -DLLAMA_AVX2=OFF -DCMAKE_SYSTEM_VERSION="10.0.19041.0"
           cmake --build . --config Release -j 2
           cd ..
 
@@ -121,8 +121,7 @@ jobs:
       - name: Package PyInstallers
         id: make_pyinstaller
         run: |
-          ./make_pyinstaller.bat
-          ./make_pyinstaller_cuda.bat
+          ./make_pyinstaller_cuda_oldpc.bat
 
       - name: Save artifact
         uses: actions/upload-artifact@v4

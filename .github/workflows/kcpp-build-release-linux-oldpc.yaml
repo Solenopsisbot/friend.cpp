@@ -1,4 +1,4 @@
-name: Koboldcpp Linux CUDA12
+name: Koboldcpp Linux OldPC
 
 on:
   workflow_dispatch:
@@ -10,8 +10,9 @@ on:
 
 env:
   BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
-  KCPP_CUDA: 12.1.0
-  ARCHES_CU12: 1
+  NOAVX2: 1
+  ARCHES_CU11: 1
+  KCPP_CUDA: 11.5.0
 
 jobs:
   linux:
@@ -50,6 +51,9 @@ jobs:
         id: make_build
         run: |
           ./koboldcpp.sh dist
+
+      - name: Rename file before upload
+        run: mv dist/koboldcpp-linux-x64-cuda1150 dist/koboldcpp-linux-x64-oldpc
 
       - name: Save artifact
         uses: actions/upload-artifact@v4
