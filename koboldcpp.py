@@ -1556,6 +1556,7 @@ def sd_generate(genparams):
     adapter_obj = genparams.get('adapter', default_adapter)
     forced_negprompt = adapter_obj.get("add_sd_negative_prompt", "")
     forced_posprompt = adapter_obj.get("add_sd_prompt", "")
+    forced_steplimit = adapter_obj.get("add_sd_step_limit", 80)
 
     prompt = genparams.get("prompt", "high quality")
     negative_prompt = genparams.get("negative_prompt", "")
@@ -1588,7 +1589,7 @@ def sd_generate(genparams):
     width = width - (width%64)
     height = height - (height%64)
     cfg_scale = (1 if cfg_scale < 1 else (25 if cfg_scale > 25 else cfg_scale))
-    sample_steps = (1 if sample_steps < 1 else (80 if sample_steps > 80 else sample_steps))
+    sample_steps = (1 if sample_steps < 1 else (forced_steplimit if sample_steps > forced_steplimit else sample_steps))
     reslimit = 1024
     width = (64 if width < 64 else width)
     height = (64 if height < 64 else height)
