@@ -7,9 +7,9 @@ fi
 if [[ ! -f "conda/envs/linux/bin/python" && $KCPP_CUDA != "rocm" || $1 == "rebuild" && $KCPP_CUDA != "rocm" ]]; then
 	cp environment.yaml environment.tmp.yaml
 	if [ -n "$KCPP_CUDA" ]; then
-		sed -i -e "s/nvidia\/label\/cuda-12.4.0/nvidia\/label\/cuda-$KCPP_CUDA/g" environment.tmp.yaml
+		sed -i -e "s/nvidia\/label\/cuda-12.1.0/nvidia\/label\/cuda-$KCPP_CUDA/g" environment.tmp.yaml
 	else
-		KCPP_CUDA=12.4.0
+		KCPP_CUDA=12.1.0
 	fi
 	bin/micromamba create --no-rc --no-shortcuts -r conda -p conda/envs/linux -f environment.tmp.yaml -y
 	bin/micromamba create --no-rc --no-shortcuts -r conda -p conda/envs/linux -f environment.tmp.yaml -y

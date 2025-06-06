@@ -52,9 +52,6 @@ jobs:
         run: |
           ./koboldcpp.sh dist
 
-      - name: Rename file before upload
-        run: mv dist/koboldcpp-linux-x64-cuda1150 dist/koboldcpp-linux-x64-cuda11
-
       - name: Save artifact
         uses: actions/upload-artifact@v4
         with:
