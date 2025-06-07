@@ -714,13 +714,17 @@ ifeq ($(OS),Windows_NT)
 	@echo 'Vulkan Shaders Rebuilt for Windows...'
 else
 	@echo 'Now rebuilding vulkan shaders for Linux...'
-	@chmod +x vulkan-shaders-gen glslc-linux
-	@echo 'Checking if bundled glslc-linux binary is usable...'
+	@echo 'Checking if system glslc-linux binary is usable...'
 	@GLSLC_BIN=$$( \
-		if [ -x ./glslc-linux ] && ./glslc-linux --version 2>/dev/null | grep -q "glslang"; then \
-			echo "./glslc-linux"; \
-		elif command -v glslc >/dev/null 2>&1; then \
+		if command -v glslc >/dev/null 2>&1 && glslc --version 2>/dev/null | grep -q "glslang"; then \
 			echo "glslc"; \
+		elif [ -x ./glslc-linux ]; then \
+			chmod +x ./glslc-linux; \
+			if ./glslc-linux --version 2>/dev/null | grep -q "glslang"; then \
+				echo "./glslc-linux"; \
+			else \
+				echo ""; \
+			fi; \
 		else \
 			echo ""; \
 		fi); \
