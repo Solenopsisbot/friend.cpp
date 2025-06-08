@@ -1661,7 +1661,7 @@ def tts_load_model(ttc_model_filename,cts_model_filename):
     inputs = tts_load_model_inputs()
     inputs.ttc_model_filename = ttc_model_filename.encode("UTF-8")
     inputs.cts_model_filename = cts_model_filename.encode("UTF-8")
-    inputs.gpulayers = (999 if args.ttsgpu else 0)
+    inputs.gpulayers = (0 if args.ttscpu else 999)
     inputs.flash_attention =  args.flashattention
     thds = args.threads
     if args.ttsthreads and args.ttsthreads > 0:
@@ -4242,7 +4242,7 @@ def show_gui():
     whisper_model_var = ctk.StringVar()
     tts_model_var = ctk.StringVar()
     wavtokenizer_var = ctk.StringVar()
-    ttsgpu_var = ctk.IntVar(value=0)
+    ttscpu_var = ctk.IntVar(value=0)
     tts_threads_var = ctk.StringVar(value=str(default_threads))
     ttsmaxlen_var = ctk.StringVar(value=str(default_ttsmaxlen))
 
@@ -4545,7 +4545,7 @@ def show_gui():
             whisperfilepath = whisper_model_var.get()
             mmprojfilepath = mmproj_var.get()
             draftmodelpath = draftmodel_var.get()
-            ttsmodelpath = tts_model_var.get() if ttsgpu_var.get()==1 else ""
+            ttsmodelpath = tts_model_var.get() if ttscpu_var.get()==0 else ""
             extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,draftmodelpath,ttsmodelpath)
             changed_gpulayers_estimate()
         pass
@@ -4958,8 +4958,8 @@ def show_gui():
     tts_model_var.trace("w", gui_changed_modelfile)
     makelabelentry(audio_tab, "OuteTTS Threads:" , tts_threads_var, 5, 50,padx=290,singleline=True,tooltip="How many threads to use during TTS generation.\nIf left blank, uses same value as threads.")
     makelabelentry(audio_tab, "OuteTTS Max Tokens:" , ttsmaxlen_var, 7, 50,padx=290,singleline=True,tooltip="Max allowed audiotokens to generate per TTS request.")
-    makecheckbox(audio_tab, "TTS Use GPU", ttsgpu_var, 9, 0,tooltiptxt="Uses the GPU for TTS.")
-    ttsgpu_var.trace("w", gui_changed_modelfile)
+    makecheckbox(audio_tab, "TTS Use CPU", ttscpu_var, 9, 0,tooltiptxt="Prevent TTS from being offloaded to the GPU.")
+    ttscpu_var.trace("w", gui_changed_modelfile)
     makefileentry(audio_tab, "WavTokenizer Model (Text-To-Speech Required):", "Select WavTokenizer GGUF Model File", wavtokenizer_var, 11, width=280, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select a WavTokenizer GGUF model file on disk to be loaded for Narration.")
     wavtokenizer_var.trace("w", gui_changed_modelfile)
 
@@ -5213,7 +5213,7 @@ def show_gui():
             args.ttsthreads = (0 if tts_threads_var.get()=="" else int(tts_threads_var.get()))
             args.ttsmodel = tts_model_var.get()
             args.ttswavtokenizer = wavtokenizer_var.get()
-            args.ttsgpu = (ttsgpu_var.get()==1)
+            args.ttscpu = (ttscpu_var.get()==1)
             args.ttsmaxlen = (default_ttsmaxlen if ttsmaxlen_var.get()=="" else int(ttsmaxlen_var.get()))
 
         args.admin = (admin_var.get()==1 and not args.cli)
@@ -5399,7 +5399,7 @@ def show_gui():
         tts_threads_var.set(str(dict["ttsthreads"]) if ("ttsthreads" in dict and dict["ttsthreads"]) else str(default_threads))
         tts_model_var.set(dict["ttsmodel"] if ("ttsmodel" in dict and dict["ttsmodel"]) else "")
         wavtokenizer_var.set(dict["ttswavtokenizer"] if ("ttswavtokenizer" in dict and dict["ttswavtokenizer"]) else "")
-        ttsgpu_var.set(dict["ttsgpu"] if ("ttsgpu" in dict) else 0)
+        ttscpu_var.set(dict["ttscpu"] if ("ttscpu" in dict) else 0)
         ttsmaxlen_var.set(str(dict["ttsmaxlen"]) if ("ttsmaxlen" in dict and dict["ttsmaxlen"]) else str(default_ttsmaxlen))
 
         embeddings_model_var.set(dict["embeddingsmodel"] if ("embeddingsmodel" in dict and dict["embeddingsmodel"]) else "")
@@ -6570,7 +6570,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 pass
             if args.gpulayers==-1:
                 if MaxMemory[0] > 0 and (not args.usecpu) and ((args.usecublas is not None) or (args.usevulkan is not None) or (args.useclblast is not None) or sys.platform=="darwin"):
-                    extract_modelfile_params(args.model_param,args.sdmodel,args.whispermodel,args.mmproj,args.draftmodel,args.ttsmodel if args.ttsgpu else "")
+                    extract_modelfile_params(args.model_param,args.sdmodel,args.whispermodel,args.mmproj,args.draftmodel,"" if args.ttscpu else args.ttsmodel)
                     layeramt = autoset_gpu_layers(args.contextsize,args.sdquant,args.blasbatchsize,(args.quantkv if args.flashattention else 0))
                     print(f"Auto Recommended GPU Layers: {layeramt}")
                     args.gpulayers = layeramt
@@ -7149,7 +7149,7 @@ if __name__ == '__main__':
     ttsparsergroup = parser.add_argument_group('TTS Narration Commands')
     ttsparsergroup.add_argument("--ttsmodel", metavar=('[filename]'), help="Specify the OuteTTS Text-To-Speech GGUF model.", default="")
     ttsparsergroup.add_argument("--ttswavtokenizer", metavar=('[filename]'), help="Specify the WavTokenizer GGUF model.", default="")
-    ttsparsergroup.add_argument("--ttsgpu", help="Use the GPU for TTS.", action='store_true')
+    ttsparsergroup.add_argument("--ttscpu", help="Force TTS to use the CPU, avoiding GPU offload.", action='store_true')
     ttsparsergroup.add_argument("--ttsmaxlen", help="Limit number of audio tokens generated with TTS.",  type=int, default=default_ttsmaxlen)
     ttsparsergroup.add_argument("--ttsthreads", metavar=('[threads]'), help="Use a different number of threads for TTS if specified. Otherwise, has the same value as --threads.", type=int, default=0)
 
@@ -7166,5 +7166,6 @@ if __name__ == '__main__':
     deprecatedgroup.add_argument("--sdconfig", help=argparse.SUPPRESS, nargs='+')
     compatgroup.add_argument("--noblas", help=argparse.SUPPRESS, action='store_true')
     compatgroup3.add_argument("--nommap", help=argparse.SUPPRESS, action='store_true')
+    deprecatedgroup.add_argument("--ttsgpu", help=argparse.SUPPRESS, action='store_true')
 
     main(launch_args=parser.parse_args(),default_args=parser.parse_args([]))
