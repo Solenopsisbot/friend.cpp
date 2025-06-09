@@ -256,13 +256,15 @@ else
 	HCC         := $(ROCM_PATH)/llvm/bin/clang
 	HCXX        := $(ROCM_PATH)/llvm/bin/clang++
 endif
-ifdef LLAMA_NO_WMMA
-	HIPFLAGS   += -DGGML_HIP_NO_ROCWMMA_FATTN
-else
+ifdef LLAMA_ALLOW_WMMA
 	DETECT_ROCWMMA := $(shell find -L /opt/rocm/include /usr/include -type f -name rocwmma.hpp 2>/dev/null | head -n 1)
 ifdef DETECT_ROCWMMA
 	HIPFLAGS   += -DGGML_HIP_ROCWMMA_FATTN -I$(dir $(DETECT_ROCWMMA))
+else
+	HIPFLAGS   += -DGGML_HIP_NO_ROCWMMA_FATTN
 endif
+else
+	HIPFLAGS   += -DGGML_HIP_NO_ROCWMMA_FATTN
 endif
 
 	HIPFLAGS   += -DGGML_USE_HIP -DGGML_HIP_NO_VMM -DGGML_USE_CUDA -DSD_USE_CUDA $(shell $(ROCM_PATH)/bin/hipconfig -C)
