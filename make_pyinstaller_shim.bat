@@ -1,1 +1,0 @@
-PyInstaller  --onedir --noconfirm --clean --console --runtime-hook "./tools/kcpplauncherhook.py" --icon "./niko.ico" --version-file "./version.txt" "./koboldcpp.py" -n "koboldcpp-loader.exe"
