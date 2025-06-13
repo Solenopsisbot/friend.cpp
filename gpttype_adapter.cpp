@@ -1593,7 +1593,7 @@ void sample_grammar(FileFormat file_format, int32_t n_vocab, llama_token_data_ar
     for (const auto & reject : rejects) {
         candidates->data[reject.index].logit = -INFINITY;
     }
-        
+
     auto first = candidates->data;
     auto last  = first + candidates->size;
     last = std::remove_if(first, last,
@@ -1650,25 +1650,19 @@ const std::vector<samplers> & sampler_order, llama_grammar * grammar, float dyna
 
     //dry always first as logits cannot be resorted
     sample_dry(n_ctx, dry_penalty_last_n, dry_multiplier, dry_base, dry_allowed_length, dry_sequence_breakers, &candidates_p);
-    
+
     //prefilter to top 3k tokens for improved speed
     bool use_grammar = grammar != nullptr;
     size_t n_pre_cull = candidates_p.size;
-    
-    sample_top_k(&candidates_p, 3000);
-    
-    if (use_grammar) {
-        
-        (debugmode == 1 && printf("\nGrammar sampling %zu candidates.\n", candidates_p.size));
-        sample_grammar(file_format, n_vocab, &candidates_p, grammar);
-        (debugmode == 1 && printf("\nGrammar returned %zu candidates.\n", candidates_p.size));
 
+    sample_top_k(&candidates_p, 3000);
+
+    if (use_grammar) {
+        sample_grammar(file_format, n_vocab, &candidates_p, grammar);
         // if top_k 3000 doesn't contain a valid candidate for this grammar, try again pre-cull
         if (candidates_p.size <= 0) {
             candidates_p.size = n_pre_cull;
-            (debugmode == 1 && printf("\nRe-sampling grammar with %zu pre-cull tokens.\n", candidates_p.size));
             sample_grammar(file_format, n_vocab, &candidates_p, grammar);
-            (debugmode == 1 && printf("\nGrammar returned %zu candidates.\n", candidates_p.size));
             sample_top_k(&candidates_p, 3000);
         }
     }
@@ -3960,7 +3954,6 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 }
 
                 if (grammar != nullptr) {
-                    (debugmode == 1 && printf("\nGrammar attempting to accept token...\n"));
                     grammar_accept_token(file_format, n_vocab, grammar, id);
                 }
 
