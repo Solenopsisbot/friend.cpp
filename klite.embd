@@ -12,7 +12,7 @@ Current version indicated by LITEVER below.
 -->
 
 <script>
-	const LITEVER = 253;
+	const LITEVER = 254;
 	const urlParams = new URLSearchParams(window.location.search);
 	var localflag = urlParams.get('local'); //this will be replaced automatically in embedded kcpp
 	const STORAGE_PREFIX = (localflag?"e_":"")+"kaihordewebui_";
@@ -60,6 +60,7 @@ Current version indicated by LITEVER below.
 		--img_chat_mono:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAA7AAAAOwBeShxvQAAADxQTFRFu7u7AAAAu7u70NDQurq60dHRjY2Ng4ODu7u7rKys19fXxsbG7+/vubm5u7u709PTyMjI4+Pj3Nzc////jB2o5QAAABR0Uk5T/wBl/xH0//9C/7z8YwZb2OmDAgHH4NesAAAAzklEQVR4nL3Tyw6EIAwF0BbLw6Lg6P//6wgKo1J1N3eBJj2xTaiAxFFfEnnAEiDtoc1UBbBUB+AKtFgHXUEng+7foDemP58XYKw1ADaf27sIzD3ojU0ft1sL27aQh1QqOHoGK6EXoNwbCA+XlYEClgEj7WAQ98EPFeAQ953yXYmO60K5AhDnPKhnKpmx1jPABPwHfxmp1CuYUl0J2cG2xbeA9/8gtPUAh851sEPcCVAL6ASQLt9I143nLGPOBpe0MCgnd8MHgBRewDqPS48vawEIEy7Qd5cAAAAASUVORK5CYII=");
 		--img_compass:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAA7AAAAOwBeShxvQAAADxQTFRF/7VV/+J5AAAA8/P11Ob1l8jt/39K+chs/9tn/8Bd/+J48eTO/9x0/9Zv99ugiHp0/5MKWVFO/6k53KWUcJJTdwAAABR0Uk5T/v8A//////8Zydn/klf///v/bf9A3eYXAAABMUlEQVR4nG2T2RaDIAwFUwEBWdz+/18LuSypNS8enTGQQGgZ4VKMW4kYHb9fnnxaaOC4fUZsxbmoxHFRx5/f2BJRkY4Dgts+f2F9AU0Q3Aol9Qyd56DUvisVMlw6Dt5D5wVDKArzusdaBfaXlZqCUrlyiksRnORKt6dioRRCSND5CK1Z8Au5vn5Y1yy4zkhBaSRYS9yh85YiURwF3CtHbhwpPHGN/FuAsN7gOjwF1bhpAtYg7tnO5Wdww8Z+nn+CapyFswtiibJN5sbIJaQQGjdyk7PMWr8RRisziU7zj0OwaBRaPTkU0ep5WPo3+mGN437wedxIYS2+n7vkvl4YvnLl3Qb0Z1TICRZcWvg2Q8B1A8dkJXqNtHTh3cCE9tHzT+zB5/Am/4aFUAe4OT66+fULsfQP1birKzkAAAAASUVORK5CYII=");
 		--img_websearch:url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAN1wAADdcBQiibeAAAAEtQTFRFAAAA////////////////////////////////////////////////////////////////////////////////////////////////g5kLBwAAABl0Uk5TAP8Ds+QtpRpgIn35Ud7vnMFxhNZFkswMPA2JIJgAAAFISURBVHicvZPbjsQgCIb5PdVT1dpW+/5PutTZncwp6V4NSasGBD4BoruI6E1LqRkfBb1LX2bcZV76i1r4dCoS1hW3nX/y0uW4aBbUiiWPg3xwMjU+Fxgy2DZedhS+0aa7Xp23MXeaQ+9BUV/5CKg/C7b2nKFxEwpRgZs4iPLs9aa3QKVtJA8Zo8TA2agCdgRIkIIyrJXhl7LYiExCIk30FdFakHbUtXO6k9MPO6H1gDxOdgvPiYoURMTu4alh0gN0wcKMLkNHVA0cFZuG6QxpB6eDqSXYdaYeyrIqL5MQao6p5R0Dc22lthx2jqZMlvwjfpZc9lbayHIPYdsTjjNaslx39hu53jYkPww2JE4siTPamVjgOveAYwL0MBAMeX4D+RftBq+/89D/KfdVw1y33HXTXrb99eB8Gr36OsBPw6vehnd4+Tj+P8K7EihG+ntRAAAAAElFTkSuQmCC');
+		--img_websearch_mono:url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAN1wAADdcBQiibeAAAADxQTFRFAAAAnp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6enp6eVevUTgAAABR0Uk5TAP+h4bMt7wwD0IkaYH0iQ/lRwXGxVnHZAAABPElEQVR4nL2T2W7EMAhFuXh3vOf//7U3nuloukjpU5GS2AEDx4DIS+KsmrxPWmeUnxJOg5eYM3xTx+ovhUdKeKzqFy/B7oN6Imecujf2zcmRuF9QUfTOT8biiXS89Fd0hQliRgjDSEi4vJhPC1pX2mg7sEQW2kG1qfT60BcgS9/Jw85psXE6A6HsAB42MnopdjwpV5nMJFr4Q/5FnIvimgTXmgvS3NsqOrch+8VeUJlo9CNO5IoqCYfboCdOMjaFo8aRL6M7aCBk2ZwNmtcoiRc41plMtT5GYybrnrExU1o56ciMZlQtX8JrUf5caWeZx+jZ8+oYzRfWnX4n612Gr9ugwzMxH69oV2KDdQ4D/QDcNoiEvJ6N/ER7wLv/uei/lPuuYe5b7r5pb9v+fnB+G738fYBvhnd7+XX8PwAV4g545KvJTQAAAABJRU5ErkJggg==');
 		--img_save:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAMAAADXqc3KAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAAnQAAAJ0Bj3LnbgAAADxQTFRFQlFtSVp52uHyws7lztbmjpmuUdjlu8TZeIminqi9WvH/rrjNVMbYxuT0Xm2HAAAAR1h3RVVyR1ZyR1h2eZplWQAAABR0Uk5T////////////////////ANT0HUjqAr+PAAAAgUlEQVR4nI3Q2RaDIAxF0RuCDNUWKP//ryXFWkUczmP2ghVAjkTklOQAvLT28R1CgMwbQCoC6oBIH4ocAOIR4BYoZtZboOHbKHlaQw3rTsFNNVObFjCP2gzmGvhZ47k/qOUdW7An4IdfDbAt+dLYgJbkR+zdq/YnYn+rhBxT2kPKH1FvCKEBnt/sAAAAAElFTkSuQmCC");
 		--img_save_mono:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAMAAADXqc3KAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAAnQAAAJ0Bj3LnbgAAADxQTFRFV1dXYWFh5eXl09PT2tram5ubnp6ejY2Nra2tysrKrKysvb29lpaWW1tbcnJy3d3dAAAAX19fXFxcXl5eL2vTkwAAABR0Uk5T//////////////////T//wDUHUizGkTXAAAAgUlEQVR4nI3QURKDIAxF0RcCAlUqlP3vtaRYq4jW+5kzMAHkRERWSRbAU2uXXjFGyLwBhCKgDoj0ocgJIJ0BboFiZr0HGj6NkqMt1LDtEuxUM7VpBfOoLWD+A881XvqBWt+xB38BbvjWAPuSK40NaEl+xN+96ngi9bcKyCmEI4T8BipnCJv9iKHqAAAAAElFTkSuQmCC");
 		--img_load:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAMAAADXqc3KAAAAAXNSR0IB2cksfwAAAAlwSFlzAAAAnQAAAJ0Bj3LnbgAAADxQTFRF8MQZKbmZ8p0fAAAA8bIc8MIa8MQZq7NIKrmY7cQa0sIs8d2BebRn87wcLL+aJrmZ//8AdbhpAP//c69phZ/jMwAAABR0Uk5T//3/AP+y8v6kbP///xcZUAGrAUn40tQBAAAAp0lEQVR4nHWSiw6DIAwAy1peojLd///rKm3ZZOOiCXLpBRIhB2CCf+JeXUr1RAECATGQ+WN3TFUBKsJmJu0ijOCZo5m7EJzVRrE2c3ZBhoiXCXoYsYm4qejbUSbWo94HXCfZALXF0kVWQVAKP6Xo/hK0RHZcmVnAa+lzketYESBb6dvwPmxDqdX49TiWlIw/JeG6+ViCVsJZCWclnJVwVkLwfwau/+INBncEwpxiohQAAAAASUVORK5CYII=");
@@ -1040,6 +1041,7 @@ Current version indicated by LITEVER below.
 		background-position: top 4px left 4px, center;
 		background-size: 24px, 100%;
 		padding: 2px 2px;
+		text-wrap: wrap;
 	}
 	.scenarioitem.blue
 	{
@@ -1900,7 +1902,7 @@ Current version indicated by LITEVER below.
 	{
 		display: flex;
 		flex-direction: column;
-		margin-top: 16px;
+		margin-top: 10px;
 		padding: 2px;
 		height: calc(100% - 20px);
 	}
@@ -1926,7 +1928,7 @@ Current version indicated by LITEVER below.
 	}
 	.corpo_leftpanel_btn
 	{
-		padding: 4px;
+		padding: 2px;
 		margin: 2px;
 		background: #f4f4f400;
 		border:none;
@@ -7388,7 +7390,7 @@ Current version indicated by LITEVER below.
 					//check for tavernai fields
 					let has_tav_wi_check = has_tavern_wi_check(new_loaded_storyobj);
 					if (!new_loaded_storyobj.scenarioVersion && (new_loaded_storyobj.name != null || new_loaded_storyobj.description != null ||
-						new_loaded_storyobj.personality != null || new_loaded_storyobj.spec=="chara_card_v2" || has_tav_wi_check)) {
+						new_loaded_storyobj.personality != null || (new_loaded_storyobj.spec=="chara_card_v2" || new_loaded_storyobj.spec=="chara_card_v3") || has_tav_wi_check)) {
 						load_tavern_obj(new_loaded_storyobj);
 					}
 					else if (new_loaded_storyobj.char_name != null || new_loaded_storyobj.char_persona != null) {
@@ -8282,7 +8284,7 @@ Current version indicated by LITEVER below.
 		if(obj!=null)
 		{
 			//a lightweight tavern card loader, not fully compliant
-			if(obj.spec=="chara_card_v2" && obj.data!=null)
+			if((obj.spec=="chara_card_v2"||obj.spec=="chara_card_v3") && obj.data!=null)
 			{
 				obj = obj.data;
 			}
@@ -8826,11 +8828,11 @@ Current version indicated by LITEVER below.
 		},
 		// Chub.ai
 		{
-			name: "characterhub.org / chub.ai",
+			name: "chub.ai / characterhub.org",
 			urlParam: "chub",
 			inputBox: {
-				text: "Enter characterhub.org or chub.ai prompt URL",
-				placeholder: "https://characterhub.org/characters/Anonymous/example-character"
+				text: "Enter chub.ai or characterhub.org card URL",
+				placeholder: "https://chub.ai/characters/Anonymous/example-character"
 			},
 			extraction: (userInput) => {
 				if (userInput.match(/chub\.ai\//i)) {
@@ -8982,10 +8984,10 @@ Current version indicated by LITEVER below.
 		},
 		// aicharactercards.com
 		{
-			name: "AICC / character-tavern.com",
+			name: "aicharactercards.com / character-tavern.com",
 			urlParam: "aicc",
 			inputBox: {
-				text: "Enter aicharactercards.com or character-tavern.com prompt URL",
+				text: "Enter aicharactercards.com or character-tavern.com card URL",
 				placeholder: "https://aicharactercards.com/character-cards/work-jobs/deffcolony/lara-lightland",
 			},
 			extraction: (userInput) => {
@@ -9017,6 +9019,86 @@ Current version indicated by LITEVER below.
 						}
 					}
 					return "https://aicharactercards.com/wp-json/pngapi/v1/image/"+userInput;
+				}
+			},
+			fetch: (userInput) => {
+				temp_scenario = {
+					"title":"",
+					"desc": "",
+					"opmode":3,
+					"chatopponent": "",
+					"gui_type":1,
+					"prompt":"",
+					"memory": "",
+					"authorsnote": "",
+					"worldinfo": [],
+				};
+
+				finalurl = apply_proxy_url(userInput,true);
+				//try to obtain the full portrait image
+				return fetch(finalurl, {
+					method: 'GET',
+					redirect: 'follow',
+					referrerPolicy: 'no-referrer',
+					})
+					.then(rb => {
+						if(rb.ok)
+						{
+							return rb.blob();
+						}else{
+							throw new Error('Cannot fetch tavern image');
+						}
+					})
+					.then(blob => {
+						preview_temp_scenario();
+
+						readTavernPngFromBlob(blob,(obj)=>{
+							load_temp_scenario_from_tavernobj(obj);
+						});
+
+						const objectURL = URL.createObjectURL(blob);
+						const compressedImg = compressImage(objectURL, (compressedImageURI, aspectratio)=>{
+							temp_scenario.image = compressedImageURI;
+							temp_scenario.image_aspect = aspectratio;
+							preview_temp_scenario();
+						}, true, AVATAR_PX);
+					})
+					.catch(error => {
+						throw new Error("Selected scenario is invalid.");
+						console.error(error);
+					});
+			}
+		},
+		{
+		name: "char-archive.evulid.cc",
+			urlParam: "carc",
+			inputBox: {
+				text: "Enter char-archive.evulid.cc card URL",
+				placeholder: "https://char-archive.evulid.cc/#/chub/Cyber_Elite/character/Cat",
+			},
+			extraction: (userInput) => {
+				if (userInput.match(/char-archive\.evulid\.cc\/\#\//i))
+				{
+					let parsedInput = userInput.split("?")[0];
+					parsedInput = parsedInput.split("char-archive.evulid.cc/#/")[1];
+					let parts = parsedInput.split("/");
+
+					if (parts.length == 3) {
+						let final = parts[2];
+						final = final.includes("+")?("+"+final.split("+")[1]):final;
+						return `https://char-archive.evulid.cc/api/archive/v1/${parts[0]}/image/character/${final}?definition=true`;
+					}
+					if (parts.length !== 4 || parts[2] !== 'character') {
+						//bad format, return original
+						return userInput;
+					}
+					let final = parts[3];
+					final = final.includes("+")?("+"+final.split("+")[1]):final;
+					return `https://char-archive.evulid.cc/api/archive/v1/${parts[0]}/image/character/${parts[1]}/${final}?definition=true`;
+				}
+				else
+				{
+					return userInput;
 				}
 			},
 			fetch: (userInput) => {
@@ -9125,7 +9207,7 @@ Current version indicated by LITEVER below.
 
 		let scenarios = ``;
 		for(let i=0;i<scenario_sources.length;++i) {
-			scenarios += `<button type="button" name="" class="scenarioitem purple btn btn-primary" onclick="import_scenario(scenario_sources[${i}])">Import from<br>${scenario_sources[i].name}</button>`
+			scenarios += `<button type="button" name="" class="scenarioitem purple btn btn-primary" onclick="import_scenario(scenario_sources[${i}])">${scenario_sources[i].name}</button>`
 		}
 
 		scenarios += `<button type="button" name="" class="scenarioitem purple btn btn-primary" onclick="character_creator()">New Character Creator</button>`;
@@ -12369,6 +12451,7 @@ Current version indicated by LITEVER below.
 
 		document.getElementById("setgrammar").disabled = !is_using_kcpp_with_grammar();
 		document.getElementById("voice_typing_mode").disabled = !is_using_kcpp_with_whisper();
+		document.getElementById("transcribe_file_btn").disabled = !is_using_kcpp_with_whisper();
 		document.getElementById("grammar_retain_state").disabled = document.getElementById("setgrammar").disabled;
 
 		if(custom_kobold_endpoint=="" && custom_oai_key=="" && custom_gemini_key=="")
@@ -16722,7 +16805,11 @@ Current version indicated by LITEVER below.
 				{
 					if(!document.getElementById("usegeminithink").checked)
 					{
-						payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0};
+						//gemini pro cannot fully disable thinking
+						payload["generationConfig"]["thinkingConfig"] = {"includeThoughts": false, "thinkingBudget": (mdlname.includes("gemini-2.5-pro")?128:0)};
+					}else
+					{
+						payload["generationConfig"]["thinkingConfig"] = {"includeThoughts": true};
 					}
 				}
 
@@ -20557,6 +20644,10 @@ Current version indicated by LITEVER below.
 			let amode = (localsettings.adventure_switch_mode==0?"Story Mode":(localsettings.adventure_switch_mode==1?"Action Mode":"Dice Mode"))
 			panelitems += `<div onclick="btn_adventure_mode()" class="corpo_leftpanel_btn" type="button" >Adventure: ${amode}</div>`;
 		}
+		if(is_using_kcpp_with_websearch())
+		{
+			panelitems += `<div onclick="toggle_websearch()" class="corpo_leftpanel_btn" type="button" style="background-image: var(--img_websearch_mono); padding-left: 44px;">WebSearch: ${localsettings.websearch_enabled?"<span class='color_green'>On</span>":"<span class='color_gray'>Off</span>"}</div>`;
+		}
 		panel.innerHTML = panelitems;
 	}
 	function populate_corpo_leftpanel()
@@ -23174,7 +23265,7 @@ Current version indicated by LITEVER below.
 					<button title="Toggle Adventure Mode" onclick="btn_adventure_mode()" id="chat_btnmode_adventure" class="chat_btnmode_adventure actionmode hidden mainnav" type="button"></button>
 					<div id="cht_inp_bg" class="cht_inp_bg">
 					<div class="cht_inp_bg_inner" id="cht_inp_lengthtester" style="white-space: nowrap; visibility: hidden; height: 0px; position:absolute; width: auto;"></div>
-					<textarea title="User Input" class="cht_inp_bg_inner mainnav" id="cht_inp" type="text" name="chtchtinp"  role="presentation" autocomplete="noppynop" spellcheck="true" rows="1" wrap="on" placeholder="Type a message" value="" oninput="update_submit_button();chat_resize_input();" onpaste="return img_paste_event(event)" onkeypress="return chat_handle_typing(event)"/></textarea>
+					<textarea title="User Input" class="cht_inp_bg_inner mainnav" id="cht_inp" type="text" name="chtchtinp"  role="presentation" autocomplete="noppynop" spellcheck="true" rows="1" wrap="on" placeholder="Type a message" value="" oninput="update_submit_button();chat_resize_input();" onpaste="return img_paste_event(event)" onkeypress="return chat_handle_typing(event)"></textarea>
 					</div>
 					<button title="Submit" onclick="submit_generation_button(true)" onmousedown="ptt_start()" onmouseup="ptt_end()" id="chat_msg_send_btn" class="chat_msg_send_btn mainnav" type="button"></button>
 					<button title="Abort" onclick="abort_generation()" id="chat_msg_send_btn_abort" class="hidden chat_msg_send_btn_abort mainnav" type="button"></button>
@@ -23208,7 +23299,7 @@ Current version indicated by LITEVER below.
 						<div class="corpo_chat_outer">
 							<button title="Image" onclick="add_img_btn_menu()" id="corpo_chat_img_btn" class="corpo_chat_img_btn mainnav" type="button"></button>
 							<div class="corpo_chat_inner" id="corpo_cht_inp_lengthtester" style="white-space: nowrap; visibility: hidden; height: 0px; position:absolute; width: auto;"></div>
-							<textarea title="User Input" class="corpo_chat_inner mainnav" id="corpo_cht_inp" type="text" name="crpchtinp"  role="presentation" autocomplete="noppynop" spellcheck="true" rows="1" wrap="on" placeholder="Message KoboldAI" value="" oninput="update_submit_button();chat_resize_input();" onpaste="return img_paste_event(event)" onkeypress="return chat_handle_typing(event)"/></textarea>
+							<textarea title="User Input" class="corpo_chat_inner mainnav" id="corpo_cht_inp" type="text" name="crpchtinp"  role="presentation" autocomplete="noppynop" spellcheck="true" rows="1" wrap="on" placeholder="Message KoboldAI" value="" oninput="update_submit_button();chat_resize_input();" onpaste="return img_paste_event(event)" onkeypress="return chat_handle_typing(event)"></textarea>
 							<button title="Submit" onclick="submit_generation_button(true)" id="corpo_chat_send_btn" class="corpo_chat_send_btn mainnav" type="button"></button>
 							<button title="Abort" onclick="abort_generation()" id="corpo_chat_send_btn_abort" class="hidden corpo_chat_send_btn_abort mainnav" type="button"></button>
 						</div>
@@ -24107,7 +24198,7 @@ Current version indicated by LITEVER below.
 									<option value="voiceclone">voiceclone</option>
 									</select></td>
 									<td><input class="settinglabel miniinput" type="text" value="" placeholder="(Name)" id="kcpp_tts_voice_custom" style="margin-left:3px; height:18px; width:44px; padding: 2px;"></td>
-									<td><button id="kcpp_tts_voice_clone" type="button" class="btn btn-primary" style="width:100%; padding:2px 3px;margin-top:2px;font-size:11px;" onclick="set_voice_clone()">Set VCJson</button></tr>
+									<td><button id="kcpp_tts_voice_clone" type="button" class="btn btn-primary" style="width:100%; padding:2px 3px;margin-top:2px;font-size:11px;" onclick="set_voice_clone()">Set VCJson</button></td></tr>
 								</table>
 								</div>
 							</div>
@@ -24144,7 +24235,7 @@ Current version indicated by LITEVER below.
 							<div class="justifyleft" style="padding:3px">Delay </div>
 							<input title="Voice Delay Milliseconds" type="text" inputmode="decimal" value="300" id="voice_end_delay" style="width:30px">
 							<input type="file" id="transcribe_file_input" accept="audio/*,video/*" style="display:none;">
-							<button id="transcribe_file_btn" type="button" class="bg_green btn btn-primary" style="height:20px; padding:2px 3px; font-size:11px;margin-top: 3px;" onclick="transcribe_file_btn()">Narrate File</button>
+							<button id="transcribe_file_btn" type="button" class="bg_green btn btn-primary" style="height:20px; padding:2px 3px; font-size:11px;margin-top: 3px;" onclick="transcribe_file_btn()">Transcribe File</button>
 						</div>
 
 
@@ -24364,7 +24455,7 @@ Current version indicated by LITEVER below.
 					</div>
 					<div id="expandguidance" class="hidden">
 						<div class="color_red hidden" id="noguidance">Classifier-Free Guidance may be unavailable.</div>
-						<div style="color:#ffffff;">Classifier-Free Guidance prompt functions as a negative prompt when Guidance Scale is above 1, and a positive prompt at Guidance Scale is below 1. Disabled if scale is exactly 1 or CFG prompt is blank.</em><br></div>
+						<div style="color:#ffffff;">Classifier-Free Guidance prompt functions as a negative prompt when Guidance Scale is above 1, and a positive prompt at Guidance Scale is below 1. Disabled if scale is exactly 1 or CFG prompt is blank.<br></div>
 						<div style="display: flex; column-gap: 4px; margin-top: 4px; margin-bottom: 4px;">
 						<input class="form-control menuinput_inline" type="text" placeholder="Enter CFG Prompt" value="" id="guidance_prompt">
 						<div style="padding:1px" class="settinglabel">Scale<br>(0-5): </div><input class="form-control menuinput_inline" style="margin-left:4px;width:70px;" inputmode="numeric" placeholder="(Off)" value="" id="guidance_scale"></div>
