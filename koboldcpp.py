@@ -67,6 +67,7 @@ friendlymodelname = "inactive"
 friendlysdmodelname = "inactive"
 friendlyembeddingsmodelname = "inactive"
 lastgeneratedcomfyimg = b''
+lastuploadedcomfyimg = b''
 fullsdmodelpath = ""  #if empty, it's not initialized
 mmprojpath = "" #if empty, it's not initialized
 password = "" #if empty, no auth key required
@@ -1563,11 +1564,14 @@ def sd_comfyui_tranform_params(genparams):
 
                 pos = inp.get("positive",[]) #positive prompt node
                 neg = inp.get("negative",[]) #negative prompt node
-                imgsize = inp.get("latent_image",[]) #image size node
+                latentimg = inp.get("latent_image",[]) #image size node
 
-                if imgsize and isinstance(imgsize, list) and len(imgsize) > 0:
-                    temp = promptobj.get(str(imgsize[0]), {})
+                if latentimg and isinstance(latentimg, list) and len(latentimg) > 0:
+                    temp = promptobj.get(str(latentimg[0]), {}) #now, this may be a VAEEncode or EmptyLatentImage
+                    nodetype = temp.get("class_type", "") #if its a VAEEncode, it will have pixels
                     temp = temp.get('inputs', {})
+                    if nodetype=="VAEEncode" and lastuploadedcomfyimg!="": #img2img
+                        genparams["init_images"] = [lastuploadedcomfyimg]
                     genparams["width"] = temp.get("width", 512)
                     genparams["height"] = temp.get("height", 512)
                 if neg and isinstance(neg, list) and len(neg) > 0:
@@ -2481,7 +2485,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             super().log_message(format, *args)
         pass
 
-    def extract_transcribe_from_file_upload(self, body):
+    def extract_formdata_from_file_upload(self, body):
         result = {"file": None, "prompt": None, "language": None}
         try:
             if 'content-type' in self.headers and self.headers['content-type']:
@@ -2490,6 +2494,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     fparts = body.split(boundary)
                     for fpart in fparts:
                         detected_upload_filename = re.findall(r'Content-Disposition.*name="file"; filename="(.*)"', fpart.decode('utf-8',errors='ignore'))
+                        detected_upload_filename_comfy = re.findall(r'Content-Disposition.*name="image"; filename="(.*)"', fpart.decode('utf-8',errors='ignore'))
                         if detected_upload_filename and len(detected_upload_filename)>0:
                             utfprint(f"Detected uploaded file: {detected_upload_filename[0]}")
                             file_content_start = fpart.find(b'\r\n\r\n') + 4  # Position after headers
@@ -2499,6 +2504,16 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                     file_data = fpart[file_content_start:file_content_end]
                                     file_data_base64 = base64.b64encode(file_data).decode('utf-8',"ignore")
                                     base64_string = f"data:audio/wav;base64,{file_data_base64}"
+                                    result["file"] = base64_string
+                        elif detected_upload_filename_comfy and len(detected_upload_filename_comfy)>0:
+                            utfprint(f"Detected uploaded image: {detected_upload_filename_comfy[0]}")
+                            file_content_start = fpart.find(b'\r\n\r\n') + 4  # Position after headers
+                            file_content_end = fpart.rfind(b'\r\n')  # Ending boundary
+                            if file_content_start != -1 and file_content_end != -1:
+                                if "file" in result and result["file"] is None:
+                                    file_data = fpart[file_content_start:file_content_end]
+                                    file_data_base64 = base64.b64encode(file_data).decode('utf-8',"ignore")
+                                    base64_string = f"{file_data_base64}"
                                     result["file"] = base64_string
 
                         # Check for fields
@@ -2926,7 +2941,7 @@ Change Mode<br>
     def do_GET(self):
         global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui
         global last_req_time, start_time
-        global savedata_obj, has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, friendlyembeddingsmodelname
+        global savedata_obj, has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastuploadedcomfyimg, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, mmprojpath, password, friendlyembeddingsmodelname
         self.path = self.path.rstrip('/')
         response_body = None
         content_type = 'application/json'
@@ -3145,7 +3160,7 @@ Change Mode<br>
         return
 
     def do_POST(self):
-        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey, lastgeneratedcomfyimg, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, net_save_slots
+        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey, lastuploadedcomfyimg, lastgeneratedcomfyimg, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, net_save_slots
         contlenstr = self.headers['content-length']
         content_length = 0
         body = None
@@ -3602,6 +3617,12 @@ Change Mode<br>
                     response_body = (json.dumps({"success": result}).encode())
                 else:
                     response_body = (json.dumps({"success": False}).encode())
+            elif self.path.startswith('/api/upload/image') or self.path.startswith("/upload/image"): #comfyui compatible
+                lastuploadedcomfyimg = b''
+                formdata = self.extract_formdata_from_file_upload(body)
+                if "file" in formdata and formdata["file"]:
+                    lastuploadedcomfyimg = formdata["file"]
+                response_body = (json.dumps({"name": "kcpp_img2img.jpg", "subfolder": "", "type": "input"}).encode())
             elif self.path.endswith('/request'):
                 api_format = 1
             elif self.path.endswith(('/api/v1/generate', '/api/latest/generate')):
@@ -3658,7 +3679,7 @@ Change Mode<br>
                 except Exception:
                     genparams = None
                     if is_transcribe: #fallback handling of file uploads
-                        formdata = self.extract_transcribe_from_file_upload(body)
+                        formdata = self.extract_formdata_from_file_upload(body)
                         if "file" in formdata and formdata["file"]:
                             b64wav = formdata["file"]
                             genparams = {"audio_data":b64wav}
