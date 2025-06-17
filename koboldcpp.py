@@ -981,7 +981,7 @@ def read_gguf_metadata(file_path):
     except Exception:
         return None
 
-def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,draftmodelpath,ttsmodelpath):
+def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,draftmodelpath,ttsmodelpath,embdmodelpath):
     global modelfile_extracted_meta
     modelfile_extracted_meta = None
     sdfsize = 0
@@ -989,6 +989,7 @@ def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,
     mmprojsize = 0
     draftmodelsize = 0
     ttsmodelsize = 0
+    embdmodelsize = 0
     if sdfilepath and os.path.exists(sdfilepath):
         sdfsize = os.path.getsize(sdfilepath)
     if whisperfilepath and os.path.exists(whisperfilepath):
@@ -999,12 +1000,14 @@ def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,
         draftmodelsize = os.path.getsize(draftmodelpath)
     if ttsmodelpath and os.path.exists(ttsmodelpath):
         ttsmodelsize = os.path.getsize(ttsmodelpath)
+    if embdmodelpath and os.path.exists(embdmodelpath):
+        embdmodelsize = os.path.getsize(embdmodelpath)
     if filepath and os.path.exists(filepath):
         try:
             fsize = os.path.getsize(filepath)
             if fsize>10000000: #dont bother with models < 10mb as they are probably bad
                 ggufmeta = read_gguf_metadata(filepath)
-                modelfile_extracted_meta = [filepath,ggufmeta,fsize,sdfsize,whisperfsize,mmprojsize,draftmodelsize,ttsmodelsize] #extract done. note that meta may be null
+                modelfile_extracted_meta = [filepath,ggufmeta,fsize,sdfsize,whisperfsize,mmprojsize,draftmodelsize,ttsmodelsize,embdmodelsize] #extract done. note that meta may be null
         except Exception:
             modelfile_extracted_meta = None
 
@@ -1048,6 +1051,8 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to dete
                 mem -= (modelfile_extracted_meta[6] * 1.5)
             if modelfile_extracted_meta[7] > 1024*1024*10: #tts model tax
                 mem -= max(600*1024*1024, modelfile_extracted_meta[7] * 3)
+            if modelfile_extracted_meta[8] > 1024*1024*10: #embeddings model tax
+                mem -= max(350*1024*1024, modelfile_extracted_meta[8] * 1.5)
             mem = 0 if mem < 0 else mem
 
             csmul = (cs/4096) if cs >= 8192 else 1.8 if cs > 4096 else 1.2 if cs > 2048 else 1.0
@@ -1762,7 +1767,7 @@ def embeddings_load_model(model_filename):
     global args
     inputs = embeddings_load_model_inputs()
     inputs.model_filename = model_filename.encode("UTF-8")
-    inputs.gpulayers = 0
+    inputs.gpulayers = (999 if args.embeddingsgpu else 0)
     inputs.flash_attention = False
     inputs.threads = args.threads
     inputs.use_mmap = args.usemmap
@@ -4299,6 +4304,7 @@ def show_gui():
 
     embeddings_model_var = ctk.StringVar()
     embeddings_ctx_var = ctk.StringVar(value=str(""))
+    embeddings_gpu_var = ctk.IntVar(value=0)
 
     admin_var = ctk.IntVar(value=0)
     admin_dir_var = ctk.StringVar()
@@ -4598,7 +4604,8 @@ def show_gui():
             mmprojfilepath = mmproj_var.get()
             draftmodelpath = draftmodel_var.get()
             ttsmodelpath = tts_model_var.get() if ttsgpu_var.get()==1 else ""
-            extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,draftmodelpath,ttsmodelpath)
+            embdmodelpath = embeddings_model_var.get() if embeddings_gpu_var.get()==1 else ""
+            extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,draftmodelpath,ttsmodelpath,embdmodelpath)
             changed_gpulayers_estimate()
         pass
 
@@ -4914,8 +4921,10 @@ def show_gui():
     makelabelentry(model_tab, "Draft Amount: ", draftamount_var, 13, 50,padx=100,singleline=True,tooltip="How many tokens to draft per chunk before verifying results")
     makelabelentry(model_tab, "Splits: ", draftgpusplit_str_vars, 13, 50,padx=210,singleline=True,tooltip="Distribution of draft model layers. Leave blank to follow main model's gpu split. Only works if multi-gpu (All) selected in main model.", labelpadx=160)
     makelabelentry(model_tab, "Layers: ", draftgpulayers_var, 13, 50,padx=320,singleline=True,tooltip="How many layers to GPU offload for the draft model", labelpadx=270)
-    makefileentry(model_tab, "Embeds Model:", "Select Embeddings Model File", embeddings_model_var, 15, width=160,singlerow=True, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select an embeddings GGUF model that can be used to generate embedding vectors.")
-    makelabelentry(model_tab, "EmbdCtx: ", embeddings_ctx_var, 15, 50,padx=390,singleline=True,tooltip="If set above 0, limits max context for embedding model to save memory.", labelpadx=330)
+    makefileentry(model_tab, "Embeds Model:", "Select Embeddings Model File", embeddings_model_var, 15, width=130,singlerow=True, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select an embeddings GGUF model that can be used to generate embedding vectors.")
+    makelabelentry(model_tab, "ECtx: ", embeddings_ctx_var, 15, 50,padx=335,singleline=True,tooltip="If set above 0, limits max context for embedding model to save memory.", labelpadx=302)
+    makecheckbox(model_tab, "GPU", embeddings_gpu_var, 15, 0,padx=390,tooltiptxt="Uses the GPU for TTS.")
+    embeddings_gpu_var.trace("w", gui_changed_modelfile)
     makefileentry(model_tab, "Preload Story:", "Select Preloaded Story File", preloadstory_var, 17,width=280,singlerow=True,tooltiptxt="Select an optional KoboldAI JSON savefile \nto be served on launch to any client.")
     makefileentry(model_tab, "SaveData File:", "Select or Create New SaveData Database File", savedatafile_var, 19,width=280,filetypes=[("KoboldCpp SaveDB", "*.jsondb")],singlerow=True,dialog_type=1,tooltiptxt="Selecting a file will allow data to be loaded and saved persistently to this KoboldCpp server remotely. File is created if it does not exist.")
     makefileentry(model_tab, "ChatCompletions Adapter:", "Select ChatCompletions Adapter File", chatcompletionsadapter_var, 24, width=250, filetypes=[("JSON Adapter", "*.json")], tooltiptxt="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.")
@@ -5275,6 +5284,7 @@ def show_gui():
 
         if embeddings_ctx_var.get() != "":
             args.embeddingsmaxctx = (0 if embeddings_ctx_var.get()=="" else int(embeddings_ctx_var.get()))
+        args.embeddingsgpu = (embeddings_gpu_var.get()==1)
 
         if tts_model_var.get() != "" and wavtokenizer_var.get() != "":
             args.ttsthreads = (0 if tts_threads_var.get()=="" else int(tts_threads_var.get()))
@@ -5476,6 +5486,7 @@ def show_gui():
 
         embeddings_model_var.set(dict["embeddingsmodel"] if ("embeddingsmodel" in dict and dict["embeddingsmodel"]) else "")
         embeddings_ctx_var.set(str(dict["embeddingsmaxctx"]) if ("embeddingsmaxctx" in dict and dict["embeddingsmaxctx"]) else "")
+        embeddings_gpu_var.set(dict["embeddingsgpu"] if ("embeddingsgpu" in dict) else 0)
 
         admin_var.set(dict["admin"] if ("admin" in dict) else 0)
         admin_dir_var.set(dict["admindir"] if ("admindir" in dict and dict["admindir"]) else "")
@@ -6649,7 +6660,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 pass
             if args.gpulayers==-1:
                 if MaxMemory[0] > 0 and (not args.usecpu) and ((args.usecublas is not None) or (args.usevulkan is not None) or (args.useclblast is not None) or sys.platform=="darwin"):
-                    extract_modelfile_params(args.model_param,args.sdmodel,args.whispermodel,args.mmproj,args.draftmodel,args.ttsmodel if args.ttsgpu else "")
+                    extract_modelfile_params(args.model_param,args.sdmodel,args.whispermodel,args.mmproj,args.draftmodel,args.ttsmodel if args.ttsgpu else "",args.embeddingsmodel if args.embeddingsgpu else "")
                     layeramt = autoset_gpu_layers(args.contextsize,args.sdquant,args.blasbatchsize,(args.quantkv if args.flashattention else 0))
                     print(f"Auto Recommended GPU Layers: {layeramt}")
                     args.gpulayers = layeramt
@@ -7235,6 +7246,7 @@ if __name__ == '__main__':
     embeddingsparsergroup = parser.add_argument_group('Embeddings Model Commands')
     embeddingsparsergroup.add_argument("--embeddingsmodel", metavar=('[filename]'), help="Specify an embeddings model to be loaded for generating embedding vectors.", default="")
     embeddingsparsergroup.add_argument("--embeddingsmaxctx", metavar=('[amount]'), help="Overrides the default maximum supported context of an embeddings model (defaults to trained context).", type=int, default=0)
+    embeddingsparsergroup.add_argument("--embeddingsgpu", help="Attempts to offload layers of the embeddings model to GPU. Usually not needed.", action='store_true')
 
     admingroup = parser.add_argument_group('Administration Commands')
     admingroup.add_argument("--admin", help="Enables admin mode, allowing you to unload and reload different configurations or models.", action='store_true')
