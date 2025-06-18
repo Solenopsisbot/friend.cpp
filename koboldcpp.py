@@ -1384,7 +1384,7 @@ def generate(genparams, stream_flag=False):
             print(f"\n!!! ====== !!!\n(Warning! Request max_context_length={max_context_length} exceeds allocated context size of {maxctx}. It will be reduced to fit. Consider launching with increased --contextsize to avoid issues. This message will only show once per session.)\n!!! ====== !!!")
             showmaxctxwarning = False
         max_context_length = maxctx
-    min_remain_hardlimit = max(min(max_context_length-4, 16),int(max_context_length*0.1))
+    min_remain_hardlimit = max(min(max_context_length-4, 16),int(max_context_length*0.2))
     min_remain_softlimit = max(min(max_context_length-4, 16),int(max_context_length*0.4))
     if max_length >= (max_context_length-min_remain_softlimit):
         print(f"\n!!! ====== !!!\nWarning: You are trying to generate text with max_length ({max_length}) near or exceeding max_context_length limit ({max_context_length}).\nMost of the context will be removed, and your outputs will not be very coherent.\nConsider launching with increased --contextsize to avoid issues.\n!!! ====== !!!")
