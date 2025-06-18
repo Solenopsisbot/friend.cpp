@@ -1213,10 +1213,6 @@ def fetch_gpu_properties(testCL,testCU,testVK):
             MaxMemory[0] = max(lowestclmem,MaxMemory[0])
         except Exception:
             pass
-    if MaxMemory[0]>0:
-        print(f"Detected Free GPU Memory: {int(MaxMemory[0]/1024/1024)} MB (Set GPU layers manually if incorrect)")
-    else:
-        print("Unable to determine GPU Memory")
     return
 
 def auto_set_backend_cli():
@@ -6671,6 +6667,17 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     if args.threads <= 0:
         args.threads = get_default_threads()
         print(f"Auto Set Threads: {args.threads}")
+
+    if MaxMemory[0]>0:
+        print(f"Detected Available GPU Memory: {int(MaxMemory[0]/1024/1024)} MB")
+    else:
+        print("Unable to determine GPU Memory")
+    try:
+        import psutil
+        vmem = psutil.virtual_memory()
+        print(f"Detected Available RAM: {int(vmem.available/1024/1024)} MB")
+    except Exception:
+        print("Unable to determine available RAM")
 
     init_library() # Note: if blas does not exist and is enabled, program will crash.
     print("==========")
