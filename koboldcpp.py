@@ -8,10 +8,14 @@
 # editing tools, save formats, memory, world info, author's note, characters,
 # scenarios and everything Kobold and KoboldAI Lite have to offer.
 
+import os
+try:
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID" # try set GPU to PCI order first thing
+except Exception:
+    pass
 import copy
 import ctypes
 import multiprocessing
-import os
 import math
 import re
 import argparse
@@ -574,7 +578,7 @@ def set_backend_props(inputs):
         inputs.kcpp_main_gpu = args.maingpu
 
     if args.usecublas:
-         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     if not args.tensor_split:
         if (args.usecublas and "0" in args.usecublas):
             os.environ["CUDA_VISIBLE_DEVICES"] = "0"
