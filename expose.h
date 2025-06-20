@@ -169,6 +169,7 @@ struct sd_load_model_inputs
     const char * vae_filename = nullptr;
     const char * lora_filename = nullptr;
     const float lora_multiplier = 1.0f;
+    const char * photomaker_filename = nullptr;
     const int img_hard_limit = 0;
     const int img_soft_limit = 0;
     const bool quiet = false;
@@ -180,6 +181,7 @@ struct sd_generation_inputs
     const char * negative_prompt = nullptr;
     const char * init_images = "";
     const char * mask = "";
+    const char * photomaker_image = "";
     const bool flip_mask = false;
     const float denoising_strength = 0.0f;
     const float cfg_scale = 0.0f;

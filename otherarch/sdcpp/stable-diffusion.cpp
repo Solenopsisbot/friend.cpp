@@ -328,7 +328,7 @@ public:
                 LOG_WARN(
                     "!!!It looks like you are using SDXL model. "
                     "If you find that the generated images are completely black, "
-                    "try specifying SDXL VAE FP16 Fix with the --vae parameter. "
+                    "try specifying a different VAE. "
                     "You can find it here: https://huggingface.co/madebyollin/sdxl-vae-fp16-fix/blob/main/sdxl_vae.safetensors");
             }
         } else if (sd_version_is_sd3(version)) {
@@ -1408,7 +1408,8 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
                            float slg_scale              = 0,
                            float skip_layer_start       = 0.01,
                            float skip_layer_end         = 0.2,
-                           ggml_tensor* masked_image    = NULL) {
+                           ggml_tensor* masked_image    = NULL,
+                           const sd_image_t* photomaker_reference = nullptr) {
     if (seed < 0) {
         // Generally, when using the provided command line, the seed is always >0.
         // However, to prevent potential issues if 'stable-diffusion.cpp' is invoked as a library
@@ -1451,6 +1452,10 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
     ggml_tensor* init_img = NULL;
     SDCondition id_cond;
     std::vector<bool> class_tokens_mask;
+    if (sd_ctx->sd->pmid_model && photomaker_reference!=nullptr)
+    {
+        sd_ctx->sd->stacked_id = true; //turn on photomaker if needed
+    }
     if (sd_ctx->sd->stacked_id) {
         if (!sd_ctx->sd->pmid_lora->applied) {
             t0 = ggml_time_ms();
@@ -1493,6 +1498,30 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
                 input_id_images.push_back(input_image);
             }
         }
+
+        // handle single photomaker image passed in by kcpp
+        if (sd_ctx->sd->pmid_model && photomaker_reference!=nullptr)
+        {
+            int c = 0;
+            int width, height;
+            width = photomaker_reference->width;
+            height = photomaker_reference->height;
+            c = photomaker_reference->channel;
+            uint8_t* input_image_buffer = photomaker_reference->data;
+            sd_image_t* input_image = NULL;
+            input_image  = new sd_image_t{(uint32_t)width,
+                                            (uint32_t)height,
+                                            3,
+                                            input_image_buffer};
+            input_image   = preprocess_id_image(input_image);
+            if (input_image == NULL) {
+                LOG_ERROR("\npreprocess input id image from kcpp photomaker failed\n");
+            } else {
+                LOG_INFO("\nPhotoMaker loaded image from kcpp\n");
+                input_id_images.push_back(input_image);
+            }
+        }
+
         if (input_id_images.size() > 0) {
             sd_ctx->sd->pmid_model->style_strength = style_ratio;
             int32_t w                              = input_id_images[0]->width;
@@ -1744,7 +1773,8 @@ sd_image_t* txt2img(sd_ctx_t* sd_ctx,
                     size_t skip_layers_count = 0,
                     float slg_scale          = 0,
                     float skip_layer_start   = 0.01,
-                    float skip_layer_end     = 0.2) {
+                    float skip_layer_end     = 0.2,
+                    const sd_image_t* photomaker_reference = nullptr) {
     std::vector<int> skip_layers_vec(skip_layers, skip_layers + skip_layers_count);
     LOG_DEBUG("txt2img %dx%d", width, height);
     if (sd_ctx == NULL) {
@@ -1822,7 +1852,9 @@ sd_image_t* txt2img(sd_ctx_t* sd_ctx,
                                                skip_layers_vec,
                                                slg_scale,
                                                skip_layer_start,
-                                               skip_layer_end);
+                                               skip_layer_end,
+                                               nullptr,
+                                               photomaker_reference);
 
     size_t t1 = ggml_time_ms();
 
@@ -1856,7 +1888,8 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
                     size_t skip_layers_count = 0,
                     float slg_scale          = 0,
                     float skip_layer_start   = 0.01,
-                    float skip_layer_end     = 0.2) {
+                    float skip_layer_end     = 0.2,
+                    const sd_image_t* photomaker_reference = nullptr) {
     std::vector<int> skip_layers_vec(skip_layers, skip_layers + skip_layers_count);
     LOG_DEBUG("img2img %dx%d", width, height);
     if (sd_ctx == NULL) {
@@ -2002,7 +2035,8 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
                                                slg_scale,
                                                skip_layer_start,
                                                skip_layer_end,
-                                               masked_image);
+                                               masked_image,
+                                               photomaker_reference);
 
     size_t t2 = ggml_time_ms();
 
