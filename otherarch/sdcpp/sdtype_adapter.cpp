@@ -135,8 +135,8 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     std::string clipl_filename = inputs.clipl_filename;
     std::string clipg_filename = inputs.clipg_filename;
     notiling = inputs.notile;
-    cfg_side_limit = inputs.side_limit;
-    cfg_square_limit = inputs.square_limit;
+    cfg_side_limit = inputs.img_hard_limit;
+    cfg_square_limit = inputs.img_soft_limit;
     printf("\nImageGen Init - Load Model: %s\n",inputs.model_filename);
 
     if(lorafilename!="")
@@ -320,9 +320,9 @@ static inline int roundup_64(int n) {
 }
 
 //scale dimensions to ensure width and height stay within limits
-//side_limit = sdclamped, hard size limit per side, no side can exceed this
+//img_hard_limit = sdclamped, hard size limit per side, no side can exceed this
 //square limit = total NxN resolution based limit to also apply
-static void sd_fix_resolution(int &width, int &height, int side_limit, int square_limit) {
+static void sd_fix_resolution(int &width, int &height, int img_hard_limit, int img_soft_limit) {
 
     // sanitize the original values
     width = std::max(std::min(width, 8192), 64);
@@ -337,12 +337,12 @@ static void sd_fix_resolution(int &width, int &height, int side_limit, int squar
     // requested ratio, since the user can choose those values directly
     long_side = rounddown_64(long_side);
     short_side = rounddown_64(short_side);
-    side_limit = rounddown_64(side_limit);
+    img_hard_limit = rounddown_64(img_hard_limit);
 
     //enforce sdclamp side limit
-    if (long_side > side_limit) {
-        short_side = static_cast<int>(short_side * side_limit / static_cast<float>(long_side));
-        long_side = side_limit;
+    if (long_side > img_hard_limit) {
+        short_side = static_cast<int>(short_side * img_hard_limit / static_cast<float>(long_side));
+        long_side = img_hard_limit;
         if (short_side <= 64) {
             short_side = 64;
         } else {
@@ -355,7 +355,7 @@ static void sd_fix_resolution(int &width, int &height, int side_limit, int squar
     }
 
     //enforce sd_restrict_square area limit
-    int area_limit = square_limit * square_limit;
+    int area_limit = img_soft_limit * img_soft_limit;
     if (long_side * short_side > area_limit) {
         float scale = std::sqrt(static_cast<float>(area_limit) / (long_side * short_side));
         int new_short = static_cast<int>(short_side * scale);
@@ -453,23 +453,23 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     // cannot exceed (832x832) for sd1/sd2 or (1024x1024) for sdxl/sd3/flux, to prevent crashing the server
     const int hard_megapixel_res_limit = (loadedsdver==SDVersion::VERSION_SD1 || loadedsdver==SDVersion::VERSION_SD2)?832:1024;
 
-    int side_limit = default_res_limit;
+    int img_hard_limit = default_res_limit;
     if (cfg_side_limit > 0) {
-        side_limit = std::max(std::min(cfg_side_limit, default_res_limit), 64);
+        img_hard_limit = std::max(std::min(cfg_side_limit, default_res_limit), 64);
     }
 
-    int square_limit = default_res_limit;
+    int img_soft_limit = default_res_limit;
     if (cfg_square_limit > 0) {
-        square_limit = std::max(std::min(cfg_square_limit, default_res_limit), 64);
+        img_soft_limit = std::max(std::min(cfg_square_limit, default_res_limit), 64);
     }
 
     if (cfg_square_limit > 0 && sddebugmode == 1) {
-        square_limit = std::min(hard_megapixel_res_limit * 2, square_limit);  //double the limit for debugmode if cfg_square_limit is set
+        img_soft_limit = std::min(hard_megapixel_res_limit * 2, img_soft_limit);  //double the limit for debugmode if cfg_square_limit is set
     } else {
-        square_limit = std::min(hard_megapixel_res_limit, square_limit);
+        img_soft_limit = std::min(hard_megapixel_res_limit, img_soft_limit);
     }
 
-    sd_fix_resolution(sd_params->width, sd_params->height, side_limit, square_limit);
+    sd_fix_resolution(sd_params->width, sd_params->height, img_hard_limit, img_soft_limit);
     if (inputs.width != sd_params->width || inputs.height != sd_params->height) {
         printf("\nKCPP SD: Requested dimensions %dx%d changed to %dx%d\n", inputs.width, inputs.height, sd_params->width, sd_params->height);
     }
