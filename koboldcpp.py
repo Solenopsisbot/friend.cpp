@@ -525,6 +525,7 @@ def init_library():
     handle.get_last_eval_time.restype = ctypes.c_float
     handle.get_last_process_time.restype = ctypes.c_float
     handle.get_last_token_count.restype = ctypes.c_int
+    handle.get_last_input_count.restype = ctypes.c_int
     handle.get_last_seed.restype = ctypes.c_int
     handle.get_last_draft_success.restype = ctypes.c_int
     handle.get_last_draft_failed.restype = ctypes.c_int
@@ -3017,6 +3018,7 @@ Change Mode<br>
             lastp = handle.get_last_process_time()
             laste = handle.get_last_eval_time()
             lastc = handle.get_last_token_count()
+            lastic = handle.get_last_input_count()
             totalgens = handle.get_total_gens()
             totalimggens = handle.get_total_img_gens()
             totalttsgens = handle.get_total_tts_gens()
@@ -3025,10 +3027,39 @@ Change Mode<br>
             lastseed = handle.get_last_seed()
             lastdraftsuccess = handle.get_last_draft_success()
             lastdraftfailed = handle.get_last_draft_failed()
+            t_pp = float(lastp)*float(lastic)*0.001
+            t_gen = float(laste)*float(lastc)*0.001
+            s_pp = float(lastic)/t_pp if t_pp>0 else 0
+            s_gen = float(lastc)/t_gen if t_gen>0 else 0
             uptime = time.time() - start_time
             idletime = time.time() - last_req_time
             is_quiet = True if (args.quiet and args.debugmode != 1) else False
-            response_body = (json.dumps({"last_process":lastp,"last_eval":laste,"last_token_count":lastc, "last_seed":lastseed, "last_draft_success":lastdraftsuccess, "last_draft_failed":lastdraftfailed, "total_gens":totalgens, "stop_reason":stopreason, "total_img_gens":totalimggens, "total_tts_gens":totalttsgens, "total_transcribe_gens":totaltranscribegens, "queue":requestsinqueue, "idle":(0 if modelbusy.locked() else 1), "hordeexitcounter":exitcounter, "uptime":uptime, "idletime":idletime, "quiet":is_quiet}).encode())
+            response_body = json.dumps(
+                {
+                    "last_process": lastp,
+                    "last_eval": laste,
+                    "last_token_count": lastc,
+                    "last_input_count": lastic,
+                    "last_process_time": t_pp,
+                    "last_eval_time": t_gen,
+                    "last_process_speed": s_pp,
+                    "last_eval_speed": s_gen,
+                    "last_seed": lastseed,
+                    "last_draft_success": lastdraftsuccess,
+                    "last_draft_failed": lastdraftfailed,
+                    "total_gens": totalgens,
+                    "stop_reason": stopreason,
+                    "total_img_gens": totalimggens,
+                    "total_tts_gens": totalttsgens,
+                    "total_transcribe_gens": totaltranscribegens,
+                    "queue": requestsinqueue,
+                    "idle": (0 if modelbusy.locked() else 1),
+                    "hordeexitcounter": exitcounter,
+                    "uptime": uptime,
+                    "idletime": idletime,
+                    "quiet": is_quiet,
+                }
+            ).encode()
 
         elif self.path.endswith('/api/extra/generate/check'):
             if not self.secure_endpoint():
