@@ -124,6 +124,7 @@ static int cfg_square_limit = 0;
 static int cfg_side_limit = 0;
 static bool sd_is_quiet = false;
 static std::string sdmodelfilename = "";
+static bool photomaker_enabled = false;
 
 bool sdtype_load_model(const sd_load_model_inputs inputs) {
     sd_is_quiet = inputs.quiet;
@@ -169,6 +170,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     if(photomaker_filename!="")
     {
         printf("With PhotoMaker Model: %s\n",photomaker_filename.c_str());
+        photomaker_enabled = true;
     }
     if(inputs.quant)
     {
@@ -433,6 +435,11 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     std::string photomaker_image_data = std::string(inputs.photomaker_image);
     std::string sampler = inputs.sample_method;
 
+    if(!photomaker_enabled)
+    {
+        photomaker_image_data = "";
+    }
+
     sd_params->prompt = cleanprompt;
     sd_params->negative_prompt = cleannegprompt;
     sd_params->cfg_scale = inputs.cfg_scale;
@@ -625,7 +632,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                           sd_params->slg_scale,
                           sd_params->skip_layer_start,
                           sd_params->skip_layer_end,
-                          (photomaker_image_data!=""?&photomaker_reference:nullptr));
+                          (photomaker_image_data!=""?(&photomaker_reference):nullptr));
     } else {
 
         if (sd_params->width <= 0 || sd_params->width % 64 != 0 || sd_params->height <= 0 || sd_params->height % 64 != 0) {
@@ -749,7 +756,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                             sd_params->slg_scale,
                             sd_params->skip_layer_start,
                             sd_params->skip_layer_end,
-                            (photomaker_image_data!=""?&photomaker_reference:nullptr));
+                            (photomaker_image_data!=""?(&photomaker_reference):nullptr));
     }
 
     if (results == NULL) {
