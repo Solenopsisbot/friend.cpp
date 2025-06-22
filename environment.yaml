@@ -22,4 +22,3 @@ dependencies:
   - tk=*=xft_*
   - pip:
     - customtkinter
-    - py-cpuinfo
