@@ -494,7 +494,7 @@ def init_library():
             libname = lib_vulkan
         elif file_exists(lib_vulkan_noavx2):
             libname = lib_vulkan_noavx2
-    elif args.useclblast (os.name!='nt' or file_exists("clblast.dll")):
+    elif args.useclblast and (os.name!='nt' or file_exists("clblast.dll")):
         if file_exists(lib_clblast):
             libname = lib_clblast
         elif file_exists(lib_clblast_noavx2):
