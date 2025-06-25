@@ -13983,7 +13983,7 @@ Current version indicated by LITEVER below.
 
 	function set_voice_clone()
 	{
-		inputBoxOkCancel("Set the Voice Clone JSON to clone an existing voice.<br><br><a href=''>You can download existing voice clone JSONs, or make your own.</span><br>","Apply Voice Clone JSON",kcpp_tts_json,"Paste JSON Here",()=>{
+		inputBoxOkCancel("Set the Voice Clone JSON to clone an existing voice.<br><br><a href='https://github.com/LostRuins/koboldcpp/tree/concedo/examples/outetts/speakers' target='_blank'>You can download existing voice clone JSONs, or make your own.</span><br>","Apply Voice Clone JSON",kcpp_tts_json,"Paste JSON Here",()=>{
 		let userinput = getInputBoxValue().trim();
 		try
 		{
@@ -14465,6 +14465,14 @@ Current version indicated by LITEVER below.
 			.catch((error) => {
 				console.error('Error:', error);
 			});
+		}
+		else
+		{
+			//sometimes if oai hasnt started streaming but we need to kill the connection, direct abort
+			if(globalabortcontroller && is_browser_supports_sse() && synchro_pending_stream=="" && localsettings.tokenstreammode!=0 && id_to_cancel && id_to_cancel != "-1" && id_to_cancel != "")
+			{
+				trigger_abort_controller();
+			}
 		}
 		show_abort_button(false);
 	}
