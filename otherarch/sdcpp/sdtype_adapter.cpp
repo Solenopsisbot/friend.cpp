@@ -593,6 +593,12 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         }
     }
 
+    std::vector<sd_image_t> kontext_imgs;
+    if(extra_image_data!="" && loadedsdver==SDVersion::VERSION_FLUX && !sd_loaded_chroma())
+    {
+        kontext_imgs.push_back(extraimage_reference);
+    }
+
     if (sd_params->mode == TXT2IMG) {
 
         if(!sd_is_quiet && sddebugmode==1)
@@ -631,6 +637,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                           sd_params->style_ratio,
                           sd_params->normalize_input,
                           sd_params->input_id_images_path.c_str(),
+                          kontext_imgs.data(), kontext_imgs.size(),
                           sd_params->skip_layers.data(),
                           sd_params->skip_layers.size(),
                           sd_params->slg_scale,
@@ -755,6 +762,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                             sd_params->style_ratio,
                             sd_params->normalize_input,
                             sd_params->input_id_images_path.c_str(),
+                            kontext_imgs.data(), kontext_imgs.size(),
                             sd_params->skip_layers.data(),
                             sd_params->skip_layers.size(),
                             sd_params->slg_scale,
