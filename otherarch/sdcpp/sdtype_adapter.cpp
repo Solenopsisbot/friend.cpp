@@ -587,7 +587,47 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             extraimage_buffers.push_back(kcpp_base64_decode(extra_image_data[i]));
             input_extraimage_buffers.push_back(stbi_load_from_memory(extraimage_buffers[i].data(), extraimage_buffers[i].size(), &nx2, &ny2, &nc2, desiredchannels));
             // Resize the image
-            int resok = stbir_resize_uint8(input_extraimage_buffers[i], nx2, ny2, 0, resized_extraimage_bufs[i].data(), img2imgW, img2imgH, 0, desiredchannels);
+            int desiredWidth = nx2;
+            int desiredHeight = ny2;
+            float aspect_ratio = static_cast<float>(nx2) / ny2;
+            int maxsize = 1024; // no image can exceed this
+            int minsize = 256;
+
+            if (desiredWidth > maxsize || desiredHeight > maxsize) { // Enforce maxsize first
+                if (aspect_ratio > 1.0f) { // wider than tall
+                    desiredWidth = maxsize;
+                    desiredHeight = static_cast<int>(maxsize / aspect_ratio);
+                } else { // taller than wide or square
+                    desiredHeight = maxsize;
+                    desiredWidth = static_cast<int>(maxsize * aspect_ratio);
+                }
+            }
+
+            if (desiredWidth < minsize || desiredHeight < minsize) { // Enforce minsize only if it won't exceed maxsize
+                if (aspect_ratio > 1.0f) { // wider than tall
+                    // Try to scale width up to max of (minsize, maxsize)
+                    desiredWidth = std::min(maxsize, std::max(minsize, desiredWidth));
+                    desiredHeight = static_cast<int>(desiredWidth / aspect_ratio);
+                    if (desiredHeight > maxsize) { // If height now exceeds maxsize, clamp based on height instead
+                        desiredHeight = maxsize;
+                        desiredWidth = static_cast<int>(maxsize * aspect_ratio);
+                    }
+                } else {
+                    // Taller than wide or square
+                    desiredHeight = std::min(maxsize, std::max(minsize, desiredHeight));
+                    desiredWidth = static_cast<int>(desiredHeight * aspect_ratio);
+                    if (desiredWidth > maxsize) {
+                        desiredWidth = maxsize;
+                        desiredHeight = static_cast<int>(maxsize / aspect_ratio);
+                    }
+                }
+            }
+
+            if(!sd_is_quiet && sddebugmode==1)
+            {
+                printf("Resize Extraimg: %dx%d to %dx%d\n",nx2,ny2,desiredWidth,desiredHeight);
+            }
+            int resok = stbir_resize_uint8(input_extraimage_buffers[i], nx2, ny2, 0, resized_extraimage_bufs[i].data(), desiredWidth, desiredHeight, 0, desiredchannels);
             if (!resok) {
                 printf("\nKCPP SD: resize extra image failed!\n");
                 output.data = "";
@@ -595,8 +635,8 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                 return output;
             }
             sd_image_t extraimage_reference;
-            extraimage_reference.width = img2imgW;
-            extraimage_reference.height = img2imgH;
+            extraimage_reference.width = desiredWidth;
+            extraimage_reference.height = desiredHeight;
             extraimage_reference.channel = desiredchannels;
             extraimage_reference.data = resized_extraimage_bufs[i].data();
             extraimage_references.push_back(extraimage_reference);
@@ -716,6 +756,10 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         }
 
         // Resize the image
+        if(!sd_is_quiet && sddebugmode==1)
+        {
+            printf("Resize Img2Img: %dx%d to %dx%d\n",nx,ny,img2imgW,img2imgH);
+        }
         int resok = stbir_resize_uint8(input_image_buffer, nx, ny, 0, resized_image_buf.data(), img2imgW, img2imgH, 0, img2imgC);
         if (!resok) {
             printf("\nKCPP SD: resize image failed!\n");
@@ -735,6 +779,10 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             image_mask_buffer = kcpp_base64_decode(img2img_mask);
             input_mask_buffer = stbi_load_from_memory(image_mask_buffer.data(), image_mask_buffer.size(), &nx2, &ny2, &nc2, 1);
             // Resize the image
+             if(!sd_is_quiet && sddebugmode==1)
+            {
+                printf("Resize Mask: %dx%d to %dx%d\n",nx2,ny2,img2imgW,img2imgH);
+            }
             int resok = stbir_resize_uint8(input_mask_buffer, nx2, ny2, 0, resized_mask_buf.data(), img2imgW, img2imgH, 0, 1);
             if (!resok) {
                 printf("\nKCPP SD: resize image failed!\n");
