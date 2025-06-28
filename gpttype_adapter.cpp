@@ -3603,6 +3603,9 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     int input_consumed = 0;
     std::mt19937 rng(kcpp_data->seed);
 
+    //do some reservation so we don't have to realloc
+    generated_tokens.reserve(remaining_tokens+16);
+
     //prepare sampler order
     std::vector<samplers> sampler_order;
     if(inputs.sampler_len<=0) //list by value
