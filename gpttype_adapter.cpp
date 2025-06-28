@@ -45,7 +45,7 @@
 #include "common/common.h"
 
 //const
-const int extra_context_handle_fragmentation = 120;
+const int extra_context_handle_fragmentation = 128;
 const int LLAVA_TOKEN_IDENTIFIER_A = -998; //alternate between both, changing when image changes
 const int LLAVA_TOKEN_IDENTIFIER_B = -999;
 
@@ -2173,6 +2173,10 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         if(kcpp_data->use_contextshift)
         {
            llama_ctx_params.n_ctx += extra_context_handle_fragmentation;
+        }
+        else
+        {
+            llama_ctx_params.n_ctx += (extra_context_handle_fragmentation/2);
         }
 
         llama_ctx_params.offload_kqv = !inputs.low_vram;
