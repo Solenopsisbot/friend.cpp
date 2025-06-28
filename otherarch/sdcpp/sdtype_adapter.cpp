@@ -566,10 +566,11 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             input_extraimage_buffer = nullptr;
         }
         int nx2, ny2, nc2;
+        int desiredchannels = 3;
         extraimage_buffer = kcpp_base64_decode(extra_image_data);
-        input_extraimage_buffer = stbi_load_from_memory(extraimage_buffer.data(), extraimage_buffer.size(), &nx2, &ny2, &nc2, 3);
+        input_extraimage_buffer = stbi_load_from_memory(extraimage_buffer.data(), extraimage_buffer.size(), &nx2, &ny2, &nc2, desiredchannels);
         // Resize the image
-        int resok = stbir_resize_uint8(input_extraimage_buffer, nx2, ny2, 0, resized_extraimage_buf.data(), img2imgW, img2imgH, 0, 1);
+        int resok = stbir_resize_uint8(input_extraimage_buffer, nx2, ny2, 0, resized_extraimage_buf.data(), img2imgW, img2imgH, 0, desiredchannels);
         if (!resok) {
             printf("\nKCPP SD: resize extra image failed!\n");
             output.data = "";
@@ -578,7 +579,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         }
         extraimage_reference.width = img2imgW;
         extraimage_reference.height = img2imgH;
-        extraimage_reference.channel = img2imgC;
+        extraimage_reference.channel = desiredchannels;
         extraimage_reference.data = resized_extraimage_buf.data();
 
         //ensure prompt has img keyword, otherwise append it
