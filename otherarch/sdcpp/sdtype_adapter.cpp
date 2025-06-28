@@ -567,7 +567,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         }
         int nx2, ny2, nc2;
         extraimage_buffer = kcpp_base64_decode(extra_image_data);
-        input_extraimage_buffer = stbi_load_from_memory(extraimage_buffer.data(), extraimage_buffer.size(), &nx2, &ny2, &nc2, 1);
+        input_extraimage_buffer = stbi_load_from_memory(extraimage_buffer.data(), extraimage_buffer.size(), &nx2, &ny2, &nc2, 3);
         // Resize the image
         int resok = stbir_resize_uint8(input_extraimage_buffer, nx2, ny2, 0, resized_extraimage_buf.data(), img2imgW, img2imgH, 0, 1);
         if (!resok) {
