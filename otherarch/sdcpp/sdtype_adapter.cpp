@@ -604,22 +604,22 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             }
 
             if (desiredWidth < minsize || desiredHeight < minsize) { // Enforce minsize only if it won't exceed maxsize
-                if (aspect_ratio > 1.0f) { // wider than tall
-                    // Try to scale width up to max of (minsize, maxsize)
-                    desiredWidth = std::min(maxsize, std::max(minsize, desiredWidth));
-                    desiredHeight = static_cast<int>(desiredWidth / aspect_ratio);
-                    if (desiredHeight > maxsize) { // If height now exceeds maxsize, clamp based on height instead
+                float scale_w = static_cast<float>(minsize) / desiredWidth;
+                float scale_h = static_cast<float>(minsize) / desiredHeight;
+                float scale = std::max(scale_w, scale_h);
+                int newWidth = static_cast<int>(desiredWidth * scale);
+                int newHeight = static_cast<int>(desiredHeight * scale);
+                if (newWidth > maxsize || newHeight > maxsize) {
+                    if (aspect_ratio > 1.0f) {
+                        desiredWidth = maxsize;
+                        desiredHeight = static_cast<int>(maxsize / aspect_ratio);
+                    } else {
                         desiredHeight = maxsize;
                         desiredWidth = static_cast<int>(maxsize * aspect_ratio);
                     }
                 } else {
-                    // Taller than wide or square
-                    desiredHeight = std::min(maxsize, std::max(minsize, desiredHeight));
-                    desiredWidth = static_cast<int>(desiredHeight * aspect_ratio);
-                    if (desiredWidth > maxsize) {
-                        desiredWidth = maxsize;
-                        desiredHeight = static_cast<int>(maxsize / aspect_ratio);
-                    }
+                    desiredWidth = newWidth;
+                    desiredHeight = newHeight;
                 }
             }
 
