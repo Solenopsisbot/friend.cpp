@@ -521,9 +521,11 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     int img2imgW = sd_params->width; //for img2img input
     int img2imgH = sd_params->height;
     int img2imgC = 3; // Assuming RGB image
-    std::vector<uint8_t> resized_image_buf(img2imgW * img2imgH * img2imgC);
-    std::vector<uint8_t> resized_mask_buf(img2imgW * img2imgH * img2imgC);
-    std::vector<std::vector<uint8_t>> resized_extraimage_bufs(max_extra_images, std::vector<uint8_t>(img2imgW * img2imgH * img2imgC));
+    //because the reference image can be larger than the output image, allocate at least enough for 1024x1024
+    const int imgMemNeed = std::max(img2imgW * img2imgH * img2imgC + 512, 1024 * 1024 * img2imgC + 512);
+    std::vector<uint8_t> resized_image_buf(imgMemNeed);
+    std::vector<uint8_t> resized_mask_buf(imgMemNeed);
+    std::vector<std::vector<uint8_t>> resized_extraimage_bufs(max_extra_images, std::vector<uint8_t>(imgMemNeed));
 
     std::string ts = get_timestamp_str();
     if(!sd_is_quiet)
@@ -621,6 +623,18 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                     desiredWidth = newWidth;
                     desiredHeight = newHeight;
                 }
+            }
+
+            //round dims down to 64
+            desiredWidth = rounddown_64(desiredWidth);
+            desiredHeight = rounddown_64(desiredHeight);
+            if(desiredWidth<64)
+            {
+                desiredWidth = 64;
+            }
+            if(desiredHeight<64)
+            {
+                desiredHeight = 64;
             }
 
             if(!sd_is_quiet && sddebugmode==1)
