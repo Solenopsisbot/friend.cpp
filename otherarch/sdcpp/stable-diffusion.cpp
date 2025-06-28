@@ -1422,7 +1422,7 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
                            float skip_layer_start                        = 0.01,
                            float skip_layer_end                          = 0.2,
                            ggml_tensor* masked_image                     = NULL,
-                           const sd_image_t* photomaker_reference = nullptr) {
+                           const std::vector<sd_image_t*> photomaker_references = std::vector<sd_image_t*>()) {
     if (seed < 0) {
         // Generally, when using the provided command line, the seed is always >0.
         // However, to prevent potential issues if 'stable-diffusion.cpp' is invoked as a library
@@ -1465,7 +1465,7 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
     ggml_tensor* init_img = NULL;
     SDCondition id_cond;
     std::vector<bool> class_tokens_mask;
-    if (sd_ctx->sd->pmid_model && photomaker_reference!=nullptr)
+    if (sd_ctx->sd->pmid_model && photomaker_references.size()>0)
     {
         sd_ctx->sd->stacked_id = true; //turn on photomaker if needed
     }
@@ -1512,26 +1512,29 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
             }
         }
 
-        // handle single photomaker image passed in by kcpp
-        if (sd_ctx->sd->pmid_model && photomaker_reference!=nullptr)
+        // handle multiple photomaker image passed in by kcpp
+        if (sd_ctx->sd->pmid_model && photomaker_references.size()>0)
         {
-            int c = 0;
-            int width, height;
-            width = photomaker_reference->width;
-            height = photomaker_reference->height;
-            c = photomaker_reference->channel;
-            uint8_t* input_image_buffer = photomaker_reference->data;
-            sd_image_t* input_image = NULL;
-            input_image  = new sd_image_t{(uint32_t)width,
-                                            (uint32_t)height,
-                                            3,
-                                            input_image_buffer};
-            input_image   = preprocess_id_image(input_image);
-            if (input_image == NULL) {
-                LOG_ERROR("\npreprocess input id image from kcpp photomaker failed\n");
-            } else {
-                LOG_INFO("\nPhotoMaker loaded image from kcpp\n");
-                input_id_images.push_back(input_image);
+            for(int i=0;i<photomaker_references.size();++i)
+            {
+                int c = 0;
+                int width, height;
+                width = photomaker_references[i]->width;
+                height = photomaker_references[i]->height;
+                c = photomaker_references[i]->channel;
+                uint8_t* input_image_buffer = photomaker_references[i]->data;
+                sd_image_t* input_image = NULL;
+                input_image  = new sd_image_t{(uint32_t)width,
+                                                (uint32_t)height,
+                                                3,
+                                                input_image_buffer};
+                input_image   = preprocess_id_image(input_image);
+                if (input_image == NULL) {
+                    LOG_ERROR("\npreprocess input id image from kcpp photomaker failed\n");
+                } else {
+                    LOG_INFO("\nPhotoMaker loaded image from kcpp\n");
+                    input_id_images.push_back(input_image);
+                }
             }
         }
 
@@ -1790,7 +1793,7 @@ sd_image_t* txt2img(sd_ctx_t* sd_ctx,
                     float slg_scale          = 0,
                     float skip_layer_start   = 0.01,
                     float skip_layer_end     = 0.2,
-                    const sd_image_t* photomaker_reference = nullptr) {
+                    const std::vector<sd_image_t*> photomaker_references = std::vector<sd_image_t*>()) {
     std::vector<int> skip_layers_vec(skip_layers, skip_layers + skip_layers_count);
     LOG_DEBUG("txt2img %dx%d", width, height);
     if (sd_ctx == NULL) {
@@ -1887,7 +1890,7 @@ sd_image_t* txt2img(sd_ctx_t* sd_ctx,
                                                skip_layer_start,
                                                skip_layer_end,
                                                nullptr,
-                                               photomaker_reference);
+                                               photomaker_references);
 
     size_t t1 = ggml_time_ms();
 
@@ -1924,7 +1927,7 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
                     float slg_scale          = 0,
                     float skip_layer_start   = 0.01,
                     float skip_layer_end     = 0.2,
-                    const sd_image_t* photomaker_reference = nullptr) {
+                    const std::vector<sd_image_t*> photomaker_references = std::vector<sd_image_t*>()) {
     std::vector<int> skip_layers_vec(skip_layers, skip_layers + skip_layers_count);
     LOG_DEBUG("img2img %dx%d", width, height);
     if (sd_ctx == NULL) {
@@ -2089,7 +2092,7 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
                                                skip_layer_start,
                                                skip_layer_end,
                                                masked_image,
-                                               photomaker_reference);
+                                               photomaker_references);
 
     size_t t2 = ggml_time_ms();
 

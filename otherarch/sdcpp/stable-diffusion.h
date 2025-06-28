@@ -183,7 +183,7 @@ SD_API sd_image_t* txt2img(sd_ctx_t* sd_ctx,
                            float slg_scale,
                            float skip_layer_start,
                            float skip_layer_end,
-                           const sd_image_t* photomaker_reference);
+                           const std::vector<sd_image_t*> photomaker_references);
 
 SD_API sd_image_t* img2img(sd_ctx_t* sd_ctx,
                            sd_image_t init_image,
@@ -213,7 +213,7 @@ SD_API sd_image_t* img2img(sd_ctx_t* sd_ctx,
                            float slg_scale,
                            float skip_layer_start,
                            float skip_layer_end,
-                           const sd_image_t* photomaker_reference);
+                           const std::vector<sd_image_t*> photomaker_references);
 
 SD_API sd_image_t* img2vid(sd_ctx_t* sd_ctx,
                            sd_image_t init_image,

@@ -59,6 +59,7 @@ stop_token_max = 256
 ban_token_max = 768
 logit_bias_max = 512
 dry_seq_break_max = 128
+extra_images_max = 4
 
 # global vars
 KcppVersion = "1.94.2"
@@ -291,7 +292,8 @@ class sd_generation_inputs(ctypes.Structure):
                 ("negative_prompt", ctypes.c_char_p),
                 ("init_images", ctypes.c_char_p),
                 ("mask", ctypes.c_char_p),
-                ("extra_image", ctypes.c_char_p),
+                ("extra_images_len", ctypes.c_int),
+                ("extra_images", ctypes.POINTER(ctypes.c_char_p)),
                 ("flip_mask", ctypes.c_bool),
                 ("denoising_strength", ctypes.c_float),
                 ("cfg_scale", ctypes.c_float),
@@ -1714,7 +1716,9 @@ def sd_generate(genparams):
         seed = random.randint(100000, 999999)
     sample_method = genparams.get("sampler_name", "k_euler_a")
     clip_skip = tryparseint(genparams.get("clip_skip", -1),-1)
-    extra_image = strip_base64_prefix(genparams.get("extra_image", ""))
+    extra_images_arr = genparams.get("extra_images", [])
+    extra_images_arr = ([] if not extra_images_arr else extra_images_arr)
+    extra_images_arr = extra_images_arr[:extra_images_max]
 
     #clean vars
     cfg_scale = (1 if cfg_scale < 1 else (25 if cfg_scale > 25 else cfg_scale))
@@ -1728,7 +1732,11 @@ def sd_generate(genparams):
     inputs.negative_prompt = negative_prompt.encode("UTF-8")
     inputs.init_images = init_images.encode("UTF-8")
     inputs.mask = "".encode("UTF-8") if not mask else mask.encode("UTF-8")
-    inputs.extra_image = "".encode("UTF-8") if not extra_image else extra_image.encode("UTF-8")
+    inputs.extra_images_len = len(extra_images_arr)
+    inputs.extra_images = (ctypes.c_char_p * inputs.extra_images_len)()
+    for n, estr in enumerate(extra_images_arr):
+        extra_image = strip_base64_prefix(estr)
+        inputs.extra_images[n] = extra_image.encode("UTF-8")
     inputs.flip_mask = flip_mask
     inputs.cfg_scale = cfg_scale
     inputs.denoising_strength = denoising_strength
