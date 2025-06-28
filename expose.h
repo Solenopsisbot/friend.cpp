@@ -181,7 +181,7 @@ struct sd_generation_inputs
     const char * negative_prompt = nullptr;
     const char * init_images = "";
     const char * mask = "";
-    const char * photomaker_image = "";
+    const char * extra_image = "";
     const bool flip_mask = false;
     const float denoising_strength = 0.0f;
     const float cfg_scale = 0.0f;

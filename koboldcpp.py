@@ -291,7 +291,7 @@ class sd_generation_inputs(ctypes.Structure):
                 ("negative_prompt", ctypes.c_char_p),
                 ("init_images", ctypes.c_char_p),
                 ("mask", ctypes.c_char_p),
-                ("photomaker_image", ctypes.c_char_p),
+                ("extra_image", ctypes.c_char_p),
                 ("flip_mask", ctypes.c_bool),
                 ("denoising_strength", ctypes.c_float),
                 ("cfg_scale", ctypes.c_float),
@@ -1714,7 +1714,7 @@ def sd_generate(genparams):
         seed = random.randint(100000, 999999)
     sample_method = genparams.get("sampler_name", "k_euler_a")
     clip_skip = tryparseint(genparams.get("clip_skip", -1),-1)
-    photomaker_image = strip_base64_prefix(genparams.get("photomaker_image", ""))
+    extra_image = strip_base64_prefix(genparams.get("extra_image", ""))
 
     #clean vars
     cfg_scale = (1 if cfg_scale < 1 else (25 if cfg_scale > 25 else cfg_scale))
@@ -1728,7 +1728,7 @@ def sd_generate(genparams):
     inputs.negative_prompt = negative_prompt.encode("UTF-8")
     inputs.init_images = init_images.encode("UTF-8")
     inputs.mask = "".encode("UTF-8") if not mask else mask.encode("UTF-8")
-    inputs.photomaker_image = "".encode("UTF-8") if not photomaker_image else photomaker_image.encode("UTF-8")
+    inputs.extra_image = "".encode("UTF-8") if not extra_image else extra_image.encode("UTF-8")
     inputs.flip_mask = flip_mask
     inputs.cfg_scale = cfg_scale
     inputs.denoising_strength = denoising_strength
