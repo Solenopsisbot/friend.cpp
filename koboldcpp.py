@@ -1718,6 +1718,7 @@ def sd_generate(genparams):
     clip_skip = tryparseint(genparams.get("clip_skip", -1),-1)
     extra_images_arr = genparams.get("extra_images", [])
     extra_images_arr = ([] if not extra_images_arr else extra_images_arr)
+    extra_images_arr = [img for img in extra_images_arr if img not in (None, "")]
     extra_images_arr = extra_images_arr[:extra_images_max]
 
     #clean vars
