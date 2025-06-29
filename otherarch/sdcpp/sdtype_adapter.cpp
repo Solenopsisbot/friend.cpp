@@ -332,6 +332,10 @@ static inline int roundup_64(int n) {
     return ((n + 63) / 64) * 64;
 }
 
+static inline int roundnearest(int multiple, int n) {
+    return ((n + (multiple/2)) / multiple) * multiple;
+}
+
 //scale dimensions to ensure width and height stay within limits
 //img_hard_limit = sdclamped, hard size limit per side, no side can exceed this
 //square limit = total NxN resolution based limit to also apply
@@ -589,53 +593,24 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             extraimage_buffers.push_back(kcpp_base64_decode(extra_image_data[i]));
             input_extraimage_buffers.push_back(stbi_load_from_memory(extraimage_buffers[i].data(), extraimage_buffers[i].size(), &nx2, &ny2, &nc2, desiredchannels));
             // Resize the image
+            float aspect_ratio = static_cast<float>(nx2) / ny2;
             int desiredWidth = nx2;
             int desiredHeight = ny2;
-            float aspect_ratio = static_cast<float>(nx2) / ny2;
-            int maxsize = 1024; // no image can exceed this
-            int minsize = 256;
-
-            if (desiredWidth > maxsize || desiredHeight > maxsize) { // Enforce maxsize first
-                if (aspect_ratio > 1.0f) { // wider than tall
-                    desiredWidth = maxsize;
-                    desiredHeight = static_cast<int>(maxsize / aspect_ratio);
-                } else { // taller than wide or square
-                    desiredHeight = maxsize;
-                    desiredWidth = static_cast<int>(maxsize * aspect_ratio);
-                }
-            }
-
-            if (desiredWidth < minsize || desiredHeight < minsize) { // Enforce minsize only if it won't exceed maxsize
-                float scale_w = static_cast<float>(minsize) / desiredWidth;
-                float scale_h = static_cast<float>(minsize) / desiredHeight;
-                float scale = std::max(scale_w, scale_h);
-                int newWidth = static_cast<int>(desiredWidth * scale);
-                int newHeight = static_cast<int>(desiredHeight * scale);
-                if (newWidth > maxsize || newHeight > maxsize) {
-                    if (aspect_ratio > 1.0f) {
-                        desiredWidth = maxsize;
-                        desiredHeight = static_cast<int>(maxsize / aspect_ratio);
-                    } else {
-                        desiredHeight = maxsize;
-                        desiredWidth = static_cast<int>(maxsize * aspect_ratio);
-                    }
-                } else {
-                    desiredWidth = newWidth;
-                    desiredHeight = newHeight;
-                }
-            }
-
-            //round dims down to 64
-            desiredWidth = rounddown_64(desiredWidth);
-            desiredHeight = rounddown_64(desiredHeight);
-            if(desiredWidth<64)
+            int smallestsrcdim = std::min(img2imgW,img2imgH);
+            if(desiredWidth > desiredHeight)
             {
-                desiredWidth = 64;
+                desiredWidth = smallestsrcdim;
+                desiredHeight = smallestsrcdim / aspect_ratio;
+            } else {
+                desiredHeight = smallestsrcdim;
+                desiredWidth = smallestsrcdim * aspect_ratio;
             }
-            if(desiredHeight<64)
-            {
-                desiredHeight = 64;
-            }
+
+            //round dims to 64
+            desiredWidth = roundnearest(16,desiredWidth);
+            desiredHeight = roundnearest(16,desiredHeight);
+            desiredWidth = std::clamp(desiredWidth,64,1024);
+            desiredHeight = std::clamp(desiredHeight,64,1024);
 
             if(!sd_is_quiet && sddebugmode==1)
             {
