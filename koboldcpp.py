@@ -6848,6 +6848,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         args.threads = get_default_threads()
         print(f"Auto Set Threads: {args.threads}")
 
+    print(f"System: {platform.system()} {platform.version()} {platform.machine()} {platform.processor()}")
     if MaxMemory[0]>0:
         print(f"Detected Available GPU Memory: {int(MaxMemory[0]/1024/1024)} MB")
     else:
