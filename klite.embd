@@ -12,7 +12,7 @@ Current version indicated by LITEVER below.
 -->
 
 <script id="init-config">
-	const LITEVER = 257;
+	const LITEVER = 259;
 	const urlParams = new URLSearchParams(window.location.search);
 	var localflag = urlParams.get('local'); //this will be replaced automatically in embedded kcpp
 	const STORAGE_PREFIX = (localflag?"e_":"")+"kaihordewebui_";
@@ -1664,10 +1664,14 @@ Current version indicated by LITEVER below.
 	.instruct-settings-input { margin: 0px 2px; font-size:10px; }
 	.instruct-settings-input input { width:40px; height:20px; }
 	#code-block-background-colorselector, #code-block-foreground-colorselector { text-align: center; margin: 0px 5px; }
-	#you-text-colorselector, #you-speech-colorselector, #you-action-colorselector, #AI-text-colorselector, #AI-speech-colorselector, #AI-action-colorselector, #sys-text-colorselector, #sys-speech-colorselector, #sys-action-colorselector { text-align: center; margin: 0px 5px; }
-	#you-bubble-colorselector, #AI-bubble-colorselector, #sys-bubble-colorselector, #you-portrait, #AI-portrait { text-align: center; margin: 0px 10px; border-radius: 1rem; padding: 1px 6px; }
-	@media screen and (max-width: 880px) {
+	#you-text-colorselector, #you-speech-colorselector, #you-action-colorselector, #AI-text-colorselector, #AI-speech-colorselector, #AI-action-colorselector { text-align: center; margin: 0px 5px; }
+	#you-bubble-colorselector, #AI-bubble-colorselector, #you-portrait, #AI-portrait { text-align: center; margin: 0px 10px; border-radius: 1rem; padding: 1px 6px; }
+	@media screen and (max-width: 780px) {
 		#aesthetic_text_preview_panel { display: none; }
+	}
+	#aesthetic_text_preview
+	{
+		max-width: 800px;
 	}
 	.aui_nametag
 	{
@@ -3072,7 +3076,7 @@ Current version indicated by LITEVER below.
 
 	const pollinations_img_endpoint = "https://image.pollinations.ai/prompt";
 	const pollinations_text_endpoint = "https://text.pollinations.ai/openai";
-	const dummy_pollinations_key = "kobo";
+	const dummy_api_key = "kobo";
 
 	//for optionally uploading content to share on dpaste
 	const dpaste_submit_endpoint = "https://dpaste.org/api/";
@@ -3371,6 +3375,7 @@ Current version indicated by LITEVER below.
 		render_streaming_markdown: true,
 		raw_instruct_tags: false, //experimental flag
 		show_endpoint_selector: false,
+		no_warn_unsaved: false,
 
 		//section migrated from story itself
 		extrastopseq: "",
@@ -3833,6 +3838,7 @@ Current version indicated by LITEVER below.
 		{
 			input = simpleMarkdown(input, localsettings.instruct_has_latex);
 		}
+		input = replaceAll(input,"\n","<br>",false);
 		return input;
 	}
 
@@ -4246,7 +4252,7 @@ Current version indicated by LITEVER below.
 	{
 		console.log("Autopick some good default models...");
 		//attempt to autopick some good default models
-		fetch_models((mdls) => {
+		fetch_horde_models((mdls) => {
 		//can we find the model that's used? if yes load it, otherwise load the first one
 			if (mdls.length > 0)
 			{
@@ -4274,7 +4280,7 @@ Current version indicated by LITEVER below.
 				{
 					selected_models.push(mdls[0]);
 				}
-				render_gametext();
+				render_gametext(false,false);
 			}
 		});
 	}
@@ -5131,7 +5137,7 @@ Current version indicated by LITEVER below.
 			//fetch the model list
 			if (selected_models.length == 0)
 			{
-				fetch_models((mdls) => {
+				fetch_horde_models((mdls) => {
 					//can we find the model that's used? if yes load it, otherwise load the first one
 					if (mdls.length == 0 && !localflag) {
 						msgbox("No models available. Unable to load.");
@@ -5880,7 +5886,8 @@ Current version indicated by LITEVER below.
 	function simpleMarkdown(text, renderLatex) {
 		const escapeHTML = (str) => str.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 		const highlightCode = (code) => {
-			let cpybtn = `<button class="unselectable" onclick="return copyMarkdownCode(this)" style="float:right;">Copy</button>`;
+			let cpybtn = `<button title="Copy" class="unselectable" onclick="return copyMarkdownCode(this)" style="color:black; float:right;">📋</button>`;
+			code = code.trim();
 			code = escapeHTML(code);
 			code = code.replace(/</g, "&lt;").replace(/>/g, "&gt;");
 			code = code.replace(/\t/g, "   ");
@@ -6296,7 +6303,7 @@ Current version indicated by LITEVER below.
 
 	function pick_default_horde_models()
 	{
-		fetch_models((mdls) => {
+		fetch_horde_models((mdls) => {
 			//can we find the model that's used? if yes load it, otherwise load the first one
 			if (mdls.length == 0 && !localflag) {
 				msgbox("No models available. Unable to load.");
@@ -7585,6 +7592,10 @@ Current version indicated by LITEVER below.
 
 	function safe_to_overwrite()
 	{
+		if(localsettings.no_warn_unsaved)
+		{
+			return true;
+		}
 		return (gametext_arr.length == 0 && current_memory == "" && current_anote == "" && current_wi.length == 0 && redo_arr.length == 0);
 	}
 
@@ -8783,7 +8794,7 @@ Current version indicated by LITEVER below.
 			}
 			if (scenarioautopickai && !localflag && !is_using_custom_ep())
 			{
-				fetch_models((mdls) =>
+				fetch_horde_models((mdls) =>
 				{
 					//can we find the model that's used? if yes load it, otherwise load the first one
 					if (mdls.length == 0) {
@@ -10410,11 +10421,11 @@ Current version indicated by LITEVER below.
 		desired_oai_ep = transform_oai_ep(desired_oai_ep);
 
 		let oaiheaders = {};
-		if(desired_oai_key!="" && !desired_oai_ep.toLowerCase().includes("pollinations.ai")){
+		if(desired_oai_key!="" && desired_oai_key!=dummy_api_key){
 			oaiheaders["Authorization"] = "Bearer " + desired_oai_key;
 		};
 		if (desired_oai_ep.toLowerCase().includes("api.mistral.ai")) {
-			if(desired_oai_key=="")
+			if(desired_oai_key=="" || desired_oai_key==dummy_api_key)
 			{
 				msgbox("MistralAI API requires an API key to fetch model list!");
 				return;
@@ -10587,7 +10598,7 @@ Current version indicated by LITEVER below.
 				document.getElementById("oaidesc").classList.remove("hidden");
 				document.getElementById("custom_oai_model").classList.remove("hidden");
 				document.getElementById("custom_oai_endpoint").classList.remove("hidden");
-				document.getElementById("custom_oai_key").value = localsettings.saved_oai_key;
+				document.getElementById("custom_oai_key").value = (localsettings.saved_oai_key==dummy_api_key?"":localsettings.saved_oai_key);
 				if (localflag) {
 					document.getElementById("custom_oai_endpoint").value = localprotocol + localmodehost + ":" + localmodeport + "/v1";
 				} else {
@@ -10599,14 +10610,14 @@ Current version indicated by LITEVER below.
 			{
 				document.getElementById("custom_mistralai_model").classList.remove("hidden");
 				document.getElementById("mistralaidesc").classList.remove("hidden");
-				document.getElementById("custom_oai_key").value = localsettings.saved_mistralai_key;
+				document.getElementById("custom_oai_key").value = (localsettings.saved_mistralai_key==dummy_api_key?"":localsettings.saved_mistralai_key);
 				document.getElementById("custom_oai_endpoint").value = default_mistralai_base;
 			}
 			else if(epchoice==8)
 			{
 				document.getElementById("custom_featherless_model").classList.remove("hidden");
 				document.getElementById("featherlessdesc").classList.remove("hidden");
-				document.getElementById("custom_oai_key").value = localsettings.saved_featherless_key;
+				document.getElementById("custom_oai_key").value = (localsettings.saved_featherless_key==dummy_api_key?"":localsettings.saved_featherless_key);
 				document.getElementById("custom_oai_endpoint").value = default_featherless_base;
 				try_fetch_oai_models_auto();
 			}
@@ -10614,14 +10625,14 @@ Current version indicated by LITEVER below.
 			{
 				document.getElementById("custom_grok_model").classList.remove("hidden");
 				document.getElementById("grokdesc").classList.remove("hidden");
-				document.getElementById("custom_oai_key").value = localsettings.saved_grok_key;
+				document.getElementById("custom_oai_key").value = (localsettings.saved_grok_key==dummy_api_key?"":localsettings.saved_grok_key);
 				document.getElementById("custom_oai_endpoint").value = default_grok_base;
 			}
 			else if(epchoice==10)
 			{
 				document.getElementById("custom_pollinations_model").classList.remove("hidden");
 				document.getElementById("pollinationsdesc").classList.remove("hidden");
-				document.getElementById("custom_oai_key").value = dummy_pollinations_key;
+				document.getElementById("custom_oai_key").value = dummy_api_key;
 				document.getElementById("custom_oai_endpoint").value = pollinations_text_endpoint;
 				document.getElementById("custom_oai_key").classList.add("hidden");
 			}
@@ -10631,7 +10642,7 @@ Current version indicated by LITEVER below.
 				document.getElementById("custom_openrouter_model").classList.remove("hidden");
 				document.getElementById("openrouterproviderbox").classList.remove("hidden");
 				document.getElementById("custom_oai_endpoint").value = default_openrouter_base;
-				document.getElementById("custom_oai_key").value = localsettings.saved_openrouter_key;
+				document.getElementById("custom_oai_key").value =(localsettings.saved_openrouter_key==dummy_api_key?"":localsettings.saved_openrouter_key);
 				if(!openrouter_fetch_attempted)
 				{
 					openrouter_fetch_attempted = true;
@@ -11104,6 +11115,11 @@ Current version indicated by LITEVER below.
 
 			desired_oai_ep = transform_oai_ep(desired_oai_ep);
 
+			if(desired_oai_key=="" && epchoice==2 && !desired_oai_ep.includes(default_oai_base)) //allow no keys for custom oai api
+			{
+				desired_oai_key = dummy_api_key;
+			}
+
 			if(desired_oai_key!="" && desired_oai_ep!="")
 			{
 				dismiss_endpoint_container();
@@ -11136,7 +11152,7 @@ Current version indicated by LITEVER below.
 				}
 				else if(epchoice==10)
 				{
-					localsettings.saved_pollinations_key = dummy_pollinations_key; //placeholder key, not actually used
+					localsettings.saved_pollinations_key = dummy_api_key; //placeholder key, not actually used
 				}
 				else
 				{
@@ -11171,6 +11187,10 @@ Current version indicated by LITEVER below.
 				}
 				document.getElementById("connectstatus").innerHTML = "OpenAI Endpoint";
 				render_gametext(true);
+			}
+			else
+			{
+				document.getElementById("connectstatus").innerHTML = "Key Needed";
 			}
 		}
 		else if(epchoice==4) //claude endpoint
@@ -11977,7 +11997,7 @@ Current version indicated by LITEVER below.
 	var cached_worker_list = null;
 	var stale_cached_model_time = performance.now();
 	var stale_cached_worker_time = performance.now();
-	function fetch_models(onDoneCallback)
+	function fetch_horde_models(onDoneCallback)
 	{
 		if(localflag)
 		{
@@ -12114,7 +12134,7 @@ Current version indicated by LITEVER below.
 		}
 
 		//fetch the model list
-		fetch_models((mdls)=>{
+		fetch_horde_models((mdls)=>{
 			models_data = mdls;
 			modelsdone = true;
 			if(modelsdone && workersdone)
@@ -12485,6 +12505,7 @@ Current version indicated by LITEVER below.
 		document.getElementById("instruct_endtag_end").value = localsettings.instruct_endtag_end;
 		document.getElementById("raw_instruct_tags").checked = localsettings.raw_instruct_tags;
 		document.getElementById("show_endpoint_selector").checked = localsettings.show_endpoint_selector;
+		document.getElementById("no_warn_unsaved").checked = localsettings.no_warn_unsaved;
 		document.getElementById("render_streaming_markdown").checked = localsettings.render_streaming_markdown;
 		document.getElementById("min_p").value = localsettings.min_p;
 		document.getElementById("dynatemp_range").value = localsettings.dynatemp_range;
@@ -13013,6 +13034,7 @@ Current version indicated by LITEVER below.
 		localsettings.persist_session = (document.getElementById("persist_session").checked ? true : false);
 		localsettings.raw_instruct_tags = (document.getElementById("raw_instruct_tags").checked ? true : false);
 		localsettings.show_endpoint_selector = (document.getElementById("show_endpoint_selector").checked ? true : false);
+		localsettings.no_warn_unsaved = (document.getElementById("no_warn_unsaved").checked ? true : false);
 		localsettings.render_streaming_markdown = (document.getElementById("render_streaming_markdown").checked ? true : false);
 		if(document.getElementById("opmode").value==1)
 		{
@@ -14352,7 +14374,7 @@ Current version indicated by LITEVER below.
 	var warn_unsaved = false;
 	function handle_quit()
 	{
-		if(warn_unsaved)
+		if(warn_unsaved && !localsettings.no_warn_unsaved)
 		{
 			warn_unsaved = false;
 			return "Unsaved changes will be lost!"; //the actual message will not be shown in new browsers
@@ -16659,7 +16681,7 @@ Current version indicated by LITEVER below.
 					'Content-Type': 'application/json'
 				};
 
-				if (!targetep.toLowerCase().includes("pollinations.ai")) {
+				if (custom_oai_key!="" && custom_oai_key!=dummy_api_key) {
                     oaiheaders['Authorization'] = 'Bearer ' + custom_oai_key;
                 }
 
@@ -19647,7 +19669,7 @@ Current version indicated by LITEVER below.
 				`<br>You are using the models <span class="color_green">${selmodelstr}</span>${(selected_workers.length == 0 ? `` : ` (Pinned to ${selected_workers.length} worker IDs)`)}.`+
 				`${whorun}.`+
 				(multiplayer_active?(!multiplayer_pinged?`<br><br><span class="color_orange">[ Trying to join Multiplayer... ]</span>`:`<br><br><span class="color_green">[ Multiplayer is <b>Active</b>! This session is shared with other server participants.]<br>[ You can leave via exit button in top right corner. ]</span>`):(is_using_kcpp_with_multiplayer()?`<br><br>[ <a href="#" tabindex="${mainmenu_is_untab?`-1`:`0`}" class="color_blueurl mainnav" onclick="join_multiplayer()"><span class="color_green">Multiplayer Available</span> - Click Here To Join</a> ]`:``))+
-				`<br><br><b><span class="color_orange">${nowmode} Selected</span></b> - Enter a prompt below to begin!`+
+				`<br><br><span class="color_orange" style="font-weight: bold;">${nowmode} Selected</span> - Enter a prompt below to begin!`+
 				`<br>Or, <a href="#" tabindex="${mainmenu_is_untab?`-1`:`0`}" class="color_blueurl mainnav" onclick="document.getElementById('loadfileinput').click()">load a <b>JSON File</b> or a <b>Character Card</b> here.</a>`+
 				`<br>Or, <a href="#" tabindex="${mainmenu_is_untab?`-1`:`0`}" class="color_blueurl mainnav" onclick="display_scenarios()">select a <b>Quick Start Scenario</b> here.</a>`+
 				`<br>${(welcome!=""?`<br><em>${escape_html(welcome)}</em>`:``)}`;
@@ -19694,7 +19716,7 @@ Current version indicated by LITEVER below.
 					}
 				}
 
-				let instruct_turns = repack_instruct_turns(fulltxt, `%SpcStg%`,`%SpcEtg%`, true);
+				let instruct_turns = repack_instruct_turns(fulltxt, `%SpcStg%`,`%SpcEtg%`);
 				fulltxt = "";
 				for(let i=0;i<instruct_turns.length;++i)
 				{
@@ -20141,7 +20163,7 @@ Current version indicated by LITEVER below.
 			</div>`;
 	}
 
-	function repack_instruct_turns(input,usertag,aitag,allow_blank)
+	function repack_instruct_turns(input,usertag,aitag)
 	{
 		let myturnchat = false; //who is currently speaking?
 		let chatunits = []; //parse chat body into nice chat chunks
@@ -20149,6 +20171,7 @@ Current version indicated by LITEVER below.
 		let combined_chunks = [];
 		let turnchunks = input.split(usertag);
 		let startoppo = true;
+		let unlabelled_turns = true; //is true until an instruct tag is encountered
 		for(let i=0;i<turnchunks.length;++i)
 		{
 			let chnk = turnchunks[i];
@@ -20198,15 +20221,94 @@ Current version indicated by LITEVER below.
 			}
 			else
 			{
-				if(allow_blank || curr.trim()!="")
+				if(curr.trim()!="")
 				{
 					chatunits.push({
 					msg:curr,
-					myturn:myturnchat});
+					myturn:myturnchat,
+					unlabelled:unlabelled_turns});
 				}
+				unlabelled_turns = false;
 			}
 		}
 		return chatunits;
+	}
+
+	function repack_postprocess_turn(currchatunit, countmap)
+	{
+		let processed_msg = currchatunit.msg;
+		processed_msg = apply_display_only_regex(processed_msg);
+		if(processed_msg && processed_msg!="")
+		{
+			processed_msg = replace_noninstruct_placeholders(processed_msg,true,true,countmap);
+			let codeblockcount = (processed_msg.match(/```/g) || []).length;
+			if(codeblockcount>0 && codeblockcount%2!=0 )
+			{
+				processed_msg += "```"; //force end code block
+			}
+			if(localsettings.instruct_has_markdown)
+			{
+				processed_msg = simpleMarkdown(processed_msg,localsettings.instruct_has_latex);
+			}
+
+			//convert the msg into images
+			processed_msg = render_all_image_html(processed_msg,false,true);
+		}
+
+		let namepart = (currchatunit.myturn ? "User" : cosmetic_corpo_ai_nick);
+		//advanced name replacement
+		if(localsettings.opmode==3 && currchatunit.name) //chat mode
+		{
+			namepart = currchatunit.name;
+		}
+		else if(localsettings.opmode==4 && localsettings.inject_chatnames_instruct && localsettings.instruct_has_markdown)
+		{
+			let validprefixes = [];
+			if(currchatunit.myturn)
+			{
+				validprefixes.push(localsettings.chatname);
+			}
+			else
+			{
+				let m_opps = localsettings.chatopponent.split("||$||");
+				for(let i=0;i<m_opps.length;++i)
+				{
+					if(m_opps[i] && m_opps[i].trim()!="")
+					{
+						validprefixes.push(m_opps[i]);
+					}
+				}
+			}
+
+			let foundTimestamp = "";
+			if(localsettings.inject_timestamps)
+			{
+				let found = processed_msg.match(/(\[\d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2} [AP]M\]) /g);
+				if(found && found.length>0)
+				{
+					foundTimestamp = found[0];
+					processed_msg = processed_msg.replace(/(\[\d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2} [AP]M\]) /g, "");
+				}
+			}
+			for(let i=0;i<validprefixes.length;++i)
+			{
+				let person = validprefixes[i];
+				let prefix = person + ":";
+				if(processed_msg.trimStart().startsWith(prefix.trimStart()))
+				{
+					namepart = person;
+					processed_msg = processed_msg.trimStart().slice(prefix.trimStart().length).trimStart();
+					break;
+				}
+			}
+			if(foundTimestamp)
+			{
+				processed_msg = foundTimestamp + "\n" + processed_msg;
+			}
+		}
+		currchatunit.msg = processed_msg;
+		currchatunit.name = namepart;
+		return currchatunit;
 	}
 
 	function repack_instruct_history(input) //repack all history into individual turns
@@ -20229,7 +20331,7 @@ Current version indicated by LITEVER below.
 		let st = get_instruct_starttag(false);
 		let et = get_instruct_endtag(false);
 
-		let turns = repack_instruct_turns(input,st,et, false);
+		let turns = repack_instruct_turns(input,st,et);
 		return turns;
 	}
 
@@ -20607,77 +20709,7 @@ Current version indicated by LITEVER below.
 		for(var i=0;i<chatunits.length;++i)
 		{
 			let curr = chatunits[i];
-			let foundimg = "";
-			let processed_msg = curr.msg;
-			processed_msg = apply_display_only_regex(processed_msg);
-			if(processed_msg && processed_msg!="")
-			{
-				processed_msg = replace_noninstruct_placeholders(processed_msg,true,true,countmap);
-				let codeblockcount = (processed_msg.match(/```/g) || []).length;
-				if(codeblockcount>0 && codeblockcount%2!=0 )
-				{
-					processed_msg += "```"; //force end code block
-				}
-				if(localsettings.instruct_has_markdown)
-				{
-					processed_msg = simpleMarkdown(processed_msg,localsettings.instruct_has_latex);
-				}
-
-				//convert the msg into images
-				processed_msg = render_all_image_html(processed_msg,false,true);
-			}
-
-			let namepart = (curr.myturn ? "User" : cosmetic_corpo_ai_nick);
-			//advanced name replacement
-			if(localsettings.opmode==3 && curr.name) //chat mode
-			{
-				namepart = curr.name;
-			}
-			else if(localsettings.opmode==4 && localsettings.inject_chatnames_instruct && localsettings.instruct_has_markdown)
-			{
-				let validprefixes = [];
-				if(curr.myturn)
-				{
-					validprefixes.push(localsettings.chatname);
-				}
-				else
-				{
-					let m_opps = localsettings.chatopponent.split("||$||");
-					for(let i=0;i<m_opps.length;++i)
-					{
-						if(m_opps[i] && m_opps[i].trim()!="")
-						{
-							validprefixes.push(m_opps[i]);
-						}
-					}
-				}
-
-				let foundTimestamp = "";
-				if(localsettings.inject_timestamps)
-				{
-					let found = processed_msg.match(/(\[\d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2} [AP]M\]) /g);
-					if(found && found.length>0)
-					{
-						foundTimestamp = found[0];
-						processed_msg = processed_msg.replace(/(\[\d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2} [AP]M\]) /g, "");
-					}
-				}
-				for(let i=0;i<validprefixes.length;++i)
-				{
-					let person = validprefixes[i];
-					let prefix = person + ": ";
-					if(processed_msg.startsWith(prefix))
-					{
-						namepart = person;
-						processed_msg = processed_msg.slice(prefix.length);
-						break;
-					}
-				}
-				if(foundTimestamp)
-				{
-					processed_msg = foundTimestamp + "\n" + processed_msg;
-				}
-			}
+			curr = repack_postprocess_turn(curr, countmap);
 
 			let resendbtn = ((curr.myturn && i<chatunits.length-1)?`<button type="button" class="btn btn-primary" style="margin:2px;float:right;" onclick="corpo_edit_chunk_resend(${i})">Resend</button>`:``);
 			let bodypart = (corpo_editing_turn == i ?
@@ -20689,7 +20721,7 @@ Current version indicated by LITEVER below.
 				${resendbtn}
 				<button type="button" class="btn btn-primary" style="margin:2px;float:right;" onclick="corpo_edit_chunk_save()">Save</button>
 				<button type="button" class="btn btn-primary bg_red" style="margin:2px;float:left;" onclick="corpo_edit_chunk_delete()">Delete</button>`:
-				`<div class="corpostyleitemcontent">${processed_msg}</div>`);
+				`<div class="corpostyleitemcontent">${curr.msg}</div>`);
 			let historical_btns = "";
 			if(!curr.myturn && i==chatunits.length-1 && !incomplete_resp)
 			{
@@ -20715,7 +20747,7 @@ Current version indicated by LITEVER below.
 			else {
 				newbodystr += `<div><img ${(curr.myturn ? "" : `onclick="corpo_click_avatar()"`)} src="${(curr.myturn ? human_square : niko_square)}" class="corpoavatar"/></div>
 				<div style="width:100%">
-				<div class="corpostyleitemheading">`+ namepart + `</div>`;
+				<div class="corpostyleitemheading">`+ curr.name + `</div>`;
 			}
 
 			newbodystr += bodypart + chunkbtns + `</div></div>`;
@@ -20850,8 +20882,6 @@ Current version indicated by LITEVER below.
 			return rep;
 		});
 
-
-
 		input = input.split("\n"); //split by newline, then parse each chunk
 		let m_name = "\n" + localsettings.chatname + ": ";
 		var mynameregex = new RegExp("(" + localsettings.chatname + ")\: ", "gi");
@@ -20877,7 +20907,8 @@ Current version indicated by LITEVER below.
 					chatunits.push({
 						name:localsettings.chatopponent,
 						msg:tempfullsearchable.split(localsettings.chatopponent+": ")[1],
-						myturn:myturnchat});
+						myturn:myturnchat,
+						unlabelled: false});
 				}
 				else
 				{
@@ -20885,7 +20916,8 @@ Current version indicated by LITEVER below.
 					chatunits.push({
 						name:foundself[0].substring(0,foundself[0].length-2),
 						msg:tempfullsearchable.split(foundself[0])[1],
-						myturn:myturnchat});
+						myturn:myturnchat,
+						unlabelled: false});
 				}
 			}
 			else if(foundopponent != null && foundopponent.length > 0)
@@ -20894,7 +20926,8 @@ Current version indicated by LITEVER below.
 				chatunits.push({
 					name:foundopponent[0].substring(0,foundopponent[0].length-2),
 					msg:tempfullsearchable.split(foundopponent[0])[1],
-					myturn:myturnchat});
+					myturn:myturnchat,
+					unlabelled: false});
 			}else{ //unknown sender, just use existing turn
 				if(chatunits.length==0)
 				{
@@ -20903,7 +20936,8 @@ Current version indicated by LITEVER below.
 						chatunits.push({
 						name:"",
 						msg:tempfullsearchable,
-						myturn:myturnchat});
+						myturn:myturnchat,
+						unlabelled: true});
 					}
 				}
 				else
@@ -20930,7 +20964,6 @@ Current version indicated by LITEVER below.
 		for(var i=0;i<chatunits.length;++i)
 		{
 			let curr = chatunits[i];
-			let foundimg = "";
 			if(curr.msg && curr.msg!="")
 			{
 				curr.msg = curr.msg.replace(bold_regex,"<b style='opacity:0.7'>$1</b>");
@@ -22021,17 +22054,18 @@ Current version indicated by LITEVER below.
 
 	<!-- Aesthetic UI scripts -->
 	<script id="aesthetic-ui">
-	const aestheticTextStyleTypes = ['text', 'speech', 'action'];	 // One style per speech type. Could add more later I guess.
-	const aestheticTextStyleRoles = ['uniform', 'you', 'AI', 'sys']; // Uniform for when you want all roles use the same styles.
 
 	class AestheticInstructUISettings {
 		constructor() {
-			this.bubbleColor_sys = 'rgb(18, 36, 36)';
-			this.bubbleColor_you = 'rgb(41, 52, 58)';
-			this.bubbleColor_AI = 'rgb(20, 20, 40)';
+			this.aui_margin_left = 5;
+			this.aui_margin_right = 5;
+			this.aui_margin_top = 5;
+			this.aui_margin_bottom = 0;
+			this.aui_padding_left = 15;
+			this.aui_padding_right = 15;
+			this.aui_padding_top = 10;
+			this.aui_padding_bottom = 5;
 
-			this.background_margin = [5, 5, 5, 0];
-			this.background_padding = [15, 15, 10, 5];
 			this.background_minHeight = 80;
 			this.centerHorizontally = false;
 
@@ -22049,32 +22083,25 @@ Current version indicated by LITEVER below.
 			this.AI_portrait = "default";
 
 			this.font_size = 12;
-			this.use_markdown = true;
-			this.use_uniform_colors = true; // Hides 'you, AI, sys' if set to true via settings UI.
 
-			for (let role of aestheticTextStyleRoles) {
-				this[`text_tcolor_${role}`] = 'rgb(255, 255, 255)';
-				this[`speech_tcolor_${role}`] = 'rgb(150, 150, 200)';
-				this[`action_tcolor_${role}`] = 'rgb(178, 178, 178)';
-			}
+			this.bubbleColor_you = 'rgb(41, 52, 58)';
+			this.text_tcolor_you = 'rgb(255, 255, 255)';
+			this.speech_tcolor_you = 'rgb(150, 150, 200)'
+			this.action_tcolor_you = 'rgb(178, 178, 178)';
+
+			this.bubbleColor_AI = 'rgb(20, 20, 40)';
+			this.text_tcolor_AI = 'rgb(255, 255, 255)';
+			this.speech_tcolor_AI = 'rgb(150, 150, 200)'
+			this.action_tcolor_AI = 'rgb(178, 178, 178)';
 
 			this.code_block_background = 'rgb(0, 0, 0)';
 			this.code_block_foreground = 'rgb(210, 50, 50)';
 		}
 
-		padding() { return `${this.background_padding[2]}px ${this.background_padding[1]}px ${this.background_padding[3]}px ${this.background_padding[0]}px`; }
-		margin() { return `${this.background_margin[2]}px ${this.background_margin[1]}px ${this.background_margin[3]}px ${this.background_margin[0]}px`; }
-		portraitSize(role) {
-			if (role == "you") {
-				return { width: this.portrait_width_you, height: this.border_style == 'Circle' ? this.portrait_width_you : this.portrait_width_you / this.portrait_ratio_you };
-			} else {
-				return { width: this.portrait_width_AI, height: this.border_style == 'Circle' ? this.portrait_width_AI : this.portrait_width_AI / this.portrait_ratio_AI };
-			}
-		}
-		portraitRadius() { return this.border_style == 'Circle' ? '1000rem' : (this.border_style == 'Rounded' ? '1.6rem' : '0.1rem'); }
-	}
+		padding() { return `${this.aui_padding_top}px ${this.aui_padding_right}px ${this.aui_padding_bottom}px ${this.aui_padding_left}px`;}
+		margin() { return `${this.aui_margin_top}px ${this.aui_margin_right}px ${this.aui_margin_bottom}px ${this.aui_margin_left}px`; }
 
-	const sideMapping = { 'left': 0, 'right': 1, 'top': 2, 'bottom': 3 };
+	}
 
 	let aestheticInstructUISettings = new AestheticInstructUISettings();
 	let tempAestheticInstructUISettings = null; // These exist to act as backup when customizing, to revert when pressing the 'Cancel' button.
@@ -22090,7 +22117,6 @@ Current version indicated by LITEVER below.
 				reader.onload = function(img) {
 					compressImage(img.target.result, loadCompressedImage, true, AVATAR_PX);
 					function loadCompressedImage(compressedImageURI, aspectratio) {
-
 						if(isSelfPortrait)
 						{
 							aestheticInstructUISettings.you_portrait = compressedImageURI;
@@ -22111,11 +22137,8 @@ Current version indicated by LITEVER below.
 	}
 
 	function initializeInstructUIFunctionality() {
-
-		// Initialize foregroundColorPickers and backgroundColorPickers.
+		// Initialize color pickers
 		document.querySelectorAll('.enhancedcolorPicker, .enhancedStandardColorPicker').forEach(element => {
-			// Create a fully transparent colorPicker for each element and initialize it as child of the textblock element.
-			// ..this happens because we want the colorPicker to open right below the element.
 			let useBackground = !element.classList.contains('enhancedcolorPicker');
 			let colorPicker = document.createElement('input');
 			colorPicker.type = 'color';
@@ -22127,16 +22150,14 @@ Current version indicated by LITEVER below.
 			colorPicker.value = element.style[`${useBackground ? 'backgroundColor' : 'color'}`];
 			element.style.position = 'relative';
 			element.appendChild(colorPicker);
-
 			// If we're on Safari browser and in iOS, we need some adjustments for the colorpickers to work.
-			// ..this happens because the clicks need to be directly done on the colorPicker for iOS in Safari.
+			// this happens because the clicks need to be directly done on the colorPicker for iOS in Safari.
 			if (/^((?!Chrome|Firefox).)*Safari/i.test(navigator.userAgent) && /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
 				// Create a wrapper for the existing content. This will fix the offset slightly.
 				let contentWrapper = document.createElement('div');
 				contentWrapper.style.position = 'relative';
 				contentWrapper.style.zIndex = '0';
 				element.appendChild(contentWrapper);
-
 				// Finally, make the colorPicker directly clickable, and offset it slightly towards the text block.
 				colorPicker.style.zIndex = '1';
 				colorPicker.style.margin = '-20px';
@@ -22149,33 +22170,19 @@ Current version indicated by LITEVER below.
 			// Initialize the functionalities of the colorPicker
 			colorPicker.addEventListener('change', function() {
 				element.style[`${useBackground ? 'backgroundColor' : 'color'}`] = this.value;
-				refreshAestheticPreview();
 			});
 			element.addEventListener('mouseover', () => element.style.cursor = "pointer");
 		});
 
-		// Initialize functionality for the margin & padding input fields.
-		document.querySelectorAll('.instruct-settings-input').forEach(element => {
-			const input = element.querySelector('input');
-			const type = element.getAttribute('data-type');
-			const side = element.getAttribute('data-side');
-
-			input.addEventListener('input', function() {
-				let clippedvalue = parseInt(this.value, 10);
-				clippedvalue = cleannum(clippedvalue, 0, 300);
-				if (type === 'margin') { aestheticInstructUISettings.background_margin[sideMapping[side]] = parseInt(clippedvalue, 10); }
-				else if (type === 'padding') { aestheticInstructUISettings.background_padding[sideMapping[side]] = parseInt(clippedvalue, 10); }
-			});
-		});
-
 		// Initialize functionality for the portrait pickers.
 		document.querySelectorAll('#you-portrait, #AI-portrait').forEach(element => {
-		element.addEventListener('click', (e) => {
-			selectAvatarImage(element.id=="you-portrait");
-		});
-		element.addEventListener('mouseover', () => element.style.cursor = "pointer");
+			element.addEventListener('click', (e) => {
+				selectAvatarImage(element.id=="you-portrait");
+			});
+			element.addEventListener('mouseover', () => element.style.cursor = "pointer");
 		});
 
+		//portrait reset button
 		document.getElementById("reset-portrait").addEventListener('click', (e) => {
 			aestheticInstructUISettings.you_portrait = null;
 			aestheticInstructUISettings.AI_portrait = "default";
@@ -22186,8 +22193,8 @@ Current version indicated by LITEVER below.
 			refreshAestheticPreview(true);
 		});
 
+		//full aesthetic reset button
 		document.getElementById("reset-all-aesthetic-instruct").addEventListener('click', (e) => {
-
 			let ns = new AestheticInstructUISettings();
 			aestheticInstructUISettings = deepCopyAestheticSettings(ns);
 			refreshAestheticPreview(false);
@@ -22199,13 +22206,12 @@ Current version indicated by LITEVER below.
 	function openAestheticUISettingsMenu() {
 		tempAestheticInstructUISettings = deepCopyAestheticSettings(aestheticInstructUISettings);
 		document.getElementById("aestheticsettingscontainer").classList.remove("hidden");
-		updateTextPreview();
-
+		updateAestheticTextPreview();
 	}
+
 	function hideAestheticUISettingsMenu(confirm) {
 		if (!confirm) { aestheticInstructUISettings = deepCopyAestheticSettings(tempAestheticInstructUISettings); updateUIFromData(); }
 		tempAestheticInstructUISettings = null;
-
 		document.getElementById("aestheticsettingscontainer").classList.add("hidden");
 		render_gametext();
 	}
@@ -22221,25 +22227,26 @@ Current version indicated by LITEVER below.
 	function refreshAestheticPreview(updateFromUI = true) {
 		if (updateFromUI) { updateDataFromUI(); }
 		updateUIFromData();
-		updateTextPreview();
+		updateAestheticTextPreview();
 		character_creator_updateimg();
 	}
 
 	function updateDataFromUI() {
-		for (let role of aestheticTextStyleRoles) {
-			for (let type of aestheticTextStyleTypes) {
-				aestheticInstructUISettings[`${type}_tcolor_${role}`] = getColorPickerValueFromElement(`${role}-${type}-colorselector`);
-			}
-			if (role != 'uniform') { aestheticInstructUISettings[`bubbleColor_${role}`] = document.getElementById(`${role}-bubble-colorselector`).style.backgroundColor; }
-		}
+		aestheticInstructUISettings.text_tcolor_you = getColorPickerValueFromElement(`you-text-colorselector`);
+		aestheticInstructUISettings.speech_tcolor_you = getColorPickerValueFromElement(`you-speech-colorselector`);
+		aestheticInstructUISettings.action_tcolor_you = getColorPickerValueFromElement(`you-action-colorselector`);
+		aestheticInstructUISettings.bubbleColor_you = document.getElementById(`you-bubble-colorselector`).style.backgroundColor;
+		aestheticInstructUISettings.text_tcolor_AI = getColorPickerValueFromElement(`AI-text-colorselector`);
+		aestheticInstructUISettings.speech_tcolor_AI = getColorPickerValueFromElement(`AI-speech-colorselector`);
+		aestheticInstructUISettings.action_tcolor_AI = getColorPickerValueFromElement(`AI-action-colorselector`);
+		aestheticInstructUISettings.bubbleColor_AI = document.getElementById(`AI-bubble-colorselector`).style.backgroundColor;
+
 		aestheticInstructUISettings.code_block_background = document.getElementById('code-block-background-colorselector').style.color;
 		aestheticInstructUISettings.code_block_foreground = document.getElementById('code-block-foreground-colorselector').style.color;
 
 		aestheticInstructUISettings.match_background = document.getElementById('aui_match_background').checked;
 		aestheticInstructUISettings.rounded_bubbles = document.getElementById('aui_rounded_bubbles').checked;
 		aestheticInstructUISettings.show_chat_names = document.getElementById('aui_show_chat_names').checked;
-		aestheticInstructUISettings.use_markdown = document.getElementById('instructModeMarkdown').checked;
-		aestheticInstructUISettings.use_uniform_colors = !document.getElementById('instructModeCustomized').checked;
 		aestheticInstructUISettings.font_size = document.getElementById('instruct-font-size').value;
 		aestheticInstructUISettings.border_style = document.getElementById('instructBorderStyle').value;
 		aestheticInstructUISettings.portrait_width_AI = document.getElementById('portrait_width_AI').value;
@@ -22248,6 +22255,15 @@ Current version indicated by LITEVER below.
 		aestheticInstructUISettings.portrait_ratio_you = document.getElementById('portrait_ratio_you').value;
 		aestheticInstructUISettings.background_minHeight = document.getElementById('instruct-min-backgroundHeight').value;
 		aestheticInstructUISettings.centerHorizontally = document.getElementById('instructModeCenterHorizontally').checked;
+
+		aestheticInstructUISettings.aui_margin_left = cleannum(parseInt(document.getElementById('aui_margin_left').value, 10), 0, 300);
+		aestheticInstructUISettings.aui_margin_right = cleannum(parseInt(document.getElementById('aui_margin_right').value, 10), 0, 300);
+		aestheticInstructUISettings.aui_margin_top = cleannum(parseInt(document.getElementById('aui_margin_top').value, 10), 0, 300);
+		aestheticInstructUISettings.aui_margin_bottom = cleannum(parseInt(document.getElementById('aui_margin_bottom').value, 10), 0, 300);
+		aestheticInstructUISettings.aui_padding_left = cleannum(parseInt(document.getElementById('aui_padding_left').value, 10), 0, 300);
+		aestheticInstructUISettings.aui_padding_right = cleannum(parseInt(document.getElementById('aui_padding_right').value, 10), 0, 300);
+		aestheticInstructUISettings.aui_padding_top = cleannum(parseInt(document.getElementById('aui_padding_top').value, 10), 0, 300);
+		aestheticInstructUISettings.aui_padding_bottom = cleannum(parseInt(document.getElementById('aui_padding_bottom').value, 10), 0, 300);
 
 		//basic sanitization
 		aestheticInstructUISettings.font_size = cleannum(aestheticInstructUISettings.font_size, 5, 50);
@@ -22263,16 +22279,18 @@ Current version indicated by LITEVER below.
 			return computedStyle.color;
 		}
 	}
+
 	function updateUIFromData() {
 		// Parse color settings and apply to the related parts in the UI.
-		for (let role of aestheticTextStyleRoles) {
-			for (let type of aestheticTextStyleTypes) {
-				setElementColor(`${role}-${type}-colorselector`, aestheticInstructUISettings[`${type}_tcolor_${role}`], false);
-			}
-			if (role != 'uniform') {
-				setElementColor(`${role}-bubble-colorselector`, aestheticInstructUISettings[`bubbleColor_${role}`], true);
-			}
-		}
+		setElementColor(`you-text-colorselector`, aestheticInstructUISettings.text_tcolor_you, false);
+		setElementColor(`you-speech-colorselector`, aestheticInstructUISettings.speech_tcolor_you, false);
+		setElementColor(`you-action-colorselector`, aestheticInstructUISettings.action_tcolor_you, false);
+		setElementColor(`you-bubble-colorselector`, aestheticInstructUISettings.bubbleColor_you, true);
+
+		setElementColor(`AI-text-colorselector`, aestheticInstructUISettings.text_tcolor_AI, false);
+		setElementColor(`AI-speech-colorselector`, aestheticInstructUISettings.speech_tcolor_AI, false);
+		setElementColor(`AI-action-colorselector`, aestheticInstructUISettings.action_tcolor_AI, false);
+		setElementColor(`AI-bubble-colorselector`, aestheticInstructUISettings.bubbleColor_AI, true);
 
 		setElementColor('code-block-background-colorselector', aestheticInstructUISettings.code_block_background, false);
 		setElementColor('code-block-foreground-colorselector', aestheticInstructUISettings.code_block_foreground, false);
@@ -22281,8 +22299,6 @@ Current version indicated by LITEVER below.
 		document.getElementById('aui_match_background').checked = aestheticInstructUISettings.match_background;
 		document.getElementById('aui_rounded_bubbles').checked = aestheticInstructUISettings.rounded_bubbles;
 		document.getElementById('aui_show_chat_names').checked = aestheticInstructUISettings.show_chat_names;
-		document.getElementById('instructModeMarkdown').checked = aestheticInstructUISettings.use_markdown;
-		document.getElementById('instructModeCustomized').checked = !aestheticInstructUISettings.use_uniform_colors;
 		document.getElementById('instruct-font-size').value = aestheticInstructUISettings.font_size;
 		document.getElementById('instructBorderStyle').value = aestheticInstructUISettings.border_style;
 		document.getElementById('portrait_width_AI').value = aestheticInstructUISettings.portrait_width_AI;
@@ -22292,33 +22308,33 @@ Current version indicated by LITEVER below.
 		document.getElementById('instruct-min-backgroundHeight').value = aestheticInstructUISettings.background_minHeight;
 		document.getElementById('instructModeCenterHorizontally').checked = aestheticInstructUISettings.centerHorizontally;
 
-		// Show or hide customization UI elements based on whether they should be visible in the UI or not.
-		showOrHide('.uniform-mode-font', document.getElementById('instructModeCustomized').checked == false);
-		showOrHide('.custom-mode-font', document.getElementById('instructModeCustomized').checked == true);
-		showOrHide('.instruct-markdown-user', document.getElementById('instructModeMarkdown').checked == true);
-		showOrHide('.rectPortraitMode', document.getElementById('instructBorderStyle').value != 'Circle');
+		if(document.getElementById('instructBorderStyle').value == 'Circle')
+		{
+			document.querySelectorAll('.rectPortraitMode').forEach((x) => x.classList.add('hidden'));
+		}
+		else
+		{
+			document.querySelectorAll('.rectPortraitMode').forEach((x) => x.classList.remove('hidden'));
+		}
 
-		document.querySelectorAll('.instruct-settings-input').forEach(element => {
-			const input = element.querySelector('input');
-			const type = element.getAttribute('data-type');
-			const side = element.getAttribute('data-side');
-
-			if (type === 'margin') { input.value = aestheticInstructUISettings.background_margin[sideMapping[side]]; }
-			else if (type === 'padding') { input.value = aestheticInstructUISettings.background_padding[sideMapping[side]]; }
-		});
-
+		document.getElementById('aui_margin_left').value = aestheticInstructUISettings.aui_margin_left;
+		document.getElementById('aui_margin_right').value = aestheticInstructUISettings.aui_margin_right;
+		document.getElementById('aui_margin_top').value = aestheticInstructUISettings.aui_margin_top;
+		document.getElementById('aui_margin_bottom').value = aestheticInstructUISettings.aui_margin_bottom;
+		document.getElementById('aui_padding_left').value = aestheticInstructUISettings.aui_padding_left;
+		document.getElementById('aui_padding_right').value = aestheticInstructUISettings.aui_padding_right;
+		document.getElementById('aui_padding_top').value = aestheticInstructUISettings.aui_padding_top;
+		document.getElementById('aui_padding_bottom').value = aestheticInstructUISettings.aui_padding_bottom;
 
 		function setElementColor(id, newColor, isBackground) {
 			let element = document.getElementById(id);
 			if (!element) { console.warn(`Element with ID: ${id} not found.`); return; }
-
 			if (isBackground) {
 				element.style.backgroundColor = newColor;
 			}
 			else {
 				element.style.color = newColor;
 			}
-
 			var childInput = element.querySelector('.colorpickerchild');
 			if (childInput && newColor.includes("rgb")) {
 				childInput.value = rgb_to_hex(newColor);
@@ -22326,14 +22342,46 @@ Current version indicated by LITEVER below.
 				childInput.value = newColor;
 			}
 		}
-		function showOrHide(classID, value) {
-			if (value) { document.querySelectorAll(classID).forEach((x) => x.classList.remove('hidden')); }
-			else { document.querySelectorAll(classID).forEach((x) => x.classList.add('hidden')); }
+	}
+
+	function updateAestheticTextPreview() {
+		let preview = `The shadows dance across the walls under the flickering candlelight of the quiet tavern.\n\nIt is well past dinnertime, and a cool breeze fills the room, which is nearly silent except for the hushed conversations from the few remaining patrons.\n{{[OUTPUT]}}\n*A small Kobold wearing a tattered brown cloak scurries up to you*\n\n"Excuse me, adventurer, I am Kobo the Kobold," he coughs softly and continues, "could you spare me a little coin? I haven't eaten for so long..." *kobo looks downcast with pleading eyes*\n{{[INPUT]}}\n*retrieves a small copper coin from a leather pouch, and places it on the table*\n\n"Hmm, that depends. Do you know to calculate the factorial of a number?", you chuckle.\n{{[OUTPUT]}}\nThe pathetic Kobold looks taken aback by your strange request, but then grudgingly agrees. *sighs heavily* "I guess..." *takes a few steps backwards, and starts scratching into the grimy floor with a stick*\n\n"Kobo just needs some food..." The kobold takes a deep breath and starts writing.\n\n\`\`\`\ndef factorial(n):\n  if n == 0:\n    return 1\n  else:\n    return n * factorial(n-1)\n\`\`\`\n*Kobo looks at you again* "Is that... acceptable?"\n{{[INPUT]}}\n*patting the sad kobold on his head, as he gratefully accepts the coin*\n\n"Aww there you go! Try not to spend it all it one place."\n\nYou watch as Kobo scampers off into the distance. Tomorrow comes.`;
+		if(localsettings.opmode==3)
+		{
+			preview = replaceAll(preview,'\n{{[OUTPUT]}}\n', `\n${localsettings.chatopponent.split("||$||")[0]}: `);
+			preview = replaceAll(preview,'\n{{[INPUT]}}\n', `\n${localsettings.chatname}: `);
 		}
+		else if(localsettings.opmode==1 || localsettings.opmode==2)
+		{
+			preview = replaceAll(preview,'{{[OUTPUT]}}', "");
+			preview = replaceAll(preview,'{{[INPUT]}}', "");
+		}
+		document.getElementById('aesthetic_text_preview').innerHTML = render_aesthetic_ui(preview,true);
 	}
 
 	function render_aesthetic_ui(input, isPreview) //class suffix string used to prevent defined styles from leaking into global scope
 	{
+		const avatarImage = function(for_ai) { //todo: this is still bad code, but will keep it for now
+			if((for_ai && !as.AI_portrait) || (!for_ai && !as.you_portrait) || as.border_style == 'None')
+			{
+				return ''; //for no portrait
+			}
+			let reinvertcolor = localsettings.invert_colors?" invert_colors":"";
+			let radius = (as.border_style == 'Circle' ? '1000rem' : (as.border_style == 'Rounded' ? '1.6rem' : '0.1rem'));
+			let width, height;
+			let imgclassname = "";
+			if (!for_ai) {
+				width = as.portrait_width_you;
+				height = (as.border_style == 'Circle' ? as.portrait_width_you : as.portrait_width_you / as.portrait_ratio_you);
+				imgclassname = "you-portrait-image";
+			} else {
+				width = as.portrait_width_AI;
+				height = (as.border_style == 'Circle' ? as.portrait_width_AI : as.portrait_width_AI / as.portrait_ratio_AI);
+				imgclassname = "AI-portrait-image";
+			}
+			return `<div class='${imgclassname}${classSuffixStr}${reinvertcolor}' style='width:${width}px; height:${height}px; border-radius: ${radius}'></div>`;
+		}
+
 		if(localsettings.separate_end_tags) {
 			if (get_instruct_starttag_end(true)) {
 				input = replaceAll(input, get_instruct_starttag_end(true), "");
@@ -22350,7 +22398,7 @@ Current version indicated by LITEVER below.
 		{
 			if(aestheticInstructUISettings.match_background)
 			{
-				document.getElementById('enhancedchatinterface_inner').style.backgroundColor = aestheticInstructUISettings.bubbleColor_sys;
+				document.getElementById('enhancedchatinterface_inner').style.backgroundColor = aestheticInstructUISettings.bubbleColor_AI;
 			}else
 			{
 				document.getElementById('enhancedchatinterface_inner').style.backgroundColor = null;
@@ -22360,225 +22408,154 @@ Current version indicated by LITEVER below.
 		let classSuffixStr = isPreview ? "prv" : "";
 		let portraitsStyling = // Also, implement portraits as css classes. Now chat entries can reuse them instead of recreating them.
 		`<style>
-			.you-portrait-image`+classSuffixStr+` {margin: 10px 6px; background:url(`+ as.you_portrait +`); background-clip: content-box; background-position: 50% 50%; background-size: 100% 100%; background-origin: content-box; background-repeat: no-repeat; border:none;}
-			.AI-portrait-image`+classSuffixStr+` {margin: 10px 6px; background:url(`+ (as.AI_portrait!="default"?as.AI_portrait:niko_square) +`); background-clip: content-box; background-position: 50% 50%; background-size: 100% 100%; background-origin: content-box; background-repeat: no-repeat; border:none;}
+			.you-portrait-image${classSuffixStr} {margin: 10px 6px; background:url(${as.you_portrait}); background-clip: content-box; background-position: 50% 50%; background-size: 100% 100%; background-origin: content-box; background-repeat: no-repeat; border:none;}
+			.AI-portrait-image${classSuffixStr} {margin: 10px 6px; background:url(${(as.AI_portrait!="default"?as.AI_portrait:niko_square)}); background-clip: content-box; background-position: 50% 50%; background-size: 100% 100%; background-origin: content-box; background-repeat: no-repeat; border:none;}
 			code
 			{
 				color: ${as.code_block_foreground};
 				background-color: ${as.code_block_background};
 			}
+			#chat_msg_body pre, #aesthetic_text_preview pre {
+				min-width:80%;
+				white-space:pre-wrap;
+				margin:8px 20px 2px 20px;
+				padding-bottom: 12px;
+				background-color:${as.code_block_background};
+				color:${as.code_block_foreground};
+			}
+			.aui_aiturn_block{
+				color: ${as.text_tcolor_AI};
+				background-color:${as.bubbleColor_AI};
+			}
+			.aui_myturn_block{
+				color: ${as.text_tcolor_you};
+				background-color:${as.bubbleColor_you};
+			}
+			.aui_myturn_block em, .aui_myturn_block b :not(code){
+				color: ${as.action_tcolor_you};
+				font-style: italic;
+				font-weight: normal;
+			}
+			.aui_aiturn_block em, .aui_aiturn_block b :not(code){
+				color: ${as.action_tcolor_AI};
+				font-style: italic;
+				font-weight: normal;
+			}
+			.aui_myturn_block .quotespn {
+				color: ${as.speech_tcolor_you};
+				font-weight: normal;
+			}
+			.aui_aiturn_block .quotespn {
+				color: ${as.speech_tcolor_AI};
+				font-weight: normal;
+			}
+			#chat_msg_body blockquote, #aesthetic_text_preview blockquote
+			{
+				font-size: ${as.font_size}px;
+				margin-bottom: 4px;
+			}
 		</style>
 		`;
 
-		const contextDict = { sysOpen: '<sys_context_koboldlite_internal>', youOpen: '<user_context_koboldlite_internal>', AIOpen: '<AI_context_koboldlite_internal>', closeTag: '<end_of_context_koboldlite_internal>' }
-		let you = "$UnusedTagMatch$"; let bot = "$UnusedTagMatch$"; // Instruct tags will be used to wrap text in styled bubbles.
-		if(localsettings.opmode==3||localsettings.opmode==4)
+		//refactor - repack as turns
+		input = replace_instruct_placeholders(input);
+		let chatunits = [];
+		if(localsettings.opmode==3) //chat mode
 		{
-			you = get_instruct_starttag();
-			bot = get_instruct_endtag();
+			chatunits = repack_chat_history(input);
 		}
-
-		if(localsettings.opmode==3)
+		else if(localsettings.opmode==2)
 		{
-			if(!input.startsWith("\n"))
-			{
-				input = "\n"+input;
-			}
-			//replace all possible instances with placeholders
-			var mynameregex = new RegExp("\n(" + localsettings.chatname + ")\: ", "gi");
-			var mynameregex2 = new RegExp("(" + localsettings.chatname + ")\: ", "gi");
-			var mynameregex3 = new RegExp("\n(" + localsettings.chatname + ") ", "gi");
-			var othernamesregex = new RegExp("\n(?!" + localsettings.chatname + ").+?\: ", "gi");
-			if(!localsettings.chat_match_any_name && localsettings.chatopponent!="")
-			{
-				let namelist = localsettings.chatopponent.split("||$||");
-				var namePattern = namelist.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-				othernamesregex = new RegExp("(" + namePattern + "): ", "gi");
-			}
-
-			input = input.replaceAll(mynameregex, '{{userplaceholder}}');
-			input = input.replaceAll(mynameregex2, '{{userplaceholder}}');
-			input = input.replaceAll(mynameregex3, '{{userplaceholder}}');
-			if(as.show_chat_names)
-			{
-				input = input.replaceAll("{{userplaceholder}}", `{{userplaceholder}}<p class='aui_nametag'>`+escape_html(localsettings.chatname)+`</p>`);
-				input = input.replaceAll(othernamesregex, function(match) {
-					//edge condition: if matched string already contains placeholders, something went wrong. return original string
-					if(match.includes("{{userplaceholder}}"))
-					{
-						return match;
-					}
-					return "{{botplaceholder}}<p class='aui_nametag'>" + escape_html(match.substring(0,match.length-2).trim()) + "</p>";
-				});
-			}
-			else
-			{
-				input = input.replaceAll(othernamesregex, function(match) {
-					//edge condition: if matched string already contains placeholders, something went wrong. return original string
-					if(match.includes("{{userplaceholder}}"))
-					{
-						return match;
-					}
-					return "{{botplaceholder}}";
-				});
-			}
-
-			you = "{{userplaceholder}}";
-			bot = "{{botplaceholder}}";
+			//aesthetic mode repacks adventure as one big chunk
+			chatunits = repack_adventure_history(input);
 		}
-		if(localsettings.opmode==4 && localsettings.inject_chatnames_instruct && localsettings.chatname!="" && localsettings.chatopponent!="")
+		else if(localsettings.opmode==1)
 		{
-			let m_name = localsettings.chatname + ": ";
-			input = replaceAll(input, m_name, `<p class='aui_nametag'>` + escape_html(localsettings.chatname) + `</p>`);
-
-			let m_opps = localsettings.chatopponent.split("||$||");
-			for(let i=0;i<m_opps.length;++i)
-			{
-				if(m_opps[i] && m_opps[i].trim()!="")
-				{
-					let m_opp = m_opps[i] + ": ";
-					input = replaceAll(input, m_opp, `<p class='aui_nametag'>` + escape_html(m_opps[i]) + `</p>`);
-				}
-			}
-		}
-
-
-		// We'll transform the input to a well-formatted HTML string that'll contain the whole visuals for the Aesthetic Instruct Mode. Effectively we're styling the input.
-		let noSystemPrompt = input.trim().startsWith(you.trim()) || input.trim().startsWith(bot.trim());
-		let newbodystr = noSystemPrompt ? input : style('sys') + input;					 // First, create the string we'll transform. Style system bubble if we should.
-		if (newbodystr.endsWith(bot)) { newbodystr = newbodystr.slice(0, -bot.length); } // Remove the last chat bubble if prompt ends with `end_sequence`.
-		newbodystr = transformInputToAestheticStyle(newbodystr,isPreview); 						 // Transform input to aesthetic style, reduce any unnecessary spaces or newlines, and trim empty replies if they exist.
-		if (synchro_pending_stream != "" && !isPreview) {
-			newbodystr += getStreamingText();
-		} 		 // Add the pending stream if it's needed. This will add any streamed text to a new bubble for the AI.
-		else{
-			let codeblockcount = (newbodystr.match(/```/g) || []).length;
-			if(codeblockcount>0 && codeblockcount%2!=0 )
-			{
-				newbodystr += "```"; //force end code block
-			}
-		}
-		newbodystr += contextDict.closeTag + '</p></div></div>';						 // Lastly, append the closing div so our body's raw form is completed.
-		if (aestheticInstructUISettings.use_markdown) {
-
-			let md = applyStylizedCodeBlocks(); 	// apply the code-block styling, if markdown is used.
-			newbodystr = md[0];
-			let codestashes = md[1];
-			// If markdown is enabled, style the content of each bubble as well.
-			let internalHTMLparts = []; // We'll cache the embedded HTML parts here to keep them intact.
-			for (let role of aestheticTextStyleRoles) {																// ..starting by the "speech" and *actions* for each role.
-				let styleRole = aestheticInstructUISettings.use_uniform_colors ? 'uniform' : role;					// Uniform role is preferred if it's active on the settings.
-				newbodystr = newbodystr.replace(new RegExp(`${contextDict[`${role}Open`]}([^]*?)${contextDict.closeTag}`, 'g'), (match, captured) => {
-					let replacedText = captured.replace(/<[^>]*>/g, (htmlPart) => { internalHTMLparts.push(htmlPart); return `<internal_html_${internalHTMLparts.length - 1}>`; });
-					replacedText = replacedText.replace(bold_regex, wrapperSpan(styleRole, 'action')); 		// Apply the actions style to *actions*.
-					replacedText = replacedText.replace(italics_regex, wrapperSpan(styleRole, 'action')); 		// Apply the actions style to *actions*.
-					replacedText = replacedText.replace(/“(.*?)”/g, wrapperSpan(styleRole, 'speech')); 	// Apply the speech style to "speech".
-					replacedText = replacedText.replace(/&quot;(.*?)&quot;/g, wrapperSpan(styleRole, 'speech')); 	// Apply the speech style to "speech".
-					if(localsettings.instruct_has_markdown)
-					{
-						replacedText = simpleMarkdown(replacedText,localsettings.instruct_has_latex);
-					}
-					return `<span>${replacedText}</span>`;
-				});
-			}
-			newbodystr = newbodystr.replace(/<internal_html_(.*?)>/gm, (match, p) => {
-				return internalHTMLparts[p];
-			});
-
-			for(let i=0;i<codestashes.length;++i)
-			{
-				newbodystr = newbodystr.replace(`%CodeStash${i}%`,codestashes[i]);
-			}
-		}
-		newbodystr = render_all_image_html(newbodystr,false,true);
-		return portraitsStyling + newbodystr.replaceAll(/(\r\n|\r|\n)/g,'<br>'); // Finally, convert newlines to HTML format and return the stylized string.
-
-
-		// Helper functions to allow styling the chat log properly. These affect both the background of the chat bubbles and its content.
-		function style(role) {
-			let showavatar = false;
-			if(localsettings.opmode==3 || localsettings.opmode==4)
-			{
-				showavatar = true;
-			}
-			return `${contextDict.closeTag}</div></div><div style='display:flex; align-items:stretch; flex-direction: row;'>${(showavatar?image(role):"")}<div style='flex: 1; display:flex; color: ${as[`text_tcolor_${as.use_uniform_colors ? 'uniform' : role}`]}; background-color:${as[`bubbleColor_${role}`]}; padding: ${as.padding()}; margin: ${as.margin()}; min-height:${as.background_minHeight}px; font-size: ${as.font_size}px; flex-direction:column; align-items: ${as.centerHorizontally ? 'center' : 'flex-start'}; justify-content: center; border-radius: ${as.rounded_bubbles ? '15px' : '0px'}'>${contextDict[`${role}Open`]}`;
-
-		}
-		function wrapperSpan(role, type) {
-			let fontStyle = type=='action'?'italic':'normal';
-			let injectQuotes1 = type=='speech'?'“':'';
-			let injectQuotes2 = type=='speech'?'”':'';
-			let textCol = as[`${type}_tcolor_${role}`];
-			return `<span style='color: ${textCol}; font-style: ${fontStyle}; font-weight: normal'>${injectQuotes1}$1${injectQuotes2}</span>`;
-		}
-		function image(role) {
-			if (!as[`${role}_portrait`] || as.border_style == 'None' || role == 'sys') { return ''; }
-			let reinvertcolor = localsettings.invert_colors?" invert_colors":"";
-			return `<div class='${role}-portrait-image${classSuffixStr}${reinvertcolor}' style='width:${as.portraitSize(role).width}px; height:${as.portraitSize(role).height}px; border-radius: ${as.portraitRadius()}'></div>`;
-		}
-		function applyStylizedCodeBlocks() {
-			let blocks = newbodystr.split(/(```[\s\S]*?\n[\s\S]*?```)/g);
-			let codestashes = [];
-			for (var i = 0; i < blocks.length; i++) {
-				if (blocks[i].startsWith('```')) {
-					blocks[i] = blocks[i].replace(/```[\s\S]*?\n([\s\S]*?)```/g,
-					function (m,m2) {
-						let idx = codestashes.length;
-						codestashes.push(`<pre style='min-width:80%;white-space:pre-wrap;margin:0px 30px 0px 20px;background-color:${as.code_block_background};color:${as.code_block_foreground}'>${m2.replace(/[“”]/g, "\"")}</pre>`);
-						return `</p>%CodeStash${idx}%<p>`
-					});
-				}
-				else {
-					blocks[i] = blocks[i].replaceAll('```', '`').replaceAll('``', '`').replace(/`(.*?)`/g, function (m,m2) {return `<code>${m2.replace(/[“”]/g, "\"")}</code>`;}); //remove fancy quotes too
-				}
-			}
-			return [blocks.join(''),codestashes];
-		}
-		function transformInputToAestheticStyle(bodyStr, isPreview) { // Trim unnecessary empty space and new lines, and append * or " to each bubble if start/end sequence ends with * or ", to preserve styling.
-			bodyStr = bodyStr.replaceAll(you + '\n', you).replaceAll(you + ' ', you).replaceAll(you, style('you') + `${you.endsWith('*') ? '*' : ''}` + `${you.endsWith('"') ? '"' : ''}`);
-			bodyStr = bodyStr.replaceAll(bot + '\n', bot).replaceAll(bot + ' ', bot).replaceAll(bot, style('AI') + `${bot.endsWith('*') ? '*' : ''}` + `${bot.endsWith('"') ? '"' : ''}`);
-
-			//for adventure mode, highlight our actions with blockquotes
-			if (localsettings.opmode == 2) {
-				bodyStr = bodyStr.replace(/\n\n\> .+?\n/g, function (m) {
-					let inner = m.substring(3);
-					return `\n\n<blockquote>` + inner + `</blockquote>`;
-				});
-			}
-
-			return bodyStr;
-
-		}
-		function getStreamingText() {
-			let isChatBotReply = (localsettings.opmode==3 && pending_context_preinjection.startsWith("\n") && pending_context_preinjection.endsWith(":"));
-			return `${(input.endsWith(bot) || isChatBotReply) ? style('AI') + `${bot.endsWith('*') ? '*' : ''}` + `${bot.endsWith('"') ? '"' : ''}` : ''}` + `<span class='pending_text'>`+ escape_html(pending_context_preinjection) + format_streaming_text(escape_html(synchro_pending_stream)) + `</span`;
-		}
-	}
-
-	function updateTextPreview() {
-		let preview = `You are Mikago, a prestigious bot that's a supervillain.\n\nRoleplay in first person, be prestigious, don't be a bot. This is a fantasy world.\n\nCode blocks should be wrapped in triple backticks, like so:\n\`\`\`\n-- multiline\n--- code here\n\`\`\`\n[AI_REPLY]\n*takes my hat off to greet the squad* "Greetings, I am Mikago, the prestigious!" *bows to the crew*\n*clears my throat* "Now, I'm sure there are many questions, but all will be answered in due time." *deep breath*\n[USER_REPLY]\n*draws my sword* "Yes. You should know the code to calculate the factorial of a number."\nThe crew also draws their weapons and point them at you, not giving you any space.\n[AI_REPLY]\n*backs off* "Woah, easy there.." *makes some steps backwards, but then stops*\n"I would normally take this as an insult to my prestige, but I understand your caution.." *takes a deep breath*\n"Well, if it's to prove myself, here goes the python code to calculate the factorial of a number.."\n\nMikago opens a live-code-portal with his magic and writes the code that was requested.\n\`\`\`\ndef factorial(n):\n  if n == 0:\n    return 1\n  else:\n    return n * factorial(n-1)\n\`\`\`\n*looks at you, getting impatient* "Are we ok now.. or do you want me to write the code of a game next?"\n[USER_REPLY]\n*sheathes my sword and approaches for a hug* "Oh, Mikago, my old friend, it is really you!"`;
-
-		if(localsettings.opmode==3)
-		{
-			preview = replaceAll(preview,'\n[USER_REPLY]\n', "{{userplaceholder}}");
-			if(aestheticInstructUISettings.show_chat_names){
-				preview = replaceAll(preview,'\n[AI_REPLY]\n', "{{botplaceholder}}<p class='aui_nametag'>Bot</p>");
-			}else{
-				preview = replaceAll(preview,'\n[AI_REPLY]\n', "{{botplaceholder}}");
-			}
-		}
-		else if(localsettings.opmode==4)
-		{
-			preview = replaceAll(preview,'\n[USER_REPLY]\n', get_instruct_starttag());
-			preview = replaceAll(preview,'\n[AI_REPLY]\n', get_instruct_endtag());
+			//aesthetic mode repacks story as one big chunk
+			chatunits = [{"msg":input, "myturn":false, "unlabelled":true}];
 		}
 		else
 		{
-			preview = replaceAll(preview,'\n[USER_REPLY]\n', "");
-			preview = replaceAll(preview,'\n[AI_REPLY]\n', "");
+			chatunits = repack_instruct_history(input);
 		}
-		document.getElementById('aesthetic_text_preview').innerHTML = render_aesthetic_ui(preview,true);
+
+		let newbodystr = "";
+		let countmap = new Map();
+		let pendstream = "";
+		if (synchro_pending_stream != "" && !isPreview) {
+			pendstream = escape_html(pending_context_preinjection) + format_streaming_text(escape_html(synchro_pending_stream));
+			chatunits.push({"msg":`<span class='pending_text'>${pendstream}</span>`,"myturn":false});
+		}
+		for(var i=0;i<chatunits.length;++i)
+		{
+			let curr = chatunits[i];
+
+			//for aesthetic mode, use fancy quotes, but we must exclude anything in codeblocks, and html tags
+			let temphtmlstash = [];
+			curr.msg = curr.msg.replace(/<[^>]*>/g, (htmlPart) => { temphtmlstash.push(htmlPart); return `[temp_replaced_html_${temphtmlstash.length - 1}]`; });
+			curr.msg = curr.msg.split(/(```[\s\S]*?\n[\s\S]*?```)/g).map(partA => {
+				if (partA.startsWith('```') && partA.endsWith('```')) {
+					return partA; // leave as is
+				} else {
+					const partsB = partA.split(/(`.*?`)/g);
+					const combinedB = partsB.map(partB => {
+						if (partB.startsWith('`') && partB.endsWith('`')) {
+							return partB; // leave as is
+						} else {
+							let x = partB.replace(/[“”"]/g, "&quot;");
+							x = x.replace(/&quot;([\s\S]*?)&quot;/g, '<span class="quotespn">“$1”</span>');
+							return x;
+						}
+					}).join('');
+					return combinedB;
+				}
+			}).join('');
+			curr.msg = curr.msg.replace(/\[temp_replaced_html_(.*?)\]/gm, (match, p) => {
+				return temphtmlstash[p];
+			});
+
+			curr = repack_postprocess_turn(curr, countmap);
+			if(!curr.msg)
+			{
+				continue; //if turn is empty skip it
+			}
+
+			let namepart = (curr.name!="" && as.show_chat_names?`<p class='aui_nametag'>${escape_html(curr.name)}</p>`:"");
+			let showavatar = true;
+
+			//adventure and story has no names or avatars, also handle unlabelled first turns for chat/instruct
+			if((i == 0 && !curr.myturn && curr.unlabelled) || (localsettings.opmode==2 || localsettings.opmode==1))
+			{
+				namepart = "";
+				showavatar = false;
+			}
+
+			//for adventure mode, highlight our actions with blockquotes
+			if (localsettings.opmode == 2 && curr.myturn) {
+				curr.msg = `<blockquote>${curr.msg}</blockquote>`;
+			}
+
+			//prepare the main turn block
+			newbodystr += `<div style='display:flex; align-items:stretch; flex-direction: row;'>`;
+			if(curr.myturn)
+			{
+				newbodystr += `${(showavatar?avatarImage(false):"")}
+				<div class='aui_myturn_block'`;
+			}
+			else
+			{
+				newbodystr += `${(showavatar?avatarImage(true):"")}
+				<div class='aui_aiturn_block'`;
+			}
+			newbodystr += ` style='flex: 1; display:flex; padding: ${as.padding()}; margin: ${as.margin()}; min-height:${as.background_minHeight}px;`
+			+ ` font-size: ${as.font_size}px; flex-direction:column; align-items: ${as.centerHorizontally ? 'center' : 'flex-start'};`
+			+ ` justify-content: center; border-radius: ${as.rounded_bubbles ? '15px' : '0px'}'>`
+			+ `<span>${namepart}${curr.msg}</span></div></div>`;
+		}
+
+		return portraitsStyling + newbodystr.replaceAll(/(\r\n|\r|\n)/g,'<br>'); // Finally, convert newlines to HTML format and return the stylized string.
 	}
+	// end of aesthetic ui
 
 	function PerformWebsearch(webSearchQuery, onDone)
 	{
@@ -24810,6 +24787,11 @@ Current version indicated by LITEVER below.
 								class="helptext">Allows you to change the connected custom endpoint at runtime even in local mode.</span></span></div>
 							<input title="Show Local Endpoint Selector" type="checkbox" id="show_endpoint_selector" style="margin:0px 0px 0px 0px;">
 						</div>
+						<div class="settinglabel">
+							<div class="justifyleft settingsmall">DoNotWarnUnsaved <span class="helpicon">?<span
+								class="helptext">Do not show any warnings for closing or overwriting unsaved work (caution!)</span></span></div>
+							<input title="Do Not Warn Unsaved" type="checkbox" id="no_warn_unsaved" style="margin:0px 0px 0px 0px;">
+						</div>
 					</div>
 
 					<div class="settingitem wide">
@@ -24850,7 +24832,6 @@ Current version indicated by LITEVER below.
 								<div style="margin-left: 12px;">
 									<div class="ui-settings-inline">
 										<div style="margin-right: 5px">Bubble Color: </div>
-										<div class="enhancedStandardColorPicker" id="sys-bubble-colorselector">System 🖌️</div>
 										<div class="enhancedStandardColorPicker" id="you-bubble-colorselector">You 🖌️</div>
 										<div class="enhancedStandardColorPicker" id="AI-bubble-colorselector">AI 🖌️</div>
 									</div>
@@ -24865,7 +24846,7 @@ Current version indicated by LITEVER below.
 
 									<div class="ui-settings-inline">
 										<div style="margin-right:20px;">Min Height: </div>
-										<div class="instruct-settings-input"><input id ="instruct-min-backgroundHeight" type="number"/> px</div>
+										<div class="instruct-settings-input"><input id="instruct-min-backgroundHeight" type="number"/> px</div>
 										<div class="ui-settings-inline">
 											<div style="padding-top: 4px; font-size: 10px; margin-left: 10px;">Horizontally-centered text:</div>
 											<input id="instructModeCenterHorizontally" type="checkbox" style="height: 10px; margin-top: 6px;">
@@ -24873,17 +24854,17 @@ Current version indicated by LITEVER below.
 									</div>
 									<div class="ui-settings-inline">
 										<div style="margin-right:20px;">Margin (px): </div>
-										<div class="instruct-settings-input" data-type="margin" data-side="left"  >L: <input type="number"/></div>
-										<div class="instruct-settings-input" data-type="margin" data-side="right" >R: <input type="number"/></div>
-										<div class="instruct-settings-input" data-type="margin" data-side="top"   >T: <input type="number"/></div>
-										<div class="instruct-settings-input" data-type="margin" data-side="bottom">B: <input type="number"/></div>
+										<div class="instruct-settings-input">L: <input id="aui_margin_left"   type="number"/></div>
+										<div class="instruct-settings-input">R: <input id="aui_margin_right"  type="number"/></div>
+										<div class="instruct-settings-input">T: <input id="aui_margin_top"    type="number"/></div>
+										<div class="instruct-settings-input">B: <input id="aui_margin_bottom" type="number"/></div>
 									</div>
 									<div class="ui-settings-inline">
 										<div style="margin-right:13px">Padding (px): </div>
-										<div class="instruct-settings-input" data-type="padding" data-side="left"  >L: <input type="number"/></div>
-										<div class="instruct-settings-input" data-type="padding" data-side="right" >R: <input type="number"/></div>
-										<div class="instruct-settings-input" data-type="padding" data-side="top"   >T: <input type="number"/></div>
-										<div class="instruct-settings-input" data-type="padding" data-side="bottom">B: <input type="number"/></div>
+										<div class="instruct-settings-input">L: <input id="aui_padding_left"   type="number"/></div>
+										<div class="instruct-settings-input">R: <input id="aui_padding_right"  type="number"/></div>
+										<div class="instruct-settings-input">T: <input id="aui_padding_top"    type="number"/></div>
+										<div class="instruct-settings-input">B: <input id="aui_padding_bottom" type="number"/></div>
 									</div>
 								</div>
 							</div>
@@ -24946,23 +24927,6 @@ Current version indicated by LITEVER below.
 										<div style="margin-right:20px;text-align: center;">Font Size: </div>
 										<div style="margin: 0px 10px"><input id="instruct-font-size" type="number" min="8" max="40" style='width:40px;height:20px;font-size:10px;'/> px</div>
 									</div>
-									<div class="ui-settings-inline">
-										<div style="font-size: 12px; margin-right:27px; text-align: center;">Customize: </div>
-										<div class="ui-settings-inline" style="font-size: 10px">
-											<div style="padding-top: 2px;">Per-entity: </div>
-											<input id="instructModeCustomized" type="checkbox" style="height: 10px;">
-										</div>
-										<div class="ui-settings-inline" style="font-size: 10px; margin-left: 10px">
-											<div style="padding-top: 2px;">Style Text: </div>
-											<input id="instructModeMarkdown"  type="checkbox" style="height: 10px">
-										</div>
-									</div>
-									<div class="ui-settings-inline uniform-mode-font">
-										<div style="margin-right:48px; text-align: center;">Colors: </div>
-										<div class="enhancedcolorPicker" id="uniform-text-colorselector">text🖌️</div>
-										<div class="enhancedcolorPicker instruct-markdown-user" id="uniform-speech-colorselector">"speech"🖌️</div>
-										<div class="enhancedcolorPicker instruct-markdown-user" id="uniform-action-colorselector">*action*🖌️</div>
-									</div>
 									<div class="ui-settings-inline custom-mode-font">
 										<div style="margin-right:58px; text-align: center;">You: </div>
 										<div class="enhancedcolorPicker" id="you-text-colorselector">text🖌️</div>
@@ -24974,12 +24938,6 @@ Current version indicated by LITEVER below.
 										<div class="enhancedcolorPicker" id="AI-text-colorselector">text🖌️</div>
 										<div class="enhancedcolorPicker instruct-markdown-user" id="AI-speech-colorselector">"speech"🖌️</div>
 										<div class="enhancedcolorPicker instruct-markdown-user" id="AI-action-colorselector">*action*🖌️</div>
-									</div>
-									<div class="ui-settings-inline custom-mode-font">
-										<div style="margin-right:38px; text-align: center;">System: </div>
-										<div class="enhancedcolorPicker" id="sys-text-colorselector">text🖌️</div>
-										<div class="enhancedcolorPicker instruct-markdown-user" id="sys-speech-colorselector">"speech"🖌️</div>
-										<div class="enhancedcolorPicker instruct-markdown-user" id="sys-action-colorselector">*action*🖌️</div>
 									</div>
 									<div class="ui-settings-inline instruct-markdown-user">
 										<div style="margin-right:11px; text-align: center;">Code blocks: </div>
