@@ -44,6 +44,7 @@ import subprocess
 sampler_order_max = 7
 tensor_split_max = 16
 images_max = 8
+audio_max = 4
 bias_min_value = -100.0
 bias_max_value = 100.0
 logprobs_max = 5
@@ -215,6 +216,7 @@ class generation_inputs(ctypes.Structure):
                 ("negative_prompt", ctypes.c_char_p),
                 ("guidance_scale", ctypes.c_float),
                 ("images", ctypes.c_char_p * images_max),
+                ("audio", ctypes.c_char_p * audio_max),
                 ("max_context_length", ctypes.c_int),
                 ("max_length", ctypes.c_int),
                 ("temperature", ctypes.c_float),
@@ -1402,6 +1404,7 @@ def generate(genparams, stream_flag=False):
     negative_prompt = genparams.get('negative_prompt', "")
     guidance_scale = tryparsefloat(genparams.get('guidance_scale', 1.0),1.0)
     images = genparams.get('images', [])
+    audio = genparams.get('audio', [])
     max_context_length = tryparseint(genparams.get('max_context_length', maxctx),maxctx)
     max_length = tryparseint(genparams.get('max_length', args.defaultgenamt),args.defaultgenamt)
     temperature = tryparsefloat(genparams.get('temperature', adapter_obj.get("temperature", 0.75)),0.75)
@@ -1468,6 +1471,11 @@ def generate(genparams, stream_flag=False):
             inputs.images[n] = "".encode("UTF-8")
         else:
             inputs.images[n] = images[n].encode("UTF-8")
+    for n in range(audio_max):
+        if not audio or n >= len(audio):
+            inputs.audio[n] = "".encode("UTF-8")
+        else:
+            inputs.audio[n] = audio[n].encode("UTF-8")
     global showmaxctxwarning
     if max_context_length > maxctx:
         if showmaxctxwarning:

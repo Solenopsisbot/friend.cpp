@@ -3,6 +3,7 @@
 
 const int tensor_split_max = 16;
 const int images_max = 8;
+const int audio_max = 4;
 const int logprobs_max = 5;
 
 // match kobold's sampler list and order
@@ -83,6 +84,7 @@ struct generation_inputs
     const char * negative_prompt = nullptr;
     const float guidance_scale = 1;
     const char * images[images_max] = {};
+    const char * audio[audio_max] = {};
     const int max_context_length = 0;
     const int max_length = 0;
     const float temperature = 0.0f;

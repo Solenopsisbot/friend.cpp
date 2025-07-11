@@ -90,10 +90,10 @@ endif
 CUBLASLD_FLAGS =
 CUBLAS_OBJS =
 
-OBJS_FULL += ggml-alloc.o ggml-cpu-traits.o ggml-quants.o ggml-cpu-quants.o kcpp-quantmapper.o ggml-repack.o kcpp-repackmapper.o unicode.o unicode-data.o ggml-threading.o ggml-cpu-cpp.o gguf.o sgemm.o common.o sampling.o kcpputils.o
-OBJS_SIMPLE += ggml-alloc.o ggml-cpu-traits.o ggml-quants_noavx2.o ggml-cpu-quants.o kcpp-quantmapper_noavx2.o ggml-repack.o kcpp-repackmapper_noavx2.o unicode.o unicode-data.o ggml-threading.o ggml-cpu-cpp.o gguf.o sgemm_noavx2.o common.o sampling.o kcpputils.o
-OBJS_SIMPLER += ggml-alloc.o ggml-cpu-traits.o ggml-quants_noavx1.o ggml-cpu-quants.o kcpp-quantmapper_noavx1.o ggml-repack.o kcpp-repackmapper_noavx1.o unicode.o unicode-data.o ggml-threading.o ggml-cpu-cpp.o gguf.o sgemm_noavx1.o common.o sampling.o kcpputils.o
-OBJS_FAILSAFE += ggml-alloc.o ggml-cpu-traits.o ggml-quants_failsafe.o ggml-cpu-quants.o kcpp-quantmapper_failsafe.o ggml-repack.o kcpp-repackmapper_failsafe.o unicode.o unicode-data.o ggml-threading.o ggml-cpu-cpp.o gguf.o sgemm_failsafe.o common.o sampling.o kcpputils.o
+OBJS_FULL += ggml-alloc.o ggml-cpu-traits.o ggml-quants.o ggml-cpu-quants.o kcpp-quantmapper.o ggml-repack.o kcpp-repackmapper.o unicode.o unicode-data.o ggml-threading.o ggml-cpu-cpp.o gguf.o sgemm.o common.o sampling.o kcpputils.o mtmdaudio.o
+OBJS_SIMPLE += ggml-alloc.o ggml-cpu-traits.o ggml-quants_noavx2.o ggml-cpu-quants.o kcpp-quantmapper_noavx2.o ggml-repack.o kcpp-repackmapper_noavx2.o unicode.o unicode-data.o ggml-threading.o ggml-cpu-cpp.o gguf.o sgemm_noavx2.o common.o sampling.o kcpputils.o mtmdaudio.o
+OBJS_SIMPLER += ggml-alloc.o ggml-cpu-traits.o ggml-quants_noavx1.o ggml-cpu-quants.o kcpp-quantmapper_noavx1.o ggml-repack.o kcpp-repackmapper_noavx1.o unicode.o unicode-data.o ggml-threading.o ggml-cpu-cpp.o gguf.o sgemm_noavx1.o common.o sampling.o kcpputils.o mtmdaudio.o
+OBJS_FAILSAFE += ggml-alloc.o ggml-cpu-traits.o ggml-quants_failsafe.o ggml-cpu-quants.o kcpp-quantmapper_failsafe.o ggml-repack.o kcpp-repackmapper_failsafe.o unicode.o unicode-data.o ggml-threading.o ggml-cpu-cpp.o gguf.o sgemm_failsafe.o common.o sampling.o kcpputils.o mtmdaudio.o
 
 # OS specific
 ifeq ($(UNAME_S),Linux)
@@ -565,6 +565,8 @@ ggml-cpu-cpp.o: ggml/src/ggml-cpu/ggml-cpu.cpp ggml/include/ggml.h ggml/src/ggml
 gguf.o: ggml/src/gguf.cpp ggml/include/gguf.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 kcpputils.o: otherarch/utils.cpp otherarch/utils.h
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+mtmdaudio.o: tools/mtmd/mtmd-audio.cpp tools/mtmd/mtmd-audio.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 #these have special gpu defines
