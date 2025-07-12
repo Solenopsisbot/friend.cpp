@@ -454,7 +454,7 @@ bool audio_embd_make_with_clip_img(clip_ctx * ctx_clip, int n_threads, const whi
     batch_f32.entries.push_back(std::move(mel_f32));
 
     int n_mmproj_embd = clip_n_mmproj_embd(ctx_clip);
-    float * audio_embd = (float *)malloc(n_tokens * n_mmproj_embd);
+    float * audio_embd = (float *)malloc(n_tokens * n_mmproj_embd * sizeof(float));
     bool ok = clip_image_batch_encode(
         ctx_clip,
         n_threads,
@@ -462,5 +462,5 @@ bool audio_embd_make_with_clip_img(clip_ctx * ctx_clip, int n_threads, const whi
         audio_embd);
     *image_embd_out = audio_embd;
     *n_img_pos_out = n_tokens;
-    return ok ? 0 : 1;
+    return ok;
 }

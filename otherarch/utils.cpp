@@ -548,7 +548,7 @@ kcpp_embd_batch::kcpp_embd_batch(std::vector<llama_token> & tokens, int32_t npas
             batch.seq_id  [i] = seq_id_0.data();
             batch.logits  [i] = (return_all_logits?true:false);
         }
-            for (int j = 0; j < batch.n_tokens * 3; j++) {
+        for (int j = 0; j < batch.n_tokens * 3; j++) {
             batch.pos[j] = npast + (j % batch.n_tokens);
         }
     }

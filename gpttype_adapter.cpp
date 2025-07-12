@@ -3089,7 +3089,7 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_sep
                     } else {
                         if(debugmode==1 && !is_quiet)
                         {
-                            printf("\nAudio Clip Embed Chunk %i used Tokens: %d",i,chunk.clp_image_tokens);
+                            printf("\nAudio Clip %i Embed Chunk used Tokens: %d",i,chunk.clp_image_tokens);
                         }
                         total_chunk_tokens += chunk.clp_image_tokens;
                         media_objects[i].mediachunks.push_back(chunk);
@@ -3480,7 +3480,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     TokenizeString(kcpp_data->prompt, embd_inp, file_format, add_bos_token);
     bool use_mrope = (file_format == FileFormat::GGUF_GENERIC && file_format_meta.model_architecture == GGUFArch::ARCH_QWEN2VL);
     TokenizeString("\n\n", media_sep, file_format, false);
-    TokenizeString("\nImages:\n", media_intro, file_format, false);
+    TokenizeString("\nAttached Media:\n", media_intro, file_format, false);
 
     if(media_composite_image_signature=="")
     {
