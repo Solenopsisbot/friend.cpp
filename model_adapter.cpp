@@ -324,6 +324,10 @@ void print_tok_vec(std::vector<float> &embd)
             {
                 fileformatmeta->model_architecture = GGUFArch::ARCH_MAMBA;
             }
+            else if(modelarch=="jamba")
+            {
+                fileformatmeta->model_architecture = GGUFArch::ARCH_JAMBA;
+            }
             else if(modelarch=="llama" && freq_base_train==10000.0f && (n_tensors==435 || n_tensors==611))
             {
                 fileformatmeta->model_architecture = GGUFArch::ARCH_SOLAR;
