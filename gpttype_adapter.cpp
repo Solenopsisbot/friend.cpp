@@ -57,6 +57,7 @@ std::string mmproj_filename = "";
 std::string draftmodel_filename = "";
 int speculative_chunk_amt = 8; //do it in chunks of this many tokens
 bool generation_finished;
+bool audio_multimodal_supported = false;
 float last_process_time = 0;
 float last_eval_time = 0;
 int last_token_count = 0;
@@ -1980,6 +1981,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     debugmode = inputs.debugmode;
     draft_ctx = nullptr;
     guidance_ctx = nullptr;
+    audio_multimodal_supported = false;
 
     auto clamped_max_context_length = inputs.max_context_length;
 
@@ -2459,6 +2461,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
                     // TODO @ngxson : check if model n_mel is 128 or 80
                     w_filters = whisper_precalc_filters::get_128_bins();
                 }
+                audio_multimodal_supported = true;
             }
             clp_img_data = clip_image_u8_init();
         }
@@ -3057,7 +3060,7 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_sep
                     }
                     else
                     {
-                        printf("\nWarning: LLAVA Image excluded - Context size too low or not enough clip tokens! (needed %d)\n",cliptokensneeded);
+                        printf("\nWarning: Vision Image excluded - Context size too low or not enough clip tokens! (needed %d)\nImage will be IGNORED! You probably want to relaunch with a larger context size!\n",cliptokensneeded);
                     }
                     media_objects[i].mediachunks.push_back(chunk);
                 }
@@ -3110,7 +3113,7 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_sep
                 }
                 else
                 {
-                    printf("\nWarning: Audio Embd excluded - Context size too low or not enough clip tokens! (needed %d)\n",cliptokensneeded);
+                    printf("\nWarning: Audio Embd excluded - Context size too low or not enough clip tokens! (needed %d)\nAudio will be IGNORED! You probably want to relaunch with a larger context size!\n",cliptokensneeded);
                 }
 
             }
