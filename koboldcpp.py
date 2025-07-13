@@ -81,7 +81,7 @@ password = "" #if empty, no auth key required
 fullwhispermodelpath = "" #if empty, it's not initialized
 ttsmodelpath = "" #if empty, not initialized
 embeddingsmodelpath = "" #if empty, not initialized
-maxctx = 4096
+maxctx = 8192
 maxhordectx = 0 #set to whatever maxctx is if 0
 maxhordelen = 512
 modelbusy = threading.Lock()
@@ -459,7 +459,7 @@ lib_vulkan_noavx2 = pick_existant_file("koboldcpp_vulkan_noavx2.dll","koboldcpp_
 libname = ""
 lib_option_pairs = [
     (lib_default, "Use CPU"),
-    (lib_cublas, "Use CuBLAS"),
+    (lib_cublas, "Use CUDA"),
     (lib_hipblas, "Use hipBLAS (ROCm)"),
     (lib_vulkan, "Use Vulkan"),
     (lib_clblast, "Use CLBlast"),
@@ -490,7 +490,7 @@ def init_library():
             libname = lib_failsafe
         elif file_exists(lib_noavx2):
             libname = lib_noavx2
-    elif (args.usecublas is not None):
+    elif (args.usecuda is not None):
         if file_exists(lib_cublas):
             libname = lib_cublas
         elif file_exists(lib_hipblas):
@@ -598,34 +598,34 @@ def set_backend_props(inputs):
     if(args.maingpu is not None and args.maingpu>=0):
         inputs.kcpp_main_gpu = args.maingpu
 
-    if args.usecublas:
+    if args.usecuda:
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     if not args.tensor_split:
-        if (args.usecublas and "0" in args.usecublas):
+        if (args.usecuda and "0" in args.usecuda):
             os.environ["CUDA_VISIBLE_DEVICES"] = "0"
             os.environ["HIP_VISIBLE_DEVICES"] = "0"
             inputs.kcpp_main_gpu = 0
-        elif (args.usecublas and "1" in args.usecublas):
+        elif (args.usecuda and "1" in args.usecuda):
             os.environ["CUDA_VISIBLE_DEVICES"] = "1"
             os.environ["HIP_VISIBLE_DEVICES"] = "1"
             inputs.kcpp_main_gpu = 0
-        elif (args.usecublas and "2" in args.usecublas):
+        elif (args.usecuda and "2" in args.usecuda):
             os.environ["CUDA_VISIBLE_DEVICES"] = "2"
             os.environ["HIP_VISIBLE_DEVICES"] = "2"
             inputs.kcpp_main_gpu = 0
-        elif (args.usecublas and "3" in args.usecublas):
+        elif (args.usecuda and "3" in args.usecuda):
             os.environ["CUDA_VISIBLE_DEVICES"] = "3"
             os.environ["HIP_VISIBLE_DEVICES"] = "3"
             inputs.kcpp_main_gpu = 0
     else:
         if(args.maingpu is None or args.maingpu<0):
-            if (args.usecublas and "0" in args.usecublas):
+            if (args.usecuda and "0" in args.usecuda):
                 inputs.kcpp_main_gpu = 0
-            elif (args.usecublas and "1" in args.usecublas):
+            elif (args.usecuda and "1" in args.usecuda):
                 inputs.kcpp_main_gpu = 1
-            elif (args.usecublas and "2" in args.usecublas):
+            elif (args.usecuda and "2" in args.usecuda):
                 inputs.kcpp_main_gpu = 2
-            elif (args.usecublas and "3" in args.usecublas):
+            elif (args.usecuda and "3" in args.usecuda):
                 inputs.kcpp_main_gpu = 3
 
     if args.usevulkan: #is an empty array if using vulkan without defined gpu
@@ -1312,9 +1312,9 @@ def auto_set_backend_cli():
             args.noavx2 = True
             args.failsafe = True
 
-    if eligible_cuda and exitcounter < 100 and MaxMemory[0]>3500000000 and (("Use CuBLAS" in runopts and CUDevicesNames[0]!="") or "Use hipBLAS (ROCm)" in runopts) and any(CUDevicesNames):
-        if "Use CuBLAS" in runopts or "Use hipBLAS (ROCm)" in runopts:
-            args.usecublas = ["normal","mmq"]
+    if eligible_cuda and exitcounter < 100 and MaxMemory[0]>3500000000 and (("Use CUDA" in runopts and CUDevicesNames[0]!="") or "Use hipBLAS (ROCm)" in runopts) and any(CUDevicesNames):
+        if "Use CUDA" in runopts or "Use hipBLAS (ROCm)" in runopts:
+            args.usecuda = ["normal","mmq"]
             print(f"Auto Selected CUDA Backend (flag={cpusupport})\n")
             found_new_backend = True
     elif exitcounter < 100 and (1 in VKIsDGPU) and ("Use Vulkan" in runopts or "Use Vulkan (Old CPU)" in runopts):
@@ -1333,9 +1333,9 @@ def load_model(model_filename):
     inputs.model_filename = model_filename.encode("UTF-8")
     inputs.max_context_length = maxctx #initial value to use for ctx, can be overwritten
     inputs.threads = args.threads
-    inputs.low_vram = (True if (args.usecublas and "lowvram" in args.usecublas) else False)
-    inputs.use_mmq = (True if (args.usecublas and "nommq" not in args.usecublas) else False)
-    inputs.use_rowsplit = (True if (args.usecublas and "rowsplit" in args.usecublas) else False)
+    inputs.low_vram = (True if (args.usecuda and "lowvram" in args.usecuda) else False)
+    inputs.use_mmq = (True if (args.usecuda and "nommq" not in args.usecuda) else False)
+    inputs.use_rowsplit = (True if (args.usecuda and "rowsplit" in args.usecuda) else False)
     inputs.vulkan_info = "0".encode("UTF-8")
     inputs.blasthreads = args.blasthreads
     inputs.use_mmap = args.usemmap
@@ -4375,7 +4375,7 @@ def show_gui():
 
     if not any(runopts):
         exitcounter = 999
-        exit_with_error(2,"KoboldCPP couldn't locate any backends to use (i.e Default, Vulkan, CLBlast, CuBLAS).\n\nTo use the program, please run the 'make' command from the directory.","No Backends Available!")
+        exit_with_error(2,"KoboldCPP couldn't locate any backends to use (i.e Default, Vulkan, CLBlast, CUDA).\n\nTo use the program, please run the 'make' command from the directory.","No Backends Available!")
 
     # Vars - should be in scope to be used by multiple widgets
     gpulayers_var = ctk.StringVar(value="-1")
@@ -4731,9 +4731,9 @@ def show_gui():
 
         #autopick cublas if suitable, requires at least 3.5GB VRAM to auto pick
         #we do not want to autoselect hip/cublas if the user has already changed their desired backend!
-        if eligible_cuda and exitcounter < 100 and MaxMemory[0]>3500000000 and (("Use CuBLAS" in runopts and CUDevicesNames[0]!="") or "Use hipBLAS (ROCm)" in runopts) and (any(CUDevicesNames) or any(CLDevicesNames)) and runmode_untouched:
-            if "Use CuBLAS" in runopts:
-                runopts_var.set("Use CuBLAS")
+        if eligible_cuda and exitcounter < 100 and MaxMemory[0]>3500000000 and (("Use CUDA" in runopts and CUDevicesNames[0]!="") or "Use hipBLAS (ROCm)" in runopts) and (any(CUDevicesNames) or any(CLDevicesNames)) and runmode_untouched:
+            if "Use CUDA" in runopts:
+                runopts_var.set("Use CUDA")
                 gpu_choice_var.set("1")
                 print(f"Auto Selected CUDA Backend (flag={cpusupport})\n")
                 found_new_backend = True
@@ -4798,7 +4798,7 @@ def show_gui():
         predicted_gpu_layers = autoset_gpu_layers(int(contextsize_text[context_var.get()]),(sd_quant_var.get()==1),int(blasbatchsize_values[int(blas_size_var.get())]),(quantkv_var.get() if flashattention_var.get()==1 else 0))
         max_gpu_layers = (f"/{modelfile_extracted_meta[1][0]+3}" if (modelfile_extracted_meta and modelfile_extracted_meta[1] and modelfile_extracted_meta[1][0]!=0) else "")
         index = runopts_var.get()
-        gpu_be = (index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CLBlast" or index == "Use CLBlast (Old CPU)" or index == "Use CLBlast (Older CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)")
+        gpu_be = (index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CLBlast" or index == "Use CLBlast (Old CPU)" or index == "Use CLBlast (Older CPU)" or index == "Use CUDA" or index == "Use hipBLAS (ROCm)")
         layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
         quick_layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
         if sys.platform=="darwin" and gpulayers_var.get()=="-1":
@@ -4885,7 +4885,7 @@ def show_gui():
         global runmode_untouched
         runmode_untouched = False
         index = runopts_var.get()
-        if index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CLBlast"  or index == "Use CLBlast (Old CPU)" or index == "Use CLBlast (Older CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
+        if index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CLBlast"  or index == "Use CLBlast (Old CPU)" or index == "Use CLBlast (Older CPU)" or index == "Use CUDA" or index == "Use hipBLAS (ROCm)":
             quick_gpuname_label.grid(row=3, column=1, padx=75, sticky="W")
             gpuname_label.grid(row=3, column=1, padx=75, sticky="W")
             gpu_selector_label.grid(row=3, column=0, padx = 8, pady=1, stick="nw")
@@ -4899,7 +4899,7 @@ def show_gui():
                 maingpu_entry.grid_remove()
                 if gpu_choice_var.get()=="All":
                     gpu_choice_var.set("1")
-            elif index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
+            elif index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CUDA" or index == "Use hipBLAS (ROCm)":
                 gpu_selector_box.grid_remove()
                 quick_gpu_selector_box.grid_remove()
                 CUDA_gpu_selector_box.grid(row=3, column=1, padx=8, pady=1, stick="nw")
@@ -4918,7 +4918,7 @@ def show_gui():
             maingpu_label.grid_remove()
             maingpu_entry.grid_remove()
 
-        if index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
+        if index == "Use CUDA" or index == "Use hipBLAS (ROCm)":
             lowvram_box.grid(row=4, column=0, padx=8, pady=1,  stick="nw")
             mmq_box.grid(row=4, column=1, padx=8, pady=1,  stick="nw")
             quick_mmq_box.grid(row=4, column=1, padx=8, pady=1,  stick="nw")
@@ -4937,7 +4937,7 @@ def show_gui():
             tensor_split_label.grid(row=8, column=0, padx = 8, pady=1, stick="nw")
             tensor_split_entry.grid(row=8, column=1, padx=8, pady=1, stick="nw")
 
-        if index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CLBlast" or index == "Use CLBlast (Old CPU)" or index == "Use CLBlast (Older CPU)" or index == "Use CuBLAS" or index == "Use hipBLAS (ROCm)":
+        if index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CLBlast" or index == "Use CLBlast (Old CPU)" or index == "Use CLBlast (Older CPU)" or index == "Use CUDA" or index == "Use hipBLAS (ROCm)":
             gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
             gpu_layers_entry.grid(row=6, column=1, padx=8, pady=1, stick="nw")
             quick_gpu_layers_label.grid(row=6, column=0, padx = 8, pady=1, stick="nw")
@@ -4956,7 +4956,7 @@ def show_gui():
         changed_gpu_choice_var()
 
     # presets selector
-    makelabel(quick_tab, "Backend:", 1,0,"Select a backend to use.\nCuBLAS runs on Nvidia GPUs, and is much faster.\nVulkan and CLBlast works on all GPUs but is somewhat slower.\nOtherwise, runs on CPU only.\nNoAVX2 and Failsafe modes support older PCs.")
+    makelabel(quick_tab, "Backend:", 1,0,"Select a backend to use.\nCUDA runs on Nvidia GPUs, and is much faster.\nVulkan and CLBlast works on all GPUs but is somewhat slower.\nOtherwise, runs on CPU only.\nNoAVX2 and Failsafe modes support older PCs.")
 
     runoptbox = ctk.CTkComboBox(quick_tab, values=runopts, width=190,variable=runopts_var, state="readonly")
     runoptbox.grid(row=1, column=1,padx=8, stick="nw")
@@ -4993,7 +4993,7 @@ def show_gui():
     makecheckbox(quick_tab, "Use FlashAttention", flashattention_var, 22, 1, tooltiptxt="Enable flash attention for GGUF models.")
 
     # context size
-    makeslider(quick_tab, "Context Size:", contextsize_text, context_var, 0, len(contextsize_text)-1, 30, width=280, set=5,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
+    makeslider(quick_tab, "Context Size:", contextsize_text, context_var, 0, len(contextsize_text)-1, 30, width=280, set=7,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
 
     # load model
     makefileentry(quick_tab, "GGUF Text Model:", "Select GGUF or GGML Model File", model_var, 40, 280, onchoosefile=on_picked_model_file,tooltiptxt="Select a GGUF or GGML model file on disk to be loaded.")
@@ -5004,7 +5004,7 @@ def show_gui():
     hardware_tab = tabcontent["Hardware"]
 
     # presets selector
-    makelabel(hardware_tab, "Backend:", 1,0,"Select a backend to use.\nCuBLAS runs on Nvidia GPUs, and is much faster.\nVulkan and CLBlast works on all GPUs but is somewhat slower.\nOtherwise, runs on CPU only.\nNoAVX2 and Failsafe modes support older PCs.")
+    makelabel(hardware_tab, "Backend:", 1,0,"Select a backend to use.\nCUDA runs on Nvidia GPUs, and is much faster.\nVulkan and CLBlast works on all GPUs but is somewhat slower.\nOtherwise, runs on CPU only.\nNoAVX2 and Failsafe modes support older PCs.")
     runoptbox = ctk.CTkComboBox(hardware_tab, values=runopts,  width=180,variable=runopts_var, state="readonly")
     runoptbox.grid(row=1, column=1,padx=8, stick="nw")
     runoptbox.set(runopts[0]) # Set to first available option
@@ -5067,7 +5067,7 @@ def show_gui():
     makecheckbox(tokens_tab, "Use Sliding Window Attention (SWA)", swa_var, 4,tooltiptxt="Allows Sliding Window Attention (SWA) KV Cache, which saves memory but cannot be used with context shifting.", command=toggleswa)
 
     # context size
-    makeslider(tokens_tab, "Context Size:",contextsize_text, context_var, 0, len(contextsize_text)-1, 18, width=280, set=5,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
+    makeslider(tokens_tab, "Context Size:",contextsize_text, context_var, 0, len(contextsize_text)-1, 18, width=280, set=7,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
     context_var.trace_add("write", changed_gpulayers_estimate)
     makelabelentry(tokens_tab, "Default Gen Amt:", defaultgenamt_var, row=20, padx=120, singleline=True, tooltip="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.")
 
@@ -5316,7 +5316,7 @@ def show_gui():
         gpuchoiceidx = 0
         args.usecpu = False
         args.usevulkan = None
-        args.usecublas = None
+        args.usecuda = None
         args.useclblast = None
         args.noavx2 = False
         if gpu_choice_var.get()!="All":
@@ -5328,17 +5328,17 @@ def show_gui():
             elif runopts_var.get() == "Use CLBlast (Older CPU)":
                 args.noavx2 = True
                 args.failsafe = True
-        if runopts_var.get() == "Use CuBLAS" or runopts_var.get() == "Use hipBLAS (ROCm)":
+        if runopts_var.get() == "Use CUDA" or runopts_var.get() == "Use hipBLAS (ROCm)":
             if gpu_choice_var.get()=="All":
-                args.usecublas = ["lowvram"] if lowvram_var.get() == 1 else ["normal"]
+                args.usecuda = ["lowvram"] if lowvram_var.get() == 1 else ["normal"]
             else:
-                args.usecublas = ["lowvram",str(gpuchoiceidx)] if lowvram_var.get() == 1 else ["normal",str(gpuchoiceidx)]
+                args.usecuda = ["lowvram",str(gpuchoiceidx)] if lowvram_var.get() == 1 else ["normal",str(gpuchoiceidx)]
             if mmq_var.get()==1:
-                args.usecublas.append("mmq")
+                args.usecuda.append("mmq")
             else:
-                args.usecublas.append("nommq")
+                args.usecuda.append("nommq")
             if rowsplit_var.get()==1:
-                args.usecublas.append("rowsplit")
+                args.usecuda.append("rowsplit")
         if runopts_var.get() == "Use Vulkan" or runopts_var.get() == "Use Vulkan (Old CPU)":
             if gpu_choice_var.get()=="All":
                 args.usevulkan = []
@@ -5519,18 +5519,18 @@ def show_gui():
                 if clblast_option is not None:
                     runopts_var.set(clblast_option)
                     gpu_choice_var.set(str(["0 0", "1 0", "0 1", "1 1"].index(str(dict["useclblast"][0]) + " " + str(dict["useclblast"][1])) + 1))
-        elif "usecublas" in dict and dict["usecublas"]:
+        elif "usecuda" in dict and dict["usecuda"]:
             if cublas_option is not None or hipblas_option is not None:
                 if cublas_option:
                     runopts_var.set(cublas_option)
                 elif hipblas_option:
                     runopts_var.set(hipblas_option)
-                lowvram_var.set(1 if "lowvram" in dict["usecublas"] else 0)
-                mmq_var.set(1 if "mmq" in dict["usecublas"] else 0)
-                rowsplit_var.set(1 if "rowsplit" in dict["usecublas"] else 0)
+                lowvram_var.set(1 if "lowvram" in dict["usecuda"] else 0)
+                mmq_var.set(1 if "mmq" in dict["usecuda"] else 0)
+                rowsplit_var.set(1 if "rowsplit" in dict["usecuda"] else 0)
                 gpu_choice_var.set("All")
                 for g in range(4):
-                    if str(g) in dict["usecublas"]:
+                    if str(g) in dict["usecuda"]:
                         gpu_choice_var.set(str(g+1))
                         break
         elif "usevulkan" in dict and dict['usevulkan'] is not None:
@@ -5997,6 +5997,8 @@ def convert_invalid_args(args):
     dict = args
     if isinstance(args, argparse.Namespace):
         dict = vars(args)
+    if "usecuda" not in dict and "usecublas" in dict and dict["usecublas"]:
+        dict["usecuda"] = dict["usecublas"]
     if "sdconfig" in dict and dict["sdconfig"] and len(dict["sdconfig"])>0:
         dict["sdmodel"] = dict["sdconfig"][0]
         if dict["sdconfig"] and len(dict["sdconfig"]) > 1:
@@ -6149,7 +6151,7 @@ def load_config_cli(filename):
                 setattr(args, key, value)
         if args.istemplate:
             print("\nA .kcppt template was selected from CLI...")
-            if (args.usecublas is None) and (args.usevulkan is None) and (args.useclblast is None):
+            if (args.usecuda is None) and (args.usevulkan is None) and (args.useclblast is None):
                 print("Automatically selecting your backend...")
                 auto_set_backend_cli()
 
@@ -6166,7 +6168,7 @@ def convert_args_to_template(savdict):
     savdict["debugmode"] = 0
     savdict["ssl"] = None
     savdict["useclblast"] = None
-    savdict["usecublas"] = None
+    savdict["usecuda"] = None
     savdict["usevulkan"] = None
     savdict["usecpu"] = None
     savdict["tensor_split"] = None
@@ -6812,7 +6814,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         global maxctx
         maxctx = args.contextsize
 
-    args.defaultgenamt = max(128, min(args.defaultgenamt, 4096))
+    args.defaultgenamt = max(128, min(args.defaultgenamt, 8192))
     args.defaultgenamt = min(args.defaultgenamt, maxctx / 2)
 
     if args.port_param!=defaultport:
@@ -6847,14 +6849,14 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             print("MacOS detected: Auto GPU layers set to maximum")
             args.gpulayers = 200
         elif not shouldavoidgpu and args.model_param and os.path.exists(args.model_param):
-            if (args.usecublas is None) and (args.usevulkan is None) and (args.useclblast is None):
+            if (args.usecuda is None) and (args.usevulkan is None) and (args.useclblast is None):
                 print("No GPU or CPU backend was selected. Trying to assign one for you automatically...")
                 auto_set_backend_cli()
             if MaxMemory[0] == 0: #try to get gpu vram for cuda if not picked yet
                 fetch_gpu_properties(False,True,True)
                 pass
             if args.gpulayers==-1:
-                if MaxMemory[0] > 0 and (not args.usecpu) and ((args.usecublas is not None) or (args.usevulkan is not None) or (args.useclblast is not None) or sys.platform=="darwin"):
+                if MaxMemory[0] > 0 and (not args.usecpu) and ((args.usecuda is not None) or (args.usevulkan is not None) or (args.useclblast is not None) or sys.platform=="darwin"):
                     extract_modelfile_params(args.model_param,args.sdmodel,args.whispermodel,args.mmproj,args.draftmodel,args.ttsmodel if args.ttsgpu else "",args.embeddingsmodel if args.embeddingsgpu else "")
                     layeramt = autoset_gpu_layers(args.contextsize,args.sdquant,args.blasbatchsize,(args.quantkv if args.flashattention else 0))
                     print(f"Auto Recommended GPU Layers: {layeramt}")
@@ -7279,7 +7281,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 s_pp = float(benchmaxctx-benchlen)/t_pp
                 s_gen = float(benchlen)/t_gen
                 datetimestamp = datetime.now(timezone.utc)
-                benchflagstr = f"NoAVX2={args.noavx2} Threads={args.threads} HighPriority={args.highpriority} Cublas_Args={args.usecublas} Tensor_Split={args.tensor_split} BlasThreads={args.blasthreads} BlasBatchSize={args.blasbatchsize} FlashAttention={args.flashattention} KvCache={args.quantkv}"
+                benchflagstr = f"NoAVX2={args.noavx2} Threads={args.threads} HighPriority={args.highpriority} Cuda_Args={args.usecuda} Tensor_Split={args.tensor_split} BlasThreads={args.blasthreads} BlasBatchSize={args.blasbatchsize} FlashAttention={args.flashattention} KvCache={args.quantkv}"
                 print(f"\nBenchmark Completed - v{KcppVersion} Results:\n======")
                 print(f"Flags: {benchflagstr}")
                 print(f"Timestamp: {datetimestamp}")
@@ -7347,11 +7349,11 @@ if __name__ == '__main__':
 
     parser.add_argument("--threads", metavar=('[threads]'), help="Use a custom number of threads if specified. Otherwise, uses an amount based on CPU cores", type=int, default=get_default_threads())
     compatgroup = parser.add_mutually_exclusive_group()
-    compatgroup.add_argument("--usecublas", "--usehipblas", help="Use CuBLAS for GPU Acceleration. Requires CUDA. Select lowvram to not allocate VRAM scratch buffer. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs. For hipBLAS binaries, please check YellowRoseCx rocm fork.", nargs='*',metavar=('[lowvram|normal] [main GPU ID] [mmq|nommq] [rowsplit]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'all', 'mmq', 'nommq', 'rowsplit'])
+    compatgroup.add_argument("--usecuda", "--usecublas", "--usehipblas", help="Use CUDA for GPU Acceleration. Requires CUDA. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs.", nargs='*',metavar=('[lowvram|normal] [main GPU ID] [mmq|nommq] [rowsplit]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'all', 'mmq', 'nommq', 'rowsplit'])
     compatgroup.add_argument("--usevulkan", help="Use Vulkan for GPU Acceleration. Can optionally specify one or more GPU Device ID (e.g. --usevulkan 0), leave blank to autodetect.", metavar=('[Device IDs]'), nargs='*', type=int, default=None)
     compatgroup.add_argument("--useclblast", help="Use CLBlast for GPU Acceleration. Must specify exactly 2 arguments, platform ID and device ID (e.g. --useclblast 1 0).", type=int, choices=range(0,9), nargs=2)
     compatgroup.add_argument("--usecpu", help="Do not use any GPU acceleration (CPU Only)", action='store_true')
-    parser.add_argument("--contextsize", help="Controls the memory allocated for maximum context size, only change if you need more RAM for big contexts. (default 4096).",metavar=('[256 to 262144]'), type=check_range(int,256,262144), default=4096)
+    parser.add_argument("--contextsize", help="Controls the memory allocated for maximum context size, only change if you need more RAM for big contexts. (default 8192).",metavar=('[256 to 262144]'), type=check_range(int,256,262144), default=8192)
     parser.add_argument("--gpulayers", help="Set number of layers to offload to GPU when using GPU. Requires GPU. Set to -1 to try autodetect, set to 0 to disable GPU offload.",metavar=('[GPU layers]'), nargs='?', const=1, type=int, default=-1)
     parser.add_argument("--tensor_split", help="For CUDA and Vulkan only, ratio to split tensors across multiple GPUs, space-separated list of proportions, e.g. 7 3", metavar=('[Ratios]'), type=float, nargs='+')
 
@@ -7409,7 +7411,7 @@ if __name__ == '__main__':
     advparser.add_argument("--exporttemplate", help="Exports the current selected arguments as a .kcppt template file", metavar=('[filename]'), type=str, default="")
     advparser.add_argument("--nomodel", help="Allows you to launch the GUI alone, without selecting any model.", action='store_true')
     advparser.add_argument("--moeexperts", metavar=('[num of experts]'), help="How many experts to use for MoE models (default=follow gguf)", type=int, default=-1)
-    advparser.add_argument("--defaultgenamt", help="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.", type=check_range(int,64,4096), default=512)
+    advparser.add_argument("--defaultgenamt", help="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.", type=check_range(int,64,8192), default=512)
     advparser.add_argument("--nobostoken", help="Prevents BOS token from being added at the start of any prompt. Usually NOT recommended for most models.", action='store_true')
     advparser.add_argument("--enableguidance", help="Enables the use of Classifier-Free-Guidance, which allows the use of negative prompts. Has performance and memory impact.", action='store_true')
     advparser.add_argument("--maxrequestsize", metavar=('[size in MB]'), help="Specify a max request payload size. Any requests to the server larger than this size will be dropped. Do not change if unsure.", type=int, default=32)
