@@ -6219,7 +6219,8 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
         input_url = input_url.replace("/blob/main/", "/resolve/main/")
     if output_filename == "auto":
         output_filename = os.path.basename(input_url).split('?')[0].split('#')[0]
-    if os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size:
+    incomplete_dl_exist = (os.path.exists(output_filename+".aria2") and os.path.getsize(output_filename+".aria2") > 16)
+    if os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size and not incomplete_dl_exist:
         print(f"{output_filename} already exists, using existing file.")
         return output_filename
     print(f"Downloading {input_url}", flush=True)
@@ -6232,7 +6233,7 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
             if os.path.exists(a2cexe): #on windows try using embedded a2cexe
                 rc = subprocess.run([
                         a2cexe, "-x", "16", "-s", "16", "--summary-interval=15", "--console-log-level=error", "--log-level=error",
-                        "--download-result=default", "--allow-overwrite=true", "--file-allocation=none", "--max-tries=3", "-o", output_filename, input_url
+                        "--download-result=default", "--continue=true", "--allow-overwrite=true", "--file-allocation=none", "--max-tries=3", "-o", output_filename, input_url
                     ], capture_output=capture_output, text=True, check=True, encoding='utf-8')
                 dl_success = (rc.returncode == 0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
     except subprocess.CalledProcessError as e:
