@@ -2830,6 +2830,18 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                         tokenStr = tokenStr[:sindex]
 
                         if tokenStr!="" or streamDone:
+                            need_split_final_msg = True if (currfinishreason is not None and streamDone and tokenStr!="") else False
+                            if need_split_final_msg: #we need to send one message without the finish reason, then send a finish reason with no msg to follow standards
+                                if api_format == 4:  # if oai chat, set format to expected openai streaming response
+                                    event_str = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"delta":{'role':'assistant','content':tokenStr}}]})
+                                    await self.send_oai_sse_event(event_str)
+                                elif api_format == 3:  # non chat completions
+                                    event_str = json.dumps({"id":"koboldcpp","object":"text_completion","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"text":tokenStr}]})
+                                    await self.send_oai_sse_event(event_str)
+                                else:
+                                    event_str = json.dumps({"token": tokenStr, "finish_reason":None})
+                                    await self.send_kai_sse_event(event_str)
+                                tokenStr = "" # now the final finish reason can be sent alone
                             if api_format == 4:  # if oai chat, set format to expected openai streaming response
                                 event_str = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":currfinishreason,"delta":{'role':'assistant','content':tokenStr}}]})
                                 await self.send_oai_sse_event(event_str)
