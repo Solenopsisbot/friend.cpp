@@ -2333,6 +2333,15 @@ ws ::= | " " | "\n" [ \t]{0,20}
                     # In case of any issues, just do normal gen
                     print("Structured Output not valid - discarded")
                     pass
+            elif 'json_schema' in genparams:
+                try:
+                    schema = genparams.get('json_schema')
+                    decoded = convert_json_to_gbnf(schema)
+                    if decoded:
+                        genparams["grammar"] = decoded
+                except Exception:
+                    print("Structured Output (old format) not valid - discarded")
+                    pass
 
             message_index = 0
             for message in messages_array:
