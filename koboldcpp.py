@@ -6135,6 +6135,7 @@ def setuptunnel(global_memory, has_sd):
 def reload_from_new_args(newargs):
     try:
         args.istemplate = False
+        newargs = convert_invalid_args(newargs)
         for key, value in newargs.items(): #do not overwrite certain values
             if key not in ["remotetunnel","showgui","port","host","port_param","admin","adminpassword","admindir","ssl","nocertify","benchmark","prompt","config"]:
                 setattr(args, key, value)
@@ -6160,6 +6161,7 @@ def load_config_cli(filename):
     print("Loading .kcpps configuration file...")
     with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
         config = json.load(f)
+        config = convert_invalid_args(config)
         if "onready" in config:
             config["onready"] = "" #do not allow onready commands from config
         args.istemplate = False
