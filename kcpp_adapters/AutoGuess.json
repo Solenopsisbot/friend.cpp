@@ -211,17 +211,6 @@
         "assistant_end": "<|endofresponse|>\n"
     }
 }, {
-    "search": ["<|extra_4|>", "<|extra_0|>", "用户", "助手"],
-    "name": "Hunyuan",
-    "adapter": {
-        "system": "",
-        "system_end": "",
-        "user": "用户：\n",
-        "user_end": "",
-        "assistant": "助手：\n",
-        "assistant_end": ""
-    }
-}, {
     "search": ["rwkv-world"],
     "name": "RWKV World",
     "adapter": {
