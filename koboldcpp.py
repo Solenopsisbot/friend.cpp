@@ -5727,7 +5727,7 @@ def show_gui():
     def load_config_gui(): #this is used to populate the GUI with a config file, whereas load_config_cli simply overwrites cli args
         file_type = [("KoboldCpp Settings", "*.kcpps *.kcppt")]
         global runmode_untouched, zenity_permitted
-        filename = zentk_askopenfilename(filetypes=file_type, defaultextension=".kcppt", initialdir=None)
+        filename = zentk_askopenfilename(filetypes=file_type, defaultextension=".kcppt", initialdir=None, title="Select kcpps or kcppt settings config file")
         if not filename or filename=="":
             return
         if not os.path.exists(filename) or os.path.getsize(filename)<4 or os.path.getsize(filename)>50000000: #for sanity, check invaid kcpps
