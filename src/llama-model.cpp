@@ -854,6 +854,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                     default: type = LLM_TYPE_UNKNOWN;
                 }
             } break;
+        case LLM_ARCH_DREAM:
+            {
+                ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
+                // Dream models are primarily 7B with 28 layers
+                switch (hparams.n_layer) {
+                    case 28:
+                        type = LLM_TYPE_7B;
+                        break;
+                    default:
+                        type = LLM_TYPE_UNKNOWN;
+                }
+                // Set non-causal attention for diffusion models
+                hparams.causal_attn = false;
+            }
+            break;
         case LLM_ARCH_QWEN2MOE:
             {
                 ml.get_key(LLM_KV_EXPERT_FEED_FORWARD_LENGTH,        hparams.n_ff_exp, false);
@@ -2766,12 +2781,14 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 } break;
             case LLM_ARCH_QWEN2:
             case LLM_ARCH_QWEN2VL:
+            case LLM_ARCH_DREAM:
                 {
                     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
 
                     // output
                     output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
                     output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
+                    output_b    = create_tensor(tn(LLM_TENSOR_OUTPUT,      "bias"),   {n_vocab}, TENSOR_NOT_REQUIRED);
                     // if output is NULL, init from the input tok embed
                     if (output == NULL) {
                         output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
@@ -7842,6 +7859,113 @@ struct llm_build_qwen2 : public llm_graph_context {
         cur = build_norm(cur,
                 model.output_norm, NULL,
                 LLM_NORM_RMS, -1);
+
+        cb(cur, "result_norm", -1);
+        res->t_embd = cur;
+
+        // lm_head
+        cur = build_lora_mm(model.output, cur);
+
+        if (model.output_b != nullptr) {
+            cur = ggml_add(ctx0, cur, model.output_b);
+        }
+
+        cb(cur, "result_output", -1);
+        res->t_logits = cur;
+
+        ggml_build_forward_expand(gf, cur);
+    }
+};
+
+struct llm_build_dream : public llm_graph_context {
+    llm_build_dream(const llama_model & model, const llm_graph_params & params, ggml_cgraph * gf) :
+        llm_graph_context(params) {
+        //copied from qwen2
+        const int64_t n_embd_head = hparams.n_embd_head_v;
+
+        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
+        GGML_ASSERT(n_embd_head == hparams.n_rot);
+
+        ggml_tensor * cur;
+        ggml_tensor * inpL;
+
+        inpL = build_inp_embd(model.tok_embd);
+
+        // inp_pos - contains the positions
+        ggml_tensor * inp_pos = build_inp_pos();
+
+        auto * inp_attn = build_attn_inp_no_cache();
+
+        ggml_tensor * inp_out_ids = build_inp_out_ids();
+
+        for (int il = 0; il < n_layer; ++il) {
+            ggml_tensor * inpSA = inpL;
+
+            // norm
+            cur = build_norm(inpL, model.layers[il].attn_norm, NULL, LLM_NORM_RMS, il);
+            cb(cur, "attn_norm", il);
+
+            // self-attention
+            {
+                // compute Q and K and RoPE them
+                ggml_tensor * Qcur = build_lora_mm(model.layers[il].wq, cur);
+                Qcur               = ggml_add(ctx0, Qcur, model.layers[il].bq);
+                cb(Qcur, "Qcur", il);
+
+                ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk, cur);
+                Kcur               = ggml_add(ctx0, Kcur, model.layers[il].bk);
+                cb(Kcur, "Kcur", il);
+
+                ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv, cur);
+                Vcur               = ggml_add(ctx0, Vcur, model.layers[il].bv);
+                cb(Vcur, "Vcur", il);
+
+                Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens);
+                Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
+                Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
+
+                Qcur = ggml_rope_ext(ctx0, Qcur, inp_pos, nullptr, n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                                     ext_factor, attn_factor, beta_fast, beta_slow);
+
+                Kcur = ggml_rope_ext(ctx0, Kcur, inp_pos, nullptr, n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                                     ext_factor, attn_factor, beta_fast, beta_slow);
+
+                cb(Qcur, "Qcur", il);
+                cb(Kcur, "Kcur", il);
+                cb(Vcur, "Vcur", il);
+
+                cur = build_attn(inp_attn, gf, model.layers[il].wo, model.layers[il].bo, Qcur, Kcur, Vcur, nullptr,
+                                 nullptr, 1.0f / sqrtf(float(n_embd_head)), il);
+            }
+
+            if (il == n_layer - 1 && inp_out_ids) {
+                cur   = ggml_get_rows(ctx0, cur, inp_out_ids);
+                inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
+            }
+
+            ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
+            cb(ffn_inp, "ffn_inp", il);
+
+            // feed-forward network
+            cur = build_norm(ffn_inp, model.layers[il].ffn_norm, NULL, LLM_NORM_RMS, il);
+            cb(cur, "ffn_norm", il);
+
+            cur = build_ffn(cur, model.layers[il].ffn_up, NULL, NULL, model.layers[il].ffn_gate, NULL, NULL,
+                            model.layers[il].ffn_down, NULL, NULL, NULL, LLM_FFN_SILU, LLM_FFN_PAR, il);
+            cb(cur, "ffn_out", il);
+
+            cur = ggml_add(ctx0, cur, ffn_inp);
+
+            cur = build_cvec(cur, il);
+            cb(cur, "l_out", il);
+
+            // input for next layer
+            inpL = cur;
+        }
+
+        cur = inpL;
+
+        cur = build_norm(cur, model.output_norm, NULL, LLM_NORM_RMS, -1);
 
         cb(cur, "result_norm", -1);
         res->t_embd = cur;
@@ -15863,6 +15987,7 @@ private:
         cb(zx, "mamba_in_proj", il);
         // {8192, 5, 1, 1} -> {8192, 1, 5, 1}
         zx = ggml_permute(ctx0, zx, 0, 2, 1, 3);
+        zx = ggml_cont(ctx0, zx);
         zx = ggml_reshape_4d(ctx0, zx, head_dim * 2, n_heads, n_seq_tokens, n_seqs);
         cb(zx, "mamba_in_proj_out", il);
 
@@ -15880,7 +16005,6 @@ private:
         // conv1d
         {
             // => {d_conv - 1 + n_seq_tokens, d_inner, n_seqs}
-            x = ggml_view_2d(ctx0, x, d_inner, n_seq_tokens * n_seqs, d_inner * x->nb[0], 0);
             ggml_tensor * conv_x = ggml_concat(ctx0, conv, ggml_transpose(ctx0, x), 0);
             cb(conv_x, "mamba_conv1d_input", il);
 
@@ -16587,6 +16711,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
         case LLM_ARCH_NOMIC_BERT_MOE:
         case LLM_ARCH_NEO_BERT:
         case LLM_ARCH_WAVTOKENIZER_DEC:
+        case LLM_ARCH_DREAM:
             {
                 res = nullptr;
             } break;
@@ -16627,7 +16752,18 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                 } else {
                     const auto padding = llama_kv_cache_unified::get_padding(cparams);
 
-                    cparams.n_ctx = GGML_PAD(cparams.n_ctx, padding);
+                    uint32_t n_ctx_per_stream = cparams.n_ctx;
+
+                    if (!cparams.kv_unified) {
+                        n_ctx_per_stream = (cparams.n_ctx + cparams.n_seq_max - 1)/cparams.n_seq_max;
+                        n_ctx_per_stream = GGML_PAD(n_ctx_per_stream, padding);
+
+                        cparams.n_ctx = n_ctx_per_stream*cparams.n_seq_max;
+                    } else {
+                        n_ctx_per_stream = GGML_PAD(n_ctx_per_stream, padding);
+
+                        cparams.n_ctx = n_ctx_per_stream;
+                    }
 
                     LLAMA_LOG_DEBUG("%s: n_ctx = %u (padded)\n", __func__, cparams.n_ctx);
 
@@ -16641,7 +16777,8 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                 !cparams.flash_attn,
                                 cparams.offload_kqv,
                                 params.swa_full,
-                                cparams.n_ctx,
+                                cparams.kv_unified,
+                                n_ctx_per_stream,
                                 cparams.n_seq_max,
                                 cparams.n_ubatch,
                                 padding);
@@ -16655,7 +16792,8 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                 params.type_v,
                                 !cparams.flash_attn,
                                 cparams.offload_kqv,
-                                cparams.n_ctx,
+                                cparams.kv_unified,
+                                n_ctx_per_stream,
                                 cparams.n_seq_max,
                                 padding,
                                 hparams.n_swa,
@@ -16738,6 +16876,11 @@ llm_graph_result_ptr llama_model::build_graph(
             {
                 llm = std::make_unique<llm_build_qwen2>(*this, params, gf);
             } break;
+        case LLM_ARCH_DREAM:
+            {
+                llm = std::make_unique<llm_build_dream>(*this, params, gf);
+            }
+            break;
         case LLM_ARCH_QWEN2VL:
             {
                 llm = std::make_unique<llm_build_qwen2vl>(*this, params, gf);
@@ -17155,6 +17298,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_BITNET:
         case LLM_ARCH_QWEN:
         case LLM_ARCH_QWEN2:
+        case LLM_ARCH_DREAM:
         case LLM_ARCH_QWEN2MOE:
         case LLM_ARCH_QWEN3:
         case LLM_ARCH_QWEN3MOE:

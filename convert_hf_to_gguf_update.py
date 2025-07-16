@@ -232,17 +232,12 @@ for model in models:
 # generate the source code for the convert_hf_to_gguf.py:get_vocab_base_pre() function:
 
 src_ifs = ""
-for model in [*all_models, *pre_computed_hashes]:
+for model in [*pre_computed_hashes, *all_models]:
     name = model["name"]
     tokt = model["tokt"]
     chkhsh = model.get("chkhsh")
 
     if tokt == TOKENIZER_TYPE.SPM or tokt == TOKENIZER_TYPE.UGM:
-        continue
-
-    # Skip if the tokenizer folder does not exist or there are other download issues previously
-    if not os.path.exists(f"models/tokenizers/{name}"):
-        logger.warning(f"Directory for tokenizer {name} not found. Skipping...")
         continue
 
     # create the tokenizer
@@ -254,6 +249,12 @@ for model in [*all_models, *pre_computed_hashes]:
         chkhsh = existing_models[name]
     else:
         # otherwise, compute the hash of the tokenizer
+
+        # Skip if the tokenizer folder does not exist or there are other download issues previously
+        if not os.path.exists(f"models/tokenizers/{name}"):
+            logger.warning(f"Directory for tokenizer {name} not found. Skipping...")
+            continue
+
         try:
             logger.info(f"Loading tokenizer from {f'models/tokenizers/{name}'}...")
             if name == "t5":
