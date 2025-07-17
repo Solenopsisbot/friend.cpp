@@ -63,7 +63,7 @@ dry_seq_break_max = 128
 extra_images_max = 4
 
 # global vars
-KcppVersion = "1.96"
+KcppVersion = "1.96.1"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":""}
@@ -1116,7 +1116,7 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to dete
                 match = re.search(r'-(\d{5})-of-(\d{5})\.', fname)
                 if match:
                     total_parts = int(match.group(2))
-                    if total_parts > 1 and total_parts <= 9:
+                    if total_parts > 1 and total_parts <= 999:
                         if showmultigpuwarning:
                             showmultigpuwarning = False
                             print("Multi-Part GGUF detected. Layer estimates may not be very accurate - recommend setting layers manually.")
@@ -6335,7 +6335,7 @@ def download_model_from_url(url, permitted_types=[".gguf",".safetensors", ".ggml
                 match = re.search(r'-(\d{5})-of-(\d{5})\.', url)
                 if match:
                     total_parts = int(match.group(2))
-                    if total_parts > 1 and total_parts <= 9:
+                    if total_parts > 1 and total_parts <= 999:
                         current_part = 1
                         base_url = url
                         for part_num in range(current_part + 1, total_parts + 1):
