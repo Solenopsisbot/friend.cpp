@@ -2344,6 +2344,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
                     pass
 
             message_index = 0
+            attachedimgid = 0
+            attachedaudid = 0
             for message in messages_array:
                 message_index += 1
                 if message['role'] == "system":
@@ -2373,11 +2375,13 @@ ws ::= | " " | "\n" [ \t]{0,20}
                         elif item['type']=="image_url":
                             if 'image_url' in item and item['image_url'] and item['image_url']['url'] and item['image_url']['url'].startswith("data:image"):
                                 images_added.append(item['image_url']['url'].split(",", 1)[1])
-                                messages_string += "\n(Attached Image)\n"
+                                attachedimgid += 1
+                                messages_string += f"\n(Attached Image {attachedimgid})\n"
                         elif item['type']=="input_audio":
                             if 'input_audio' in item and item['input_audio'] and item['input_audio']['data']:
                                 audio_added.append(item['input_audio']['data'])
-                                messages_string += "\n(Attached Audio)\n"
+                                attachedaudid += 1
+                                messages_string += f"\n(Attached Audio {attachedaudid})\n"
                 # If last message, add any tools calls after message content and before message end token if any
                 if message['role'] == "user" and message_index == len(messages_array):
                     # tools handling: Check if user is passing a openai tools array, if so add to end of prompt before assistant prompt unless tool_choice has been set to None
