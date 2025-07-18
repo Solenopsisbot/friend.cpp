@@ -5124,7 +5124,7 @@ def show_gui():
     ctk.CTkButton(model_tab, width=70, text = "HF Search", command = model_searcher ).grid(row=1,column=0, stick="nw", padx=370, pady=2)
     makefileentry(model_tab, "Text Lora:", "Select Lora File",lora_var, 3,width=160,singlerow=True,tooltiptxt="Select an optional GGML Text LoRA adapter to use.\nLeave blank to skip.")
     makelabelentry(model_tab, "Multiplier: ", loramult_var, 3, 50,padx=390,singleline=True,tooltip="Scale multiplier for Text LoRA Strength. Default is 1.0", labelpadx=330)
-    makefileentry(model_tab, "Vision mmproj:", "Select Vision mmproj File", mmproj_var, 7,width=280,singlerow=True,tooltiptxt="Select a mmproj file to use for vision models like LLaVA.\nLeave blank to skip.")
+    makefileentry(model_tab, "Mmproj File:", "Select Audio or Vision mmproj File", mmproj_var, 7,width=280,singlerow=True,tooltiptxt="Select a mmproj file to use for multimodal models for vision and audio recognition.\nLeave blank to skip.")
     makecheckbox(model_tab, "Vision Force CPU", mmprojcpu_var, 9, tooltiptxt="Force CLIP for Vision mmproj always on CPU.")
     makelabelentry(model_tab, "Vision MaxRes:", visionmaxres_var, 9, padx=320, singleline=True, tooltip=f"Clamp MMProj vision maximum allowed resolution. Allowed values are between 512 to 2048 px (default {default_visionmaxres}).", labelpadx=220)
     makefileentry(model_tab, "Draft Model:", "Select Speculative Text Model File", draftmodel_var, 11,width=280,singlerow=True,tooltiptxt="Select a draft text model file to use for speculative decoding.\nLeave blank to skip.")
