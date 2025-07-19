@@ -3459,6 +3459,8 @@ Current version indicated by LITEVER below.
 	};
 
 	const defaultsettings = JSON.parse(JSON.stringify(localsettings));
+	//visionmode 0=disabled, 1=hordeinterrogate, 2=localinterrogate, 3=multimodal
+	//type 0=img, 1=audio
 	const default_imgs_meta = {prompt:"", desc:"", visionmode:0, aspect:0, ref:"", len:0, type:0, data: ""};
 
 	//a list of presets users can choose from
@@ -14725,7 +14727,7 @@ Current version indicated by LITEVER below.
 			let userinput = getInputBoxValue();
 			if(userinput.trim()!="")
 			{
-				var sentence = userinput.trim().substring(0, 380);
+				var sentence = userinput.trim().substring(0, 540);
 				do_manual_gen_image(sentence);
 			}
 		},false);
@@ -16554,7 +16556,7 @@ Current version indicated by LITEVER below.
 			{
 				let txt = "I'll try and create that image.";
 				gametext_arr.push(txt);
-				var sentence = img_gen_trigger_prompt.trim().substring(0, 380);
+				var sentence = img_gen_trigger_prompt.trim().substring(0, 540);
 				do_manual_gen_image(sentence);
 			}
 
@@ -17916,11 +17918,18 @@ Current version indicated by LITEVER below.
 		}
 
 	}
-	function zoomed_transcribe_btn(audiohash,onDone)
+	function zoomed_transcribe_btn(audiohash)
+	{
+		transcribe_audio_file(audiohash,(txt)=>{
+			msgbox(txt,"Transcribed Audio");
+		});
+	}
+	function transcribe_audio_file(audiohash,onDone)
 	{
 		let fetchedblob = data_hash_to_blob_lookup[audiohash];
 		if(!fetchedblob)
 		{
+			onDone(null);
 			return;
 		}
 		fetch(fetchedblob.blob)
@@ -17950,10 +17959,14 @@ Current version indicated by LITEVER below.
 						console.log(resp);
 						if(resp && resp.text && resp.text!="")
 						{
-							msgbox(resp.text,"Transcribed Audio");
+							onDone(resp.text);
+						}else
+						{
+							onDone(null);
 						}
 					}).catch((error) => {
 						console.log("Transcribe Error: " + error);
+						onDone(null);
 					});
 				}
 				reader.readAsDataURL(wavblob);
@@ -17968,14 +17981,34 @@ Current version indicated by LITEVER below.
 		if(savedmeta)
 		{
 			savedmeta.visionmode = document.getElementById("aivisionmode").value;
-			if(!savedmeta.desc && (savedmeta.visionmode==1 || savedmeta.visionmode==2))
+			if(savedmeta.type==1) //audio
 			{
-				//request a new interrogation
-				var alreadysent = Object.values(interrogation_db).some(item => item.imghash === imghash);
-				if(!alreadysent && document.getElementById("zoomedimg"))
+				if(!savedmeta.desc && savedmeta.visionmode==2)
 				{
-					let b64 = document.getElementById("zoomedimg").src;
-					interrogate_new_image(b64,imghash,(savedmeta.visionmode==1));
+					var alreadysent = Object.values(interrogation_db).some(item => item.imghash === imghash);
+					if(!alreadysent && document.getElementById("zoomedaudio"))
+					{
+						transcribe_audio_file(imghash,(txt)=>{
+							if(txt)
+							{
+								savedmeta.desc = txt;
+								update_clicked_image(imghash);
+							}
+						});
+					}
+				}
+			}
+			else //images
+			{
+				if(!savedmeta.desc && (savedmeta.visionmode==1 || savedmeta.visionmode==2))
+				{
+					//request a new interrogation
+					var alreadysent = Object.values(interrogation_db).some(item => item.imghash === imghash);
+					if(!alreadysent && document.getElementById("zoomedimg"))
+					{
+						let b64 = document.getElementById("zoomedimg").src;
+						interrogate_new_image(b64,imghash,(savedmeta.visionmode==1));
+					}
 				}
 			}
 			update_clicked_image(imghash);
@@ -18066,6 +18099,7 @@ Current version indicated by LITEVER below.
 			}
 			let togglebtn = `<select class="form-control" id="aivisionmode" style="display:inline;height:24px;width: 140px; padding: 2px; margin: 3px; font-size:12px;" onchange="toggle_ai_vision(\'`+imghash+`\')">
 								<option value="0">Disabled</option>
+								<option value="2">Transcribe (Local)</option>
 								<option value="3">Multimodal Audio</option>
 							</select>`;
 			document.getElementById("zoomedimgdesc").innerHTML = `
@@ -18093,7 +18127,7 @@ Current version indicated by LITEVER below.
 			let userinput = getInputBoxValue();
 			if(userinput.trim()!="" && document.getElementById("zoomedimg"))
 			{
-				var sentence = userinput.trim().substring(0, 380);
+				var sentence = userinput.trim().substring(0, 540);
 				let b64 = document.getElementById("zoomedimg").src;
 				do_manual_gen_image(sentence, b64);
 				document.getElementById("zoomedimgcontainer").classList.add("hidden");
@@ -19059,9 +19093,23 @@ Current version indicated by LITEVER below.
 		reader.onloadend = function () {
 			const arrayBuffer = reader.result;
 			const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-			audioContext.decodeAudioData(arrayBuffer, function (buffer) {
+			audioContext.decodeAudioData(arrayBuffer, function (obuf) {
+				resampleAudioBuffer(obuf,22050,(buffer)=>{
 				const samplefreq = buffer.sampleRate;
-				const samples = buffer.getChannelData(0); // mono
+				const numberOfChannels = buffer.numberOfChannels;
+				const length = buffer.length;
+				//first, mix all down into mono
+				let samples = new Float32Array(length);
+				for (let channel = 0; channel < numberOfChannels; channel++) {
+					const channelData = buffer.getChannelData(channel);
+					for (let i = 0; i < length; i++) {
+						samples[i] += channelData[i];
+					}
+				}
+				for (let i = 0; i < length; i++) {
+					samples[i] /= numberOfChannels;
+				}
+
 				const durationInSeconds = buffer.duration;
 				const mp3encoder = new lamejs.Mp3Encoder(1, samplefreq, 40); // mono, 16kHz, 40kbps
 				const sampleBlockSize = 1152; //can be anything but make it a multiple of 576 to make encoders life easier
@@ -19069,13 +19117,14 @@ Current version indicated by LITEVER below.
 				for (let i = 0; i < samples.length; i += sampleBlockSize) {
 					let sampleChunk = samples.subarray(i, i + sampleBlockSize);
 
-					// Convert Float32 [-1, 1] to Int16 [-32768, 32767]
-					let int16Buffer = new Int16Array(sampleChunk.length);
+					let buff = new Float32Array(sampleChunk.length);
 					for (let j = 0; j < sampleChunk.length; j++) {
-						let s = Math.max(-1, Math.min(1, sampleChunk[j]));
-						int16Buffer[j] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+						let s = sampleChunk[j];
+						s = s*32767.0;
+						s = Math.max(-32767.0, Math.min(32767.0, s));
+						buff[j] = s;
 					}
-					const mp3buf = mp3encoder.encodeBuffer(int16Buffer);
+					const mp3buf = mp3encoder.encodeBuffer(buff);
 					if (mp3buf.length > 0) {
 						mp3Data.push(new Uint8Array(mp3buf));
 					}
@@ -19091,6 +19140,7 @@ Current version indicated by LITEVER below.
 					onDone(mp3Base64,durationInSeconds);
 				};
 				fileReader.readAsDataURL(mp3Blob);
+			});
 			}, function (err) {
 				console.log("Audio decode failed.");
 				onDone(null,null);
@@ -20000,7 +20050,12 @@ Current version indicated by LITEVER below.
 						let data = foundmeta.data;
 						if(foundmeta.desc && (foundmeta.visionmode==1||foundmeta.visionmode==2))
 						{
-							return "\n(Attached Image: " + foundmeta.desc + ")\n";
+							if(foundmeta.type==1)//audio
+							{
+								return "\n(Attached Audio: " + foundmeta.desc + ")\n";
+							}else{
+								return "\n(Attached Image: " + foundmeta.desc + ")\n";
+							}
 						}
 						else if(foundmeta.visionmode==3)
 						{
@@ -21315,7 +21370,15 @@ Current version indicated by LITEVER below.
 		for(var i=0;i<chatunits.length;++i)
 		{
 			let curr = chatunits[i];
-			curr = repack_postprocess_turn(curr, countmap);
+			if(corpo_editing_turn != i)
+			{
+				curr = repack_postprocess_turn(curr, countmap); //change whole object
+			}
+			else
+			{
+				let reshaped = repack_postprocess_turn(JSON.parse(JSON.stringify(curr)), countmap);
+				curr.name = reshaped.name; //only change name
+			}
 
 			let resendbtn = ((curr.myturn && i<chatunits.length-1)?`<button type="button" class="btn btn-primary corpoeditbtn" style="float:right;" onclick="corpo_edit_chunk_resend(${i})">Resend</button>`:``);
 			let bodypart = (corpo_editing_turn == i ?
