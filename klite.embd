@@ -3425,6 +3425,9 @@ Current version indicated by LITEVER below.
 		websearch_retain: false,
 		websearch_template: "",
 		wordsearch_enabled: false,
+		second_ep_qty:0,
+		second_ep_model:"gpt2",
+		second_ep_url:"",
 
 		max_context_length: (localflag?4096:2048),
 		max_length: (localflag?512:256),
@@ -12674,6 +12677,9 @@ Current version indicated by LITEVER below.
 		document.getElementById("dry_base").value = localsettings.dry_base;
 		document.getElementById("dry_allowed_length").value = localsettings.dry_allowed_length;
 		document.getElementById("token_count_multiplier").value = localsettings.token_count_multiplier;
+		document.getElementById("second_ep_qty").value = localsettings.second_ep_qty;
+		document.getElementById("second_ep_model").value = localsettings.second_ep_model;
+		document.getElementById("second_ep_url").value = localsettings.second_ep_url;
 
 		if(is_using_kcpp_with_mirostat())
 		{
@@ -13247,6 +13253,9 @@ Current version indicated by LITEVER below.
 		localsettings.token_count_multiplier = parseInt(document.getElementById("token_count_multiplier").value);
 		localsettings.guidance_scale = parseFloat(document.getElementById("guidance_scale").value);
 		localsettings.guidance_prompt = document.getElementById("guidance_prompt").value;
+		localsettings.second_ep_qty = parseInt(document.getElementById("second_ep_qty").value);
+		localsettings.second_ep_model = document.getElementById("second_ep_model").value;
+		localsettings.second_ep_url = document.getElementById("second_ep_url").value;
 
 		localsettings.extrastopseq = document.getElementById("extrastopseq").value;
 		localsettings.tokenbans = document.getElementById("tokenbans").value;
@@ -13446,6 +13455,7 @@ Current version indicated by LITEVER below.
 		localsettings.xtc_threshold = cleannum(localsettings.xtc_threshold, 0.0, 1.0);
 		localsettings.sampler_seed = cleannum(localsettings.sampler_seed, -1, 999999);
 		localsettings.token_count_multiplier = cleannum(localsettings.token_count_multiplier, 70, 130);
+		localsettings.second_ep_qty = cleannum(Math.floor(localsettings.second_ep_qty), 0, 1024);
 		toggle_invert_colors();
 		toggle_sidepanel_mode();
 
@@ -13901,6 +13911,7 @@ Current version indicated by LITEVER below.
 
 			on_searchsummary_done = onDoneFn;
 
+			submit_payload = finalize_submit_payload(submit_payload, false);
 			dispatch_submit_generation(submit_payload, false);
 			render_gametext();
 		}
@@ -13975,7 +13986,8 @@ Current version indicated by LITEVER below.
 		//v2 api specific fields
 		submit_payload.workers = selected_workers.map((m) => { return m.id });
 
-		dispatch_submit_generation(submit_payload,false);
+		submit_payload = finalize_submit_payload(submit_payload, false);
+		dispatch_submit_generation(submit_payload, false);
 		render_gametext();
 		document.getElementById("memorytext").value = "[<|Generating summary, do not close window...|>]"
 		};
@@ -16545,6 +16557,14 @@ Current version indicated by LITEVER below.
 
 			if (!doNotGenerate)
 			{
+				submit_payload = finalize_submit_payload(submit_payload, user_input_empty);
+				if(localsettings.second_ep_qty>0 && localsettings.second_ep_url!="")
+				{
+					let decensored_prefix = yield FetchDecensoredPrefix(submit_payload, localsettings.second_ep_url, localsettings.second_ep_model, localsettings.second_ep_qty);
+					console.log(`Obtained Prefix: ${decensored_prefix}`);
+					pending_context_preinjection += decensored_prefix;
+					submit_payload.prompt += decensored_prefix;
+				}
 				dispatch_submit_generation(submit_payload, user_input_empty);
 			}
 			else
@@ -16714,10 +16734,8 @@ Current version indicated by LITEVER below.
 		return resp;
 	}
 
-	function dispatch_submit_generation(submit_payload, input_was_empty) //if input is not empty, always unban eos
+	function finalize_submit_payload(submit_payload, input_was_empty)
 	{
-		console.log(submit_payload);
-
 		//preprocess to add extra fields
 		if(custom_kobold_endpoint != "" && is_using_kcpp_with_mirostat())
 		{
@@ -16772,6 +16790,28 @@ Current version indicated by LITEVER below.
 			submit_payload.params.negative_prompt = localsettings.guidance_prompt;
 		}
 
+		//for vesion 1.2.2 and later, send stopper tokens for chat and instruct
+		if (custom_kobold_endpoint != "" && kobold_endpoint_version && kobold_endpoint_version != "" && compare_version_str(kobold_endpoint_version, "1.2.2") >= 0) {
+			submit_payload.params.stop_sequence = get_stop_sequences();
+		}
+
+		//version 1.2.4 and later supports unban tokens
+		if (custom_kobold_endpoint != "" && kobold_endpoint_version && kobold_endpoint_version != "" && compare_version_str(kobold_endpoint_version, "1.2.4") >= 0)
+		{
+			submit_payload.params.use_default_badwordsids = determine_if_ban_eos(input_was_empty);
+			if(is_using_kcpp_with_added_memory())
+			{
+				submit_payload.params.bypass_eos = (localsettings.eos_ban_mode == 3?true:false);
+			}
+		}
+
+		return submit_payload;
+	}
+
+	function dispatch_submit_generation(submit_payload, input_was_empty) //if input is not empty, always unban eos
+	{
+		console.log(submit_payload);
+
 		start_time_taken(); //timestamp start request
 
 		if (is_using_custom_ep()) {
@@ -16792,23 +16832,6 @@ Current version indicated by LITEVER below.
 				let prompt = submit_payload.prompt;
 				submit_payload = submit_payload.params;
 				submit_payload.prompt = prompt;
-				let showlog = false;
-				submit_payload.quiet = !showlog;
-
-				//for vesion 1.2.2 and later, send stopper tokens for chat and instruct
-				if (kobold_endpoint_version && kobold_endpoint_version != "" && compare_version_str(kobold_endpoint_version, "1.2.2") >= 0) {
-					submit_payload.stop_sequence = get_stop_sequences();
-				}
-
-				//version 1.2.4 and later supports unban tokens
-				if (kobold_endpoint_version && kobold_endpoint_version != "" && compare_version_str(kobold_endpoint_version, "1.2.4") >= 0)
-				{
-					submit_payload.use_default_badwordsids = determine_if_ban_eos(input_was_empty);
-					if(is_using_kcpp_with_added_memory())
-					{
-						submit_payload.bypass_eos = (localsettings.eos_ban_mode == 3?true:false);
-					}
-				}
 
 				last_request_str = JSON.stringify(submit_payload);
 				last_response_obj = null;
@@ -17006,18 +17029,6 @@ Current version indicated by LITEVER below.
 				}
 				else
 				{
-					//apply custom logit bias for official OAI only
-					let needbaneos = (custom_oai_endpoint.toLowerCase().includes("api.openai.com") && determine_if_ban_eos(input_was_empty));
-
-					if(needbaneos)
-					{
-						if(oai_payload.logit_bias)
-						{
-							oai_payload.logit_bias["50256"] = -100;
-						}else{
-							oai_payload.logit_bias = { "50256": -100 };
-						}
-					}
 					oai_payload.prompt = submit_payload.prompt;
 				}
 
@@ -19039,7 +19050,7 @@ Current version indicated by LITEVER below.
 				{
 					if(!localsettings.allow_continue_chat)
 					{
-						pending_context_preinjection =  get_instructendplaceholder();
+						pending_context_preinjection = get_instructendplaceholder();
 
 						if(localsettings.inject_timestamps)
 						{
@@ -20351,6 +20362,7 @@ Current version indicated by LITEVER below.
 				fulltxt = replace_placeholders(fulltxt,true);
 			}
 
+			let alreadyShowedStreaming = false; //sometimes, streaming is injected inline to preserve indentation
 
 			if(localsettings.opmode==4 && !inEditMode)
 			{
@@ -20380,6 +20392,36 @@ Current version indicated by LITEVER below.
 				{
 					let curr = instruct_turns[i];
 					let currmsg = curr.msg;
+
+					//in some special cases, add streaming text inline
+					let allow_cont_prev_turn = (localsettings.opmode==4 || (localsettings.opmode==3 && localsettings.allow_continue_chat));
+					if(i>0 && (i==instruct_turns.length-1) && curr.myturn==false && currmsg && allow_cont_prev_turn)
+					{
+						//inject into previous turn, only for instruct OR continuechat
+						currmsg += `<span class="color_yellow pending_text">${escape_html(pending_context_preinjection) + format_streaming_text(escape_html(synchro_pending_stream))}</span>`;
+						alreadyShowedStreaming = true;
+					}
+
+					//apply stylization to time tags
+					if(localsettings.inject_timestamps && localsettings.instruct_has_markdown)
+					{
+						currmsg = currmsg.replace(/(\[\d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2} [AP]M\])/g, "$1\n");
+					}
+					if(localsettings.inject_chatnames_instruct && localsettings.instruct_has_markdown)
+					{
+						let m_name = localsettings.chatname + ": ";
+						currmsg = replaceAll(currmsg, m_name, `<b>` + escape_html(m_name) + `</b>`);
+						let m_opps = localsettings.chatopponent.split("||$||");
+						for(let i=0;i<m_opps.length;++i)
+						{
+							if(m_opps[i] && m_opps[i].trim()!="")
+							{
+								let m_opp = m_opps[i] + ": ";
+								currmsg = replaceAll(currmsg, m_opp, `<b>` + escape_html(m_opp) + `</b>`);
+							}
+						}
+					}
+
 					if(localsettings.instruct_has_markdown && (localsettings.render_streaming_markdown||synchro_pending_stream==""||(i+1)<instruct_turns.length))
 					{
 						//if a list has a starttag on the same line, add a newline before it
@@ -20406,26 +20448,7 @@ Current version indicated by LITEVER below.
 					}
 				}
 
-				//apply stylization to time tags
-				if(localsettings.inject_timestamps && localsettings.instruct_has_markdown)
-				{
-					fulltxt = fulltxt.replace(/(\[\d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2} [AP]M\])/g, "$1\n");
-				}
-				if(localsettings.inject_chatnames_instruct && localsettings.instruct_has_markdown)
-				{
-					let m_name = localsettings.chatname + ": ";
-					fulltxt = replaceAll(fulltxt, m_name, `<b>` + escape_html(m_name) + `</b>`);
-					let m_opps = localsettings.chatopponent.split("||$||");
-					for(let i=0;i<m_opps.length;++i)
-					{
-						if(m_opps[i] && m_opps[i].trim()!="")
-						{
-							let m_opp = m_opps[i] + ": ";
-							fulltxt = replaceAll(fulltxt, m_opp, `<b>` + escape_html(m_opp) + `</b>`);
-						}
-					}
-				}
-			}else{
+			} else {
 				fulltxt = replaceAll(fulltxt, get_instruct_starttag(true), `%SclStg%`+escape_html(get_instruct_starttag(true))+`%SpnEtg%`);
 				fulltxt = replaceAll(fulltxt, get_instruct_endtag(true), `%SclStg%`+escape_html(get_instruct_endtag(true))+`%SpnEtg%`);
 				if (localsettings.separate_end_tags) {
@@ -20463,7 +20486,7 @@ Current version indicated by LITEVER below.
 			{
 				if(!document.getElementById("allowediting").checked && !fulltxt.startsWith("\n"))
 				{
-					fulltxt = "\n"+fulltxt;
+					fulltxt = "\n" + fulltxt;
 				}
 
 				//for chat mode, highlight our name in blue and opponent in red
@@ -20483,7 +20506,6 @@ Current version indicated by LITEVER below.
 					return `<span class="`+colormap[onametrim]+`">` + oname + `</span>`;
 				});
 				fulltxt = replaceAll(fulltxt,m_name, `<span class="color_blue">` + escape_html(m_name) + `</span>`);
-
 			}
 
 			//for adventure mode, highlight our actions in green
@@ -20493,8 +20515,8 @@ Current version indicated by LITEVER below.
 				});
 			}
 
-			//streaming display
-			if(synchro_pending_stream!="" && waiting_for_tool_call==0)
+			//streaming display for all other cases
+			if(!alreadyShowedStreaming && synchro_pending_stream!="" && waiting_for_tool_call==0)
 			{
 				fulltxt += `<span class="color_yellow pending_text">${escape_html(pending_context_preinjection) + format_streaming_text(escape_html(synchro_pending_stream))}</span>`;
 			}
@@ -23906,6 +23928,59 @@ Current version indicated by LITEVER below.
 			resultsContainer.appendChild(btn);
 		});
 	}
+
+	//queries the decensoring prefix from a second OAI compatible endpoint and returns a string to add to our main request
+	const FetchDecensoredPrefix = asyncRunner(function* (submit_payload, endpoint_url, modelused, num_tokens)
+	{
+		let oaiheaders = {
+			'Content-Type': 'application/json'
+		};
+		if (custom_oai_key!="" && custom_oai_key!=dummy_api_key) {
+			oaiheaders['Authorization'] = 'Bearer ' + custom_oai_key;
+		}
+
+		let scaled_rep_pen = 0;
+		if(submit_payload.params.presence_penalty > 0)
+		{
+			scaled_rep_pen = submit_payload.params.presence_penalty;
+		}else{
+			//original range between 1 and 3, scale to 0 and 2
+			scaled_rep_pen = (submit_payload.params.rep_pen - 1.0);
+		}
+		let oai_payload =
+		{
+			"prompt": submit_payload.prompt,
+			"max_tokens": num_tokens,
+			"model": modelused,
+			"temperature": submit_payload.params.temperature,
+			"top_p": submit_payload.params.top_p,
+			"stream": false,
+			"presence_penalty": scaled_rep_pen,
+			"stop": get_stop_sequences().slice(0, 4)
+		};
+
+		return fetch(endpoint_url, {
+			method: 'POST',
+			headers: oaiheaders,
+			body: JSON.stringify(oai_payload),
+			referrerPolicy: 'no-referrer',
+		})
+		.then((response) => response.json())
+		.then((data) => {
+			let reply = "";
+			if (data.choices != null && data.choices.length > 0) {
+				let dch = data.choices[0];
+				if (dch.text) {
+					reply = dch.text;
+				}
+			}
+			return reply;
+		})
+		.catch((error) => {
+			console.error('Error:', error);
+			return "";
+		});
+	});
 	</script>
 
 </head>
@@ -24872,6 +24947,19 @@ Current version indicated by LITEVER below.
 								<div title="Top N Sigma. 0 to deactivate. Range 0 to 5." class="justifyleft settingsmall" style="width:100%">T.NSigma</div>
 								<div class="justifyleft settingsmall" style="width:100%">
 								<input title="Top N Sigma. 0 to deactivate. Range 0 to 5." class="settinglabel miniinput" type="text" inputmode="decimal" placeholder="0" value="0" id="nsigma"></div>
+							</div>
+							<div class="settinglabel settingcell">
+								<div class="justifyleft settingsmall" style="width:100%">2ndEpSampleQty <span class="helpicon">?<span class="helptext">
+									If enabled, sample N tokens from a second OpenAI Compatible endpoint first before a request. This can be useful for jailbreak purposes.</span></span></div>
+								<div class="justifyleft settingsmall" style="width:100%;">
+									<div style="display:flex;">
+										<div class="settingsmall" style="margin-left:2px;margin-right:2px;margin-top:4px;" title="Number of tokens to sample">Qty: </div> <input title="Token Quantity" class="settinglabel miniinput" type="text" inputmode="decimal" placeholder="0" value="0" id="second_ep_qty">
+										<div class="settingsmall" style="margin-left:2px;margin-right:2px;margin-top:4px;" title="Model name to use">Model: </div> <input title="Model Name" class="settinglabel miniinput" type="text" inputmode="decimal" placeholder="(Blank Model)" value="" id="second_ep_model">
+									</div>
+									<div style="display:flex; margin-top:2px">
+										<div class="settingsmall" style="margin-left:2px;margin-right:2px;margin-top:4px;" title="URL of second OpenAI Compatible Endpoint">Url: </div> <input title="Second OpenAI Compatible URL" class="settinglabel miniinput" type="text" placeholder="(Full /v1/completions URL)" value="" id="second_ep_url">
+									</div>
+								</div>
 							</div>
 						</div>
 					</div>
