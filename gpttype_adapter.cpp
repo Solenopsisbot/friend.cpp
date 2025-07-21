@@ -585,6 +585,7 @@ static void speculative_decoding_setup(std::string spec_model_filename, const ll
     draft_ctx_params.offload_kqv = base_ctx_params.offload_kqv;
     draft_model_params.main_gpu = base_model_params.main_gpu;
     draft_model_params.split_mode = llama_split_mode::LLAMA_SPLIT_MODE_LAYER;
+    draft_ctx_params.kv_unified = base_ctx_params.kv_unified;
     #if defined(GGML_USE_CUDA) || defined(GGML_USE_VULKAN)
     bool ts_all_zero = true;
     for (int i = 0; i < tensor_split_max; ++i) {
@@ -2183,6 +2184,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         }
 
         llama_ctx_params.offload_kqv = !inputs.low_vram;
+        llama_ctx_params.kv_unified = true;
         model_params.use_mmap = inputs.use_mmap;
         model_params.use_mlock = inputs.use_mlock;
         model_params.n_gpu_layers = inputs.gpulayers;

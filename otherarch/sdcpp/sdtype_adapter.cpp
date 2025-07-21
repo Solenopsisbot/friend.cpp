@@ -288,6 +288,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
     if (sd_ctx == NULL) {
         printf("\nError: KCPP SD Failed to create context!\nIf using Flux/SD3.5, make sure you have ALL files required (e.g. VAE, T5, Clip...) or baked in!\n");
+        printf("Otherwise, if you are using GGUF format, you can try the original .safetensors instead (Comfy GGUF not supported)\n");
         return false;
     }
 
