@@ -801,7 +801,7 @@ def utfprint(str, importance = 2): #0 = only debugmode, 1 = except quiet, 2 = al
             return
     maxlen = 32000
     if args.debugmode >= 1:
-        maxlen = 64000
+        maxlen = 192000
     try:
         strlength = len(str)
         if strlength > maxlen: #limit max output len
@@ -3897,7 +3897,7 @@ Change Mode<br>
 
                 trunc_len = 8000
                 if args.debugmode >= 1:
-                    trunc_len = 16000
+                    trunc_len = 32000
 
                 printablegenparams_raw = truncate_long_json(genparams,trunc_len)
                 utfprint("\nInput: " + json.dumps(printablegenparams_raw),1)
