@@ -4,8 +4,10 @@ Also checks that every template is being tested so that when new AutoGuess addit
 """
 import os
 import sys
+import jinja2
 import requests
 import json
+from transformers import AutoTokenizer
 
 
 # Map an AutoGuess name to a HuggingFace model ID
@@ -15,10 +17,10 @@ AUTOGUESS_MAPPING = {
     "ChatML (Qwen 2.5 based)": "Qwen/Qwen2.5-0.5B-Instruct",
     "ChatML (Kimi)": "moonshotai/Kimi-K2-Instruct",
     "Google Gemma 2": "Efficient-Large-Model/gemma-2-2b-it",
-    "Google Gemma 3": "scb10x/typhoon2.1-gemma3-12b",
+    "Google Gemma 3": "google/gemma-3-4b-it",
     "Google Gemma 3n": "lmstudio-community/gemma-3n-E4B-it-MLX-bf16",
     "Llama 3.x": "Steelskull/L3.3-Shakudo-70b",
-    "Llama 4": "meta-llama/Llama-4-Scout-17B-16E-Instruct",
+    "Llama 4": "nvidia/Llama-4-Scout-17B-16E-Instruct-FP8",
     "Mistral V7 (with system prompt)": "Doctor-Shotgun/MS3.2-24B-Magnum-Diamond",
     "Mistral V3": "mistralai/Mistral-7B-Instruct-v0.3",
     "GLM-4": "THUDM/glm-4-9b-chat-hf",
@@ -31,6 +33,11 @@ AUTOGUESS_MAPPING = {
     "RWKV World": "fla-hub/rwkv7-1.5B-world",
     "Mistral (Generic)": "mistralai/Mistral-Nemo-Instruct-2407",
     "ChatML (Generic)": "NewEden/Gemma-27B-chatml",
+}
+
+AUTOGUESS_SKIP_ADAPTER_TESTS = {
+    "Mistral V3": {"system"},           # Poor system support
+    "Mistral (Generic)": {"system"},    # Poor system support
 }
 
 # User may be running this test from ./ or from ../ -- we want to be in ./ (i.e. tests)
@@ -46,6 +53,11 @@ def get_tokenizer_config_for_huggingface_model_id(huggingface_model_id: str):
         with open(fname) as f:
             return json.load(f)
 
+    fname = f"gated-tokenizers/tokenizer_configs/{huggingface_model_id.replace('/','_')}/tokenizer_config.json"
+    if os.path.exists(fname):
+        with open(fname) as f:
+            return json.load(f)
+
     for filename in ["tokenizer_config.json", "chat_template.json"]:
         url = f"https://huggingface.co/{huggingface_model_id}/resolve/main/{filename}"
         response = requests.get(url)
@@ -55,7 +67,13 @@ def get_tokenizer_config_for_huggingface_model_id(huggingface_model_id: str):
                 return v
     raise ValueError(f"Failed to fetch tokenizer config for {huggingface_model_id}.")
 
-def match_chat_template_to_adapter(chat_template: str|list) -> tuple[str, str|None]|None:
+def get_tokenizer_for_huggingface_model_id(huggingface_model_id: str):
+    dname = f"gated-tokenizers/tokenizer_configs/{huggingface_model_id.replace('/','_')}"
+    if os.path.exists(dname):
+        return AutoTokenizer.from_pretrained(dname, trust_remote_code=True)
+    return AutoTokenizer.from_pretrained(huggingface_model_id, trust_remote_code=True)
+
+def match_chat_template_to_adapter(chat_template: str|list) -> tuple[dict, str|None]|None:
     # Additional code in tester not present in application: support for multiple chat templates, and use default if present
     sub_template: str|None = None
     if isinstance(chat_template, list):
@@ -74,7 +92,48 @@ def match_chat_template_to_adapter(chat_template: str|list) -> tuple[str, str|No
     if chat_template != "":
         for entry in autoguess:
             if all(s in chat_template for s in entry['search']):
-                return entry['name'], sub_template
+                return entry, sub_template
+
+def test_tokenizer_with_adapter(tokenizer, adapter: dict[str, str], skip: set) -> tuple[bool, str|None]:
+    """
+    See if the adapter correctly reflects the tokenizer chat template.
+    """
+    def adapter_wrap(role, content):
+        return adapter[f"{role}_start"] + content + adapter[f"{role}_end"]
+    def system(content):        return adapter_wrap("system", content)
+    def user(content):          return adapter_wrap("user", content)
+    def assistant(content):     return adapter_wrap("assistant", content)
+    def templ(rolelist):
+        return tokenizer.apply_chat_template(rolelist, tokenize=False)
+
+    try:
+        # We skip system checks if user and system are identical, or if in skip
+        if "system" not in skip and user("x") != system("x"):
+            # Test system
+            expect = system("SyS-tEm")
+            templated = templ([{"role": "system", "content": "SyS-tEm"}, {"role": "user", "content": "user"}])
+            if expect not in templated:
+                return False, f"system role missing expected fragment {expect.replace("\n", "\\n")}: {templated.replace("\n", "\\n")}"
+
+        # Test user/asst/usernvidia/Llama-4-Scout-17B-16E-Instruct-FP8
+        expect = [
+            user("user_1"),
+            assistant("asst_1"),
+            user("user_2")
+        ]
+        templated = templ([
+            {"role":"user", "content": "user_1"},
+            {"role":"assistant", "content": "asst_1"},
+            {"role":"user", "content": "user_2"},
+        ])
+        rem = templated
+        for sub in expect:
+            if sub not in rem:
+                return False, f"missing expected fragment {sub.replace("\n", "\\n")}: {rem.replace("\n", "\\n")}"
+            rem = rem.split(sub, 1)[1]
+    except jinja2.exceptions.TemplateError as e:
+        return False, f"template error: {e}"
+    return True, None
 
 failures = 0
 seen = set()
@@ -87,14 +146,21 @@ for name, huggingface_model_id in AUTOGUESS_MAPPING.items():
         continue
     tokenizer_config = get_tokenizer_config_for_huggingface_model_id(huggingface_model_id)
     assert 'chat_template' in tokenizer_config
-    matched = match_chat_template_to_adapter(tokenizer_config['chat_template'])
-    if matched is None:
-        matched, sub_template = "MISSING MAPPING", None
+    match = match_chat_template_to_adapter(tokenizer_config['chat_template'])
+    if match is None:
+        matched, sub_template, adapter = "MISSING", None, None
     else:
-        matched, sub_template = matched
+        match, sub_template = match
+        matched = match['name']
+        adapter = match['adapter']
     sub_template = f"[{sub_template}]" if sub_template else ""
-    print(namefmt.format(name=name) + " = " + namefmt.format(name=matched) + " : " + ("OK     " if name == matched else "FAILURE") + " " + hmifmt.format(huggingface_model_id=huggingface_model_id) + " " + sub_template)
-    failures += name != matched
+    adaptercheck, reason = False, '?'
+    if name == matched:
+        assert adapter
+        tokenizer = get_tokenizer_for_huggingface_model_id(huggingface_model_id)
+        adaptercheck, reason = test_tokenizer_with_adapter(tokenizer, adapter, AUTOGUESS_SKIP_ADAPTER_TESTS.get(name, set()))
+    print(namefmt.format(name=name) + " = " + namefmt.format(name=matched) + " : " + ("OK     " if adaptercheck and name == matched else reason if not adaptercheck else "FAILURE") + " " + hmifmt.format(huggingface_model_id=huggingface_model_id) + " " + sub_template)
+    failures += name != matched or not adaptercheck
 
 for entry in autoguess:
     if entry['name'] not in seen:
