@@ -2390,7 +2390,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                                 attachedaudid += 1
                                 messages_string += f"\n(Attached Audio {attachedaudid})\n"
                 # If last message, add any tools calls after message content and before message end token if any
-                if message['role'] == "user" and message_index == len(messages_array):
+                if (message['role'] == "user" or message['role'] == "tool") and message_index == len(messages_array):
                     # tools handling: Check if user is passing a openai tools array, if so add to end of prompt before assistant prompt unless tool_choice has been set to None
                     tools_array = genparams.get('tools', [])
                     chosen_tool = genparams.get('tool_choice', "auto")
@@ -2402,6 +2402,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
                         if chosen_tool=="auto":
                             # if you want a different template, you can set 'custom_tools_prompt' in the chat completions adapter as follows
                             custom_tools_prompt = adapter_obj.get("custom_tools_prompt", "Can the user query be answered by a listed tool above? (One word response: yes or no):")
+                            if message['role'] == "tool":
+                                custom_tools_prompt = adapter_obj.get("custom_tools_prompt", "Can the user query be further answered by another listed tool above? (If response is already complete, reply NO) (One word response: yes or no):")
                             # note: message string already contains the instruct start tag!
                             pollgrammar = r'root ::= "yes" | "no" | "Yes" | "No" | "YES" | "NO"'
                             temp_poll = {
