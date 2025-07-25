@@ -2286,7 +2286,7 @@ def transform_genparams(genparams, api_format):
             user_message_end = adapter_obj.get("user_end", "")
             assistant_message_start = adapter_obj.get("assistant_start", "\n### Response:\n")
             assistant_message_end = adapter_obj.get("assistant_end", "")
-            tools_message_start = adapter_obj.get("tools_start", "")
+            tools_message_start = adapter_obj.get("tools_start", "\nTool Results:\n")
             tools_message_end = adapter_obj.get("tools_end", "")
             images_added = []
             audio_added = []
@@ -2365,6 +2365,13 @@ ws ::= | " " | "\n" [ \t]{0,20}
                         for img in imgs:
                             images_added.append(img)
                 if not curr_content:
+                    if "tool_calls" in message:
+                        try:
+                            if len(message.get("tool_calls"))>0:
+                                tcfnname = message.get("tool_calls")[0].get("function").get("name")
+                                messages_string += f"\n(Made a function call to {tcfnname})\n"
+                        except Exception:
+                            messages_string += "\n(Made a function call)\n"
                     pass  # do nothing
                 elif isinstance(curr_content, str):
                     messages_string += curr_content
@@ -2738,7 +2745,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     for tc in tool_calls:
                         tcarg = tc.get("function",{}).get("arguments",None)
                         tc["id"] = f"call_{random.randint(10000, 99999)}"
-                        if tcarg and not isinstance(tcarg, str):
+                        if tcarg is not None and not isinstance(tcarg, str):
                             tc["function"]["arguments"] = json.dumps(tcarg)
                     recvtxt = None
                     currfinishreason = "tool_calls"
