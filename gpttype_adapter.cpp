@@ -2440,19 +2440,30 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
                 fprintf(stderr, "%s: error: failed to load mmproj model!\n", __func__);
                 return ModelLoadResult::FAIL;
             }
-            const int n_embd_clip = clip_n_mmproj_embd(clp_ctx_v);
             const int n_embd_llm  = llama_n_embd(llamamodel);
-            if (clp_ctx_v && clp_ctx_a) {
-                int n_embd_a = clip_n_mmproj_embd(clp_ctx_a);
-                if (n_embd_clip != n_embd_a) {
-                    fprintf(stderr, "%s: mmproj embedding mismatch between Audio and Vision (%d and %d)! Make sure you use the correct mmproj file!\n", __func__,n_embd_clip, n_embd_a);
+            int n_embd_clip_a = -1;
+            int n_embd_clip_v = -1;
+            if (clp_ctx_v)
+            {
+                n_embd_clip_v = clip_n_mmproj_embd(clp_ctx_v);
+                if (n_embd_clip_v != n_embd_llm) {
+                    fprintf(stderr, "%s: mmproj vision embedding mismatch (%d and %d)! Make sure you use the correct mmproj file!\n", __func__,n_embd_clip_v, n_embd_llm);
                     return ModelLoadResult::FAIL;
                 }
             }
-            if (n_embd_clip != n_embd_llm) {
-                fprintf(stderr, "%s: mmproj embedding mismatch (%d and %d)! Make sure you use the correct mmproj file!\n", __func__,n_embd_clip, n_embd_llm);
+            if (clp_ctx_a)
+            {
+                n_embd_clip_a = clip_n_mmproj_embd(clp_ctx_a);
+                if (n_embd_clip_a != n_embd_llm) {
+                    fprintf(stderr, "%s: mmproj audio embedding mismatch (%d and %d)! Make sure you use the correct mmproj file!\n", __func__,n_embd_clip_a, n_embd_llm);
+                    return ModelLoadResult::FAIL;
+                }
+            }
+            if (clp_ctx_v && clp_ctx_a && n_embd_clip_v != n_embd_clip_a) {
+                fprintf(stderr, "%s: mmproj embedding mismatch between Audio and Vision (%d and %d)! Make sure you use the correct mmproj file!\n", __func__,n_embd_clip_v, n_embd_clip_a);
                 return ModelLoadResult::FAIL;
             }
+
             if(clp_ctx_a) //init audio
             {
                 if (clip_has_whisper_encoder(clp_ctx_a)) {
@@ -2473,9 +2484,9 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             {
                 printf("Error: Speculative decoding cannot be used with Recurrent models!\n");
             }
-            else if(clp_ctx_v!=nullptr)
+            else if(clp_ctx_v!=nullptr || clp_ctx_a!=nullptr)
             {
-                printf("Error: Speculative decoding cannot be used with multimodal vision projectors!\n");
+                printf("Error: Speculative decoding cannot be used with multimodal projectors!\n");
             }
             else
             {
@@ -3115,6 +3126,8 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
                     printf("\nWarning: Audio Embd excluded - Context size too low or not enough clip tokens! (needed %d)\nAudio will be IGNORED! You probably want to relaunch with a larger context size!\n",cliptokensneeded);
                 }
 
+            }else{
+                printf("\nUnhandled media object, something went wrong.\n");
             }
         }
     }
