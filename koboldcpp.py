@@ -2415,7 +2415,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                             pollgrammar = r'root ::= "yes" | "no" | "Yes" | "No" | "YES" | "NO"'
                             temp_poll = {
                                 "prompt": f"{messages_string}\n\nTool List:\n{tools_string}\n\n{custom_tools_prompt}{user_end}",
-                                "max_length":4,
+                                "max_length":5,
                                 "temperature":0.1,
                                 "top_k":1,
                                 "rep_pen":1,
@@ -2445,10 +2445,10 @@ ws ::= | " " | "\n" [ \t]{0,20}
                                         pollgrammar += ("" if pollgrammar=="" else " | ")
                                         pollgrammar += "\"" + name + "\""
                                     pollgrammar = r'root ::= ' + pollgrammar
-                                    decide_tool_prompt = "Which of the listed tools should be used? Pick exactly one. (Reply directly with the selected tool's name):"
+                                    decide_tool_prompt = "Which of the listed tools should be used next? Pick exactly one. (Reply directly with the selected tool's name):"
                                     temp_poll = {
                                         "prompt": f"{messages_string}\n\nTool List:\n{tools_string}\n\n{decide_tool_prompt}{user_end}",
-                                        "max_length":8,
+                                        "max_length":16,
                                         "temperature":0.1,
                                         "top_k":1,
                                         "rep_pen":1,
