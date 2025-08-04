@@ -2610,8 +2610,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 prompt = prompt.replace("{{[INPUT_END]}}", user_message_end)
                 prompt = prompt.replace("{{[OUTPUT_END]}}", assistant_message_end)
                 prompt = prompt.replace("{{[SYSTEM_END]}}", system_message_end)
-                memory = memory.replace("{{[INPUT]}}", assistant_message_end + user_message_start)
-                memory = memory.replace("{{[OUTPUT]}}", user_message_end + assistant_message_start)
+                memory = memory.replace("{{[INPUT]}}", user_message_start)
+                memory = memory.replace("{{[OUTPUT]}}", assistant_message_start)
                 memory = memory.replace("{{[SYSTEM]}}", system_message_start)
                 memory = memory.replace("{{[INPUT_END]}}", user_message_end)
                 memory = memory.replace("{{[OUTPUT_END]}}", assistant_message_end)
@@ -2631,13 +2631,13 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 memory = memory.replace("{{[SYSTEM_END]}}", "")
         for i in range(len(stop_sequence)):
             if stop_sequence[i] == "{{[INPUT]}}":
-                stop_sequence[i] = user_message_start
+                stop_sequence[i] = user_message_start.strip()
             elif stop_sequence[i] == "{{[OUTPUT]}}":
-                stop_sequence[i] = assistant_message_start
+                stop_sequence[i] = assistant_message_start.strip()
             elif stop_sequence[i] == "{{[INPUT_END]}}":
-                stop_sequence[i] = (user_message_end if user_message_end.strip()!="" else "")
+                stop_sequence[i] = (user_message_end.strip() if user_message_end.strip()!="" else "")
             elif stop_sequence[i] == "{{[OUTPUT_END]}}":
-                stop_sequence[i] = (assistant_message_end if assistant_message_end.strip()!="" else "")
+                stop_sequence[i] = (assistant_message_end.strip() if assistant_message_end.strip()!="" else "")
         stop_sequence = list(filter(None, stop_sequence))
         genparams["prompt"] = prompt
         genparams["memory"] = memory
