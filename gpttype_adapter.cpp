@@ -3832,8 +3832,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         std::string outstr = "";
         // printf("\n[Debug: Dump Forwarded Input Tokens]\n");
         // outstr += get_tok_vec_str(embd_inp);
-        outstr += "\n\n[Debug: n_past="+std::to_string(n_past)+" Context Size = " + std::to_string(current_context_tokens.size()) + "]\n";
-        outstr += get_tok_vec_str(current_context_tokens);
+        outstr += "[Debug: n_past="+std::to_string(n_past)+" Context Size = " + std::to_string(current_context_tokens.size()) + "]";
+        //outstr += get_tok_vec_str(current_context_tokens);
         printf("%s\n\n", RemoveBell(outstr).c_str());
     }
 
