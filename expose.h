@@ -61,6 +61,7 @@ struct load_model_inputs
     const float rope_freq_scale = 1.0f;
     const float rope_freq_base = 10000.0f;
     const int moe_experts = -1;
+    const int moecpu = 0;
     const bool no_bos_token = false;
     const bool load_guidance = false;
     const char * override_kv = nullptr;
