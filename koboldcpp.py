@@ -6735,6 +6735,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             ccadapter_path = os.path.abspath(args.chatcompletionsadapter)
         elif isinstance(args.chatcompletionsadapter, str) and adapt_dir:
             filename = args.chatcompletionsadapter
+            if filename.lower().strip()=="autoguess":
+                filename = "AutoGuess"
             if not filename.endswith(".json"):
                 filename += ".json"
             #strip to just the filename
