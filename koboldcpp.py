@@ -63,7 +63,7 @@ dry_seq_break_max = 128
 extra_images_max = 4
 
 # global vars
-KcppVersion = "1.97.4"
+KcppVersion = "1.98"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":""}
@@ -2615,6 +2615,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
         user_message_end = adapter_obj.get("user_end", "")
         assistant_message_start = adapter_obj.get("assistant_start", "\n### Response:\n")
         assistant_message_end = adapter_obj.get("assistant_end", "")
+        assistant_message_gen = adapter_obj.get("assistant_gen", assistant_message_start)
         if isinstance(prompt, str): #needed because comfy SD uses same field name
             if assistant_message_gen and assistant_message_gen!=assistant_message_start: #replace final output tag with unspaced (gen) version if exists
                 if prompt.rstrip().endswith("{{[OUTPUT]}}"):
@@ -7470,7 +7471,7 @@ if __name__ == '__main__':
     compatgroup.add_argument("--usecpu", help="Do not use any GPU acceleration (CPU Only)", action='store_true')
     parser.add_argument("--contextsize", help="Controls the memory allocated for maximum context size, only change if you need more RAM for big contexts. (default 8192).",metavar=('[256 to 262144]'), type=check_range(int,256,262144), default=8192)
     parser.add_argument("--gpulayers", help="Set number of layers to offload to GPU when using GPU. Requires GPU. Set to -1 to try autodetect, set to 0 to disable GPU offload.",metavar=('[GPU layers]'), nargs='?', const=1, type=int, default=-1)
-    parser.add_argument("--tensor_split", help="For CUDA and Vulkan only, ratio to split tensors across multiple GPUs, space-separated list of proportions, e.g. 7 3", metavar=('[Ratios]'), type=float, nargs='+')
+    parser.add_argument("--tensor_split", "--tensorsplit", help="For CUDA and Vulkan only, ratio to split tensors across multiple GPUs, space-separated list of proportions, e.g. 7 3", metavar=('[Ratios]'), type=float, nargs='+')
 
     #more advanced params
     advparser = parser.add_argument_group('Advanced Commands')
