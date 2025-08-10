@@ -671,6 +671,14 @@ def tryparsefloat(value,fallback):
     except ValueError:
         return fallback
 
+def replace_last_in_string(text: str, match: str, replacement: str) -> str:
+    if match == "":
+        return text
+    head, sep, tail = text.rpartition(match)
+    if sep == "":
+        return text  # old not found
+    return head + replacement + tail
+
 def is_incomplete_utf8_sequence(byte_seq): #note, this will only flag INCOMPLETE sequences, corrupted ones will be ignored.
     try:
         byte_seq.decode('utf-8')
@@ -2608,6 +2616,11 @@ ws ::= | " " | "\n" [ \t]{0,20}
         assistant_message_start = adapter_obj.get("assistant_start", "\n### Response:\n")
         assistant_message_end = adapter_obj.get("assistant_end", "")
         if isinstance(prompt, str): #needed because comfy SD uses same field name
+            if assistant_message_gen and assistant_message_gen!=assistant_message_start: #replace final output tag with unspaced (gen) version if exists
+                if prompt.rstrip().endswith("{{[OUTPUT]}}"):
+                    prompt = replace_last_in_string(prompt,"{{[OUTPUT]}}",assistant_message_gen)
+                elif assistant_message_start and prompt.rstrip().endswith(assistant_message_start):
+                    prompt = replace_last_in_string(prompt, assistant_message_start, assistant_message_gen)
             if "{{[INPUT_END]}}" in prompt or "{{[OUTPUT_END]}}" in prompt:
                 prompt = prompt.replace("{{[INPUT]}}", user_message_start)
                 prompt = prompt.replace("{{[OUTPUT]}}", assistant_message_start)
