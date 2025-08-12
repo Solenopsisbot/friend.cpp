@@ -233,9 +233,13 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     bool endswithgguf = (sd_params->model_path.rfind(".gguf") == sd_params->model_path.size() - 5);
     if(sd_params->t5xxl_path!="" && endswithgguf)
     {
-        printf("\nSwap to Diffusion Model Path:%s",sd_params->model_path.c_str());
-        sd_params->diffusion_model_path = sd_params->model_path;
-        sd_params->model_path = "";
+        //extra check - make sure there is no diffusion model prefix already inside!
+        if(!gguf_tensor_exists(sd_params->model_path,"model.diffusion_model.",false))
+        {
+            printf("\nSwap to Diffusion Model Path:%s",sd_params->model_path.c_str());
+            sd_params->diffusion_model_path = sd_params->model_path;
+            sd_params->model_path = "";
+        }
     }
 
     sddebugmode = inputs.debugmode;
