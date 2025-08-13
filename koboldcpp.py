@@ -1898,7 +1898,7 @@ def embeddings_load_model(model_filename):
     inputs = embeddings_load_model_inputs()
     inputs.model_filename = model_filename.encode("UTF-8")
     inputs.gpulayers = (999 if args.embeddingsgpu else 0)
-    inputs.flash_attention = False
+    inputs.flash_attention = args.flashattention
     inputs.threads = args.threads
     inputs.use_mmap = args.usemmap
     inputs.embeddingsmaxctx = (args.embeddingsmaxctx if args.embeddingsmaxctx else args.contextsize) # for us to clamp to contextsize if embeddingsmaxctx unspecified
