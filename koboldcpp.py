@@ -2688,8 +2688,8 @@ def LaunchWebbrowser(target_url, failedmsg):
 ### we are intentionally NOT using flask, because we want MINIMAL dependencies
 #################################################################
 class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
-    sys_version = ""
-    server_version = "ConcedoLlamaForKoboldServer"
+    sys_version = "1"
+    server_version = "KoboldCppServer"
 
     def __init__(self, addr, port):
         self.addr = addr
