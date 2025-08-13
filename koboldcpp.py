@@ -1901,7 +1901,7 @@ def embeddings_load_model(model_filename):
     inputs.flash_attention = False
     inputs.threads = args.threads
     inputs.use_mmap = args.usemmap
-    inputs.embeddingsmaxctx = args.embeddingsmaxctx
+    inputs.embeddingsmaxctx = (args.embeddingsmaxctx if args.embeddingsmaxctx else args.contextsize) # for us to clamp to contextsize if embeddingsmaxctx unspecified
     inputs = set_backend_props(inputs)
     ret = handle.embeddings_load_model(inputs)
     return ret
