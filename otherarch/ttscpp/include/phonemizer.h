@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <map>
 #include <unordered_set>
-#include "tokenizer.h"
+#include "ttstokenizer.h"
 #include <algorithm>
 #include <mutex>
 
@@ -33,16 +33,16 @@ static const std::unordered_set<std::string> ONE_LETTER_WORDS = {
 	"i",
 };
 /*
- * The two letter and three letter words listed below have been filtered down from the complete list of english two and three letter words 
+ * The two letter and three letter words listed below have been filtered down from the complete list of english two and three letter words
  * via several criteria:
  *   1. All non-EN-US words have been removed
  * 	 2. All three letter acronyms have been removed (as these lists are used to identify acronyms)
- *   3. All archaic, deprecated, or poetic words have been removed. 
- * 	 4. All literary, abbreviative, and slang words have been removed if they see no more than a mean of 30 daily searches via google (over the 
- *	 last 10 years). 
- * 
- * After the lists were filtered by the criteria described above, removed items were reviewed. Any item which had entered the common EN-US 
- * vernacular but was not identified as of American origin was reintroduced into the sets below. 
+ *   3. All archaic, deprecated, or poetic words have been removed.
+ * 	 4. All literary, abbreviative, and slang words have been removed if they see no more than a mean of 30 daily searches via google (over the
+ *	 last 10 years).
+ *
+ * After the lists were filtered by the criteria described above, removed items were reviewed. Any item which had entered the common EN-US
+ * vernacular but was not identified as of American origin was reintroduced into the sets below.
  */
 static const std::unordered_set<std::string> TWO_LETTER_WORDS = {
 	"ab", "ah", "am", "an", "as", "at", "aw", "ax", "ay", "be", "bo", "br",
@@ -50,7 +50,7 @@ static const std::unordered_set<std::string> TWO_LETTER_WORDS = {
 	"id", "if", "in", "is", "it", "la", "lo", "ma", "me", "mm", "my", "na",
 	"no", "of", "oh", "oi", "on", "oo", "or", "ow", "ox", "oy", "pa", "qi",
 	"re", "sh", "so", "to", "uh", "um", "un", "up", "us", "we", "wo", "ya",
-	"ye", "yo", 
+	"ye", "yo",
 };
 static const std::unordered_set<std::string> THREE_LETTER_WORDS = {
 	"aah", "abs", "aby", "ace", "ach", "ack", "act", "add", "ado", "ads", "aft", "age",
@@ -292,7 +292,7 @@ static std::string STOPPING_TOKENS = ".,:;!?";
 
 #ifdef ESPEAK_INSTALL
 /**
- * espeak-ng uses globals to persist and manage its state so it is not compatible with 
+ * espeak-ng uses globals to persist and manage its state so it is not compatible with
  * threaded parallelism (https://github.com/espeak-ng/espeak-ng/issues/1527).
  * This singleton acts as a mutex wrapped provider for all espeak phonemization methods such
  * that multiple instances of the kokoro_runner can be initialized and called in parallel.
@@ -323,7 +323,7 @@ public:
 #endif
 
 enum lookup_code {
-	SUCCESS = 100,
+	SUCCESS_TOTAL = 100,
 	SUCCESS_PARTIAL = 101,
 	FAILURE_UNFOUND = 200,
 	FAILURE_PHONETIC = 201,
@@ -368,7 +368,7 @@ struct conditions {
 	void update_for_word(std::string word,bool allow_for_upper_check = true);
 };
 
-/* 
+/*
  * The corpus struct is simply a small wrapper class that is used to perform simple look forward and backwards in the text
  * which is being phonemized. This can be used to discern how to convert chunks of text in a consistent and protective fashion
  * in order to accurately phonemize complicated text.
@@ -376,7 +376,7 @@ struct conditions {
 struct corpus {
 	corpus(const char * text, size_t size): size(size), text(text) {};
 	size_t location = 0;
-	size_t size; 
+	size_t size;
 	const char * text;
 
 	/*
@@ -397,9 +397,9 @@ struct corpus {
 	std::string after_until(int after, std::string val);
 };
 
-/* 
+/*
  * The TTS phonemizer works by splitting each word into distinct graphemes, and for each grapheme the phonemizer will look at the grapheme that came
- * before, after, and for any word specific exceptions in order to compile a 
+ * before, after, and for any word specific exceptions in order to compile a
  */
 struct phonemizer_rule {
 	~phonemizer_rule() {
@@ -436,10 +436,10 @@ private:
 
 struct word_phonemizer * word_phonemizer_from_gguf(gguf_context * meta);
 
-/* 
+/*
  * The general translation approach that espeak uses is to lookup words in the dictionary and return a list of possible matches per lookup.
  * Each match contains flags which describe the match's conditions and limitations and optionally a pronunciation. When a pronunciation is not returned,
- * it usually means that the word needs to be pronounced phonetically, the word belongs to another language, or that the original content is a 
+ * it usually means that the word needs to be pronounced phonetically, the word belongs to another language, or that the original content is a
  * token representation of a different word (e.g. with numbers).
  *
  * Since it does not make sense to have the core lexer reperform this lookup operation with represented words or via distinct languages, those behaviors
@@ -470,7 +470,7 @@ struct phoneme_dictionary {
 
 struct phoneme_dictionary * phoneme_dictionary_from_gguf(gguf_context * meta);
 
-/* 
+/*
  * In general, I would like to avoid requiring the installation of otherwise broad and technically complicated libraries,
  * like espeak, especially when they are only being used for a small portion of their overall functionality. While avoiding these
  * requirements will keep the default installation cost of TTS.cpp down, it is also unlikely that TTS.cpp will support
@@ -478,8 +478,8 @@ struct phoneme_dictionary * phoneme_dictionary_from_gguf(gguf_context * meta);
  * espeak. As such, the phonemizer struct described below will support simple text to IPA phoneme functionality out of the box,
  * while also optionally acting as an interface for espeak phonemization.
  *
- * Phonemization seems to use a pattern close to the common lexer, such that at each index or chunk of text forward and backward context 
- * views are used to support single pass translation. As such, the TTS.cpp phonemization pattern I've decided to implement behaves 
+ * Phonemization seems to use a pattern close to the common lexer, such that at each index or chunk of text forward and backward context
+ * views are used to support single pass translation. As such, the TTS.cpp phonemization pattern I've decided to implement behaves
  * effecively like a simple router lexer. It will only support utf-8 encoded text and english IPA conversion.
  */
 struct phonemizer {

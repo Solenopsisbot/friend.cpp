@@ -2,8 +2,8 @@
 #define parler_model_h
 
 #include "dac_model.h"
-#include "t5_encoder_model.h"
-#include "sampler.h"
+#include "ttst5_encoder_model.h"
+#include "ttssampler.h"
 
 enum parler_tensor {
     PARLER_EMBD,
@@ -38,17 +38,17 @@ struct parler_layer {
     struct ggml_tensor * self_attn_o_proj;
     struct ggml_tensor * self_attn_norm;
     struct ggml_tensor * self_attn_norm_bias;
-    
+
     struct ggml_tensor * attn_k_proj;
     struct ggml_tensor * attn_q_proj;
     struct ggml_tensor * attn_v_proj;
     struct ggml_tensor * attn_o_proj;
     struct ggml_tensor * attn_norm;
     struct ggml_tensor * attn_norm_bias;
-    
+
     struct ggml_tensor * cross_k;
     struct ggml_tensor * cross_v;
-    
+
     struct ggml_tensor * fc1;
     struct ggml_tensor * fc2;
     struct ggml_tensor * final_norm;
@@ -74,18 +74,18 @@ struct parler_tts_model : tts_model {
     uint32_t prompt_vocab_size;
 
     bool use_cross_attn = true;
-    
+
     std::vector<struct ggml_tensor*> embds;
     std::vector<parler_layer*> layers;
     std::vector<struct ggml_tensor*> heads;
-    
+
     struct ggml_tensor * precomputed_input_emb;
     struct ggml_tensor * precomputed_positional_embds;
-    
+
     struct ggml_tensor * layer_norm;
     struct ggml_tensor * layer_norm_bias;
     struct ggml_tensor * prompt_embd;
-    
+
     void assign_weight(std::string name, ggml_tensor * tensor);
     void prep_constants(gguf_context * meta);
     void prep_layers(gguf_context * meta);
@@ -107,21 +107,21 @@ struct parler_context : runner_context {
     std::vector<bool> eos_seen;
 
     bool use_cache = true;
-    
+
     size_t  output_size = 0; // capacity (of tokens positions) for the output buffers
     int32_t n_outputs   = 0; // number of actually-used outputs in the current ubatch or last logical batch
     uint32_t current_position = 0; // current position in the active sequence
     uint32_t prompt_end_position = 0; // the position of the text prompt termination (used for adjusting the cache when incrementally generating)
     int32_t seq_id; // a unique identifier associated with the active sequence.
-    
+
     std::vector<uint32_t> output_tokens;
-    
+
     struct ggml_tensor * inp_tokens;
     struct ggml_tensor * audio_inp_tokens;
     struct ggml_tensor * positions;
     struct ggml_tensor * attn_mask;
     struct ggml_tensor * attn_mask_cross;
-    
+
     void build_schedule() {
         runner_context::build_schedule(model->max_nodes());
     }
@@ -130,17 +130,17 @@ struct parler_context : runner_context {
 
 struct parler_kv_cache {
     int32_t seq_id;
-    
+
     ggml_type type_k = GGML_TYPE_F32;
     ggml_type type_v = GGML_TYPE_F32;
 
     std::vector<struct ggml_tensor *> k_l;
     std::vector<struct ggml_tensor *> v_l;
-    
+
     struct ggml_context * ctx;
     ggml_backend_buffer_type_t buft;
     ggml_backend_buffer_t buf;
-    
+
     void free() {
         ggml_free(ctx);
         ggml_backend_buffer_free(buf);
@@ -152,8 +152,8 @@ struct parler_kv_cache {
 };
 
 struct parler_ubatch {
-    parler_ubatch(bool audio_generation, size_t n_tokens, size_t n_audio_tokens, size_t sequence_length, 
-        uint32_t * tokens, uint32_t * audio_tokens, uint32_t * positions, uint32_t * true_order, 
+    parler_ubatch(bool audio_generation, size_t n_tokens, size_t n_audio_tokens, size_t sequence_length,
+        uint32_t * tokens, uint32_t * audio_tokens, uint32_t * positions, uint32_t * true_order,
         int current_step): audio_generation(audio_generation), n_tokens(n_tokens), n_audio_tokens(n_audio_tokens), sequence_length(sequence_length), tokens(tokens), audio_tokens(audio_tokens), positions(positions), true_order(true_order), current_step(current_step) {};
     parler_ubatch() {};
     bool audio_generation; // whether we are receiving codebook decoded tokens or text tokens

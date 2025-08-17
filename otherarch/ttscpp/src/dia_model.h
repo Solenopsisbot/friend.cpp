@@ -1,7 +1,7 @@
 #pragma once
 
 #include "dac_model.h"
-#include "sampler.h"
+#include "ttssampler.h"
 
 struct dia_encoder_layer {
     struct ggml_tensor * k;
@@ -22,7 +22,7 @@ struct dia_decoder_layer {
     struct ggml_tensor * self_attn_v;
     struct ggml_tensor * self_attn_o;
     struct ggml_tensor * self_attn_norm;
-    
+
     struct ggml_tensor * cross_attn_k;
     struct ggml_tensor * cross_attn_q;
     struct ggml_tensor * cross_attn_v;
@@ -76,7 +76,7 @@ struct dia_model : tts_model {
 
     dia_encoder * encoder;
     dia_decoder * decoder;
-    
+
     void assign_weight(std::string name, ggml_tensor * tensor);
     void assign_to_encoder(std::vector<std::string> parts, struct ggml_tensor * tensor, std::string name);
     void assign_to_decoder(std::vector<std::string> parts, struct ggml_tensor * tensor, std::string name);
@@ -103,15 +103,15 @@ struct dia_context : runner_context {
     uint32_t max_generation_size; // this is set by the generation context or defaults to the config set on dia model.
 
     std::vector<uint32_t> output_tokens;
-    struct dia_model * model;    
-    
+    struct dia_model * model;
+
     struct ggml_tensor * inp_tokens;
     struct ggml_tensor * audio_inp_tokens;
     struct ggml_tensor * positions;
     struct ggml_tensor * encode_positions;
     struct ggml_tensor * encode_attn_mask;
     struct ggml_tensor * cross_attn_mask;
-    
+
     void build_schedule() {
         runner_context::build_schedule(model->max_nodes());
     }
@@ -126,11 +126,11 @@ struct dia_kv_cache {
 
     std::vector<struct ggml_tensor *> k_l;
     std::vector<struct ggml_tensor *> v_l;
-    
+
     struct ggml_context * ctx;
     ggml_backend_buffer_type_t buft;
     ggml_backend_buffer_t buf;
-    
+
     void free() {
         ggml_free(ctx);
         ggml_backend_buffer_free(buf);

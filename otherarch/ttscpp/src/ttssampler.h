@@ -21,7 +21,7 @@ struct sampler {
     std::vector<uint32_t> repetition_counts;
     bool do_sample = true;
     bool apply_softmax = true;
-    
+
     void sample(float * logits, std::vector<uint32_t> & output_tokens);
     void softmax(float * logits, std::vector<std::vector<size_t>> picks, std::vector<uint32_t> max_indices);
     void max(float * logits, std::vector<uint32_t> & output_tokens);

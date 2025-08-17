@@ -4,7 +4,7 @@
 
 // SNAC, Scale Neural Audio Codec, is another neural audio codec much like DAC.
 // The key differences are that it uses grouping in the residual units of its layers,
-// performs a repeat_interleave over the second and third input channels, applies 
+// performs a repeat_interleave over the second and third input channels, applies
 // a noise convolutional layer after input encoding for each layer, and applies
 // an extra convolutional layer before residual layers are applied.
 struct snac_model : tts_model {
@@ -19,7 +19,7 @@ struct snac_model : tts_model {
     uint32_t noise_steps[4] = {8, 64, 256, 512};
     uint32_t noise_steps_sum = 840;
     bool use_noise = true;
-    
+
     struct ggml_tensor * repeat_interleave_buffer;
 
     struct ggml_tensor * in_conv_kernel;
@@ -46,12 +46,12 @@ struct snac_model : tts_model {
 // the context used for running the snac model
 struct snac_context : runner_context {
     snac_context(snac_model * model, int n_threads): runner_context(n_threads), model(model) {};
-    
+
     struct snac_model * model;
-        
+
     struct ggml_tensor * inp_tokens;
     struct ggml_tensor * noise;
-    
+
     void build_schedule() {
         runner_context::build_schedule(model->max_nodes());
     }
@@ -74,11 +74,11 @@ struct snac_runner : tts_runner {
     }
     snac_model * model;
     snac_context * sctx;
-    
+
     void init_build() {
         tts_runner::init_build(&sctx->buf_compute_meta);
     }
-    
+
     void set_inputs(std::vector<std::vector<uint32_t>> & tokens);
     void prepare_post_load();
     struct ggml_cgraph * build_snac_graph(size_t sequence_length);

@@ -53,7 +53,7 @@ namespace general_neural_audio_codec {
 
         uint32_t padding;
         uint32_t stride;
-        
+
         std::vector<residual_unit> residual_blocks;
     };
 

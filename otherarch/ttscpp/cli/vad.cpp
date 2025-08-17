@@ -9,8 +9,8 @@ float energy(float * chunk, int count) {
 }
 
 void apply_energy_voice_inactivity_detection(
-	tts_response & data, 
-	float sample_rate, 
+	tts_response & data,
+	float sample_rate,
 	int ms_per_frame,
 	int frame_threshold,
 	float normalized_energy_threshold,

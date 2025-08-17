@@ -543,7 +543,7 @@ dictionary_response * phoneme_dictionary::lookup(corpus * text, std::string valu
 	}
 	std::vector<dictionary_response*> possibilities = lookup_map.at(value);
 	for (auto possible : possibilities) {
-		if (possible->code == SUCCESS || (possible->code == SUCCESS_PARTIAL && possible->is_match(text, flags))) {
+		if (possible->code == SUCCESS_TOTAL || (possible->code == SUCCESS_PARTIAL && possible->is_match(text, flags))) {
 			return possible;
 		}
 	}
@@ -818,7 +818,7 @@ bool phonemizer::process_word(corpus* text, std::string* output, std::string wor
 			output->append(" ");
 		}
 		flags->update_for_word(word);
-		if (response->code != SUCCESS) {
+		if (response->code != SUCCESS_TOTAL) {
 			word += response->after_match;
 			output->append(response->value);
 			text->size_pop(word.size()+unaccented_size_difference);
@@ -1072,7 +1072,7 @@ dictionary_response * response_from_string(std::string value, std::string key) {
 	bool not_at_start = key[0] == '#';
 	bool not_at_end = key.back() == '#';
     if (!has_spacing) {
-    	dictionary_response * resp = new dictionary_response(SUCCESS, value);
+    	dictionary_response * resp = new dictionary_response(SUCCESS_TOTAL, value);
     	resp->expects_to_be_proceeded_by_number = expects_to_be_proceeded_by_number;
     	resp->not_at_clause_end = not_at_end;
     	resp->not_at_clause_start = not_at_start;

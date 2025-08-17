@@ -25,6 +25,22 @@
 #define M_PI		3.14159265358979323846
 #endif
 
+//imports required for tts.cpp to work
+#include "tts.cpp"
+#include "ttstokenizer.cpp"
+#include "ttssampler.cpp"
+#include "parler_model.cpp"
+#include "dac_model.cpp"
+#include "ttsutil.cpp"
+#include "ttst5_encoder_model.cpp"
+#include "phonemizer.cpp"
+#include "tts_model.cpp"
+#include "kokoro_model.cpp"
+#include "dia_model.cpp"
+#include "orpheus_model.cpp"
+#include "snac_model.cpp"
+#include "general_neural_audio_codec.cpp"
+
 enum TTS_VER
 {
     TTS_VER_2,

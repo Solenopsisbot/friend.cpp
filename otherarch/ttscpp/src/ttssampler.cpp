@@ -1,4 +1,4 @@
-#include "sampler.h"
+#include "ttssampler.h"
 
 void sampler::sample(float * logits, std::vector<uint32_t> & output_tokens) {
     // assume that we are pointing to the start of the first token output;
@@ -6,7 +6,7 @@ void sampler::sample(float * logits, std::vector<uint32_t> & output_tokens) {
         return max(logits, output_tokens);
     }
     std::vector<uint32_t> max_vals;
-    // the max_head_probs variable is used when top-p is applied but exists to address the case in which top-k and top-p cause the cumulative probability of the nucleus to beless than or 
+    // the max_head_probs variable is used when top-p is applied but exists to address the case in which top-k and top-p cause the cumulative probability of the nucleus to beless than or
     // equal to top_p;
     std::vector<float> max_head_probs;
 
@@ -189,7 +189,7 @@ void sampler::max(float * logits, std::vector<uint32_t> & output_tokens) {
         uint32_t token_id = 0;
         for (uint32_t ii = 0; ii < vocab_size; ii++) {
             float v = *(logits+i*vocab_size+ii);
-            // while repetition penalty will never be used for maximum token selection, it is used for the logarithmic stabilization of 
+            // while repetition penalty will never be used for maximum token selection, it is used for the logarithmic stabilization of
             // the softmax function in which case it is possible for repetition counts to be set.
             if (has_repetition_penalty && last_token_ids[i] == ii) {
                 v /= (pow(repetition_penalty, repetition_counts[i]));

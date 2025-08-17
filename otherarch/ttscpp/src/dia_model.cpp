@@ -119,7 +119,7 @@ void dia_model::assign_to_decoder_layer(std::string part, dia_decoder_layer * la
         set_tensor(layer->self_attn_norm, tensor);
     } else if (part == "pre_mlp_norm") {
         layer->mlp_norm = ggml_dup_tensor(ctx, tensor);
-        set_tensor(layer->mlp_norm, tensor);    
+        set_tensor(layer->mlp_norm, tensor);
     } else if (part == "pre_ca_norm") {
         layer->cross_attn_norm = ggml_dup_tensor(ctx, tensor);
         set_tensor(layer->cross_attn_norm, tensor);
@@ -151,7 +151,7 @@ void dia_model::prep_layers() {
         dia_decoder_layer * l = new dia_decoder_layer;
         decoder->layers.push_back(l);
     }
-    
+
     decoder->embds.reserve((size_t) n_output_heads);
     decoder->heads.reserve((size_t) n_output_heads);
     for (int i = 0; i < n_output_heads; i++) {
@@ -196,7 +196,7 @@ void dia_model::prep_constants(gguf_context * meta) {
     int encoder_attn_heads_key = gguf_find_key(meta, "dia.encoder.attn_heads");
     if (encoder_attn_heads_key != -1) {
         encoder_attn_heads = gguf_get_val_u32(meta, encoder_attn_heads_key);
-    }    
+    }
 
     int head_size_key = gguf_find_key(meta, "dia.attn_head_size");
     if (head_size_key != -1) {
@@ -271,7 +271,7 @@ struct dia_context * build_new_dia_context(struct dia_model * model, int n_threa
     return dctx;
 }
 
-static bool dia_kv_cache_init(struct dia_kv_cache * cache, dia_model * model, dia_context * dctx) {    
+static bool dia_kv_cache_init(struct dia_kv_cache * cache, dia_model * model, dia_context * dctx) {
     ggml_backend_buffer_type_t buft = nullptr;
     // this will only really support cpu or metal for the time being;
     if (dctx->backend != nullptr) {
@@ -382,7 +382,7 @@ static struct ggml_tensor * build_dia_encoder(ggml_context * ctx, dia_model * mo
     struct ggml_tensor * cur = ggml_reshape_3d(ctx, ggml_get_rows(ctx, model->encoder->embedding, dctx->inp_tokens), model->encoder_hidden_size, model->max_encoder_context_length, 2);
     for (auto layer : model->encoder->layers) {
         struct ggml_tensor * residual = cur;
-        
+
         cur = dia_layer_norm(ctx, cur, layer->self_attn_norm);
         // self-attention
         {
@@ -402,7 +402,7 @@ static struct ggml_tensor * build_dia_encoder(ggml_context * ctx, dia_model * mo
             struct ggml_tensor * kqv_merged = ggml_permute(ctx, kqv, 2, 0, 1, 3);
 
             // It is unclear why the attention ops in Dia's encoder don't project to the embedding dimension size as is standard. Instead they up project to the decoder's embedding dimension
-            // then down project back the the encoder embedding dimension. 
+            // then down project back the the encoder embedding dimension.
             cur = ggml_cont_3d(ctx, kqv_merged, model->decoder_hidden_size, model->max_encoder_context_length, 2);
             cur = ggml_mul_mat(ctx, layer->o, cur);
         }
@@ -443,10 +443,10 @@ static struct ggml_tensor * repeat_interleave_dim1(ggml_context * ctx, struct gg
 static void build_dia_self_kv_store(ggml_context * ctx, dia_context * dctx, dia_model * model, dia_kv_cache * kv, ggml_cgraph * gf, struct ggml_tensor * k, struct ggml_tensor * v, dia_ubatch & batch, int layer_index) {
     int64_t attn_size = model->head_size * model->decoder_attn_heads;
 
-    struct ggml_tensor * k_cache_view = 
+    struct ggml_tensor * k_cache_view =
         ggml_view_2d(
-                ctx, kv->k_l[layer_index], attn_size, 2, 
-                attn_size * model->max_generation_size * ggml_element_size(kv->k_l[layer_index]), 
+                ctx, kv->k_l[layer_index], attn_size, 2,
+                attn_size * model->max_generation_size * ggml_element_size(kv->k_l[layer_index]),
                 attn_size*dctx->current_position*ggml_element_size(kv->k_l[layer_index]));
 
     k = ggml_rope(ctx, ggml_cont(ctx, ggml_reshape_4d(ctx, k, model->head_size, model->decoder_attn_heads / model->decoder_query_heads, batch.sequence_length, 2)), dctx->positions, model->head_size, 2);
@@ -461,8 +461,8 @@ static void build_dia_self_kv_store(ggml_context * ctx, dia_context * dctx, dia_
     struct ggml_tensor * v_cache_view = nullptr;
 
     v_cache_view = ggml_view_2d(
-            ctx, kv->v_l[layer_index], attn_size, 2, 
-            attn_size * model->max_generation_size * ggml_element_size(kv->v_l[layer_index]), 
+            ctx, kv->v_l[layer_index], attn_size, 2,
+            attn_size * model->max_generation_size * ggml_element_size(kv->v_l[layer_index]),
             attn_size*dctx->current_position*ggml_element_size(kv->v_l[layer_index]));
 
     // Since the sequence length should always be 1 here this is the most pertinent time to repeat the heads for grouped query attention.
@@ -476,11 +476,11 @@ static void build_dia_self_kv_store(ggml_context * ctx, dia_context * dctx, dia_
 static void build_dia_cross_kv_store(ggml_context * ctx, dia_context * dctx, dia_model * model, dia_kv_cache * kv, ggml_cgraph * gf, struct ggml_tensor * encoder_hidden_states, int layer_index) {
     dia_decoder_layer * layer = model->decoder->layers[layer_index];
     struct ggml_tensor * encoder_states_key_view = ggml_cont(ctx, ggml_view_3d(
-        ctx, 
-        encoder_hidden_states, 
-        model->encoder_hidden_size, 
-        dctx->prompt_size, 
-        2, 
+        ctx,
+        encoder_hidden_states,
+        model->encoder_hidden_size,
+        dctx->prompt_size,
+        2,
         model->encoder_hidden_size * ggml_element_size(encoder_hidden_states), model->encoder_hidden_size * model->max_encoder_context_length * ggml_element_size(encoder_hidden_states), 0));
 
     struct ggml_tensor * k = ggml_mul_mat(ctx, layer->cross_attn_k, encoder_states_key_view);
@@ -491,8 +491,8 @@ static void build_dia_cross_kv_store(ggml_context * ctx, dia_context * dctx, dia
 
     struct ggml_tensor * k_cache_view =
         ggml_view_4d(
-                ctx, kv->cross_k_l[layer_index], model->head_size, model->decoder_attn_heads, 2, dctx->prompt_size, 
-                model->head_size*ggml_element_size(kv->cross_k_l[layer_index]), 
+                ctx, kv->cross_k_l[layer_index], model->head_size, model->decoder_attn_heads, 2, dctx->prompt_size,
+                model->head_size*ggml_element_size(kv->cross_k_l[layer_index]),
                 model->head_size*model->decoder_attn_heads*ggml_element_size(kv->cross_k_l[layer_index]),
                 model->head_size*model->decoder_attn_heads*2*ggml_element_size(kv->cross_k_l[layer_index]),
                 0);
@@ -504,10 +504,10 @@ static void build_dia_cross_kv_store(ggml_context * ctx, dia_context * dctx, dia
 
     struct ggml_tensor * v_cache_view =
         ggml_view_4d(
-                ctx, kv->cross_v_l[layer_index], model->max_encoder_context_length, model->head_size, model->decoder_attn_heads, 2, 
-                model->max_encoder_context_length*ggml_element_size(kv->cross_v_l[layer_index]), 
-                model->head_size*model->max_encoder_context_length*ggml_element_size(kv->cross_v_l[layer_index]), 
-                model->head_size*model->max_encoder_context_length*model->decoder_attn_heads*ggml_element_size(kv->cross_v_l[layer_index]), 
+                ctx, kv->cross_v_l[layer_index], model->max_encoder_context_length, model->head_size, model->decoder_attn_heads, 2,
+                model->max_encoder_context_length*ggml_element_size(kv->cross_v_l[layer_index]),
+                model->head_size*model->max_encoder_context_length*ggml_element_size(kv->cross_v_l[layer_index]),
+                model->head_size*model->max_encoder_context_length*model->decoder_attn_heads*ggml_element_size(kv->cross_v_l[layer_index]),
                 0);
 
     ggml_build_forward_expand(gf, ggml_cpy(ctx, v, v_cache_view));
@@ -515,11 +515,11 @@ static void build_dia_cross_kv_store(ggml_context * ctx, dia_context * dctx, dia
 
 static struct ggml_tensor * build_dia_decoder(
         ggml_cgraph * gf,
-        ggml_context * ctx, 
-        dia_model * model, 
-        dia_context * dctx, 
-        dia_kv_cache * cache, 
-        dia_ubatch & batch, 
+        ggml_context * ctx,
+        dia_model * model,
+        dia_context * dctx,
+        dia_kv_cache * cache,
+        dia_ubatch & batch,
         struct ggml_tensor * encoder_hidden_states) {
     dctx->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, batch.sequence_length);
     ggml_set_input(dctx->positions);
@@ -528,7 +528,7 @@ static struct ggml_tensor * build_dia_decoder(
     for (int l = 0; l < model->decoder->layers.size(); l++){
         dia_decoder_layer * layer = model->decoder->layers[l];
         struct ggml_tensor * residual = cur;
-        
+
         cur = dia_layer_norm(ctx, cur, layer->self_attn_norm);
         // self-attention
         {
@@ -546,13 +546,13 @@ static struct ggml_tensor * build_dia_decoder(
                         0);
             k = ggml_cont(ctx, ggml_permute(ctx, k, 0, 2, 1, 3));
 
-            struct ggml_tensor * v = 
+            struct ggml_tensor * v =
                 ggml_view_3d(ctx, cache->v_l[l],
                         model->head_size * model->decoder_attn_heads, dctx->current_position + 1, 2,
                         ggml_element_size(cache->v_l[l]) * model->decoder_attn_heads * model->head_size,
                         ggml_element_size(cache->v_l[l]) * model->decoder_attn_heads * model->head_size * model->max_generation_size,
                         0);
-            v = ggml_cont_4d(ctx, ggml_transpose(ctx, v), dctx->current_position + 1, model->head_size, model->decoder_attn_heads, 2); 
+            v = ggml_cont_4d(ctx, ggml_transpose(ctx, v), dctx->current_position + 1, model->head_size, model->decoder_attn_heads, 2);
 
             // As noted in the encoder Dia uses the Neo-X protocol for RoPE.
             Qcur = ggml_rope(ctx, ggml_cont(ctx, ggml_reshape_4d(ctx, Qcur, model->head_size, model->decoder_attn_heads, batch.sequence_length, 2)), dctx->positions, model->head_size, 2);
@@ -583,22 +583,22 @@ static struct ggml_tensor * build_dia_decoder(
                 build_dia_cross_kv_store(ctx, dctx, model, cache, gf, encoder_hidden_states, l);
             }
 
-            struct ggml_tensor * cross_k = 
+            struct ggml_tensor * cross_k =
                 ggml_view_4d(
                         ctx, cache->cross_k_l[l], model->head_size, model->decoder_attn_heads, 2,
-                        model->max_encoder_context_length, model->head_size*ggml_element_size(cache->cross_k_l[l]), 
-                        model->head_size*model->decoder_attn_heads*ggml_element_size(cache->cross_k_l[l]), 
-                        model->head_size*model->decoder_attn_heads*2*ggml_element_size(cache->cross_k_l[l]),                 
+                        model->max_encoder_context_length, model->head_size*ggml_element_size(cache->cross_k_l[l]),
+                        model->head_size*model->decoder_attn_heads*ggml_element_size(cache->cross_k_l[l]),
+                        model->head_size*model->decoder_attn_heads*2*ggml_element_size(cache->cross_k_l[l]),
                         0);
             // the double permute operation shouldn't be necessary here, but it seems that currently ggml permute only currently alows for a single
             // axis pair to be transposed.
             cross_k = ggml_cont(ctx, ggml_permute(ctx, ggml_permute(ctx, cross_k, 0, 1, 3, 2), 0, 2, 1, 3));
 
-            struct ggml_tensor * cross_v = 
+            struct ggml_tensor * cross_v =
                 ggml_cont(ctx, ggml_view_4d(
                         ctx, cache->cross_v_l[l], model->max_encoder_context_length, model->head_size, model->decoder_attn_heads, 2,
-                        model->max_encoder_context_length*ggml_element_size(cache->cross_v_l[l]), 
-                        model->head_size*model->max_encoder_context_length*ggml_element_size(cache->cross_v_l[l]), 
+                        model->max_encoder_context_length*ggml_element_size(cache->cross_v_l[l]),
+                        model->head_size*model->max_encoder_context_length*ggml_element_size(cache->cross_v_l[l]),
                         model->head_size*model->max_encoder_context_length*model->decoder_attn_heads*ggml_element_size(cache->cross_v_l[l]),
                         0));
 
@@ -637,10 +637,10 @@ static struct ggml_tensor * build_dia_decoder(
 }
 
 void dia_runner::tokenize_sentence(std::string sentence, dia_ubatch & batch) {
-    // Dia's tokenization process is unusual. Essentially Dia takes the byte value for each character and uses that as 
-    // a token array. Additionally, because Dia performs a cfg-scale adjustment before sampling tokens, it is necessary to 
+    // Dia's tokenization process is unusual. Essentially Dia takes the byte value for each character and uses that as
+    // a token array. Additionally, because Dia performs a cfg-scale adjustment before sampling tokens, it is necessary to
     // generate with a conditioned context (i.e. with the text) and an unconditioned context (i.e. without any text) so that
-    // proper adjustments can be perfored at each generation step. This means that we need to pad the end of our tokens to the 
+    // proper adjustments can be perfored at each generation step. This means that we need to pad the end of our tokens to the
     // max context size for both the conditional and unconditional sequence.
 
     // if the sentence isn't prepended by dialogue start tokens, [S1] or [S2], then append one.
@@ -699,7 +699,7 @@ dia_ubatch dia_runner::batch_from_sentence(std::string sentence) {
  * 1.  Dia cleans its output generation by adding the difference between its text based output (its conditional output) and its unconditional output
  *     to the conditional ouput before sampling. This is why the batch is set to two throughout the graph.
  *
- * 2.  Dia's decoder attends across the entire encoded space including the pad buffer which receives a unique attention mask. This is why the 
+ * 2.  Dia's decoder attends across the entire encoded space including the pad buffer which receives a unique attention mask. This is why the
  *     encoder sequence is always max length.
  */
 struct ggml_cgraph * dia_runner::build_dia_graph(dia_ubatch & batch) {
@@ -716,7 +716,7 @@ struct ggml_cgraph * dia_runner::build_dia_graph(dia_ubatch & batch) {
     ggml_set_name(cur, "decoder_output");
     ggml_build_forward_expand(gf, cur);
     free_build();
-    
+
     return gf;
 }
 
@@ -758,11 +758,11 @@ int dia_runner::decode(dia_ubatch & batch) {
         dctx->output_tokens.reserve(dctx->max_generation_size * model->n_output_heads);
     }
     ggml_backend_sched_reset(dctx->sched);
-        
+
     const size_t logits_size = model->output_vocab_size * dctx->max_generation_size * model->n_output_heads;
     const size_t prev_size = dctx->buf_output ? ggml_backend_buffer_get_size(dctx->buf_output) : 0;
     const size_t new_size  = logits_size * sizeof(float);
-    
+
     if (!dctx->buf_output || prev_size < new_size) {
         if (dctx->buf_output) {
             ggml_backend_buffer_free(dctx->buf_output);
@@ -772,7 +772,7 @@ int dia_runner::decode(dia_ubatch & batch) {
 
         dctx->buf_output = ggml_backend_buft_alloc_buffer(dctx->backend_cpu_buffer, new_size);
     }
-    
+
     dctx->logits = (float *) ggml_backend_buffer_get_base(dctx->buf_output);
 
     ggml_cgraph * gf = build_dia_graph(batch);
@@ -817,7 +817,7 @@ bool dia_runner::check_stopping(dia_ubatch & batch) {
     if (dctx->delay_steps == -1 && (batch.audio_tokens[0] == model->eos_token_id || dctx->current_position >= dctx->max_generation_size - model->max_delay)) {
         dctx->delay_steps = model->max_delay;
     }
-    
+
     if (dctx->delay_steps > 0) {
         int step_after_eos = model->max_delay - dctx->delay_steps;
         for (int i = 0; i < model->delay_pattern.size(); i++) {
@@ -907,5 +907,5 @@ void dia_runner::assign_weight(std::string name, ggml_tensor * tensor) {
         dac_runner->model->assign_weight(name.substr(14), tensor);
     } else {
         model->assign_weight(name, tensor);
-    }   
+    }
 }

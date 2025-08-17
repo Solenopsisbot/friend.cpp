@@ -2,7 +2,7 @@
 #define t5_encoder_model_h
 
 #include "tts_model.h"
-#include "tokenizer.h"
+#include "ttstokenizer.h"
 
 
 enum t5_tensor {
@@ -75,14 +75,14 @@ void assign_to_t5_layer(t5_encoder * model, t5_layer & layer, std::string name, 
 
 struct t5_context : runner_context {
     t5_context(t5_encoder * model, int n_threads): runner_context(n_threads), model(model) {};
-    
+
     struct t5_encoder * model;
-    
+
     struct ggml_tensor * inp_tokens;
     struct ggml_tensor * positions;
     struct ggml_tensor * attn_mask;
     struct ggml_tensor * inp_pos_bucket;
-    
+
     void build_schedule() {
         runner_context::build_schedule(model->max_nodes());
     }
@@ -116,7 +116,7 @@ struct t5_runner : tts_runner {
     void init_build() {
         tts_runner::init_build(&t5ctx->buf_compute_meta);
     }
-    
+
     void prepare_post_load();
     struct t5_ubatch build_worst_case_batch();
     void set_inputs(t5_ubatch & batch);

@@ -150,7 +150,7 @@ orpheus_context * build_new_orpheus_context(orpheus_model * model, int n_threads
     return octx;
 }
 
-void orpheus_runner::orpheus_kv_cache_init() {    
+void orpheus_runner::orpheus_kv_cache_init() {
     ggml_backend_buffer_type_t buft = nullptr;
     if (octx->backend != nullptr) {
 #ifdef GGML_USE_METAL
@@ -192,21 +192,21 @@ void orpheus_runner::orpheus_kv_cache_init() {
  }
 
  void orpheus_runner::orpheus_build_kv_store(struct ggml_context * ctx, struct ggml_cgraph * graph, struct ggml_tensor * k_cur, struct ggml_tensor * v_cur, int index, uint32_t n_tokens, int repeat) {
-    k_cur = ggml_rope_ext(ctx, ggml_cont(ctx, ggml_reshape_3d(ctx, k_cur, model->head_size, model->n_kv_attn_heads, n_tokens)), octx->positions, model->rope_frequencies, 
+    k_cur = ggml_rope_ext(ctx, ggml_cont(ctx, ggml_reshape_3d(ctx, k_cur, model->head_size, model->n_kv_attn_heads, n_tokens)), octx->positions, model->rope_frequencies,
                 model->head_size, 2,0, 500000.0f,
                 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
 
     // A performance comparison between this method, i.e. performing 3 incremental copy operations in order to achieve repeat_interleave,
     // and performing the repeat operation upfront before performign a single copy needs to be performed in order to better optimize this function.
-    // Additionally, it might be more performant for the values transposition to be performed prior to appending it to the cache, as it would save us 
+    // Additionally, it might be more performant for the values transposition to be performed prior to appending it to the cache, as it would save us
     // from incrementally larger transpositions with generation.
     for (int i = 0; i < repeat; i++) {
         struct ggml_tensor * k_cache_view = ggml_view_3d(
-            ctx, 
-            kv_self->k_l[index], 
+            ctx,
+            kv_self->k_l[index],
             model->head_size,
             model->n_kv_attn_heads,
-            n_tokens, 
+            n_tokens,
             ggml_element_size(kv_self->k_l[index]) * model->head_size * repeat,
             ggml_element_size(kv_self->k_l[index]) * model->n_attn_heads * model->head_size,
             ggml_element_size(kv_self->k_l[index]) * model->n_attn_heads * model->head_size * octx->current_position + i * ggml_element_size(kv_self->k_l[index]) * model->head_size
@@ -230,19 +230,19 @@ void orpheus_runner::orpheus_kv_cache_init() {
 struct ggml_cgraph * orpheus_runner::build_orpheus_graph(orpheus_ubatch & batch) {
     init_build();
     struct ggml_cgraph * gf = ggml_new_graph_custom(ctx, 8192, false);
-    
+
     struct ggml_tensor * cur;
     struct ggml_tensor * inpL;
-    
+
     const int32_t full_sequence_length = octx->current_position + (uint32_t) batch.n_tokens;
     octx->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, batch.n_tokens);
     ggml_set_input(octx->positions);
     octx->inp_tokens = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, batch.n_tokens);
     ggml_set_input(octx->inp_tokens);
     inpL = ggml_get_rows(ctx, model->embd, octx->inp_tokens);
-    
+
     struct ggml_tensor * KQ_mask_dec = build_attn_mask(ctx, octx, batch);
-    
+
     for (int l = 0; l < model->n_layers; l++) {
         struct ggml_tensor * residual = inpL;
         cur = orpheus_build_layer_norm(ctx, inpL, model->layers[l].input_norm);
@@ -261,8 +261,8 @@ struct ggml_cgraph * orpheus_runner::build_orpheus_graph(orpheus_ubatch & batch)
                         model->head_size, full_sequence_length, model->n_attn_heads,
                         ggml_element_size(kv_self->k_l[l]) * model->n_attn_heads * model->head_size,
                         ggml_element_size(kv_self->k_l[l]) * model->head_size,
-                        0));            
-            
+                        0));
+
             struct ggml_tensor * v =
                 ggml_view_2d(ctx, kv_self->v_l[l],
                         model->hidden_size, full_sequence_length,
@@ -272,7 +272,7 @@ struct ggml_cgraph * orpheus_runner::build_orpheus_graph(orpheus_ubatch & batch)
             v = ggml_cont_3d(ctx, ggml_transpose(ctx, v), full_sequence_length, model->head_size, model->n_attn_heads);
 
             Qcur = ggml_rope_ext(
-                ctx, ggml_cont(ctx, ggml_reshape_3d(ctx, Qcur, model->head_size, model->n_attn_heads, batch.n_tokens)), 
+                ctx, ggml_cont(ctx, ggml_reshape_3d(ctx, Qcur, model->head_size, model->n_attn_heads, batch.n_tokens)),
                 octx->positions, model->rope_frequencies, model->head_size, 2, 0, 500000.0f, // rope theta
                 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
 
@@ -286,7 +286,7 @@ struct ggml_cgraph * orpheus_runner::build_orpheus_graph(orpheus_ubatch & batch)
         }
 
         cur = ggml_add(ctx, attn_out, residual);
-        
+
         struct ggml_tensor * residualffn = cur;
 
         // mlp
@@ -298,7 +298,7 @@ struct ggml_cgraph * orpheus_runner::build_orpheus_graph(orpheus_ubatch & batch)
         cur = ggml_add(ctx, cur, residualffn);
         inpL = cur;
     }
-    
+
     cur = orpheus_build_layer_norm(ctx, cur, model->output_norm);
     // only about 40k of the output head is actually uses for generation purposes. Ideally the head tensor should be shrunk and sampled tokens should be incremented.
     cur = ggml_mul_mat(ctx, model->head, cur);
@@ -307,15 +307,15 @@ struct ggml_cgraph * orpheus_runner::build_orpheus_graph(orpheus_ubatch & batch)
     }
     ggml_build_forward_expand(gf, cur);
     free_build();
-    
+
     return gf;
 }
 
 void orpheus_runner::decode(orpheus_ubatch & batch) {
     ggml_backend_sched_reset(octx->sched);
-    
+
     octx->output_tokens.reserve(model->max_generation_size);
-    
+
     const size_t new_size  = model->vocab_size * model->max_generation_size * sizeof(float);
     octx->prep_output_buffer(new_size);
 
@@ -324,10 +324,10 @@ void orpheus_runner::decode(orpheus_ubatch & batch) {
     // the output is always the last tensor in the graph
     struct ggml_tensor * res = gf->nodes[gf->n_nodes - 1];
     ggml_backend_sched_alloc_graph(octx->sched, gf);
-    
+
     set_inputs(batch);
     ggml_backend_sched_graph_compute_async(octx->sched, gf);
- 
+
     float * logits_out = octx->logits + octx->n_outputs * model->vocab_size;
     octx->get_ggml_node_data(res, logits_out, model->vocab_size * sizeof(float));
 

@@ -22,13 +22,13 @@ struct dac_quantize_layer {
 // this struct maintains the static tensors for the dac audio decoder graph.
 // As such, this is designed to contain basic configuration and ggml tensor support for DAC.
 // The dac_runner describes how the graph is built and run.
-struct dac_model : tts_model {    
+struct dac_model : tts_model {
     // These configs  are essentially built for the 44khZ 8kbps standard DAC model audio encoder and decoder
     uint32_t n_layers = 4;
     uint32_t n_heads = 9;
     uint32_t up_sampling_factor = 512;
     uint32_t max_generation_size = 2580;
-    
+
     struct ggml_tensor * in_conv_kernel;
     struct ggml_tensor * in_conv_bias;
     struct ggml_tensor * out_conv_kernel;
@@ -53,11 +53,11 @@ void assign_to_audio_encoder(dac_model * model, std::string name, ggml_tensor * 
 // the context used for running the dac model
 struct dac_context : runner_context {
     dac_context(dac_model * model, int n_threads): runner_context(n_threads), model(model) {};
-    
+
     struct dac_model * model;
-        
+
     struct ggml_tensor * inp_tokens;
-    
+
     void build_schedule() {
         runner_context::build_schedule(model->max_nodes());
     }
@@ -85,11 +85,11 @@ struct dac_runner : tts_runner {
     }
     dac_model * model;
     dac_context * dctx;
-    
+
     void init_build() {
         tts_runner::init_build(&dctx->buf_compute_meta);
     }
-    
+
     void prepare_post_load();
     struct ggml_cgraph * build_dac_graph(dac_ubatch & batch);
     void run(uint32_t * input_tokens, uint32_t sequence_length, struct tts_response * outputs);

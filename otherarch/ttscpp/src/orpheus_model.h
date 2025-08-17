@@ -1,7 +1,7 @@
 #pragma once
 
-#include "sampler.h"
-#include "tokenizer.h"
+#include "ttssampler.h"
+#include "ttstokenizer.h"
 #include "snac_model.h"
 
 // Orpheus uses vLLM with a llama-3 architecture. The only critical difference from the normal llama architecture is the use of kv heads.
@@ -73,7 +73,7 @@ struct orpheus_context : runner_context {
     struct ggml_tensor * positions;
 };
 
-struct orpheus_kv_cache {    
+struct orpheus_kv_cache {
     ggml_type cache_type = GGML_TYPE_F32;
 
     std::vector<struct ggml_tensor *> k_l;
@@ -104,11 +104,11 @@ struct orpheus_ubatch {
 
 struct orpheus_runner : tts_runner {
     orpheus_runner(
-            orpheus_model * model, 
-            snac_runner * audio_decoder, 
-            orpheus_context * octx, 
-            bpe_tokenizer * bt, 
-            sampler * samp, 
+            orpheus_model * model,
+            snac_runner * audio_decoder,
+            orpheus_context * octx,
+            bpe_tokenizer * bt,
+            sampler * samp,
             orpheus_kv_cache * cache): model(model), srunner(audio_decoder), octx(octx), tokenizer(bt), generation_sampler(samp), kv_self(cache) {
         tts_runner::sampling_rate = 24000.0f;
         generation_sampler->n_output_heads = 1;
