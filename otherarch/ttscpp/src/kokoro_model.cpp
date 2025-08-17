@@ -1389,7 +1389,8 @@ std::vector<std::vector<uint32_t>> kokoro_runner::tokenize_chunks(std::vector<st
 
 int kokoro_runner::generate(std::string prompt, struct tts_response * response, std::string voice, std::string voice_code) {
 	if (model->voices.find(voice) == model->voices.end()) {
-		TTS_ABORT("Failed to find Kokoro voice '%s' aborting.\n", voice.c_str());
+		fprintf(stdout,"\nFailed to find Kokoro voice '%s' aborting.\n", voice.c_str());
+		return -1;
     } else {
     	// if the language changed then we should change the phonemization voice
     	if (phmzr->mode == ESPEAK && kctx->voice[0] != voice[0]) {

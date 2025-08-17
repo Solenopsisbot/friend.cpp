@@ -409,7 +409,8 @@ int orpheus_runner::generate(std::string sentence, struct tts_response * respons
     // it should be possible to update the max context window size, but currently it is extremely unlikely that a single prompt will
     // surpass the default size.
     if (batch.tokens.size() > model->max_context_length) {
-        TTS_ABORT("The prompt was too large for the default context window. Try splitting up or shortenning the prompt.");
+        fprintf(stdout,"The prompt was too large for the default context window. Try splitting up or shortenning the prompt.");
+        return -1;
     }
     octx->reset();
     generation_sampler->reset();
@@ -427,7 +428,8 @@ void orpheus_runner::configure_generation(generation_configuration * config) {
     generation_sampler->top_k = config->top_k;
     generation_sampler->top_p = config->top_p;
     if (std::find(orpheus_voices.begin(), orpheus_voices.end(), config->voice) == orpheus_voices.end() && !config->voice.empty()) {
-        TTS_ABORT("Voice '%s' is not a valid voice for Orpheus.", config->voice.c_str());
+        fprintf(stdout,"Voice '%s' is not a valid voice for Orpheus. Defaulting to zoe.", config->voice.c_str());
+        config->voice = "zoe";
     }
     octx->voice = config->voice;
 }

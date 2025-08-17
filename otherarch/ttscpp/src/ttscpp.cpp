@@ -162,6 +162,7 @@ struct tts_runner * runner_from_file(const std::string & fname, int n_threads, g
     }
 }
 
+//returns 0 on success
 int generate(tts_runner * runner, std::string sentence, struct tts_response * response, generation_configuration * config) {
     switch(runner->arch) {
         case PARLER_TTS_ARCH:

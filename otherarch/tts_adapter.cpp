@@ -499,6 +499,7 @@ static int nthreads = 4;
 static int tts_max_len = 4096;
 
 //ttscpp specific
+static bool is_ttscpp_file = false;
 static generation_configuration * ttscpp_config = nullptr;
 static struct tts_runner * ttscpp_runner = nullptr;
 
@@ -539,7 +540,7 @@ bool ttstype_load_model(const tts_load_model_inputs inputs)
     std::string modelfile_cts = inputs.cts_model_filename;
     std::string detectedarch = gguf_get_model_arch(modelfile_ttc);
 
-    bool is_ttscpp_file = false;
+    is_ttscpp_file = false;
     if (detectedarch!="" && SUPPORTED_ARCHITECTURES.find(detectedarch) != SUPPORTED_ARCHITECTURES.end()) {
         is_ttscpp_file = true;
         printf("\nLoading TTS.CPP Model Arch: %s \n", detectedarch.c_str());
@@ -556,7 +557,7 @@ bool ttstype_load_model(const tts_load_model_inputs inputs)
 
     // tts init
     if (is_ttscpp_file) {
-        ttscpp_config = new generation_configuration("af_alloy", 50, 1.0, 1.0, true, "", 0, 1.0);
+        ttscpp_config = new generation_configuration("am_adam", 50, 1.0, 1.0, true, "", 0, 1.0);
         ttscpp_runner = runner_from_file(modelfile_ttc, inputs.threads, ttscpp_config, true);
         if (ttscpp_runner == nullptr) {
             printf("\nTTS Load Error: Failed to initialize TTSCPP!\n");
@@ -640,7 +641,72 @@ bool ttstype_load_model(const tts_load_model_inputs inputs)
     return true;
 }
 
-tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
+static tts_generation_outputs ttstype_generate_ttscpp(const tts_generation_inputs inputs)
+{
+    tts_generation_outputs output;
+    if(ttscpp_runner==nullptr || ttscpp_config==nullptr)
+    {
+        printf("\nWarning: KCPP TTSCPP not initialized! Make sure TTS model is loaded successfully.\n");
+        output.data = "";
+        output.status = 0;
+        return output;
+    }
+    int speaker_seed = inputs.speaker_seed;
+    std::string voiceused = "am_adam";
+    std::string prompt = inputs.prompt;
+    double ttstime = 0;
+    timer_start();
+    switch(speaker_seed)
+    {
+        case 1:
+            voiceused = "am_adam";
+            break;
+        case 2:
+            voiceused = "af_alloy";
+            break;
+        case 3:
+            voiceused = "af_jessica";
+            break;
+        case 4:
+            voiceused = "bm_george";
+            break;
+        case 5:
+            voiceused = "bf_isabella";
+            break;
+    }
+    if(ttsdebugmode==1 && !tts_is_quiet)
+    {
+        printf("\nUsing Speaker ID: %d, Voice: %s", speaker_seed, voiceused.c_str());
+        printf("\nInput: %s\n", prompt.c_str());
+    }
+    ttscpp_config->voice = voiceused;
+
+    tts_response response_data;
+    int errorres = generate(ttscpp_runner, prompt, &response_data, ttscpp_config);
+    if(errorres==0)
+    {
+        ttstime = timer_check();
+        printf("\nTTS Generated %d audio in %.2fs.\n",ttstime);
+        std::vector<float> wavdat = std::vector(response_data.data, response_data.data + response_data.n_outputs);
+        last_generated_audio = save_wav16_base64(wavdat, ttscpp_runner->sampling_rate);
+        output.data = last_generated_audio.c_str();
+        output.status = 1;
+        last_generation_settings_audio_seed = 0;
+        last_generation_settings_speaker_seed = speaker_seed;
+        last_generation_settings_prompt = std::string(prompt);
+        total_tts_gens += 1;
+        return output;
+    }
+    else
+    {
+        printf("\nError: TTSCPP generation failed\n");
+        output.data = "";
+        output.status = 0;
+        return output;
+    }
+}
+
+static tts_generation_outputs ttstype_generate_outetts(const tts_generation_inputs inputs)
 {
     tts_generation_outputs output;
 
@@ -1049,5 +1115,14 @@ tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
         total_tts_gens += 1;
 
         return output;
+    }
+}
+
+tts_generation_outputs ttstype_generate(const tts_generation_inputs inputs)
+{
+    if (is_ttscpp_file) {
+        return ttstype_generate_ttscpp(inputs);
+    } else {
+        return ttstype_generate_outetts(inputs);
     }
 }
