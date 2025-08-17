@@ -1,4 +1,4 @@
-#include "tts.h"
+#include "ttscpp.h"
 #include "ttsargs.h"
 #include "ttscommon.h"
 #include "playback.h"

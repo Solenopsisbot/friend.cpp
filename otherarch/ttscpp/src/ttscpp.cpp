@@ -1,4 +1,4 @@
-#include "tts.h"
+#include "ttscpp.h"
 #include <mutex>
 
 // A list of all of the top level GGUF names under kokoro.duration_predictor that have quantization compatible tensors.
@@ -133,15 +133,18 @@ struct tts_runner * runner_from_file(const std::string & fname, int n_threads, g
     };
     gguf_context * meta_ctx = gguf_init_from_file(fname.c_str(), params);
     if (!meta_ctx) {
-        TTS_ABORT("%s failed for file %s\n", __func__, fname.c_str());
+        fprintf(stdout,"%s failed for file %s\n", __func__, fname.c_str());
+        return nullptr;
     }
     int arch_key = gguf_find_key(meta_ctx, "general.architecture");
     if (arch_key == -1) {
-        TTS_ABORT("%s failed for file %s. No architecture is set.\n", __func__, fname.c_str());
+        fprintf(stdout,"%s failed for file %s. No architecture is set.\n", __func__, fname.c_str());
+        return nullptr;
     }
     std::string arch = std::string(gguf_get_val_str(meta_ctx, arch_key));
     if (SUPPORTED_ARCHITECTURES.find(arch) == SUPPORTED_ARCHITECTURES.end()) {
-        TTS_ABORT("%s failed for file %s. The architecture '%s' is not supported.", __func__, fname.c_str(), arch.c_str());
+        fprintf(stdout,"%s failed for file %s. The architecture '%s' is not supported.", __func__, fname.c_str(), arch.c_str());
+        return nullptr;
     }
     tts_arch arch_type = SUPPORTED_ARCHITECTURES.at(arch);
     switch(arch_type) {
@@ -154,7 +157,8 @@ struct tts_runner * runner_from_file(const std::string & fname, int n_threads, g
         case ORPHEUS_ARCH:
             return orpheus_from_file(meta_ctx, weight_ctx, n_threads, config, arch_type, cpu_only);
         default:
-            TTS_ABORT("%s failed for file %s. The architecture '%s' is not supported.", __func__, fname.c_str(), arch.c_str());
+            fprintf(stdout,"%s failed for file %s. The architecture '%s' is not supported.", __func__, fname.c_str(), arch.c_str());
+            return nullptr;
     }
 }
 

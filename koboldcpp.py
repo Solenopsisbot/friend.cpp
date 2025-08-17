@@ -1826,8 +1826,8 @@ def whisper_generate(genparams):
 def tts_load_model(ttc_model_filename,cts_model_filename):
     global args
     inputs = tts_load_model_inputs()
-    inputs.ttc_model_filename = ttc_model_filename.encode("UTF-8")
-    inputs.cts_model_filename = cts_model_filename.encode("UTF-8")
+    inputs.ttc_model_filename = ttc_model_filename.encode("UTF-8") if ttc_model_filename else "".encode("UTF-8")
+    inputs.cts_model_filename = cts_model_filename.encode("UTF-8") if cts_model_filename else "".encode("UTF-8")
     inputs.gpulayers = (999 if args.ttsgpu else 0)
     inputs.flash_attention =  args.flashattention
     thds = args.threads
@@ -5602,7 +5602,7 @@ def show_gui():
             args.embeddingsmaxctx = (0 if embeddings_ctx_var.get()=="" else int(embeddings_ctx_var.get()))
         args.embeddingsgpu = (embeddings_gpu_var.get()==1)
 
-        if tts_model_var.get() != "" and wavtokenizer_var.get() != "":
+        if tts_model_var.get() != "":
             args.ttsthreads = (0 if tts_threads_var.get()=="" else int(tts_threads_var.get()))
             args.ttsmodel = tts_model_var.get()
             args.ttswavtokenizer = wavtokenizer_var.get()
@@ -7201,8 +7201,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 exit_with_error(3,"Could not load whisper model: " + whispermodel)
 
     #handle tts model
-    if args.ttsmodel and args.ttsmodel!="" and args.ttswavtokenizer and args.ttswavtokenizer!="":
-        if not os.path.exists(args.ttsmodel) or not os.path.exists(args.ttswavtokenizer):
+    if args.ttsmodel and args.ttsmodel!="":
+        if not os.path.exists(args.ttsmodel) or (args.ttswavtokenizer and args.ttswavtokenizer!="" and not os.path.exists(args.ttswavtokenizer)):
             if args.ignoremissing:
                 print("Ignoring missing TTS model files!")
                 args.ttsmodel = None
@@ -7214,7 +7214,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             ttsmodelpath = args.ttsmodel
             ttsmodelpath = os.path.abspath(ttsmodelpath)
             wavtokpath = args.ttswavtokenizer
-            wavtokpath = os.path.abspath(wavtokpath)
+            if wavtokpath:
+                wavtokpath = os.path.abspath(wavtokpath)
             loadok = tts_load_model(ttsmodelpath,wavtokpath)
             print("Load TTS Model OK: " + str(loadok))
             if not loadok:

@@ -26,7 +26,8 @@
 #endif
 
 //imports required for tts.cpp to work
-#include "tts.cpp"
+#include "ttscommon.h"
+#include "ttscpp.cpp"
 #include "ttstokenizer.cpp"
 #include "ttssampler.cpp"
 #include "parler_model.cpp"
@@ -497,6 +498,10 @@ static int code_terminate_id = 151670;
 static int nthreads = 4;
 static int tts_max_len = 4096;
 
+//ttscpp specific
+static generation_configuration * ttscpp_config = nullptr;
+static struct tts_runner * ttscpp_runner = nullptr;
+
 int total_tts_gens = 0;
 
 bool ttstype_load_model(const tts_load_model_inputs inputs)
@@ -532,81 +537,103 @@ bool ttstype_load_model(const tts_load_model_inputs inputs)
 
     std::string modelfile_ttc = inputs.ttc_model_filename;
     std::string modelfile_cts = inputs.cts_model_filename;
-    printf("\nLoading TTS Model, OuteTTS: %s \nWavTokenizer: %s \n",modelfile_ttc.c_str(),modelfile_cts.c_str());
+    std::string detectedarch = gguf_get_model_arch(modelfile_ttc);
+
+    bool is_ttscpp_file = false;
+    if (detectedarch!="" && SUPPORTED_ARCHITECTURES.find(detectedarch) != SUPPORTED_ARCHITECTURES.end()) {
+        is_ttscpp_file = true;
+        printf("\nLoading TTS.CPP Model Arch: %s \n", detectedarch.c_str());
+    }else{
+        printf("\nLoading OuteTTS Model, OuteTTS: %s \nWavTokenizer: %s \n",modelfile_ttc.c_str(),modelfile_cts.c_str());
+        if(modelfile_ttc=="" || modelfile_cts=="")
+        {
+             printf("\nWarning: KCPP OuteTTS missing a file! Make sure both TTS and WavTokenizer models are loaded.\n");
+              return false;
+        }
+    }
 
     ttsdebugmode = inputs.debugmode;
 
     // tts init
-    llama_model_params tts_model_params = llama_model_default_params();
-    llama_context_params tts_ctx_params = llama_context_default_params();
-
-    nthreads = inputs.threads;
-
-    tts_max_len = inputs.ttsmaxlen;
-
-    tts_model_params.use_mmap = false;
-    tts_model_params.use_mlock = false;
-    tts_model_params.n_gpu_layers = inputs.gpulayers; //offload if possible
-    tts_model_params.split_mode = llama_split_mode::LLAMA_SPLIT_MODE_LAYER;
-    int kcpp_parseinfo_maindevice = inputs.kcpp_main_gpu<=0?0:inputs.kcpp_main_gpu;
-    tts_model_params.main_gpu = kcpp_parseinfo_maindevice;
-    tts_ctx_params.n_ctx = 8192;
-    tts_ctx_params.offload_kqv = true;
-    tts_ctx_params.n_batch = 8192;
-    tts_ctx_params.n_ubatch = 512;
-    tts_ctx_params.n_threads = nthreads;
-    tts_ctx_params.n_threads_batch = nthreads;
-    tts_ctx_params.flash_attn = inputs.flash_attention;
-    tts_ctx_params.kv_unified = true;
-
-    llama_model * ttcmodel = llama_model_load_from_file(modelfile_ttc.c_str(), tts_model_params);
-    ttc_ctx = llama_init_from_model(ttcmodel, tts_ctx_params);
-
-    if (ttc_ctx == nullptr) {
-        printf("\nTTS Load Error: Failed to initialize ttc context!\n");
-        return false;
-    }
-
-    llama_model * ctsmodel = llama_model_load_from_file(modelfile_cts.c_str(), tts_model_params);
-
-    tts_ctx_params.embeddings = true; //this requires embeddings instead
-    tts_ctx_params.n_ubatch = tts_ctx_params.n_batch;
-    cts_ctx = llama_init_from_model(ctsmodel, tts_ctx_params);
-
-    if (cts_ctx == nullptr) {
-        printf("\nTTS Load Error: Failed to initialize cts context!\n");
-        return false;
-    }
-
-    std::vector<int> tmp = {1, 2, 3, 4};
-    llama_memory_clear(llama_get_memory(ttc_ctx),true);
-    auto er = llama_decode(ttc_ctx, llama_batch_get_one(tmp.data(), tmp.size()));
-    if(er!=0)
-    {
-        printf("\nTTS Eval returned nonzero: %d\n",er);
-        return false;
-    }
-
-    const llama_vocab * ttcvocab = llama_model_get_vocab(ttcmodel);
-    llama_tokens testoks = common_tokenize(ttcvocab,"<|space|>",false,true);
-    if (testoks.size() == 1) {
-        ttsver = TTS_VER_3;
-        printf("\nUsing v0.3 mode");
-        //note that the final word does NOT have a space at the end.
-        space_id = testoks[0];
-        testoks = common_tokenize(ttcvocab,"<|audio_end|>",false,true);
-        if (testoks.size() == 1) {
-            code_terminate_id = testoks[0];
+    if (is_ttscpp_file) {
+        ttscpp_config = new generation_configuration("af_alloy", 50, 1.0, 1.0, true, "", 0, 1.0);
+        ttscpp_runner = runner_from_file(modelfile_ttc, inputs.threads, ttscpp_config, true);
+        if (ttscpp_runner == nullptr) {
+            printf("\nTTS Load Error: Failed to initialize TTSCPP!\n");
+            return false;
         }
-    } else {
-        ttsver = TTS_VER_2;
-        printf("\nUsing v0.2 mode");
-    }
+    } else { //outetts only
+        llama_model_params tts_model_params = llama_model_default_params();
+        llama_context_params tts_ctx_params = llama_context_default_params();
 
-    //determine offset of <|0|>
-    testoks = common_tokenize(ttcvocab,"<|0|>",false,true);
-    if (testoks.size() == 1) {
-        cts_offset = testoks[0];
+        nthreads = inputs.threads;
+
+        tts_max_len = inputs.ttsmaxlen;
+
+        tts_model_params.use_mmap = false;
+        tts_model_params.use_mlock = false;
+        tts_model_params.n_gpu_layers = inputs.gpulayers; //offload if possible
+        tts_model_params.split_mode = llama_split_mode::LLAMA_SPLIT_MODE_LAYER;
+        int kcpp_parseinfo_maindevice = inputs.kcpp_main_gpu<=0?0:inputs.kcpp_main_gpu;
+        tts_model_params.main_gpu = kcpp_parseinfo_maindevice;
+        tts_ctx_params.n_ctx = 8192;
+        tts_ctx_params.offload_kqv = true;
+        tts_ctx_params.n_batch = 8192;
+        tts_ctx_params.n_ubatch = 512;
+        tts_ctx_params.n_threads = nthreads;
+        tts_ctx_params.n_threads_batch = nthreads;
+        tts_ctx_params.flash_attn = inputs.flash_attention;
+        tts_ctx_params.kv_unified = true;
+
+        llama_model * ttcmodel = llama_model_load_from_file(modelfile_ttc.c_str(), tts_model_params);
+        ttc_ctx = llama_init_from_model(ttcmodel, tts_ctx_params);
+
+        if (ttc_ctx == nullptr) {
+            printf("\nTTS Load Error: Failed to initialize ttc context!\n");
+            return false;
+        }
+
+        llama_model * ctsmodel = llama_model_load_from_file(modelfile_cts.c_str(), tts_model_params);
+
+        tts_ctx_params.embeddings = true; //this requires embeddings instead
+        tts_ctx_params.n_ubatch = tts_ctx_params.n_batch;
+        cts_ctx = llama_init_from_model(ctsmodel, tts_ctx_params);
+
+        if (cts_ctx == nullptr) {
+            printf("\nTTS Load Error: Failed to initialize cts context!\n");
+            return false;
+        }
+
+        std::vector<int> tmp = {1, 2, 3, 4};
+        llama_memory_clear(llama_get_memory(ttc_ctx),true);
+        auto er = llama_decode(ttc_ctx, llama_batch_get_one(tmp.data(), tmp.size()));
+        if(er!=0)
+        {
+            printf("\nTTS Eval returned nonzero: %d\n",er);
+            return false;
+        }
+
+        const llama_vocab * ttcvocab = llama_model_get_vocab(ttcmodel);
+        llama_tokens testoks = common_tokenize(ttcvocab,"<|space|>",false,true);
+        if (testoks.size() == 1) {
+            ttsver = TTS_VER_3;
+            printf("\nUsing v0.3 mode");
+            //note that the final word does NOT have a space at the end.
+            space_id = testoks[0];
+            testoks = common_tokenize(ttcvocab,"<|audio_end|>",false,true);
+            if (testoks.size() == 1) {
+                code_terminate_id = testoks[0];
+            }
+        } else {
+            ttsver = TTS_VER_2;
+            printf("\nUsing v0.2 mode");
+        }
+
+        //determine offset of <|0|>
+        testoks = common_tokenize(ttcvocab,"<|0|>",false,true);
+        if (testoks.size() == 1) {
+            cts_offset = testoks[0];
+        }
     }
 
     printf("\nTTS Load Complete.\n");
