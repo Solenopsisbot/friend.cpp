@@ -1387,6 +1387,24 @@ std::vector<std::vector<uint32_t>> kokoro_runner::tokenize_chunks(std::vector<st
 	return chunks;
 }
 
+//kcpp hacked a quick replace fn
+static void kokoro_str_replace_all(std::string & s, const std::string & search, const std::string & replace) {
+    if (search.empty()) {
+        return;
+    }
+    std::string builder;
+    builder.reserve(s.length());
+    size_t pos = 0;
+    size_t last_pos = 0;
+    while ((pos = s.find(search, last_pos)) != std::string::npos) {
+        builder.append(s, last_pos, pos - last_pos);
+        builder.append(replace);
+        last_pos = pos + search.length();
+    }
+    builder.append(s, last_pos, std::string::npos);
+    s = std::move(builder);
+}
+
 int kokoro_runner::generate(std::string prompt, struct tts_response * response, std::string voice, std::string voice_code) {
 	if (model->voices.find(voice) == model->voices.end()) {
 		fprintf(stdout,"\nFailed to find Kokoro voice '%s' aborting.\n", voice.c_str());
@@ -1406,7 +1424,10 @@ int kokoro_runner::generate(std::string prompt, struct tts_response * response, 
     // We preserve the other punctuation for cleaner chunking pre-tokenization
     prompt = replace_any(prompt, ",;:", "--");
     prompt = replace_any(prompt, "\n", " ");
+	kokoro_str_replace_all(prompt," - "," -- ");
+	kokoro_str_replace_all(prompt,"'s ","s ");
   	std::string phonemized_prompt = phmzr->text_to_phonemes(prompt);
+	// printf("\nRESULT: %s\n",phonemized_prompt.c_str());
 
   	// Kokoro users a utf-8 single character tokenizer so if the size of the prompt is smaller than the max context length without the
   	// beginning of sentence and end of sentence tokens then we can compute it all at once.

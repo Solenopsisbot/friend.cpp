@@ -798,9 +798,53 @@ bool phonemizer::handle_phonetic(corpus* text, std::string word, std::string* ou
 	return true;
 }
 
+static std::unordered_map<std::string, std::string> kokoro_ipa_map;
+void populate_kokoro_ipa_map(std::string executable_path)
+{
+	std::string line;
+    auto filepath = executable_path + "kokoro_ipa.embd";
+    printf("\nReading Kokoro IPA from %s",filepath.c_str());
+    std::ifstream myfile(filepath);
+    if (myfile.is_open())
+    {
+        while (myfile.good())
+        {
+            getline(myfile, line);
+			auto parts = split(line, ",");
+			if(parts.size()==2)
+			{
+                kokoro_ipa_map[parts[0]] = parts[1];
+            } else {
+                printf("\nError reading line in Kokoro IPA!");
+            }
+        }
+        myfile.close();
+    }
+    else
+    {
+		printf("\nUnable to open Kokoro IPA file");
+    }
+}
+std::string found_word_to_ipa(std::string input)
+{
+	auto it = kokoro_ipa_map.find(input);
+    if (it != kokoro_ipa_map.end()) {
+        return it->second; //found
+    }
+    return "";
+}
 bool phonemizer::process_word(corpus* text, std::string* output, std::string word, conditions* flags, bool has_accent) {
 	dictionary_response* response;
 	size_t unaccented_size_difference = 0;
+
+	std::string foundstr = found_word_to_ipa(word);
+	if(foundstr!="")
+	{
+		output->append(foundstr);
+		text->size_pop(word.size());
+		return true;
+	}
+
 	if (has_accent) {
 		response = dict->lookup(text, word, flags);
 		if (!response->is_successful()) {
@@ -812,6 +856,8 @@ bool phonemizer::process_word(corpus* text, std::string* output, std::string wor
 	} else {
 		response = dict->lookup(text, word, flags);
 	}
+
+	//printf("\nSUCCESS: %d, word:%s, result:%s\n",response->is_successful(),word.c_str(),response->value.c_str());
 
 	if (response->is_successful()) {
 		if (flags->was_word && output->back() != ' ' && !flags->hyphenated) {
