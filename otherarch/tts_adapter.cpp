@@ -557,7 +557,7 @@ bool ttstype_load_model(const tts_load_model_inputs inputs)
 
     // tts init
     if (is_ttscpp_file) {
-        ttscpp_config = new generation_configuration("am_adam", 50, 1.0, 1.0, true, "", 0, 1.0);
+        ttscpp_config = new generation_configuration("am_adam", 50, 1.0, 1.0, true, "", 1024, 1.0);
         ttscpp_runner = runner_from_file(modelfile_ttc, inputs.threads, ttscpp_config, true);
         if (ttscpp_runner == nullptr) {
             printf("\nTTS Load Error: Failed to initialize TTSCPP!\n");
@@ -681,12 +681,16 @@ static tts_generation_outputs ttstype_generate_ttscpp(const tts_generation_input
     }
     ttscpp_config->voice = voiceused;
 
+    if(!tts_is_quiet)
+    {
+        printf("\nTTS Generating...");
+    }
     tts_response response_data;
     int errorres = generate(ttscpp_runner, prompt, &response_data, ttscpp_config);
     if(errorres==0)
     {
         ttstime = timer_check();
-        printf("\nTTS Generated %d audio in %.2fs.\n",ttstime);
+        printf("\nTTS Generated audio in %.2fs.\n",ttstime);
         std::vector<float> wavdat = std::vector(response_data.data, response_data.data + response_data.n_outputs);
         last_generated_audio = save_wav16_base64(wavdat, ttscpp_runner->sampling_rate);
         output.data = last_generated_audio.c_str();

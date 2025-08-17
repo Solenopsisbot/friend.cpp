@@ -2,6 +2,11 @@
 
 void dia_model::assign_weight(std::string name, struct ggml_tensor * tensor) {
     std::vector<std::string> parts = split(name, ".");
+    // GGML_LOG("\nassign_weight %s\n",name.c_str());
+    if(name=="GGUF tensor data binary blob") //patch for gguf, idk why this tensor exists
+    {
+       return;
+    }
     TTS_ASSERT(parts.size() >= 3);
 
     if (parts[1] == "encoder") {

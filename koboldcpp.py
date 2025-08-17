@@ -5835,7 +5835,7 @@ def show_gui():
         export_vars()
         savdict = json.loads(json.dumps(args.__dict__))
         file_type = [("KoboldCpp Settings", "*.kcpps")]
-        filename = zentk_asksaveasfilename(filetypes=file_type, defaultextension=".kcpps")
+        filename = zentk_asksaveasfilename(filetypes=file_type, defaultextension=".kcpps",title="Save kcpps settings config file")
         if not filename:
             return
         filenamestr = str(filename).strip()
