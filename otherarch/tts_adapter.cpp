@@ -502,6 +502,7 @@ static int tts_max_len = 4096;
 static bool is_ttscpp_file = false;
 static generation_configuration * ttscpp_config = nullptr;
 static struct tts_runner * ttscpp_runner = nullptr;
+static std::string detectedarch = "";
 
 int total_tts_gens = 0;
 static std::string tts_executable_path = "";
@@ -540,7 +541,7 @@ bool ttstype_load_model(const tts_load_model_inputs inputs)
 
     std::string modelfile_ttc = inputs.ttc_model_filename;
     std::string modelfile_cts = inputs.cts_model_filename;
-    std::string detectedarch = gguf_get_model_arch(modelfile_ttc);
+    detectedarch = gguf_get_model_arch(modelfile_ttc);
 
     is_ttscpp_file = false;
     if (detectedarch!="" && SUPPORTED_ARCHITECTURES.find(detectedarch) != SUPPORTED_ARCHITECTURES.end()) {
@@ -663,24 +664,34 @@ static tts_generation_outputs ttstype_generate_ttscpp(const tts_generation_input
     std::string prompt = inputs.prompt;
     double ttstime = 0;
     timer_start();
-    switch(speaker_seed)
+
+    std::vector<std::string> vmapper = {};
+    std::vector<std::string> vpermitted = {};
+
+    if(detectedarch=="kokoro")
     {
-        case 1:
-            voiceused = "am_echo";
-            break;
-        case 2:
-            voiceused = "af_alloy";
-            break;
-        case 3:
-            voiceused = "af_jessica";
-            break;
-        case 4:
-            voiceused = "bm_daniel";
-            break;
-        case 5:
-            voiceused = "bf_isabella";
-            break;
+        vmapper = {"am_echo","af_heart","af_alloy","bm_daniel","bf_isabella"};
+        vpermitted = {"af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky", "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa", "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel", "bm_fable", "bm_george", "bm_lewis"};
     }
+    else if(detectedarch=="dia")
+    {
+        vmapper = {"zoe", "zac", "jess", "leo", "mia"};
+        vpermitted = {"zoe", "zac","jess", "leo", "mia", "julia", "leah"};
+    }
+
+    if(speaker_seed>=1 && speaker_seed<=5 && vmapper.size()>=5)
+    {
+        voiceused = vmapper[speaker_seed-1];
+    }
+    else if(vpermitted.size()>0)
+    {
+        //if we can match the voice, use it
+        const std::string cspeaker = inputs.custom_speaker_voice;
+        if (std::find(vpermitted.begin(), vpermitted.end(), cspeaker) != vpermitted.end()) {
+            voiceused = cspeaker;
+        }
+    }
+
     if(ttsdebugmode==1 && !tts_is_quiet)
     {
         printf("\nUsing Speaker ID: %d, Voice: %s", speaker_seed, voiceused.c_str());
