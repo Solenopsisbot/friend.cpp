@@ -819,6 +819,7 @@ void populate_kokoro_ipa_map(std::string executable_path)
             }
         }
         myfile.close();
+		printf("\nPopulated Kokoro IPA: %d entries", kokoro_ipa_map.size());
     }
     else
     {
@@ -827,9 +828,21 @@ void populate_kokoro_ipa_map(std::string executable_path)
 }
 std::string found_word_to_ipa(std::string input)
 {
-	auto it = kokoro_ipa_map.find(input);
+	bool is_acronym = !input.empty() &&
+        std::all_of(input.begin(), input.end(), [](unsigned char c) {
+            return std::isupper(c);
+        });
+
+    if (is_acronym) {
+        return ""; // Return empty for acronyms
+    }
+
+	// Convert input to lowercase
+    std::transform(input.begin(), input.end(), input.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    auto it = kokoro_ipa_map.find(input);
     if (it != kokoro_ipa_map.end()) {
-        return it->second; //found
+        return it->second; // found
     }
     return "";
 }

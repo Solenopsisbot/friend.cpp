@@ -504,10 +504,12 @@ static generation_configuration * ttscpp_config = nullptr;
 static struct tts_runner * ttscpp_runner = nullptr;
 
 int total_tts_gens = 0;
+static std::string tts_executable_path = "";
 
 bool ttstype_load_model(const tts_load_model_inputs inputs)
 {
     tts_is_quiet = inputs.quiet;
+    tts_executable_path = inputs.executable_path;
 
     //duplicated from expose.cpp
     int cl_parseinfo = inputs.clblast_info; //first digit is whether configured, second is platform, third is devices
@@ -544,6 +546,11 @@ bool ttstype_load_model(const tts_load_model_inputs inputs)
     if (detectedarch!="" && SUPPORTED_ARCHITECTURES.find(detectedarch) != SUPPORTED_ARCHITECTURES.end()) {
         is_ttscpp_file = true;
         printf("\nLoading TTS.CPP Model Arch: %s \n", detectedarch.c_str());
+        if(detectedarch=="kokoro")
+        {
+            //setup kokoro IPA
+            populate_kokoro_ipa_map(tts_executable_path);
+        }
     }else{
         printf("\nLoading OuteTTS Model, OuteTTS: %s \nWavTokenizer: %s \n",modelfile_ttc.c_str(),modelfile_cts.c_str());
         if(modelfile_ttc=="" || modelfile_cts=="")
@@ -557,7 +564,7 @@ bool ttstype_load_model(const tts_load_model_inputs inputs)
 
     // tts init
     if (is_ttscpp_file) {
-        ttscpp_config = new generation_configuration("am_adam", 25, 1.0, 1.0, true, "", 2048, 1.0);
+        ttscpp_config = new generation_configuration("am_echo", 25, 1.0, 1.0, true, "", 2048, 1.0);
         ttscpp_runner = runner_from_file(modelfile_ttc, inputs.threads, ttscpp_config, true);
         if (ttscpp_runner == nullptr) {
             printf("\nTTS Load Error: Failed to initialize TTSCPP!\n");
@@ -652,14 +659,14 @@ static tts_generation_outputs ttstype_generate_ttscpp(const tts_generation_input
         return output;
     }
     int speaker_seed = inputs.speaker_seed;
-    std::string voiceused = "am_adam";
+    std::string voiceused = "am_echo";
     std::string prompt = inputs.prompt;
     double ttstime = 0;
     timer_start();
     switch(speaker_seed)
     {
         case 1:
-            voiceused = "am_adam";
+            voiceused = "am_echo";
             break;
         case 2:
             voiceused = "af_alloy";
@@ -668,7 +675,7 @@ static tts_generation_outputs ttstype_generate_ttscpp(const tts_generation_input
             voiceused = "af_jessica";
             break;
         case 4:
-            voiceused = "bm_george";
+            voiceused = "bm_daniel";
             break;
         case 5:
             voiceused = "bf_isabella";
