@@ -851,11 +851,15 @@ bool phonemizer::process_word(corpus* text, std::string* output, std::string wor
 	size_t unaccented_size_difference = 0;
 
 	std::string foundstr = found_word_to_ipa(word);
-	if(foundstr!="")
+	if(foundstr!="") //do not use if its part of a contracted word
 	{
-		output->append(foundstr);
-		text->size_pop(word.size());
-		return true;
+		std::string detected = text->next(word.size()+1);
+		if(detected.back()!='\'')
+		{
+			output->append(foundstr);
+			text->size_pop(word.size());
+			return true;
+		}
 	}
 
 	if (has_accent) {

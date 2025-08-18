@@ -1425,8 +1425,9 @@ int kokoro_runner::generate(std::string prompt, struct tts_response * response, 
     prompt = replace_any(prompt, ",;:", "--");
     prompt = replace_any(prompt, "\n", " ");
 	kokoro_str_replace_all(prompt," - "," -- ");
+	kokoro_str_replace_all(prompt,"he's ","he is ");
 	kokoro_str_replace_all(prompt,"'s ","s ");
-	kokoro_str_replace_all(prompt,"wasn't ","wasnt ");
+	kokoro_str_replace_all(prompt,"n't ","nt ");
   	std::string phonemized_prompt = phmzr->text_to_phonemes(prompt);
 	// printf("\nRESULT: %s\n",phonemized_prompt.c_str());
 
