@@ -110,6 +110,7 @@ struct generation_inputs
     const int sampler_len = 0;
     const bool allow_eos_token = false;
     const bool bypass_eos_token = false;
+    const bool tool_call_fix = false; //this prevents close square bracket ] from being generated early.
     const bool render_special = false;
     const bool stream_sse = false;
     const char * grammar = nullptr;

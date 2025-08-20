@@ -244,6 +244,7 @@ class generation_inputs(ctypes.Structure):
                 ("sampler_len", ctypes.c_int),
                 ("allow_eos_token", ctypes.c_bool),
                 ("bypass_eos_token", ctypes.c_bool),
+                ("tool_call_fix", ctypes.c_bool),
                 ("render_special", ctypes.c_bool),
                 ("stream_sse", ctypes.c_bool),
                 ("grammar", ctypes.c_char_p),
@@ -1477,6 +1478,7 @@ def generate(genparams, stream_flag=False):
     banned_strings = genparams.get('banned_strings', []) # SillyTavern uses that name
     banned_tokens = genparams.get('banned_tokens', banned_strings)
     bypass_eos_token = genparams.get('bypass_eos', False)
+    tool_call_fix = genparams.get('using_openai_tools', False)
     custom_token_bans = genparams.get('custom_token_bans', '')
 
     for tok in custom_token_bans.split(','):
@@ -1535,6 +1537,7 @@ def generate(genparams, stream_flag=False):
     inputs.grammar_retain_state = grammar_retain_state
     inputs.allow_eos_token = not ban_eos_token
     inputs.bypass_eos_token = bypass_eos_token
+    inputs.tool_call_fix = tool_call_fix
     inputs.render_special = render_special
     if mirostat in (1, 2):
         inputs.mirostat = mirostat
