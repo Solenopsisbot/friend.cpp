@@ -4589,7 +4589,7 @@ def show_gui():
     sd_flash_attention_var = ctk.IntVar(value=0)
     sd_vaeauto_var = ctk.IntVar(value=0)
     sd_tiled_vae_var = ctk.StringVar(value=str(default_vae_tile_threshold))
-    sd_convdirect_var = ctk.StringVar(value='disabled')
+    sd_convdirect_var = ctk.StringVar(value=str(sd_convdirect_choices[0]))
     sd_clamped_var = ctk.StringVar(value="0")
     sd_clamped_soft_var = ctk.StringVar(value="0")
     sd_threads_var = ctk.StringVar(value=str(default_threads))
@@ -5363,7 +5363,7 @@ def show_gui():
     makecheckbox(images_tab, "TAE SD (AutoFix Broken VAE)", sd_vaeauto_var, 42,command=toggletaesd,tooltiptxt="Replace VAE with TAESD. May fix bad VAE.")
     makelabelcombobox(images_tab, "Conv2D Direct:", sd_convdirect_var, row=42, labelpadx=220, padx=310, width=90, tooltiptxt="Use Conv2D Direct operation. May save memory or improve performance.\nMight crash if not supported by the backend.\n", values=sd_convdirect_choices)
     makelabelentry(images_tab, "VAE Tiling Threshold:", sd_tiled_vae_var, 44, 50, padx=144,singleline=True,tooltip="Enable VAE Tiling for images above this size, to save memory.\nSet to 0 to disable VAE tiling.")
-    makecheckbox(images_tab, "Flash Attention", sd_flash_attention_var, 46, tooltiptxt="Enable Flash Attention for diffusion. May save memory or improve performance.")
+    makecheckbox(images_tab, "SD Flash Attention", sd_flash_attention_var, 46, tooltiptxt="Enable Flash Attention for image diffusion. May save memory or improve performance.")
 
     # audio tab
     audio_tab = tabcontent["Audio"]
