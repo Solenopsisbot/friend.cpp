@@ -254,9 +254,9 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     sd_params = new SDParams();
     sd_params->model_path = inputs.model_filename;
     sd_params->wtype = SD_TYPE_COUNT;
-    if (inputs.quant > 0 && inputs.quant < SD_TYPE_COUNT) {
-        sd_params->wtype = (sd_type_t) inputs.quant;
-        printf("\nDiffusion Model quantized to %s", sd_type_name(sd_params->wtype));
+    if (inputs.quant > 0) {
+        sd_params->wtype = (inputs.quant==1?SD_TYPE_Q8_0:SD_TYPE_Q4_0);
+        printf("Diffusion Model quantized to %s\n", sd_type_name(sd_params->wtype));
     }
     sd_params->n_threads = inputs.threads; //if -1 use physical cores
     sd_params->diffusion_flash_attn = inputs.flash_attention;
