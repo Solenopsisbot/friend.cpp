@@ -670,7 +670,7 @@ static tts_generation_outputs ttstype_generate_ttscpp(const tts_generation_input
 
     if(detectedarch=="kokoro")
     {
-        vmapper = {"am_echo","af_heart","af_alloy","bm_daniel","bf_isabella"};
+        vmapper = {"am_echo","af_heart","af_nicole","bm_fable","bf_isabella"};
         vpermitted = {"af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky", "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael", "am_onyx", "am_puck", "am_santa", "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel", "bm_fable", "bm_george", "bm_lewis"};
     }
     else if(detectedarch=="dia")
