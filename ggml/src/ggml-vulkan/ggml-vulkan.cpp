@@ -61,7 +61,11 @@
 #include "ggml-impl.h"
 #include "ggml-backend-impl.h"
 
+#ifndef NO_VULKAN_EXTENSIONS
 #include "ggml-vulkan-shaders.hpp"
+#else
+#include "ggml-vulkan-shaders-noext.hpp"
+#endif
 
 // remove this once it's more widely available in the SDK
 #if !defined(VK_KHR_shader_bfloat16)
