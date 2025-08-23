@@ -7513,7 +7513,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                             file.seek(0, 2)
                             if file.tell() == 0: #empty file
                                 file.write("Timestamp,Backend,Layers,Model,MaxCtx,GenAmount,ProcessingTime,ProcessingSpeed,GenerationTime,GenerationSpeed,TotalTime,Output,Flags")
-                            file.write(f"\n{datetimestamp},{libname},{args.gpulayers},{benchmodel},{benchmaxctx},{benchlen},{t_pp:.2f},{s_pp:.2f},{t_gen:.2f},{s_gen:.2f},{(t_pp+t_gen):.2f},{result},{benchflagstr}")
+                            file.write(f"\n{datetimestamp},{libname},{args.gpulayers},{benchmodel},{benchmaxctx},{benchlen},{t_pp:.2f},{s_pp:.2f},{t_gen:.2f},{s_gen:.2f},{(t_pp+t_gen):.2f},{result},\"{benchflagstr}\"")
                     except Exception as e:
                         print(f"Error writing benchmark to file: {e}")
                 if global_memory and using_gui_launcher and not save_to_file:
