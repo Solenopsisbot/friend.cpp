@@ -3319,6 +3319,7 @@ Current version indicated by LITEVER below.
 		saved_alltalk_url: default_alltalk_base,
 		prev_custom_endpoint_type: 0, //show a reconnect box to custom endpoint if needed. 0 is horde, otherwise its dropdown value+1
 		prev_custom_endpoint_model: "", //we may not be able to match, but set it if we do
+		prev_custom_endpoint_ischatcmpl: true,
 		generate_images_mode: (localflag?0:1), //0=off, 1=horde, 2=a1111, 3=dalle, 4=comfy, 5=pollinations
 
 		autoscroll: true, //automatically scroll to bottom on render
@@ -4261,6 +4262,7 @@ Current version indicated by LITEVER below.
 				//offer to reconnect
 				let pending_eptype = localsettings.prev_custom_endpoint_type;
 				let pending_custmodel = localsettings.prev_custom_endpoint_model;
+				let pending_ischatcmpl = localsettings.prev_custom_endpoint_ischatcmpl;
 				if(!localflag && pending_eptype>0)
 				{
 					msgboxYesNo("Reconnect to previous custom endpoint?","Custom Endpoint Reconnect",()=>{
@@ -4273,6 +4275,7 @@ Current version indicated by LITEVER below.
 								const hasValue = Array.from(dropdown.options).some(option => option.value === pending_custmodel);
 								if (hasValue) {
 									dropdown.value = pending_custmodel;
+									document.getElementById("useoaichatcompl").checked = pending_ischatcmpl;
 								}
 							}
 						}
@@ -7251,6 +7254,39 @@ Current version indicated by LITEVER below.
 		else {
 			return (localsettings.eos_ban_mode == 2 ? true : false);
 		}
+	}
+
+	//returns true if the current multimodal setup for some media can be used, otherwise false.
+	function determine_if_can_use_vision_audio(currmeta)
+	{
+		if(!currmeta)
+		{
+			return false;
+		}
+		if(currmeta.visionmode==3)
+		{
+			if(custom_kobold_endpoint!="") //on a kobo endpoint
+			{
+				if((is_using_kcpp_with_vision() && currmeta.type==0) || (is_using_kcpp_with_audio() && currmeta.type==1))
+				{
+					return true;
+				}
+			}
+			else
+			{
+				let isoai = (custom_oai_key!="" && document.getElementById("useoaichatcompl").checked);
+				let isgemini = (custom_gemini_key!="");
+				return (isoai||isgemini);
+			}
+		}
+		else if(currmeta.visionmode==1 || currmeta.visionmode==2)
+		{
+			if(currmeta.desc)
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 
@@ -10687,6 +10723,7 @@ Current version indicated by LITEVER below.
 			if(localsettings.prev_custom_endpoint_model && sortedarr[i]==localsettings.prev_custom_endpoint_model)
 			{
 				selidx = i;
+				document.getElementById("useoaichatcompl").checked = localsettings.prev_custom_endpoint_ischatcmpl;
 			}
 			dropdown.appendChild(el);
 		}
@@ -18260,13 +18297,14 @@ Current version indicated by LITEVER below.
 		{
 			savedmeta.visionmode = 0;
 		}
-		let canvisionaudio = ((is_using_kcpp_with_vision() && savedmeta.type==0) ||  (is_using_kcpp_with_audio() && savedmeta.type==1));
+
 		let visionstatus = "";
 		if(savedmeta.visionmode==3)
 		{
 			if(custom_kobold_endpoint!="") //on a kobo endpoint
 			{
-				visionstatus = ((!savedmeta.visionmode || savedmeta.visionmode==0)?`<span class="color_red">Inactive</span>`:(canvisionaudio?`<span class="color_green">Active</span>`:`<span class="color_yellow">Unsupported</span>`));
+				let supported = ((is_using_kcpp_with_vision() && savedmeta.type==0) ||  (is_using_kcpp_with_audio() && savedmeta.type==1));
+				visionstatus = ((!savedmeta.visionmode || savedmeta.visionmode==0)?`<span class="color_red">Inactive</span>`:(supported?`<span class="color_green">Active</span>`:`<span class="color_yellow">Unsupported</span>`));
 			}
 			else
 			{
@@ -18282,7 +18320,7 @@ Current version indicated by LITEVER below.
 			{
 				caninterrogate = false;
 			}
-			visionstatus = ((!savedmeta.visionmode || savedmeta.visionmode==0)?`<span class="color_red">Inactive</span>`:(savedmeta.desc?`<span class="color_green">Active</span>`:(caninterrogate?`<span class="color_yellow">Analyzing</span>`:`<span class="color_yellow">Unsupported</span>`)));
+			visionstatus = ((!savedmeta.visionmode || savedmeta.visionmode==0)?`<span class="color_red">Inactive</span>`:(savedmeta.desc?`<span class="color_green">Active</span>`:(caninterrogate?`<span class="color_yellow">Analyzing</span>`:`<span class="color_yellow">Unavailable</span>`)));
 		}
 
 
@@ -18531,7 +18569,7 @@ Current version indicated by LITEVER below.
 		let fndisp = filename!=""?`(${filename.substring(0,50)}) `:"";
 		fndisp = len?(`: ${Math.floor(len)}s ${fndisp}`):fndisp;
 		let vision_indicator_hide = "hidden";
-		let canvisionaudio = (currmeta.visionmode==3 && ((is_using_kcpp_with_vision() && currmeta.type==0) ||  (is_using_kcpp_with_audio() && currmeta.type==1))) || (currmeta.desc && (currmeta.visionmode==2||currmeta.visionmode==1));
+		let canvisionaudio = determine_if_can_use_vision_audio(currmeta);
 		if (canvisionaudio) {
 			vision_indicator_hide = "";
 		}
@@ -18583,7 +18621,7 @@ Current version indicated by LITEVER below.
 					dimH *= 0.75;
 				}
 
-				let canvisionaudio = (currmeta.visionmode==3 && ((is_using_kcpp_with_vision() && currmeta.type==0) ||  (is_using_kcpp_with_audio() && currmeta.type==1))) || (currmeta.desc && (currmeta.visionmode==2||currmeta.visionmode==1));
+				let canvisionaudio = determine_if_can_use_vision_audio(currmeta);
 				if (canvisionaudio) {
 					vision_indicator_hide = "";
 				}
@@ -22077,6 +22115,7 @@ Current version indicated by LITEVER below.
 	{
 		localsettings.prev_custom_endpoint_type = 0;
 		localsettings.prev_custom_endpoint_model = "";
+		localsettings.prev_custom_endpoint_ischatcmpl = true;
 		if (custom_kobold_endpoint != "") {
 			localsettings.prev_custom_endpoint_type = 1;
 		}
@@ -22119,6 +22158,7 @@ Current version indicated by LITEVER below.
 			if(dropdown && dropdown.value)
 			{
 				localsettings.prev_custom_endpoint_model = dropdown.value;
+				localsettings.prev_custom_endpoint_ischatcmpl = document.getElementById("useoaichatcompl").checked?true:false;
 			}
 		}
 	}
