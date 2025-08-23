@@ -348,9 +348,14 @@ ifneq ($(filter armv7%,$(UNAME_M)),)
 endif
 ifneq ($(filter armv8%,$(UNAME_M)),)
 	# Raspberry Pi 3, 4, Zero 2 (32-bit)
-	CFLAGS   += -mfp16-format=ieee -mno-unaligned-access
-	CXXFLAGS += -mfp16-format=ieee -mno-unaligned-access
+	CFLAGS   += -mno-unaligned-access
+	CXXFLAGS += -mno-unaligned-access
+ifneq ($(findstring clang, $(CCV)), ) #cl doesnt support this and sometimes androids end up here
+	CFLAGS 	 += -mfp16-format=ieee
+	CXXFLAGS += -mfp16-format=ieee
 endif
+endif
+
 ifneq ($(filter ppc64%,$(UNAME_M)),)
 	POWER9_M := $(shell grep "POWER9" /proc/cpuinfo)
 ifneq (,$(findstring POWER9,$(POWER9_M)))
