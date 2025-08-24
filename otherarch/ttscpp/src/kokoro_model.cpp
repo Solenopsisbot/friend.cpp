@@ -1422,8 +1422,8 @@ int kokoro_runner::generate(std::string prompt, struct tts_response * response, 
     }
     // replace all non-sentence terminating characters with '--' which espeak will treat as a pause.
     // We preserve the other punctuation for cleaner chunking pre-tokenization
-    prompt = replace_any(prompt, ",;:", "--");
-    prompt = replace_any(prompt, "\n", " ");
+    prompt = replace_any(prompt, ";:", "--");
+    prompt = replace_any(prompt, "\n", ". ");
 	kokoro_str_replace_all(prompt," - "," -- ");
 	kokoro_str_replace_all(prompt,"he's ","he is ");
 	kokoro_str_replace_all(prompt,"'s ","s ");
