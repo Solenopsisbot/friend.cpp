@@ -1902,6 +1902,8 @@ def tts_generate(genparams):
     oai_voicemap = ["alloy","onyx","echo","nova","shimmer"] # map to kcpp defaults
     voice_mapping = ["kobo","cheery","sleepy","shouty","chatty"]
     normalized_voice = voicestr.strip().lower() if voicestr else ""
+    if normalized_voice.endswith(".wav"):
+        normalized_voice = normalized_voice[:-4]
     if normalized_voice in voice_mapping:
         voice = voice_mapping.index(normalized_voice) + 1
     elif normalized_voice in oai_voicemap:
