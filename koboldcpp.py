@@ -1200,7 +1200,7 @@ def fetch_gpu_properties(testCL,testCU,testVK):
                 device_name = None
                 current_agent_is_gpu = False
                 in_pool_section = False
-                
+
                 for line in output.splitlines(): # read through the output line by line
                     line = line.strip()
                     if line.startswith("Agent ") and "Agent" in line:
@@ -1210,7 +1210,7 @@ def fetch_gpu_properties(testCL,testCU,testVK):
                         in_pool_section = False
                     elif line.startswith("Marketing Name:"):
                         device_name = line.split(":", 1)[1].strip() # if we find a named device, temporarily save the name
-                    elif line.startswith("Device Type:") and "GPU" in line and device_name is not None: 
+                    elif line.startswith("Device Type:") and "GPU" in line and device_name is not None:
                         # if the following Device Type is a GPU (not a CPU) then add it to devices list
                         FetchedCUdevices.append(device_name)
                         current_agent_is_gpu = True
@@ -1231,7 +1231,7 @@ def fetch_gpu_properties(testCL,testCU,testVK):
                             vram_mb = vram_kb // 1024
                             FetchedCUdeviceMem.append(str(vram_mb))
                             in_pool_section = False
-                
+
                 if FetchedCUdevices and FetchedCUdeviceMem:
                     print(f"Detected AMD GPU VRAM from rocminfo: {list(zip(FetchedCUdevices, FetchedCUdeviceMem))} MB")
             except Exception:
@@ -1262,7 +1262,7 @@ def fetch_gpu_properties(testCL,testCU,testVK):
     if testVK:
         try: # Get Vulkan names
             foundVkGPU = False
-            lowestvkmem = 0 
+            lowestvkmem = 0
             output = subprocess.run(['vulkaninfo','--summary'], capture_output=True, text=True, check=True, encoding='utf-8', timeout=10).stdout
             devicelist = [line.split("=")[1].strip() for line in output.splitlines() if "deviceName" in line]
             devicetypes = [line.split("=")[1].strip() for line in output.splitlines() if "deviceType" in line]
@@ -1331,11 +1331,11 @@ def fetch_gpu_properties(testCL,testCU,testVK):
             MaxMemory[0] = max(lowestclmem,MaxMemory[0])
         except Exception:
             pass
-    
+
     # Check VRAM detection after all backends have been tested
     if MaxMemory[0] < (1024*1024*256):
         print("Unable to detect VRAM, please set layers manually.")
-    
+
     return
 
 def auto_set_backend_cli():
