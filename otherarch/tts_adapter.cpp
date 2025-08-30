@@ -779,7 +779,7 @@ static tts_generation_outputs ttstype_generate_ttscpp(const tts_generation_input
     }
     else if(detectedarch=="dia")
     {
-        vmapper = {"zoe", "zac", "jess", "leo", "mia"};
+        vmapper = {"zac", "zoe", "jess", "leo", "mia"};
         vpermitted = {"zoe", "zac","jess", "leo", "mia", "julia", "leah"};
     }
 
