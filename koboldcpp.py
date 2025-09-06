@@ -6492,7 +6492,9 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
     if "https://huggingface.co/" in input_url and "/blob/main/" in input_url:
         input_url = input_url.replace("/blob/main/", "/resolve/main/")
     if output_filename == "auto":
-        output_filename = os.path.basename(input_url).split('?')[0].split('#')[0]
+        exe_dir = os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__)
+        filename = os.path.basename(input_url).split('?')[0].split('#')[0]
+        output_filename = os.path.join(exe_dir, filename)
     incomplete_dl_exist = (os.path.exists(output_filename+".aria2") and os.path.getsize(output_filename+".aria2") > 16)
     if os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size and not incomplete_dl_exist:
         print(f"{output_filename} already exists, using existing file.")
