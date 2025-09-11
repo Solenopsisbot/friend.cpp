@@ -297,6 +297,9 @@ void llm_graph_input_attn_no_cache::set_input(const llama_ubatch * ubatch) {
 
     float * data = (float *) kq_mask->data;
 
+    // [TAG_NO_CACHE_ISWA]
+    GGML_ASSERT(hparams.swa_type == LLAMA_SWA_TYPE_NONE && "TODO: implement");
+
     for (int h = 0; h < 1; ++h) {
         for (int i1 = 0; i1 < n_tokens; ++i1) {
             const llama_seq_id s1 = ubatch->seq_id[i1][0];
@@ -315,9 +318,10 @@ void llm_graph_input_attn_no_cache::set_input(const llama_ubatch * ubatch) {
                         continue; // skip future tokens for causal attention
                     }
 
-                    if (hparams.is_masked_swa(ubatch->pos[i0], ubatch->pos[i1])) {
-                        continue; // skip masked tokens for SWA
-                    }
+                    // TODO: this does not take into account that some layers are SWA and others are note (i.e. iSWA) [TAG_NO_CACHE_ISWA]
+                    //if (hparams.is_masked_swa(ubatch->pos[i0], ubatch->pos[i1])) {
+                    //    continue; // skip masked tokens for SWA
+                    //}
 
                     // TODO: reimplement this like in llama_kv_cache_unified
                     if (hparams.use_alibi) {
@@ -1427,7 +1431,8 @@ ggml_tensor * llm_graph_context::build_attn(
 
     // [TAG_NO_CACHE_PAD]
     // TODO: if ubatch.equal_seqs() == true, we can split the three tensors below into ubatch.n_seqs_unq streams
-    assert(!ubatch.equal_seqs() || (k_cur->ne[3] == 1 && k_cur->ne[3] == ubatch.n_seqs_unq));
+    //       but it might not be worth it: https://github.com/ggml-org/llama.cpp/pull/15636
+    //assert(!ubatch.equal_seqs() || (k_cur->ne[3] == 1 && k_cur->ne[3] == ubatch.n_seqs_unq));
 
     ggml_tensor * q = q_cur;
     ggml_tensor * k = k_cur;
