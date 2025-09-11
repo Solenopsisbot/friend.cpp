@@ -108,6 +108,7 @@ Current version indicated by LITEVER below.
 		--theme_color_tabs_text: #e0e0e0;
 		--theme_color_glow_text: #94d7ff;
 		--theme_color_placeholder_text:#9e9e9e;
+		--theme_color_topmenu: #32496d;
 	}
 
 	.theme-old {
@@ -131,6 +132,26 @@ Current version indicated by LITEVER below.
 		--theme_color_tabs_text: #e0e0e0;
 		--theme_color_glow_text: #7afaff;
 		--theme_color_placeholder_text:#9e9e9e;
+		--theme_color_topmenu: #337ab7;
+	}
+
+	body.connected.corpoui .topmenu {
+		--theme_color_topmenu: #337ab7;
+	}
+	body.connected.darkmode.corpoui .topmenu {
+		--theme_color_topmenu: #32496d;
+	}
+	body.connected.corpoui .nav-link {
+		--theme_color_topbtn: #4787be;
+	}
+	body.connected.corpoui .nav-link:hover {
+		--theme_color_topbtn_highlight: #4db4ea;
+	}
+	body.connected.darkmode.corpoui .nav-link {
+		--theme_color_topbtn: #415577;
+	}
+	body.connected.darkmode.corpoui .nav-link:hover {
+		--theme_color_topbtn_highlight: #596985;
 	}
 
 	/* Global appearances */
@@ -318,8 +339,9 @@ Current version indicated by LITEVER below.
 		line-height: normal;
 	}
 	body.connected .topmenu {
-		background-color: var(--theme_color_main);
+		background-color: var(--theme_color_topmenu);
 	}
+
 	.nav-link {
 		color: #f2f2f2;
 		font-weight: bold;
@@ -344,6 +366,7 @@ Current version indicated by LITEVER below.
 		background-color: var(--theme_color_topbtn_highlight);
 		border-color: var(--theme_color_border);
 	}
+
 	.navtoggler {
 		background-color: var(--theme_color_topbtn);
 		border: 0px solid #bababa;
@@ -1159,65 +1182,51 @@ Current version indicated by LITEVER below.
 		padding: 2px 2px;
 		text-wrap: wrap;
 	}
-	.scenarioitem.blue
-	{
-		background-image: var(--img_paper),linear-gradient(to right, #63aae7, #337ab7);
+
+	.scenarioitem.blue {
+		background-image: var(--img_paper),	linear-gradient(to right, #4f6fa0, #365580);
 	}
-	.scenarioitem.blue:hover
-	{
-		background-image: var(--img_paper),linear-gradient(to right, #7ebbf0, #438ac7);
+	.scenarioitem.blue:hover {
+		background-image: var(--img_paper),	linear-gradient(to right, #5f82b8, #406591);
 	}
-	.scenarioitem.blue:focus
-	{
-		background-image: var(--img_paper),linear-gradient(to right, #4c7aa3, #4c7aa3);
+	.scenarioitem.blue:focus {
+		background-image: var(--img_paper),	linear-gradient(to right, #304764, #304764);
 	}
-	.scenarioitem.green
-	{
-		background-image: var(--img_sword),linear-gradient(to right, #58db6e, #2ba04e);
+	.scenarioitem.green {
+		background-image: var(--img_sword),	linear-gradient(to right, #4da96d, #347a51);
 	}
-	.scenarioitem.green:hover
-	{
-		background-image: var(--img_sword),linear-gradient(to right, #68e47d, #37b85e);
+	.scenarioitem.green:hover {
+		background-image: var(--img_sword),	linear-gradient(to right, #5cbf80, #3d8c5f);
 	}
-	.scenarioitem.green:focus
-	{
-		background-image: var(--img_sword),linear-gradient(to right, #53a34c, #4ca353);
+	.scenarioitem.green:focus {
+		background-image: var(--img_sword),	linear-gradient(to right, #2f6042, #2f6042);
 	}
-	.scenarioitem.red
-	{
-		background-image: var(--img_chat),linear-gradient(to right, #e76363, #b73333);
+	.scenarioitem.red {
+		background-image: var(--img_chat),	linear-gradient(to right, #a04d4d, #7a3535);
 	}
-	.scenarioitem.red:hover
-	{
-		background-image: var(--img_chat),linear-gradient(to right, #f07e7e, #c74343);
+	.scenarioitem.red:hover {
+		background-image: var(--img_chat),	linear-gradient(to right, #b85c5c, #8c4040);
 	}
-	.scenarioitem.red:focus
-	{
-		background-image: var(--img_chat),linear-gradient(to right, #a34c4c, #a34c4c);
+	.scenarioitem.red:focus {
+		background-image: var(--img_chat),	linear-gradient(to right, #5a2e2e, #5a2e2e);
 	}
-	.scenarioitem.purple
-	{
-		background-image: none,linear-gradient(to right, #dc63e7, #ac33b7);
+	.scenarioitem.purple {
+		background-image: none,	linear-gradient(to right, #8d5ca6, #6b4582);
 	}
-	.scenarioitem.purple:hover
-	{
-		background-image: none,linear-gradient(to right, #f07ee6, #c743c7);
+	.scenarioitem.purple:hover {
+		background-image: none,	linear-gradient(to right, #9f6ab8, #7a5091);
 	}
-	.scenarioitem.purple:focus
-	{
-		background-image: none,linear-gradient(to right, #a34c9c, #a34ca3);
+	.scenarioitem.purple:focus {
+		background-image: none,	linear-gradient(to right, #50325e, #50325e);
 	}
-	.scenarioitem.yellow
-	{
-		background-image: var(--img_compass),linear-gradient(to right, #daae5d, #ad8823);
+	.scenarioitem.yellow {
+		background-image: var(--img_compass),linear-gradient(to right, #c89b4a, #9c7736);
 	}
-	.scenarioitem.yellow:hover
-	{
-		background-image: var(--img_compass),linear-gradient(to right, #e0c56e, #bba632);
+	.scenarioitem.yellow:hover {
+		background-image: var(--img_compass),linear-gradient(to right, #d6ad5c, #ad8642);
 	}
-	.scenarioitem.yellow:focus
-	{
-		background-image: var(--img_compass),linear-gradient(to right, #a38c4c, #a38c4c);
+	.scenarioitem.yellow:focus {
+		background-image: var(--img_compass),linear-gradient(to right, #6b5530, #6b5530);
 	}
 
 	/* Welcome splash */
@@ -2055,7 +2064,7 @@ Current version indicated by LITEVER below.
 		width: 100%;
 	}
 	.corpo_leftpanel_btn:hover {
-		background: #9dcef5;
+		background: #b0d9fc;
 		background-repeat: no-repeat;
 		background-position: 8px;
 		background-size: 24px;
@@ -20908,6 +20917,15 @@ Current version indicated by LITEVER below.
 		document.getElementById("gametext").contentEditable = (document.getElementById("allowediting").checked && pending_response_id=="");
 		let inEditMode = (document.getElementById("allowediting").checked ? true : false);
 
+		if(is_corpo_ui())
+		{
+			document.body.classList.add('corpoui');
+		}
+		else
+		{
+			document.body.classList.remove('corpoui');
+		}
+
 		//adventure mode has a toggle to choose action mode
 		document.getElementById("adventure_mode_img").classList.remove("input_story");
 		document.getElementById("adventure_mode_img").classList.remove("input_action");
@@ -24882,7 +24900,7 @@ Current version indicated by LITEVER below.
 					<div style="padding:2px;font-size:14px;margin-left:8px;font-weight:600;line-height:1.1;margin-top:12px">Quick Slot Load</div>
 					<hr style="margin-top:4px;margin-bottom:6px" />
 					<div class="corpoleftpanelitemsinner" id="corpoleftpanelitemsinner"></div>
-					<div style="margin-top: auto; margin-bottom:2px; width: 230px;"><div onclick="quicksave()" class="corpo_leftpanel_btn" type="button" style="width:110px;padding-left: 44px;display:inline-block;background-image: var(--img_save_mono);">Save</div><div onclick="quickdelete()" class="corpo_leftpanel_btn red" type="button" style="width:110px;padding-left: 44px;display:inline-block;background-image: var(--img_delete_mono);">Delete</div></div>
+					<div style="margin-top: auto; margin-bottom:2px; width: 230px;"><div onclick="quicksave()" class="corpo_leftpanel_btn" type="button" style="width:110px;padding-left: 44px;display:inline-block;background-image: var(--img_save_mono);">Save</div><div onclick="quickdelete()" class="corpo_leftpanel_btn" type="button" style="width:110px;padding-left: 44px;display:inline-block;background-image: var(--img_delete_mono);">Delete</div></div>
 					</div>
 				</div>
 				<button title="Show Corpo Side Panel" class="corpo_leftpanel_open mainnav" onclick="show_corpo_leftpanel(true)"><div class="corpo_arrow_right"></div></button>
@@ -26600,10 +26618,10 @@ Current version indicated by LITEVER below.
 						</div>
 					</div>
 					<div style="width:100%;align-self: center;">
-						<button type="button" id="savetoslot" title="Save To Slot" class="btn btn-primary bg_primary" onclick="save_to_curr_slot()"><img class="btnicon-save"/> Save Slot</button>
-						<button type="button" id="loadfromslot" title="Load From Slot" class="btn btn-primary bg_primary" onclick="load_from_curr_slot()"><img class="btnicon-load"/> Load Slot</button>
-						<button type="button" id="downloadslot" title="Download Slot" class="btn btn-primary bg_green" onclick="download_from_curr_slot()"><img class="btnicon-download"/> Download</button>
-						<button type="button" id="deleteslot" title="Delete Slot" class="btn btn-primary bg_red" onclick="delete_from_curr_slot()"><img class="btnicon-delete"/> Delete Slot</button>
+						<button type="button" id="savetoslot" title="Save To Slot" class="btn btn-primary" onclick="save_to_curr_slot()"><img class="btnicon-save"/> Save Slot</button>
+						<button type="button" id="loadfromslot" title="Load From Slot" class="btn btn-primary" onclick="load_from_curr_slot()"><img class="btnicon-load"/> Load Slot</button>
+						<button type="button" id="downloadslot" title="Download Slot" class="btn btn-primary" onclick="download_from_curr_slot()"><img class="btnicon-download"/> Download</button>
+						<button type="button" id="deleteslot" title="Delete Slot" class="btn btn-primary" onclick="delete_from_curr_slot()"><img class="btnicon-delete"/> Delete Slot</button>
 					</div>
 				</div>
 				<div class="menutext"><p style="padding:6px;font-size: 10px;" class="color_red">Caution: Local Storage Slots are saved to a temporary cache and can be deleted by your browser. KoboldCpp remote storage will save data to a file in your KoboldCpp server. To avoid losing data, use the download file button.</p></div>
