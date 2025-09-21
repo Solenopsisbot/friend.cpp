@@ -318,16 +318,28 @@ ifdef LLAMA_METAL
 CFLAGS   += -DGGML_USE_METAL -DGGML_METAL_NDEBUG -DSD_USE_METAL
 CXXFLAGS += -DGGML_USE_METAL -DSD_USE_METAL
 LDFLAGS  += -framework Foundation -framework Metal -framework MetalKit -framework MetalPerformanceShaders
-OBJS     += ggml-metal.o ggml-metal-common.o
+OBJS     += ggml-metal.o ggml-metal-device.o ggml-metal-device-m.o ggml-metal-context-m.o ggml-metal-common.o ggml-metal-ops.o
 
 ggml-metal-common.o: ggml/src/ggml-metal/ggml-metal-common.cpp ggml/src/ggml-metal/ggml-metal-common.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-ggml-metal.o: ggml/src/ggml-metal/ggml-metal.m ggml/src/ggml-metal/ggml-metal-impl.h ggml/include/ggml-metal.h
+ggml-metal-ops.o: ggml/src/ggml-metal/ggml-metal-ops.cpp ggml/src/ggml-metal/ggml-metal-ops.h
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+ggml-metal.o: ggml/src/ggml-metal/ggml-metal.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+ggml-metal-device.o: ggml/src/ggml-metal/ggml-metal-device.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+ggml-metal-device-m.o: ggml/src/ggml-metal/ggml-metal-device.m ggml/src/ggml-metal/ggml-metal-impl.h ggml/include/ggml-metal.h
 	@echo "== Preparing merged Metal file =="
 	@sed -e '/#include "ggml-common.h"/r ggml/src/ggml-common.h' -e '/#include "ggml-common.h"/d' < ggml/src/ggml-metal/ggml-metal.metal > ggml/src/ggml-metal/ggml-metal-embed.metal.tmp
 	@sed -e '/#include "ggml-metal-impl.h"/r ggml/src/ggml-metal/ggml-metal-impl.h' -e '/#include "ggml-metal-impl.h"/d' < ggml/src/ggml-metal/ggml-metal-embed.metal.tmp > ggml/src/ggml-metal/ggml-metal-merged.metal
 	@cp ggml/src/ggml-metal/ggml-metal-merged.metal ./ggml-metal-merged.metal
+	$(CC) $(CFLAGS) -c $< -o $@
+
+ggml-metal-context-m.o: ggml/src/ggml-metal/ggml-metal-context.m ggml/src/ggml-metal/ggml-metal-impl.h ggml/include/ggml-metal.h
 	$(CC) $(CFLAGS) -c $< -o $@
 endif # LLAMA_METAL
 
