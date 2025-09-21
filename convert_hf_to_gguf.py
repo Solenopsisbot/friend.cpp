@@ -29,12 +29,15 @@ if 'NO_LOCAL_GGUF' not in os.environ:
     sys.path.insert(1, str(Path(__file__).parent / 'gguf-py'))
 import gguf
 from gguf.vocab import MistralTokenizerType, MistralVocab
-from mistral_common.tokens.tokenizers.base import TokenizerVersion
-from mistral_common.tokens.tokenizers.multimodal import DATASET_MEAN, DATASET_STD
-from mistral_common.tokens.tokenizers.tekken import Tekkenizer
-from mistral_common.tokens.tokenizers.sentencepiece import (
-    SentencePieceTokenizer,
-)
+try:
+    from mistral_common.tokens.tokenizers.base import TokenizerVersion
+    from mistral_common.tokens.tokenizers.multimodal import DATASET_MEAN, DATASET_STD
+    from mistral_common.tokens.tokenizers.tekken import Tekkenizer
+    from mistral_common.tokens.tokenizers.sentencepiece import (
+        SentencePieceTokenizer,
+    )
+except Exception:
+    print("Warning: No Mistral Common Installed. You cannot convert Mistral models.")
 
 
 logger = logging.getLogger("hf-to-gguf")
