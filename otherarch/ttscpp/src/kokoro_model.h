@@ -302,7 +302,7 @@ struct kokoro_model : tts_model {
     	compute_tensor_meta_cb = &fn;
         prep_constants(meta_ctx);
         prep_layers(meta_ctx);
-        tts_model::setup_from_file(meta_ctx, load_context, cpu_only, "kokoro", 1.6, post_load_tensor_bytes + 4096); //add some extra space
+        tts_model::setup_from_file(meta_ctx, load_context, cpu_only, "kokoro", 1.6, post_load_tensor_bytes);
     }
 };
 

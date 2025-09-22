@@ -104,10 +104,16 @@ void tts_model::prep_buffers_and_context(bool cpu_only, float size_offset, uint3
     }
     size_t ctx_size = ggml_tensor_overhead() * (tensor_meta.n_tensors * size_offset);
     struct ggml_init_params params = {
-        /*.mem_size   =*/ ctx_size + 4096,
+        /*.mem_size   =*/ ctx_size,
         /*.mem_buffer =*/ NULL,
         /*.no_alloc   =*/ true,
     };
+    if(dedicated_add_on_size>13000)
+    {
+        printf("Clamp TTS addon memory %zu to 13000\n",dedicated_add_on_size);
+        dedicated_add_on_size = 13000;
+    }
+    printf("TTS Memory Requested: %zu, with buffer %zu + %zu\n",ctx_size,tensor_meta.n_bytes,dedicated_add_on_size);
     ctx = ggml_init(params);
     buf = ggml_backend_buft_alloc_buffer(buffer, tensor_meta.n_bytes + dedicated_add_on_size);
 }
