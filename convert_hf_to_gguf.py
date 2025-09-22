@@ -1358,11 +1358,13 @@ class MmprojModel(ModelBase):
             self.gguf_writer.add_vision_head_count(self.find_vparam(["num_attention_heads"]))
 
             # preprocessor config
-            image_mean = DATASET_MEAN if self.is_mistral_format else self.preprocessor_config["image_mean"]
-            image_std = DATASET_STD if self.is_mistral_format else self.preprocessor_config["image_std"]
+            # image_mean = DATASET_MEAN if self.is_mistral_format else self.preprocessor_config["image_mean"]
+            # image_std = DATASET_STD if self.is_mistral_format else self.preprocessor_config["image_std"]
 
-            self.gguf_writer.add_vision_image_mean(image_mean)
-            self.gguf_writer.add_vision_image_std(image_std)
+            # self.gguf_writer.add_vision_image_mean(image_mean)
+            # self.gguf_writer.add_vision_image_std(image_std)
+            self.gguf_writer.add_vision_image_mean(self.preprocessor_config["image_mean"])
+            self.gguf_writer.add_vision_image_std(self.preprocessor_config["image_std"])
 
         if self.has_audio_encoder:
             self.gguf_writer.add_clip_has_audio_encoder(True)
