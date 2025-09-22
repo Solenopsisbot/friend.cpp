@@ -1248,7 +1248,7 @@ def fetch_gpu_properties(testCL,testCU,testVK):
             for idx in range(0,4):
                 if(len(FetchedCUdevices)>idx):
                     if len(FetchedCUdeviceMem)>idx:
-                        dmem = int(FetchedCUdeviceMem[idx]) if AMDgpu else (int(FetchedCUdeviceMem[idx])*1024*1024)
+                        dmem = (int(FetchedCUdeviceMem[idx])*1024*1024) if AMDgpu else (int(FetchedCUdeviceMem[idx])*1024*1024)
                         lowestcumem = dmem if lowestcumem==0 else (dmem if dmem<lowestcumem else lowestcumem)
                     if len(FetchedCUfreeMem)>idx:
                         dmem = (int(FetchedCUfreeMem[idx])*1024*1024)

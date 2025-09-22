@@ -34,10 +34,7 @@ void runner_context::get_ggml_node_data(struct ggml_tensor * output_node, float 
 
 void runner_context::set_threads() {
     if (backend != nullptr) {
-#ifdef GGML_USE_METAL
-        // this is form copied from llama.cpp, but has since been removed. I don't know if this should be tuned.
-        // ggml_backend_metal_set_n_cb(backend, 1);
-#endif
+
     }
     if (backend_cpu != nullptr) {
         ggml_backend_cpu_set_n_threads(backend_cpu, n_threads);
@@ -107,7 +104,7 @@ void tts_model::prep_buffers_and_context(bool cpu_only, float size_offset, uint3
     }
     size_t ctx_size = ggml_tensor_overhead() * (tensor_meta.n_tensors * size_offset);
     struct ggml_init_params params = {
-        /*.mem_size   =*/ ctx_size,
+        /*.mem_size   =*/ ctx_size + 4096,
         /*.mem_buffer =*/ NULL,
         /*.no_alloc   =*/ true,
     };
