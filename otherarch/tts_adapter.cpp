@@ -651,7 +651,7 @@ bool ttstype_load_model(const tts_load_model_inputs inputs)
     is_ttscpp_file = false;
     if (detectedarch!="" && SUPPORTED_ARCHITECTURES.find(detectedarch) != SUPPORTED_ARCHITECTURES.end()) {
         is_ttscpp_file = true;
-        printf("\nLoading TTS.CPP Model Arch: %s \n", detectedarch.c_str());
+        printf("\nLoading TTS.CPP Model: %s, Arch: %s \n",modelfile_ttc.c_str(), detectedarch.c_str());
         if(detectedarch=="kokoro")
         {
             //setup kokoro IPA
