@@ -6493,8 +6493,12 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
         input_url = input_url.replace("/blob/main/", "/resolve/main/")
     if output_filename == "auto":
         cwd = os.getcwd()
-        test_writable = os.access(cwd, os.W_OK)
-        if test_writable:
+        non_writable = False
+        if os.name == "nt":
+            parts = [p.lower() for p in os.path.normpath(cwd).split(os.sep)]
+            if "windows" in parts and ("system32" in parts or "syswow64" in parts):
+                non_writable = True
+        if not non_writable:
             output_filename = os.path.basename(input_url).split('?')[0].split('#')[0]
         else:
             exe_dir = os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__)
@@ -7167,6 +7171,9 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     if args.password and args.password!="":
         password = args.password.strip()
 
+    print(args)
+    print("==========")
+
     #handle loading text model
     if args.model_param:
         if not os.path.exists(args.model_param):
@@ -7214,10 +7221,10 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             args.blasthreads = args.threads
 
         modelname = os.path.abspath(args.model_param)
-        print(args)
+
         # Flush stdout for win32 issue with regards to piping in terminals,
         # especially before handing over to C++ context.
-        print(f"==========\nLoading Text Model: {modelname}", flush=True)
+        print(f"Loading Text Model: {modelname}", flush=True)
         if not modelname.endswith(".bin") and not modelname.endswith(".gguf"):
             print("WARNING: Selected Text Model does not seem to be a GGUF file! Are you sure you picked the right file?")
         loadok = load_model(modelname)
