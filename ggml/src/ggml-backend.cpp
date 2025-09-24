@@ -656,9 +656,9 @@ static bool ggml_is_view_op(enum ggml_op op) {
 #ifndef GGML_SCHED_MAX_BACKENDS
 #define GGML_SCHED_MAX_BACKENDS 16
 #endif
-
+//kcpp yolo fix: decreased from 30 to 14 in order to try resolve tts oom issues.
 #ifndef GGML_SCHED_MAX_SPLIT_INPUTS
-#define GGML_SCHED_MAX_SPLIT_INPUTS 30
+#define GGML_SCHED_MAX_SPLIT_INPUTS 14
 #endif
 
 #ifndef GGML_SCHED_MAX_COPIES
