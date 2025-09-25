@@ -7448,6 +7448,10 @@ Current version indicated by LITEVER below.
 			if (userinput != null && userinput!="") {
 				localsettings.saved_oai_tts_key = userinput.trim();
 			}
+			else
+			{
+				localsettings.saved_oai_tts_key = "";
+			}
 		},false,false,true);
 	}
 	function set_oai_tts_url()
@@ -15906,9 +15910,14 @@ Current version indicated by LITEVER below.
 			}
 			userinput = userinput.trim();
 			if (userinput != null && userinput!="" && ssval > 0) {
-				tts_speak(userinput,downloadtts,embedtts);
+				tts_speak(userinput,downloadtts,embedtts,false);
 			}
 		},true);
+	}
+
+	function test_tts()
+	{
+		tts_speak("Hello there, this is a test.",false,false,true);
 	}
 
 	function toggle_tts_mode()
@@ -16072,7 +16081,7 @@ Current version indicated by LITEVER below.
 		reader.readAsDataURL(file);
 	}
 
-	function tts_speak(text, do_download=false, do_embed_tts=false)
+	function tts_speak(text, do_download=false, do_embed_tts=false, is_test=false)
 	{
 		if(!text || text=="" || text.trim()=="")
 		{
@@ -16081,7 +16090,20 @@ Current version indicated by LITEVER below.
 		let ssval = localsettings.tts_mode;
 		let ssrate = localsettings.tts_speed;
 		let vcjson = localsettings.kcpp_tts_json;
-		if(localsettings.narrate_only_dialog)
+		let narrateonlydialog = localsettings.narrate_only_dialog;
+		let pickedwebvoice = localsettings.wb_tts_choice;
+
+		if(is_test)
+		{
+			//testing from settings page
+			ssval = document.getElementById("ttsselect").value;
+			ssrate = document.getElementById("tts_speed").value;
+			vcjson = kcpp_tts_json;
+			narrateonlydialog = false;
+			pickedwebvoice = document.getElementById("wb_tts_choice").value;
+		}
+
+		if(narrateonlydialog)
 		{
 			// Remove text within asterisks and the asterisks, then trim
 			text = text.replace(italics_regex,"").trim();
@@ -16434,14 +16456,13 @@ Current version indicated by LITEVER below.
 		else if(ssval==WEBBROWSER_TTS_ID)
 		{
 			let voicelist = window.speechSynthesis.getVoices();
-			let pickedvoice = localsettings.wb_tts_choice;
-			if(pickedvoice > voicelist.length)
+			if(pickedwebvoice > voicelist.length)
 			{
-				pickedvoice = 0;
+				pickedwebvoice = 0;
 			}
 			if ('speechSynthesis' in window) {
 				let utterance = new window.SpeechSynthesisUtterance(text);
-				utterance.voice = voicelist[pickedvoice];
+				utterance.voice = voicelist[pickedwebvoice];
 				utterance.rate = ssrate;
 				window.speechSynthesis.speak(utterance);
 				utterance.onend = function(event) {
@@ -16679,7 +16700,7 @@ Current version indicated by LITEVER below.
 			{
 				if(localsettings.narrate_targets==2)
 				{
-					tts_speak(newgen,false,localsettings.embed_narrations);
+					tts_speak(newgen,false,localsettings.embed_narrations,false);
 				}
 			}
 
@@ -17774,7 +17795,39 @@ Current version indicated by LITEVER below.
 					}
 					else //auto role
 					{
-						let mhistory = repack_instruct_history(mainoaibody);
+						let mhistory = null;
+						if (typeof mainoaibody === 'string' || mainoaibody instanceof String)
+						{
+							mhistory = repack_instruct_history(mainoaibody);
+						}
+						else
+						{
+							//it's an object/array, so repack the text turn
+							let t1 = mainoaibody[0].text;
+							mhistory = repack_instruct_history(t1);
+
+							//many backends REFUSE to allow the assistant to go first. If the first turn belongs to assistant, we turn it into user
+							if(mhistory.length>0 && !mhistory[0].myturn)
+							{
+								mhistory[0].myturn = true;
+							}
+							//if both first and second turns are from user, merge them into one turn
+							if(mhistory.length>1 && mhistory[0].myturn && mhistory[1].myturn)
+							{
+								mhistory[0].msg += "\n"+mhistory[1].msg;
+								mhistory.splice(1, 1);
+							}
+
+							if(mhistory.length>0 && mainoaibody.length>1 && mainoaibody[1].type && mainoaibody[1].type!="text")
+							{
+								mhistory[0].msg = [{type: 'text', text: mhistory[0].msg}];
+								for(let i=1;i<mainoaibody.length;++i)
+								{
+									mhistory[0].msg.push(mainoaibody[i]);
+								}
+							}
+						}
+
 						for(let i=0;i<mhistory.length;++i)
 						{
 							oai_payload.messages.push({ "role": (mhistory[i].myturn?"user":"assistant"), "content": mhistory[i].msg });
@@ -19516,7 +19569,7 @@ Current version indicated by LITEVER below.
 
 			if(localsettings.narrate_targets != 0)
 			{
-				tts_speak(gentxtspeak,false,localsettings.embed_narrations);
+				tts_speak(gentxtspeak,false,localsettings.embed_narrations,false);
 			}
 		}
 
@@ -21114,7 +21167,7 @@ Current version indicated by LITEVER below.
 			let box2 = document.getElementById("chat_msg_body");
 			let box3 = document.getElementById("corpostylemain");
 			function isScrolledToBottom(element) {
-				return element.scrollHeight - element.scrollTop <= element.clientHeight + 250;
+				return element.scrollHeight - element.scrollTop - element.clientHeight <= 60;
 			}
 			if(alwaysscroll || isScrolledToBottom(box1))
 			{
@@ -26010,7 +26063,7 @@ Current version indicated by LITEVER below.
 					<div class="settingitem">
 						<div class="settinglabel">
 							<div class="justifyleft settingsmall" style="width: 100%;">Text To Speech <span class="helpicon">?<span class="helptext">Enable Text-To-Speech to have your story automatically read to you.</span></span></div>
-							<select title="Text To Speech" class="form-control" id="ttsselect" style="font-size:12px;height:20px;padding:0;margin:0px 0 0;width:calc(100%);" onchange="toggle_tts_mode()">
+							<select title="Text To Speech" class="form-control" id="ttsselect" style="font-size:12px;height:20px;padding:0;margin:0px 0 0;width:calc(100% - 35px);" onchange="toggle_tts_mode()">
 								<option value="0">Disabled</option>
 								<option value="1">Browser Inbuilt TTS</option>
 								<option value="2">KoboldCpp TTS API</option>
@@ -26019,6 +26072,7 @@ Current version indicated by LITEVER below.
 								<option value="5">OpenAI-Compat. API Server</option>
 								<option value="6">PollinationsAI TTS API</option>
 							</select>
+							<button id="manual_tts" type="button" class="bg_green btn btn-primary" style="height:20px; width:30px; padding:2px 3px;font-size:11px; margin-left: 2px;" onclick="test_tts()">Test</button>
 							<div id="xtts_container" class="settinglabel hidden">
 								<div>
 									<table width="100%"><tr>
