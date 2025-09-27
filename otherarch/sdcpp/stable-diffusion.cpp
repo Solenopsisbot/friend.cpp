@@ -293,7 +293,11 @@ public:
         {
             std::string to_search = "taesd.embd";
             std::string to_replace = "";
-            if(sd_version_is_sdxl(version))
+            if(sd_version_is_sd1(version) || sd_version_is_sd2(version))
+            {
+                to_replace = "taesd.embd";
+            }
+            else if(sd_version_is_sdxl(version))
             {
                 to_replace = "taesd_xl.embd";
             }
@@ -312,6 +316,12 @@ public:
                 if (pos != std::string::npos) {
                     taesd_path_fixed.replace(pos, to_search.length(), to_replace);
                 }
+            }
+            else
+            {
+                printf("\nCannot use TAESD: Unknown version %d. TAESD Disabled!\n",version);
+                taesd_path_fixed = "";
+                use_tiny_autoencoder = false;
             }
         }
 
