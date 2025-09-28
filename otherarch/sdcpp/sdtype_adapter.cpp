@@ -92,6 +92,8 @@ static bool sd_is_quiet = false;
 static std::string sdmodelfilename = "";
 static bool photomaker_enabled = false;
 
+static bool is_vid_model = false;
+
 static int get_loaded_sd_version(sd_ctx_t* ctx)
 {
     return ctx->sd->version;
@@ -296,6 +298,13 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
             printf("Chroma: flash attention is on, disabling DiT mask (this will lower image quality)\n");
             // disabled before loading
         }
+    }
+
+    auto loadedsdver = get_loaded_sd_version(sd_ctx);
+    if (loadedsdver == SDVersion::VERSION_WAN2 || loadedsdver == SDVersion::VERSION_WAN2_2_I2V || loadedsdver == SDVersion::VERSION_WAN2_2_TI2V)
+    {
+        printf("\nVer %d, Setting to Video Generation Mode!\n",loadedsdver);
+        is_vid_model = true;
     }
 
     std::filesystem::path mpath(inputs.model_filename);
@@ -712,8 +721,44 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     params.pm_params.id_images = photomaker_imgs.data();
     params.pm_params.id_images_count = photomaker_imgs.size();
 
-    if (!is_img2img) {
+    if(is_vid_model)
+    {
+        int num_results = 1;
+        std::vector<sd_image_t> control_frames; //empty for now
+        sd_vid_gen_params_t vid_gen_params = {};
+        sd_vid_gen_params_init (&vid_gen_params);
+        vid_gen_params.prompt = params.prompt;
+        vid_gen_params.negative_prompt = params.negative_prompt;
+        vid_gen_params.clip_skip = params.clip_skip;
+        vid_gen_params.control_frames = control_frames.data();
+        vid_gen_params.control_frames_size = (int)control_frames.size();
+        vid_gen_params.width = params.width;
+        vid_gen_params.height = params.height;
+        vid_gen_params.sample_params = params.sample_params;
+        vid_gen_params.strength = params.strength;
+        vid_gen_params.seed = params.seed;
+        vid_gen_params.video_frames = 1;
+         if(!sd_is_quiet && sddebugmode==1)
+        {
+            std::stringstream ss;
+            ss  << "\nVID PROMPT:" << vid_gen_params.prompt
+            << "\nNPROMPT:"   << vid_gen_params.negative_prompt
+            << "\nCLPSKP:"   << vid_gen_params.clip_skip
+            << "\nSIZE:"     << vid_gen_params.width << "x" << vid_gen_params.height
+            << "\nSTEP:"     << vid_gen_params.sample_params.sample_steps
+            << "\nSEED:"     << vid_gen_params.seed
+            << "\nSTRENGTH:" << vid_gen_params.strength
+            << "\nFRAMES:"   << vid_gen_params.video_frames
+            << "\nCTRL_FRM:" << vid_gen_params.control_frames_size
+            << "\n\n";
+            printf("%s", ss.str().c_str());
+        }
 
+        fflush(stdout);
+        results = generate_video(sd_ctx, &vid_gen_params, &num_results);
+    }
+    else if (!is_img2img)
+    {
         if(!sd_is_quiet && sddebugmode==1)
         {
             std::stringstream ss;
