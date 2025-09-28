@@ -214,4 +214,180 @@ int create_mjpg_avi_from_sd_images(const char* filename, sd_image_t* images, int
     return 0;
 }
 
+
+//// KCPP PART FOR WRITING AVI TO MEMORY
+
+typedef struct {
+    uint8_t* data;
+    size_t size;
+} mem_buffer_t;
+
+// Append raw bytes
+static void mem_write(mem_buffer_t* buf, const void* data, size_t size) {
+    buf->data = (uint8_t*)realloc(buf->data, buf->size + size);
+    memcpy(buf->data + buf->size, data, size);
+    buf->size += size;
+}
+
+// Write 32-bit LE
+static void mem_write_u32_le(mem_buffer_t* buf, uint32_t val) {
+    mem_write(buf, &val, 4);
+}
+
+// Write 16-bit LE
+static void mem_write_u16_le(mem_buffer_t* buf, uint16_t val) {
+    mem_write(buf, &val, 2);
+}
+
+/**
+ * Create MJPG AVI file in memory and return as base64 string.
+ * Returns 0 on success, -1 on failure
+ * must be freed by caller after use
+ */
+int create_mjpg_avi_membuf_from_sd_images(sd_image_t* images, int num_images, int fps, int quality,  uint8_t** out_data, size_t *out_len)
+{
+    if (num_images == 0) {
+        fprintf(stderr, "Error: Image array is empty.\n");
+        return -1;
+    }
+
+    mem_buffer_t buf = {NULL, 0};
+    uint32_t width    = images[0].width;
+    uint32_t height   = images[0].height;
+    uint32_t channels = images[0].channel;
+
+    if (channels != 3 && channels != 4) {
+        fprintf(stderr, "Error: Unsupported channel count: %u\n", channels);
+        return -1;
+    }
+
+    // --- RIFF AVI Header ---
+    mem_write(&buf, "RIFF", 4);
+    size_t riff_size_pos = buf.size;
+    mem_write_u32_le(&buf, 0);  // placeholder
+    mem_write(&buf, "AVI ", 4);
+
+    // 'hdrl' LIST
+    mem_write(&buf, "LIST", 4);
+    mem_write_u32_le(&buf, 4 + 8 + 56 + 8 + 4 + 8 + 56 + 8 + 40);
+    mem_write(&buf, "hdrl", 4);
+
+    // 'avih'
+    mem_write(&buf, "avih", 4);
+    mem_write_u32_le(&buf, 56);
+    mem_write_u32_le(&buf, 1000000 / fps);
+    mem_write_u32_le(&buf, 0);
+    mem_write_u32_le(&buf, 0);
+    mem_write_u32_le(&buf, 0x110);
+    mem_write_u32_le(&buf, num_images);
+    mem_write_u32_le(&buf, 0);
+    mem_write_u32_le(&buf, 1);
+    mem_write_u32_le(&buf, width * height * 3);
+    mem_write_u32_le(&buf, width);
+    mem_write_u32_le(&buf, height);
+    mem_write_u32_le(&buf, 0); mem_write_u32_le(&buf, 0);
+    mem_write_u32_le(&buf, 0); mem_write_u32_le(&buf, 0);
+
+    // 'strl' LIST
+    mem_write(&buf, "LIST", 4);
+    mem_write_u32_le(&buf, 4 + 8 + 56 + 8 + 40);
+    mem_write(&buf, "strl", 4);
+
+    // 'strh'
+    mem_write(&buf, "strh", 4);
+    mem_write_u32_le(&buf, 56);
+    mem_write(&buf, "vids", 4);
+    mem_write(&buf, "MJPG", 4);
+    mem_write_u32_le(&buf, 0);
+    mem_write_u16_le(&buf, 0);
+    mem_write_u16_le(&buf, 0);
+    mem_write_u32_le(&buf, 0);
+    mem_write_u32_le(&buf, 1);
+    mem_write_u32_le(&buf, fps);
+    mem_write_u32_le(&buf, 0);
+    mem_write_u32_le(&buf, num_images);
+    mem_write_u32_le(&buf, width * height * 3);
+    mem_write_u32_le(&buf, (uint32_t)-1);
+    mem_write_u32_le(&buf, 0);
+    mem_write_u16_le(&buf, 0); mem_write_u16_le(&buf, 0);
+    mem_write_u16_le(&buf, 0); mem_write_u16_le(&buf, 0);
+
+    // 'strf'
+    mem_write(&buf, "strf", 4);
+    mem_write_u32_le(&buf, 40);
+    mem_write_u32_le(&buf, 40);
+    mem_write_u32_le(&buf, width);
+    mem_write_u32_le(&buf, height);
+    mem_write_u16_le(&buf, 1);
+    mem_write_u16_le(&buf, 24);
+    mem_write(&buf, "MJPG", 4);
+    mem_write_u32_le(&buf, width * height * 3);
+    mem_write_u32_le(&buf, 0);
+    mem_write_u32_le(&buf, 0);
+    mem_write_u32_le(&buf, 0);
+    mem_write_u32_le(&buf, 0);
+
+    // 'movi' LIST
+    mem_write(&buf, "LIST", 4);
+    size_t movi_size_pos = buf.size;
+    mem_write_u32_le(&buf, 0);
+    mem_write(&buf, "movi", 4);
+
+    avi_index_entry* index = (avi_index_entry*)malloc(sizeof(avi_index_entry) * num_images);
+
+    // Encode and write each frame
+    for (int i = 0; i < num_images; i++) {
+        struct {
+            uint8_t* buf;
+            size_t size;
+        } jpeg_data = {NULL, 0};
+
+        auto write_to_buf = [](void* context, void* data, int size) {
+            auto jd = (decltype(jpeg_data)*)context;
+            jd->buf = (uint8_t*)realloc(jd->buf, jd->size + size);
+            memcpy(jd->buf + jd->size, data, size);
+            jd->size += size;
+        };
+
+        stbi_write_jpg_to_func(
+            write_to_buf, &jpeg_data,
+            images[i].width, images[i].height,
+            channels, images[i].data, quality
+        );
+
+        mem_write(&buf, "00dc", 4);
+        mem_write_u32_le(&buf, jpeg_data.size);
+        index[i].offset = buf.size - 8;
+        index[i].size   = jpeg_data.size;
+        mem_write(&buf, jpeg_data.buf, jpeg_data.size);
+        if (jpeg_data.size % 2) mem_write(&buf, "\0", 1);
+
+        free(jpeg_data.buf);
+    }
+
+    // finalize movi size
+    uint32_t movi_size = buf.size - movi_size_pos - 4;
+    memcpy(buf.data + movi_size_pos, &movi_size, 4);
+
+    // write idx1
+    mem_write(&buf, "idx1", 4);
+    mem_write_u32_le(&buf, num_images * 16);
+    for (int i = 0; i < num_images; i++) {
+        mem_write(&buf, "00dc", 4);
+        mem_write_u32_le(&buf, 0x10);
+        mem_write_u32_le(&buf, index[i].offset);
+        mem_write_u32_le(&buf, index[i].size);
+    }
+
+    // finalize RIFF size
+    uint32_t riff_size = buf.size - riff_size_pos - 4;
+    memcpy(buf.data + riff_size_pos, &riff_size, 4);
+
+    free(index);
+
+    *out_data = buf.data;
+    *out_len = buf.size;
+    return 0;
+}
+
 #endif  // __AVI_WRITER_H__

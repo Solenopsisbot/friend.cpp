@@ -200,6 +200,7 @@ struct sd_generation_inputs
     const int seed = 0;
     const char * sample_method = nullptr;
     const int clip_skip = -1;
+    const int vid_req_frames = 1;
 };
 struct sd_generation_outputs
 {

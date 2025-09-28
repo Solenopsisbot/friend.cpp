@@ -37,6 +37,8 @@
 // #define STB_IMAGE_RESIZE_IMPLEMENTATION //already defined in llava
 #include "stb_image_resize.h"
 
+#include "avi_writer.h"
+
 static_assert((int)SD_TYPE_COUNT == (int)GGML_TYPE_COUNT,
               "inconsistency between SD_TYPE_COUNT and GGML_TYPE_COUNT");
 
@@ -721,9 +723,12 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     params.pm_params.id_images = photomaker_imgs.data();
     params.pm_params.id_images_count = photomaker_imgs.size();
 
+    //the below params are only used in video models. May move into standalone object in future
+    int vid_req_frames = inputs.vid_req_frames;
+    int generated_num_results = 1;
+
     if(is_vid_model)
     {
-        int num_results = 1;
         std::vector<sd_image_t> control_frames; //empty for now
         sd_vid_gen_params_t vid_gen_params = {};
         sd_vid_gen_params_init (&vid_gen_params);
@@ -737,8 +742,8 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         vid_gen_params.sample_params = params.sample_params;
         vid_gen_params.strength = params.strength;
         vid_gen_params.seed = params.seed;
-        vid_gen_params.video_frames = 1;
-         if(!sd_is_quiet && sddebugmode==1)
+        vid_gen_params.video_frames = vid_req_frames;
+        if(!sd_is_quiet && sddebugmode==1)
         {
             std::stringstream ss;
             ss  << "\nVID PROMPT:" << vid_gen_params.prompt
@@ -755,7 +760,11 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         }
 
         fflush(stdout);
-        results = generate_video(sd_ctx, &vid_gen_params, &num_results);
+        results = generate_video(sd_ctx, &vid_gen_params, &generated_num_results);
+        if(!sd_is_quiet && sddebugmode==1)
+        {
+            printf("\nRequested Vid Frames: %d, Generated Vid Frames: %d\n",vid_req_frames, generated_num_results);
+        }
     }
     else if (!is_img2img)
     {
@@ -906,12 +915,27 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             continue;
         }
 
-        int out_data_len;
-        unsigned char * png = stbi_write_png_to_mem(results[i].data, 0, results[i].width, results[i].height, results[i].channel, &out_data_len, get_image_params(params).c_str());
-        if (png != NULL)
+        //if multiframe, make a video
+        if(vid_req_frames>1 && generated_num_results>1 && is_vid_model)
         {
-            recent_data = kcpp_base64_encode(png,out_data_len);
-            free(png);
+            uint8_t * out_data = nullptr;
+            size_t out_len = 0;
+            int status = create_mjpg_avi_membuf_from_sd_images(results, generated_num_results, 24, 40, &out_data,&out_len);
+            if(status==0)
+            {
+                recent_data = kcpp_base64_encode(out_data, out_len);
+                free(out_data);
+            }
+        }
+        else
+        {
+            int out_data_len;
+            unsigned char * png = stbi_write_png_to_mem(results[i].data, 0, results[i].width, results[i].height, results[i].channel, &out_data_len, get_image_params(params).c_str());
+            if (png != NULL)
+            {
+                recent_data = kcpp_base64_encode(png,out_data_len);
+                free(png);
+            }
         }
 
         free(results[i].data);
