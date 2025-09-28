@@ -263,6 +263,9 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     params.diffusion_conv_direct = sd_params->diffusion_conv_direct;
     params.vae_conv_direct = sd_params->vae_conv_direct;
     params.chroma_use_dit_mask = sd_params->chroma_use_dit_mask;
+    params.offload_params_to_cpu = inputs.offload_cpu;
+    params.keep_vae_on_cpu = inputs.vae_cpu;
+    params.keep_clip_on_cpu = inputs.clip_cpu;
 
     if (params.chroma_use_dit_mask && params.diffusion_flash_attn) {
         // note we don't know yet if it's a Chroma model
