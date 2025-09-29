@@ -317,7 +317,8 @@ class sd_generation_inputs(ctypes.Structure):
                 ("seed", ctypes.c_int),
                 ("sample_method", ctypes.c_char_p),
                 ("clip_skip", ctypes.c_int),
-                ("vid_req_frames", ctypes.c_int)]
+                ("vid_req_frames", ctypes.c_int),
+                ("vid_req_avi", ctypes.c_int)]
 
 class sd_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -1824,6 +1825,7 @@ def sd_generate(genparams):
     clip_skip = tryparseint(genparams.get("clip_skip", -1),-1)
     vid_req_frames = tryparseint(genparams.get("frames", 1),1)
     vid_req_frames = 1 if (not vid_req_frames or vid_req_frames < 1) else vid_req_frames
+    vid_req_avi = 1 if genparams.get("avi_video", False) else 0
     extra_images_arr = genparams.get("extra_images", [])
     extra_images_arr = ([] if not extra_images_arr else extra_images_arr)
     extra_images_arr = [img for img in extra_images_arr if img not in (None, "")]
@@ -1856,6 +1858,7 @@ def sd_generate(genparams):
     inputs.sample_method = sample_method.lower().encode("UTF-8")
     inputs.clip_skip = clip_skip
     inputs.vid_req_frames = vid_req_frames
+    inputs.vid_req_avi = vid_req_avi
     ret = handle.sd_generate(inputs)
     outstr = ""
     if ret.status==1:

@@ -266,6 +266,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     params.offload_params_to_cpu = inputs.offload_cpu;
     params.keep_vae_on_cpu = inputs.vae_cpu;
     params.keep_clip_on_cpu = inputs.clip_cpu;
+    // params.flow_shift = 5.0f;
 
     if (params.chroma_use_dit_mask && params.diffusion_flash_attn) {
         // note we don't know yet if it's a Chroma model
@@ -676,7 +677,9 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     }
 
     std::vector<sd_image_t> reference_imgs;
-    if(extra_image_data.size()>0 && loadedsdver==SDVersion::VERSION_FLUX && !loaded_model_is_chroma(sd_ctx))
+    bool is_wan = (loadedsdver == SDVersion::VERSION_WAN2 || loadedsdver == SDVersion::VERSION_WAN2_2_I2V || loadedsdver == SDVersion::VERSION_WAN2_2_TI2V);
+    bool is_kontext = (loadedsdver==SDVersion::VERSION_FLUX && !loaded_model_is_chroma(sd_ctx));
+    if(extra_image_data.size()>0 && (is_wan || is_kontext))
     {
         for(int i=0;i<extra_image_data.size();++i)
         {
@@ -684,7 +687,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         }
         if(!sd_is_quiet && sddebugmode==1)
         {
-            printf("\nFlux Kontext: Using %d reference images\n",reference_imgs.size());
+            printf("\nImage Gen: Using %d reference images\n",reference_imgs.size());
         }
     }
 
@@ -728,6 +731,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
     //the below params are only used in video models. May move into standalone object in future
     int vid_req_frames = inputs.vid_req_frames;
+    int vid_req_avi = inputs.vid_req_avi;
     int generated_num_results = 1;
 
     if(is_vid_model)
@@ -746,6 +750,17 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         vid_gen_params.strength = params.strength;
         vid_gen_params.seed = params.seed;
         vid_gen_params.video_frames = vid_req_frames;
+        if(reference_imgs.size()>0)
+        {
+            if(reference_imgs.size()>=1)
+            {
+                vid_gen_params.init_image = reference_imgs[0];
+            }
+            if(reference_imgs.size()>=2)
+            {
+                vid_gen_params.end_image = reference_imgs[1];
+            }
+        }
         if(!sd_is_quiet && sddebugmode==1)
         {
             std::stringstream ss;
@@ -758,6 +773,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             << "\nSTRENGTH:" << vid_gen_params.strength
             << "\nFRAMES:"   << vid_gen_params.video_frames
             << "\nCTRL_FRM:" << vid_gen_params.control_frames_size
+            << "\nREF_IMGS:"   << reference_imgs.size()
             << "\n\n";
             printf("%s", ss.str().c_str());
         }
@@ -921,9 +937,26 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         //if multiframe, make a video
         if(vid_req_frames>1 && generated_num_results>1 && is_vid_model)
         {
+            if(!sd_is_quiet && sddebugmode==1)
+            {
+                printf("\nSaving video buffer, AVI=%d...",vid_req_avi);
+            }
             uint8_t * out_data = nullptr;
             size_t out_len = 0;
-            int status = create_mjpg_avi_membuf_from_sd_images(results, generated_num_results, 24, 40, &out_data,&out_len);
+            int status = 0;
+            if(vid_req_avi==1)
+            {
+                status = create_mjpg_avi_membuf_from_sd_images(results, generated_num_results, 16, 40, &out_data,&out_len);
+            }
+            else
+            {
+                status = create_gif_buf_from_sd_images(results, generated_num_results, 16, 100, &out_data,&out_len);
+            }
+
+            if(!sd_is_quiet && sddebugmode==1)
+            {
+                printf(status==0?"Video Saved!\n":"Save Failed!\n");
+            }
             if(status==0)
             {
                 recent_data = kcpp_base64_encode(out_data, out_len);
