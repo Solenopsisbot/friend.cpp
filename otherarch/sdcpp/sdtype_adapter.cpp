@@ -944,20 +944,46 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             uint8_t * out_data = nullptr;
             size_t out_len = 0;
             int status = 0;
+
             if(vid_req_avi==1)
             {
                 status = create_mjpg_avi_membuf_from_sd_images(results, generated_num_results, 16, 40, &out_data,&out_len);
             }
             else
             {
-                status = create_gif_buf_from_sd_images(results, generated_num_results, 16, &out_data,&out_len);
+                uint8_t * out_data_a = nullptr;
+                uint8_t * out_data_b = nullptr;
+                int status_a = 0;
+                int status_b = 0;
+                size_t out_len_a = 0;
+                size_t out_len_b = 0;
+                status_a = create_gif_buf_from_sd_images_gifh(results, generated_num_results, 16, &out_data_a,&out_len_a);
+                status_b = create_gif_buf_from_sd_images_msf(results, generated_num_results, 16, &out_data_b,&out_len_b);
+                if(!sd_is_quiet && sddebugmode==1)
+                {
+                    printf("GIF-H Len: %zu, MSF Len: %zu\n",out_len_a,out_len_b);
+                }
+                if(status_a==0 && out_len_a < out_len_b)
+                {
+                    free(out_data_b);
+                    out_len = out_len_a;
+                    out_data = out_data_a;
+                    status = status_a;
+                }
+                else
+                {
+                    free(out_data_a);
+                    out_len = out_len_b;
+                    out_data = out_data_b;
+                    status = status_b;
+                }
             }
 
             if(!sd_is_quiet && sddebugmode==1)
             {
                 if(status==0)
                 {
-                    printf("Video Saved (Len %d)!\n",out_len);
+                    printf("Video Saved (Len %zu)!\n",out_len);
                 }else{
                     printf("Save Failed!\n");
                 }
