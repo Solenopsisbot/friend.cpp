@@ -1834,6 +1834,7 @@ def sd_generate(genparams):
     #clean vars
     cfg_scale = (1 if cfg_scale < 1 else (25 if cfg_scale > 25 else cfg_scale))
     sample_steps = (1 if sample_steps < 1 else (forced_steplimit if sample_steps > forced_steplimit else sample_steps))
+    vid_req_frames = (1 if vid_req_frames < 1 else (100 if vid_req_frames > 100 else vid_req_frames))
 
     if args.sdclamped:
         sample_steps = (40 if sample_steps > 40 else sample_steps)
