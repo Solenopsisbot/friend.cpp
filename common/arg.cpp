@@ -39,7 +39,7 @@
 #if defined(LLAMA_USE_CURL)
 #include <curl/curl.h>
 #include <curl/easy.h>
-#else
+#elif defined(LLAMA_USE_HTTPLIB)
 #include <cpp-httplib/httplib.h>
 #endif
 
@@ -572,6 +572,8 @@ std::pair<long, std::vector<char>> common_remote_get_content(const std::string &
 
 #else
 
+#ifdef LLAMA_USE_HTTPLIB
+
 bool common_has_curl() {
     return false;
 }
@@ -935,6 +937,26 @@ std::pair<long, std::vector<char>> common_remote_get_content(const std::string  
 
     return { res->status, std::move(buf) };
 }
+
+#else //no httplib
+
+bool common_has_curl() {
+    return false;
+}
+
+static bool common_download_file_single_online(const std::string &, const std::string &, const std::string &) {
+    LOG_ERR("error: built without CURL, cannot download model from internet\n");
+    return false;
+}
+
+std::pair<long, std::vector<char>> common_remote_get_content(const std::string & url, const common_remote_params &) {
+    if (!url.empty()) {
+        throw std::runtime_error("error: built without CURL, cannot download model from the internet");
+    }
+
+    return {};
+}
+#endif
 
 #endif // LLAMA_USE_CURL
 
