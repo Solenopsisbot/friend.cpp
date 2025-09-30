@@ -950,12 +950,18 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             }
             else
             {
-                status = create_gif_buf_from_sd_images(results, generated_num_results, 16, 100, &out_data,&out_len);
+                status = create_gif_buf_from_sd_images(results, generated_num_results, 16, &out_data,&out_len);
             }
 
             if(!sd_is_quiet && sddebugmode==1)
             {
-                printf(status==0?"Video Saved!\n":"Save Failed!\n");
+                if(status==0)
+                {
+                    printf("Video Saved (Len %d)!\n",out_len);
+                }else{
+                    printf("Save Failed!\n");
+                }
+
             }
             if(status==0)
             {
