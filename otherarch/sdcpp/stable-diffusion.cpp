@@ -224,10 +224,17 @@ public:
         }
 
         bool is_unet = model_loader.model_is_unet();
+        int tempver = model_loader.get_sd_version();
+        bool iswan = (tempver==VERSION_WAN2 || tempver==VERSION_WAN2_2_I2V || tempver==VERSION_WAN2_2_TI2V);
 
         if (strlen(SAFE_STR(sd_ctx_params->clip_l_path)) > 0) {
             LOG_INFO("loading clip_l from '%s'", sd_ctx_params->clip_l_path);
             std::string prefix = is_unet ? "cond_stage_model.transformer." : "text_encoders.clip_l.transformer.";
+            if(iswan)
+            {
+                prefix = "cond_stage_model.transformer.";
+                LOG_INFO("swap clip_vision from '%s'", sd_ctx_params->clip_l_path);
+            }
             if (!model_loader.init_from_file(sd_ctx_params->clip_l_path, prefix)) {
                 LOG_WARN("loading clip_l from '%s' failed", sd_ctx_params->clip_l_path);
             }
@@ -236,6 +243,11 @@ public:
         if (strlen(SAFE_STR(sd_ctx_params->clip_g_path)) > 0) {
             LOG_INFO("loading clip_g from '%s'", sd_ctx_params->clip_g_path);
             std::string prefix = is_unet ? "cond_stage_model.1.transformer." : "text_encoders.clip_g.transformer.";
+            if(iswan)
+            {
+                prefix = "cond_stage_model.transformer.";
+                LOG_INFO("swap clip_vision from '%s'", sd_ctx_params->clip_g_path);
+            }
             if (!model_loader.init_from_file(sd_ctx_params->clip_g_path, prefix)) {
                 LOG_WARN("loading clip_g from '%s' failed", sd_ctx_params->clip_g_path);
             }
