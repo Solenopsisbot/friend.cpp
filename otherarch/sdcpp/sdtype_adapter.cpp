@@ -499,6 +499,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     {
         printf("\nWarning: KCPP image generation not initialized!\n");
         output.data = "";
+        output.animated = 0;
         output.status = 0;
         return output;
     }
@@ -653,6 +654,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             if (!resok) {
                 printf("\nKCPP SD: resize extra image failed!\n");
                 output.data = "";
+                output.animated = 0;
                 output.status = 0;
                 return output;
             }
@@ -812,6 +814,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         if (params.width <= 0 || params.width % 64 != 0 || params.height <= 0 || params.height % 64 != 0) {
             printf("\nKCPP SD: bad request image dimensions!\n");
             output.data = "";
+            output.animated = 0;
             output.status = 0;
             return output;
         }
@@ -827,12 +830,14 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         if (nx < 64 || ny < 64 || nx > 2048 || ny > 2048 || nc!= 3) {
             printf("\nKCPP SD: bad input image dimensions %d x %d!\n",nx,ny);
             output.data = "";
+            output.animated = 0;
             output.status = 0;
             return output;
         }
         if (!input_image_buffer) {
             printf("\nKCPP SD: load image from memory failed!\n");
             output.data = "";
+            output.animated = 0;
             output.status = 0;
             return output;
         }
@@ -846,6 +851,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         if (!resok) {
             printf("\nKCPP SD: resize image failed!\n");
             output.data = "";
+            output.animated = 0;
             output.status = 0;
             return output;
         }
@@ -869,6 +875,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             if (!resok) {
                 printf("\nKCPP SD: resize image failed!\n");
                 output.data = "";
+                output.animated = 0;
                 output.status = 0;
                 return output;
             }
@@ -924,10 +931,12 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     if (results == NULL) {
         printf("\nKCPP SD generate failed!\n");
         output.data = "";
+        output.animated = 0;
         output.status = 0;
         return output;
     }
 
+    bool wasanim = false;
 
     for (int i = 0; i < params.batch_count; i++) {
         if (results[i].data == NULL) {
@@ -944,6 +953,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             uint8_t * out_data = nullptr;
             size_t out_len = 0;
             int status = 0;
+            wasanim = true;
 
             if(vid_req_avi==1)
             {
@@ -1012,6 +1022,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
     free(results);
     output.data = recent_data.c_str();
+    output.animated = (wasanim?1:0);
     output.status = 1;
     total_img_gens += 1;
     return output;

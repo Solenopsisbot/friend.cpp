@@ -209,6 +209,7 @@ struct sd_generation_inputs
 struct sd_generation_outputs
 {
     int status = -1;
+    int animated = 0;
     const char * data = "";
 };
 

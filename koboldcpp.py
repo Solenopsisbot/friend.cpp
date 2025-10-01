@@ -322,6 +322,7 @@ class sd_generation_inputs(ctypes.Structure):
 
 class sd_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
+                ("animated", ctypes.c_int),
                 ("data", ctypes.c_char_p)]
 
 class whisper_load_model_inputs(ctypes.Structure):
@@ -1862,9 +1863,11 @@ def sd_generate(genparams):
     inputs.vid_req_avi = vid_req_avi
     ret = handle.sd_generate(inputs)
     outstr = ""
+    animated = False
     if ret.status==1:
         outstr = ret.data.decode("UTF-8","ignore")
-    return outstr
+        animated = True if ret.animated else False
+    return {"animated": animated, "data":outstr}
 
 
 def whisper_load_model(model_filename):
@@ -4086,13 +4089,13 @@ Change Mode<br>
                     if (api_format == 4 or api_format == 3) and "stream" in genparams and genparams["stream"]:
                         sse_stream_flag = True
 
-                    gen = asyncio.run(self.handle_request(genparams, api_format, sse_stream_flag))
+                    gendat = asyncio.run(self.handle_request(genparams, api_format, sse_stream_flag))
 
                     try:
                         # Headers are already sent when streaming
                         if not sse_stream_flag:
                             self.send_response(200)
-                            genresp = (json.dumps(gen).encode())
+                            genresp = (json.dumps(gendat).encode())
                             self.send_header('content-length', str(len(genresp)))
                             self.end_headers(content_type='application/json')
                             self.wfile.write(genresp)
@@ -4104,7 +4107,7 @@ Change Mode<br>
                             self.end_headers(content_type='text/event-stream')
                             toolsdata_res = []
                             try:
-                                toolsdata_res = gen['choices'][0]['message']['tool_calls']
+                                toolsdata_res = gendat['choices'][0]['message']['tool_calls']
                                 if toolsdata_res and len(toolsdata_res)>0:
                                     toolsdata_res[0]["index"] = 0 # need to add an index for OWUI
                             except Exception:
@@ -4131,17 +4134,19 @@ Change Mode<br>
                         elif is_oai_imggen:
                             genparams = sd_oai_tranform_params(genparams)
                         gen = sd_generate(genparams)
+                        gendat = gen["data"]
+                        genanim = gen["animated"]
                         genresp = None
                         if is_comfyui_imggen:
-                            if gen:
-                                lastgeneratedcomfyimg = base64.b64decode(gen)
+                            if gendat:
+                                lastgeneratedcomfyimg = base64.b64decode(gendat)
                             else:
                                 lastgeneratedcomfyimg = b''
                             genresp = (json.dumps({"prompt_id": "12345678-0000-0000-0000-000000000001","number": 0,"node_errors":{}}).encode())
                         elif is_oai_imggen:
-                            genresp = (json.dumps({"created":int(time.time()),"data":[{"b64_json":gen}],"background":"opaque","output_format":"png","size":"1024x1024","quality":"medium"}).encode())
+                            genresp = (json.dumps({"created":int(time.time()),"data":[{"b64_json":gendat}],"background":"opaque","output_format":"png","size":"1024x1024","quality":"medium"}).encode())
                         else:
-                            genresp = (json.dumps({"images":[gen],"parameters":{},"info":""}).encode())
+                            genresp = (json.dumps({"images":[gendat],"parameters":{},"info":"","animated":genanim}).encode())
                         self.send_response(200)
                         self.send_header('content-length', str(len(genresp)))
                         self.end_headers(content_type='application/json')
@@ -4153,8 +4158,8 @@ Change Mode<br>
                     return
                 elif is_transcribe:
                     try:
-                        gen = whisper_generate(genparams)
-                        genresp = (json.dumps({"text":gen}).encode())
+                        gendat = whisper_generate(genparams)
+                        genresp = (json.dumps({"text":gendat}).encode())
                         self.send_response(200)
                         self.send_header('content-length', str(len(genresp)))
                         self.end_headers(content_type='application/json')
@@ -4166,10 +4171,10 @@ Change Mode<br>
                     return
                 elif is_tts:
                     try:
-                        gen = tts_generate(genparams)
+                        gendat = tts_generate(genparams)
                         wav_data = b''
-                        if gen:
-                            wav_data = base64.b64decode(gen) # Decode the Base64 string into binary data
+                        if gendat:
+                            wav_data = base64.b64decode(gendat) # Decode the Base64 string into binary data
                         self.send_response(200)
                         self.send_header('content-length', str(len(wav_data)))  # Set content length
                         self.send_header('Content-Disposition', 'attachment; filename="output.wav"')
@@ -4182,10 +4187,10 @@ Change Mode<br>
                     return
                 elif is_embeddings:
                     try:
-                        gen = embeddings_generate(genparams)
+                        gendat = embeddings_generate(genparams)
                         outdatas = []
                         odidx = 0
-                        for od in gen["data"]:
+                        for od in gendat["data"]:
                             if genparams.get("encoding_format", "")=="base64":
                                 binary_data = struct.pack('<' + 'f' * len(od), *od)
                                 b64_string = base64.b64encode(binary_data).decode('utf-8')
@@ -4193,7 +4198,7 @@ Change Mode<br>
                             else:
                                 outdatas.append({"object":"embedding","index":odidx,"embedding":od})
                             odidx += 1
-                        genresp = (json.dumps({"object":"list","data":outdatas,"model":friendlyembeddingsmodelname,"usage":{"prompt_tokens":gen["count"],"total_tokens":gen["count"]}}).encode())
+                        genresp = (json.dumps({"object":"list","data":outdatas,"model":friendlyembeddingsmodelname,"usage":{"prompt_tokens":gendat["count"],"total_tokens":gendat["count"]}}).encode())
                         self.send_response(200)
                         self.send_header('content-length', str(len(genresp)))
                         self.end_headers(content_type='application/json')
