@@ -674,18 +674,16 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
     //for img2img
     sd_image_t input_image = {0,0,0,nullptr};
-    std::vector<sd_image_t> extraimage_references;
-    extraimage_references.reserve(max_extra_images);
-    std::vector<std::vector<uint8_t>> extraimage_buffers;
-    extraimage_buffers.reserve(max_extra_images);
+    std::vector<sd_image_t> kontext_imgs;
+    std::vector<sd_image_t> wan_imgs;
+    std::vector<sd_image_t> photomaker_imgs;
+    bool is_wan = (loadedsdver == SDVersion::VERSION_WAN2 || loadedsdver == SDVersion::VERSION_WAN2_2_I2V || loadedsdver == SDVersion::VERSION_WAN2_2_TI2V);
+    bool is_kontext = (loadedsdver==SDVersion::VERSION_FLUX && !loaded_model_is_chroma(sd_ctx));
 
     int nx, ny, nc;
     int img2imgW = sd_params->width; //for img2img input
     int img2imgH = sd_params->height;
     int img2imgC = 3; // Assuming RGB image
-    //because the reference image can be larger than the output image, allocate at least enough for 1024x1024
-    const int imgMemNeed = std::max(img2imgW * img2imgH * img2imgC + 512, 1024 * 1024 * img2imgC + 512);
-    std::vector<std::vector<uint8_t>> resized_extraimage_bufs(max_extra_images, std::vector<uint8_t>(imgMemNeed));
 
     std::string ts = get_timestamp_str();
     if(!sd_is_quiet)
@@ -707,52 +705,45 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             }
             input_extraimage_buffers.clear();
         }
-        extraimage_buffers.clear();
-        extraimage_references.clear();
         for(int i=0;i<extra_image_data.size() && i<max_extra_images;++i)
         {
             int nx2, ny2, nc2;
             int desiredchannels = 3;
-            extraimage_buffers.push_back(kcpp_base64_decode(extra_image_data[i]));
-            input_extraimage_buffers.push_back(stbi_load_from_memory(extraimage_buffers[i].data(), extraimage_buffers[i].size(), &nx2, &ny2, &nc2, desiredchannels));
-            // Resize the image
-            float aspect_ratio = static_cast<float>(nx2) / ny2;
-            int desiredWidth = nx2;
-            int desiredHeight = ny2;
-            int smallestsrcdim = std::min(img2imgW,img2imgH);
-            if(desiredWidth > desiredHeight)
+            if(is_wan)
             {
-                desiredWidth = smallestsrcdim;
-                desiredHeight = smallestsrcdim / aspect_ratio;
-            } else {
-                desiredHeight = smallestsrcdim;
-                desiredWidth = smallestsrcdim * aspect_ratio;
+                uint8_t * loaded = load_image_from_b64(extra_image_data[i],nx2,ny2,img2imgW,img2imgH,3);
+                if(loaded)
+                {
+                    input_extraimage_buffers.push_back(loaded);
+                    sd_image_t extraimage_reference;
+                    extraimage_reference.width = nx2;
+                    extraimage_reference.height = ny2;
+                    extraimage_reference.channel = desiredchannels;
+                    extraimage_reference.data = loaded;
+                    wan_imgs.push_back(extraimage_reference);
+                }
             }
-
-            //round dims to 64
-            desiredWidth = roundnearest(16,desiredWidth);
-            desiredHeight = roundnearest(16,desiredHeight);
-            desiredWidth = std::clamp(desiredWidth,64,1024);
-            desiredHeight = std::clamp(desiredHeight,64,1024);
-
-            if(!sd_is_quiet && sddebugmode==1)
+            else if (is_kontext || photomaker_enabled)
             {
-                printf("Resize Extraimg: %dx%d to %dx%d\n",nx2,ny2,desiredWidth,desiredHeight);
+                uint8_t * loaded = load_image_from_b64(extra_image_data[i],nx2,ny2);
+                if(loaded)
+                {
+                    input_extraimage_buffers.push_back(loaded);
+                    sd_image_t extraimage_reference;
+                    extraimage_reference.width = nx2;
+                    extraimage_reference.height = ny2;
+                    extraimage_reference.channel = desiredchannels;
+                    extraimage_reference.data = loaded;
+                    if(is_kontext)
+                    {
+                        kontext_imgs.push_back(extraimage_reference);
+                    }
+                    else
+                    {
+                        photomaker_imgs.push_back(extraimage_reference);
+                    }
+                }
             }
-            int resok = stbir_resize_uint8(input_extraimage_buffers[i], nx2, ny2, 0, resized_extraimage_bufs[i].data(), desiredWidth, desiredHeight, 0, desiredchannels);
-            if (!resok) {
-                printf("\nKCPP SD: resize extra image failed!\n");
-                output.data = "";
-                output.animated = 0;
-                output.status = 0;
-                return output;
-            }
-            sd_image_t extraimage_reference;
-            extraimage_reference.width = desiredWidth;
-            extraimage_reference.height = desiredHeight;
-            extraimage_reference.channel = desiredchannels;
-            extraimage_reference.data = resized_extraimage_bufs[i].data();
-            extraimage_references.push_back(extraimage_reference);
         }
 
         //ensure prompt has img keyword, otherwise append it
@@ -765,48 +756,10 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                 sd_params->prompt = "person " + sd_params->prompt;
             }
         }
-    }
 
-    std::vector<sd_image_t> reference_imgs;
-    std::vector<sd_image_t> wan_imgs;
-    bool is_wan = (loadedsdver == SDVersion::VERSION_WAN2 || loadedsdver == SDVersion::VERSION_WAN2_2_I2V || loadedsdver == SDVersion::VERSION_WAN2_2_TI2V);
-    bool is_kontext = (loadedsdver==SDVersion::VERSION_FLUX && !loaded_model_is_chroma(sd_ctx));
-    if(extra_image_data.size()>0)
-    {
-        if(is_kontext)
-        {
-            for(int i=0;i<extra_image_data.size();++i)
-            {
-                reference_imgs.push_back(extraimage_references[i]);
-            }
-            if(!sd_is_quiet && sddebugmode==1)
-            {
-                printf("\nImage Gen: Using %d reference images\n",reference_imgs.size());
-            }
-        }
-        if(is_wan)
-        {
-            for(int i=0;i<extra_image_data.size();++i)
-            {
-                wan_imgs.push_back(extraimage_references[i]);
-            }
-            if(!sd_is_quiet && sddebugmode==1)
-            {
-                printf("\nImage Gen: Using %d video reference images\n",wan_imgs.size());
-            }
-        }
-    }
-
-    std::vector<sd_image_t> photomaker_imgs;
-    if(photomaker_enabled && extra_image_data.size()>0)
-    {
-        for(int i=0;i<extra_image_data.size();++i)
-        {
-            photomaker_imgs.push_back(extraimage_references[i]);
-        }
         if(!sd_is_quiet && sddebugmode==1)
         {
-            printf("\nPhotomaker: Using %d reference images\n",photomaker_imgs.size());
+            printf("\nImageGen References: Kontext=%d Wan=%d Photomaker=%d\n",kontext_imgs.size(),wan_imgs.size(),photomaker_imgs.size());
         }
     }
 
@@ -829,8 +782,8 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     params.vae_tiling_params.enabled = dotile;
     params.batch_count = 1;
 
-    params.ref_images = reference_imgs.data();
-    params.ref_images_count = reference_imgs.size();
+    params.ref_images = kontext_imgs.data();
+    params.ref_images_count = kontext_imgs.size();
     params.pm_params.id_images = photomaker_imgs.data();
     params.pm_params.id_images_count = photomaker_imgs.size();
 
