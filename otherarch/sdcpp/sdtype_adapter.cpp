@@ -491,6 +491,99 @@ static enum sample_method_t sampler_from_name(const std::string& sampler)
     }
 }
 
+
+uint8_t* load_image_from_b64(const std::string & b64str, int& width, int& height, int expected_width = 0, int expected_height = 0, int expected_channel = 3)
+{
+    std::vector<uint8_t> decoded_buf = kcpp_base64_decode(b64str);
+    int c = 0;
+    uint8_t* image_buffer = (uint8_t*)stbi_load_from_memory(decoded_buf.data(), decoded_buf.size(), &width, &height, &c, expected_channel);
+
+    if (image_buffer == NULL) {
+        fprintf(stderr, "load_image_from_b64 failed\n");
+        return NULL;
+    }
+    if (c < expected_channel) {
+        fprintf(stderr, "load_image_from_b64: the number of channels for the input image must be >= %d, but got %d channels\n", expected_channel, c);
+        free(image_buffer);
+        return NULL;
+    }
+    if (width <= 0) {
+        fprintf(stderr, "load_image_from_b64 error: the width of image must be greater than 0\n");
+        free(image_buffer);
+        return NULL;
+    }
+    if (height <= 0) {
+        fprintf(stderr, "load_image_from_b64 error: the height of image must be greater than 0\n");
+        free(image_buffer);
+        return NULL;
+    }
+
+    // Resize input image ...
+    if ((expected_width > 0 && expected_height > 0) && (height != expected_height || width != expected_width)) {
+        float dst_aspect = (float)expected_width / (float)expected_height;
+        float src_aspect = (float)width / (float)height;
+
+        int crop_x = 0, crop_y = 0;
+        int crop_w = width, crop_h = height;
+
+        if (src_aspect > dst_aspect) {
+            crop_w = (int)(height * dst_aspect);
+            crop_x = (width - crop_w) / 2;
+        } else if (src_aspect < dst_aspect) {
+            crop_h = (int)(width / dst_aspect);
+            crop_y = (height - crop_h) / 2;
+        }
+
+        if (crop_x != 0 || crop_y != 0) {
+            if(!sd_is_quiet && sddebugmode==1)
+            {
+                printf("\ncrop input image from %dx%d to %dx%d\n", width, height, crop_w, crop_h);
+            }
+            uint8_t* cropped_image_buffer = (uint8_t*)malloc(crop_w * crop_h * expected_channel);
+            if (cropped_image_buffer == NULL) {
+                fprintf(stderr, "\nerror: allocate memory for crop\n");
+                free(image_buffer);
+                return NULL;
+            }
+            for (int row = 0; row < crop_h; row++) {
+                uint8_t* src = image_buffer + ((crop_y + row) * width + crop_x) * expected_channel;
+                uint8_t* dst = cropped_image_buffer + (row * crop_w) * expected_channel;
+                memcpy(dst, src, crop_w * expected_channel);
+            }
+
+            width  = crop_w;
+            height = crop_h;
+            free(image_buffer);
+            image_buffer = cropped_image_buffer;
+        }
+
+        if(!sd_is_quiet && sddebugmode==1)
+        {
+            printf("\nresize input image from %dx%d to %dx%d\n", width, height, expected_width, expected_height);
+        }
+        int resized_height = expected_height;
+        int resized_width  = expected_width;
+
+        uint8_t* resized_image_buffer = (uint8_t*)malloc(resized_height * resized_width * expected_channel);
+        if (resized_image_buffer == NULL) {
+            fprintf(stderr, "\nerror: allocate memory for resize input image\n");
+            free(image_buffer);
+            return NULL;
+        }
+        stbir_resize(image_buffer, width, height, 0,
+                     resized_image_buffer, resized_width, resized_height, 0, STBIR_TYPE_UINT8,
+                     expected_channel, STBIR_ALPHA_CHANNEL_NONE, 0,
+                     STBIR_EDGE_CLAMP, STBIR_EDGE_CLAMP,
+                     STBIR_FILTER_BOX, STBIR_FILTER_BOX,
+                     STBIR_COLORSPACE_SRGB, nullptr);
+        width  = resized_width;
+        height = resized_height;
+        free(image_buffer);
+        image_buffer = resized_image_buffer;
+    }
+    return image_buffer;
+}
+
 sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 {
     sd_generation_outputs output;
@@ -583,8 +676,6 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     sd_image_t input_image = {0,0,0,nullptr};
     std::vector<sd_image_t> extraimage_references;
     extraimage_references.reserve(max_extra_images);
-    std::vector<uint8_t> image_buffer;
-    std::vector<uint8_t> image_mask_buffer;
     std::vector<std::vector<uint8_t>> extraimage_buffers;
     extraimage_buffers.reserve(max_extra_images);
 
@@ -594,8 +685,6 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     int img2imgC = 3; // Assuming RGB image
     //because the reference image can be larger than the output image, allocate at least enough for 1024x1024
     const int imgMemNeed = std::max(img2imgW * img2imgH * img2imgC + 512, 1024 * 1024 * img2imgC + 512);
-    std::vector<uint8_t> resized_image_buf(imgMemNeed);
-    std::vector<uint8_t> resized_mask_buf(imgMemNeed);
     std::vector<std::vector<uint8_t>> resized_extraimage_bufs(max_extra_images, std::vector<uint8_t>(imgMemNeed));
 
     std::string ts = get_timestamp_str();
@@ -833,37 +922,16 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             return output;
         }
 
-        image_buffer = kcpp_base64_decode(img2img_data);
         if(input_image_buffer!=nullptr) //just in time free old buffer
         {
              stbi_image_free(input_image_buffer);
              input_image_buffer = nullptr;
         }
-        input_image_buffer = stbi_load_from_memory(image_buffer.data(), image_buffer.size(), &nx, &ny, &nc, 3);
 
-        if (nx < 64 || ny < 64 || nx > 2048 || ny > 2048 || nc!= 3) {
-            printf("\nKCPP SD: bad input image dimensions %d x %d!\n",nx,ny);
-            output.data = "";
-            output.animated = 0;
-            output.status = 0;
-            return output;
-        }
+        input_image_buffer = load_image_from_b64(img2img_data,nx,ny,img2imgW,img2imgH,3);
+
         if (!input_image_buffer) {
             printf("\nKCPP SD: load image from memory failed!\n");
-            output.data = "";
-            output.animated = 0;
-            output.status = 0;
-            return output;
-        }
-
-        // Resize the image
-        if(!sd_is_quiet && sddebugmode==1)
-        {
-            printf("Resize Img2Img: %dx%d to %dx%d\n",nx,ny,img2imgW,img2imgH);
-        }
-        int resok = stbir_resize_uint8(input_image_buffer, nx, ny, 0, resized_image_buf.data(), img2imgW, img2imgH, 0, img2imgC);
-        if (!resok) {
-            printf("\nKCPP SD: resize image failed!\n");
             output.data = "";
             output.animated = 0;
             output.status = 0;
@@ -878,26 +946,13 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                 stbi_image_free(input_mask_buffer);
                 input_mask_buffer = nullptr;
             }
-            image_mask_buffer = kcpp_base64_decode(img2img_mask);
-            input_mask_buffer = stbi_load_from_memory(image_mask_buffer.data(), image_mask_buffer.size(), &nx2, &ny2, &nc2, 1);
-            // Resize the image
-             if(!sd_is_quiet && sddebugmode==1)
-            {
-                printf("Resize Mask: %dx%d to %dx%d\n",nx2,ny2,img2imgW,img2imgH);
-            }
-            int resok = stbir_resize_uint8(input_mask_buffer, nx2, ny2, 0, resized_mask_buf.data(), img2imgW, img2imgH, 0, 1);
-            if (!resok) {
-                printf("\nKCPP SD: resize image failed!\n");
-                output.data = "";
-                output.animated = 0;
-                output.status = 0;
-                return output;
-            }
+            input_mask_buffer = load_image_from_b64(img2img_mask,nx2,ny2,img2imgW,img2imgH,1);
+
             if(inputs.flip_mask)
             {
-                int bufsiz = resized_mask_buf.size();
+                int bufsiz = nx2 * ny2 * 1; //1 channel
                 for (int i = 0; i < bufsiz; ++i) {
-                    resized_mask_buf[i] = 255 - resized_mask_buf[i];
+                    input_mask_buffer[i] = 255 - input_mask_buffer[i];
                 }
             }
         }
@@ -905,12 +960,12 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         input_image.width = img2imgW;
         input_image.height = img2imgH;
         input_image.channel = img2imgC;
-        input_image.data = resized_image_buf.data();
+        input_image.data = input_image_buffer;
 
         uint8_t* mask_image_buffer    = NULL;
         std::vector<uint8_t> default_mask_image_vec(img2imgW * img2imgH * img2imgC, 255);
         if (img2img_mask != "") {
-            mask_image_buffer = resized_mask_buf.data();
+            mask_image_buffer = input_mask_buffer;
         } else {
             mask_image_buffer = default_mask_image_vec.data();
         }
@@ -922,7 +977,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         if(!sd_is_quiet && sddebugmode==1)
         {
             std::stringstream ss;
-            ss  << "\nnIMG2IMG PROMPT:" << params.prompt
+            ss  << "\nIMG2IMG PROMPT:" << params.prompt
                 << "\nNPROMPT:" << params.negative_prompt
                 << "\nCLPSKP:" << params.clip_skip
                 << "\nCFGSCLE:" << params.sample_params.guidance.txt_cfg
