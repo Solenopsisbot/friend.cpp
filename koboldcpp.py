@@ -64,7 +64,7 @@ dry_seq_break_max = 128
 extra_images_max = 4
 
 # global vars
-KcppVersion = "1.99.4"
+KcppVersion = "1.100"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":""}
@@ -1716,7 +1716,7 @@ def sd_load_model(model_filename,vae_filename,lora_filename,t5xxl_filename,clipl
     inputs.flash_attention = args.sdflashattention
     inputs.offload_cpu = args.sdoffloadcpu
     inputs.vae_cpu = args.sdvaecpu
-    inputs.clip_cpu = args.sdclipcpu
+    inputs.clip_cpu = False if args.sdclipgpu else True
     sdconvdirect = sd_convdirect_option(args.sdconvdirect)
     inputs.diffusion_conv_direct = sdconvdirect == 'full'
     inputs.vae_conv_direct = sdconvdirect in ['vaeonly', 'full']
@@ -4667,7 +4667,7 @@ def show_gui():
     sd_flash_attention_var = ctk.IntVar(value=0)
     sd_offload_cpu_var = ctk.IntVar(value=0)
     sd_vae_cpu_var = ctk.IntVar(value=0)
-    sd_clip_cpu_var = ctk.IntVar(value=0)
+    sd_clip_gpu_var = ctk.IntVar(value=0)
     sd_vaeauto_var = ctk.IntVar(value=0)
     sd_tiled_vae_var = ctk.StringVar(value=str(default_vae_tile_threshold))
     sd_convdirect_var = ctk.StringVar(value=str(sd_convdirect_choices[0]))
@@ -5449,7 +5449,7 @@ def show_gui():
     makecheckbox(images_tab, "SD Flash Attention", sd_flash_attention_var, 44,padx=230, tooltiptxt="Enable Flash Attention for image diffusion. May save memory or improve performance.")
     makecheckbox(images_tab, "Model CPU Offload", sd_offload_cpu_var, 50,padx=8, tooltiptxt="Offload image weights in RAM to save VRAM, swap into VRAM when needed.")
     makecheckbox(images_tab, "VAE on CPU", sd_vae_cpu_var, 50,padx=160, tooltiptxt="Force VAE to CPU only for image generation.")
-    makecheckbox(images_tab, "CLIP on CPU", sd_clip_cpu_var, 50,padx=280, tooltiptxt="Force CLIP to CPU only for image generation.")
+    makecheckbox(images_tab, "CLIP on GPU", sd_clip_gpu_var, 50,padx=280, tooltiptxt="Put CLIP and T5 to GPU for image generation. Otherwise, CLIP will use CPU.")
 
     # audio tab
     audio_tab = tabcontent["Audio"]
@@ -5694,8 +5694,8 @@ def show_gui():
             args.sdoffloadcpu = True
         if sd_vae_cpu_var.get()==1:
             args.sdvaecpu = True
-        if sd_clip_cpu_var.get()==1:
-            args.sdclipcpu = True
+        if sd_clip_gpu_var.get()==1:
+            args.sdclipgpu = True
         args.sdthreads = (0 if sd_threads_var.get()=="" else int(sd_threads_var.get()))
         args.sdclamped = (0 if int(sd_clamped_var.get())<=0 else int(sd_clamped_var.get()))
         args.sdclampedsoft = (0 if int(sd_clamped_soft_var.get())<=0 else int(sd_clamped_soft_var.get()))
@@ -5937,7 +5937,7 @@ def show_gui():
         sd_flash_attention_var.set(1 if ("sdflashattention" in dict and dict["sdflashattention"]) else 0)
         sd_offload_cpu_var.set(1 if ("sdoffloadcpu" in dict and dict["sdoffloadcpu"]) else 0)
         sd_vae_cpu_var.set(1 if ("sdvaecpu" in dict and dict["sdvaecpu"]) else 0)
-        sd_clip_cpu_var.set(1 if ("sdclipcpu" in dict and dict["sdclipcpu"]) else 0)
+        sd_clip_gpu_var.set(1 if ("sdclipgpu" in dict and dict["sdclipgpu"]) else 0)
         sd_convdirect_var.set(sd_convdirect_option(dict.get("sdconvdirect")))
         sd_vae_var.set(dict["sdvae"] if ("sdvae" in dict and dict["sdvae"]) else "")
         sd_t5xxl_var.set(dict["sdt5xxl"] if ("sdt5xxl" in dict and dict["sdt5xxl"]) else "")
@@ -7770,7 +7770,7 @@ if __name__ == '__main__':
     sdparsergroup.add_argument("--sdflashattention", help="Enables Flash Attention for image generation.", action='store_true')
     sdparsergroup.add_argument("--sdoffloadcpu", help="Offload image weights in RAM to save VRAM, swap into VRAM when needed.", action='store_true')
     sdparsergroup.add_argument("--sdvaecpu", help="Force VAE to CPU only for image generation.", action='store_true')
-    sdparsergroup.add_argument("--sdclipcpu", help="Force CLIP to CPU only for image generation.", action='store_true')
+    sdparsergroup.add_argument("--sdclipgpu", help="Put CLIP and T5 to GPU for image generation. Otherwise, CLIP will use CPU.", action='store_true')
     sdparsergroup.add_argument("--sdconvdirect", help="Enables Conv2D Direct. May improve performance or reduce memory usage. Might crash if not supported by the backend. Can be 'off' (default) to disable, 'full' to turn it on for all operations, or 'vaeonly' to enable only for the VAE.", type=sd_convdirect_option, choices=sd_convdirect_choices, default=sd_convdirect_choices[0])
     sdparsergroupvae = sdparsergroup.add_mutually_exclusive_group()
     sdparsergroupvae.add_argument("--sdvae", metavar=('[filename]'), help="Specify an image generation safetensors VAE which replaces the one in the model.", default="")
