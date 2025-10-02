@@ -679,17 +679,32 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     }
 
     std::vector<sd_image_t> reference_imgs;
+    std::vector<sd_image_t> wan_imgs;
     bool is_wan = (loadedsdver == SDVersion::VERSION_WAN2 || loadedsdver == SDVersion::VERSION_WAN2_2_I2V || loadedsdver == SDVersion::VERSION_WAN2_2_TI2V);
     bool is_kontext = (loadedsdver==SDVersion::VERSION_FLUX && !loaded_model_is_chroma(sd_ctx));
-    if(extra_image_data.size()>0 && (is_wan || is_kontext))
+    if(extra_image_data.size()>0)
     {
-        for(int i=0;i<extra_image_data.size();++i)
+        if(is_kontext)
         {
-            reference_imgs.push_back(extraimage_references[i]);
+            for(int i=0;i<extra_image_data.size();++i)
+            {
+                reference_imgs.push_back(extraimage_references[i]);
+            }
+            if(!sd_is_quiet && sddebugmode==1)
+            {
+                printf("\nImage Gen: Using %d reference images\n",reference_imgs.size());
+            }
         }
-        if(!sd_is_quiet && sddebugmode==1)
+        if(is_wan)
         {
-            printf("\nImage Gen: Using %d reference images\n",reference_imgs.size());
+            for(int i=0;i<extra_image_data.size();++i)
+            {
+                wan_imgs.push_back(extraimage_references[i]);
+            }
+            if(!sd_is_quiet && sddebugmode==1)
+            {
+                printf("\nImage Gen: Using %d video reference images\n",wan_imgs.size());
+            }
         }
     }
 
@@ -727,7 +742,6 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
     params.ref_images = reference_imgs.data();
     params.ref_images_count = reference_imgs.size();
-
     params.pm_params.id_images = photomaker_imgs.data();
     params.pm_params.id_images_count = photomaker_imgs.size();
 
@@ -752,15 +766,15 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         vid_gen_params.strength = params.strength;
         vid_gen_params.seed = params.seed;
         vid_gen_params.video_frames = vid_req_frames;
-        if(reference_imgs.size()>0)
+        if(wan_imgs.size()>0)
         {
-            if(reference_imgs.size()>=1)
+            if(wan_imgs.size()>=1)
             {
-                vid_gen_params.init_image = reference_imgs[0];
+                vid_gen_params.init_image = wan_imgs[0];
             }
-            if(reference_imgs.size()>=2)
+            if(wan_imgs.size()>=2)
             {
-                vid_gen_params.end_image = reference_imgs[1];
+                vid_gen_params.end_image = wan_imgs[1];
             }
         }
         if(!sd_is_quiet && sddebugmode==1)
@@ -775,7 +789,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             << "\nSTRENGTH:" << vid_gen_params.strength
             << "\nFRAMES:"   << vid_gen_params.video_frames
             << "\nCTRL_FRM:" << vid_gen_params.control_frames_size
-            << "\nREF_IMGS:"   << reference_imgs.size()
+            << "\nINIT_IMGS:" << wan_imgs.size()
             << "\n\n";
             printf("%s", ss.str().c_str());
         }
