@@ -18,12 +18,14 @@
 std::string sd_load_merges();
 std::string sd_load_t5();
 std::string sd_load_umt5();
+std::string sd_load_qwen2_merges();
 
 #include "flux.hpp"
 #include "stable-diffusion.cpp"
 #include "util.cpp"
 #include "upscaler.cpp"
 #include "model.cpp"
+#include "tokenize_util.cpp"
 #include "zip.c"
 
 #include "otherarch/utils.h"
@@ -141,6 +143,16 @@ std::string sd_load_merges()
     mergesstr = read_str_from_disk(filepath);
     return mergesstr;
 }
+std::string sd_load_qwen2_merges()
+{
+    static std::string qwenmergesstr;  // cached string
+    if (!qwenmergesstr.empty()) {
+        return qwenmergesstr;  // already loaded
+    }
+    std::string filepath = executable_path + "embd_res/qwen2_merges_utf8_c_str.embd";
+    qwenmergesstr = read_str_from_disk(filepath);
+    return qwenmergesstr;
+}
 std::string sd_load_t5()
 {
     static std::string t5str = "";
@@ -170,8 +182,8 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     std::string lorafilename = inputs.lora_filename;
     std::string vaefilename = inputs.vae_filename;
     std::string t5xxl_filename = inputs.t5xxl_filename;
-    std::string clipl_filename = inputs.clipl_filename;
-    std::string clipg_filename = inputs.clipg_filename;
+    std::string clip1_filename = inputs.clip1_filename;
+    std::string clip2_filename = inputs.clip2_filename;
     std::string photomaker_filename = inputs.photomaker_filename;
     cfg_tiled_vae_threshold = inputs.tiled_vae_threshold;
     cfg_tiled_vae_threshold = (cfg_tiled_vae_threshold > 8192 ? 8192 : cfg_tiled_vae_threshold);
@@ -201,13 +213,13 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     {
         printf("With Custom T5-XXL Model: %s\n",t5xxl_filename.c_str());
     }
-    if(clipl_filename!="")
+    if(clip1_filename!="")
     {
-        printf("With Custom Clip-L Model: %s\n",clipl_filename.c_str());
+        printf("With Custom Clip-1 Model: %s\n",clip1_filename.c_str());
     }
-    if(clipg_filename!="")
+    if(clip2_filename!="")
     {
-        printf("With Custom Clip-G Model: %s\n",clipg_filename.c_str());
+        printf("With Custom Clip-2 Model: %s\n",clip2_filename.c_str());
     }
     if(photomaker_filename!="")
     {
@@ -270,12 +282,12 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     sd_params->vae_path = vaefilename;
     sd_params->taesd_path = taesdpath;
     sd_params->t5xxl_path = t5xxl_filename;
-    sd_params->clip_l_path = clipl_filename;
-    sd_params->clip_g_path = clipg_filename;
+    sd_params->clip_l_path = clip1_filename;
+    sd_params->clip_g_path = clip2_filename;
     sd_params->stacked_id_embeddings_path = photomaker_filename;
     //if t5 is set, and model is a gguf, load it as a diffusion model path
     bool endswithgguf = (sd_params->model_path.rfind(".gguf") == sd_params->model_path.size() - 5);
-    if(sd_params->t5xxl_path!="" && endswithgguf)
+    if((sd_params->t5xxl_path!="" || sd_params->clip_l_path!="" || sd_params->clip_g_path!="") && endswithgguf)
     {
         //extra check - make sure there is no diffusion model prefix already inside!
         if(!gguf_tensor_exists(sd_params->model_path,"model.diffusion_model.",false))
