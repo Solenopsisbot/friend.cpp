@@ -15,6 +15,10 @@
 
 #include "model_adapter.h"
 
+std::string sd_load_merges();
+std::string sd_load_t5();
+std::string sd_load_umt5();
+
 #include "flux.hpp"
 #include "stable-diffusion.cpp"
 #include "util.cpp"
@@ -112,6 +116,52 @@ static bool loaded_model_is_chroma(sd_ctx_t* ctx)
     return false;
 }
 
+static std::string read_str_from_disk(std::string filepath)
+{
+    std::string output;
+    std::cout << "\nTry read vocab from " << filepath << std::endl;
+
+    std::ifstream file(filepath);  // text mode
+    if (!file) {
+        throw std::runtime_error("Failed to open file: " + filepath);
+    }
+
+    output.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+
+    return output;
+}
+
+std::string sd_load_merges()
+{
+    static std::string mergesstr;  // cached string
+    if (!mergesstr.empty()) {
+        return mergesstr;  // already loaded
+    }
+    std::string filepath = executable_path + "embd_res/merges_utf8_c_str.embd";
+    mergesstr = read_str_from_disk(filepath);
+    return mergesstr;
+}
+std::string sd_load_t5()
+{
+    static std::string t5str = "";
+    if (!t5str.empty()) {
+        return t5str;  // already loaded
+    }
+    std::string filepath = executable_path + "embd_res/t5_tokenizer_json.embd";
+    t5str = read_str_from_disk(filepath);
+    return t5str;
+}
+std::string sd_load_umt5()
+{
+    static std::string umt5str = "";
+    if (!umt5str.empty()) {
+        return umt5str;  // already loaded
+    }
+    std::string filepath = executable_path + "embd_res/umt5_tokenizer_json.embd";
+    umt5str = read_str_from_disk(filepath);
+    return umt5str;
+}
+
 bool sdtype_load_model(const sd_load_model_inputs inputs) {
     sd_is_quiet = inputs.quiet;
     set_sd_quiet(sd_is_quiet);
@@ -136,7 +186,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     }
     if(inputs.taesd)
     {
-        taesdpath = executable_path + "taesd.embd";
+        taesdpath = executable_path + "embd_res/taesd.embd";
         printf("With TAE SD VAE: %s\n",taesdpath.c_str());
         if (cfg_tiled_vae_threshold < 8192) {
             printf("  disabling VAE tiling for TAESD\n");

@@ -17,8 +17,10 @@
 #include "model.h"
 #include "stable-diffusion.h"
 #include "util.h"
+#ifdef KCPP_BAKE_SD_VOCAB
 #include "vocab.hpp"
 #include "vocab_umt5.hpp"
+#endif
 
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
@@ -1976,18 +1978,30 @@ void ModelLoader::set_wtype_override(ggml_type wtype, std::string prefix) {
 }
 
 std::string ModelLoader::load_merges() {
+#ifdef KCPP_BAKE_SD_VOCAB
     std::string merges_utf8_str(reinterpret_cast<const char*>(merges_utf8_c_str), sizeof(merges_utf8_c_str));
     return merges_utf8_str;
+#else
+    return sd_load_merges();
+#endif
 }
 
 std::string ModelLoader::load_t5_tokenizer_json() {
+#ifdef KCPP_BAKE_SD_VOCAB
     std::string json_str(reinterpret_cast<const char*>(t5_tokenizer_json_str), sizeof(t5_tokenizer_json_str));
     return json_str;
+#else
+    return sd_load_t5();
+#endif
 }
 
 std::string ModelLoader::load_umt5_tokenizer_json() {
+#ifdef KCPP_BAKE_SD_VOCAB
     std::string json_str(reinterpret_cast<const char*>(umt5_tokenizer_json_str), sizeof(umt5_tokenizer_json_str));
     return json_str;
+#else
+    return sd_load_umt5();
+#endif
 }
 
 bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb, int n_threads_p) {
