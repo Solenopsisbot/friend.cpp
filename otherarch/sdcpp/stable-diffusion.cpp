@@ -2109,7 +2109,7 @@ sd_image_t* generate_image_internal(sd_ctx_t* sd_ctx,
         seed = rand();
     }
 
-    print_ggml_tensor(init_latent, true, "init");
+    //print_ggml_tensor(init_latent, true, "init");
 
     // for (auto v : sigmas) {
     //     std::cout << v << " ";
