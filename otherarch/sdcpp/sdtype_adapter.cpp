@@ -740,7 +740,13 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     std::vector<sd_image_t> wan_imgs;
     std::vector<sd_image_t> photomaker_imgs;
     bool is_wan = (loadedsdver == SDVersion::VERSION_WAN2 || loadedsdver == SDVersion::VERSION_WAN2_2_I2V || loadedsdver == SDVersion::VERSION_WAN2_2_TI2V);
+    bool is_qwenimg = (loadedsdver == SDVersion::VERSION_QWEN_IMAGE);
     bool is_kontext = (loadedsdver==SDVersion::VERSION_FLUX && !loaded_model_is_chroma(sd_ctx));
+
+    if(is_qwenimg)
+    {
+        dotile = false; //qwen image has divide by zero issue when tiling
+    }
 
     int nx, ny, nc;
     int img2imgW = sd_params->width; //for img2img input
