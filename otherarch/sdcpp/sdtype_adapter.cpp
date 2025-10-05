@@ -1051,31 +1051,11 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             }
             else
             {
-                uint8_t * out_data_a = nullptr;
-                uint8_t * out_data_b = nullptr;
-                int status_a = 0;
-                int status_b = 0;
-                size_t out_len_a = 0;
-                size_t out_len_b = 0;
-                status_a = create_gif_buf_from_sd_images_gifh(results, generated_num_results, 16, &out_data_a,&out_len_a);
-                status_b = create_gif_buf_from_sd_images_msf(results, generated_num_results, 16, &out_data_b,&out_len_b);
+
+                status = create_gif_buf_from_sd_images_msf(results, generated_num_results, 16, &out_data,&out_len);
                 if(!sd_is_quiet && sddebugmode==1)
                 {
-                    printf("GIF-H Len: %zu, MSF Len: %zu\n",out_len_a,out_len_b);
-                }
-                if(status_a==0 && out_len_a < out_len_b)
-                {
-                    free(out_data_b);
-                    out_len = out_len_a;
-                    out_data = out_data_a;
-                    status = status_a;
-                }
-                else
-                {
-                    free(out_data_a);
-                    out_len = out_len_b;
-                    out_data = out_data_b;
-                    status = status_b;
+                    printf("Video Output Size: %zu\n",out_len);
                 }
             }
 
