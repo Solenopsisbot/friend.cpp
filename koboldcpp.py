@@ -1814,17 +1814,21 @@ def sd_process_meta_fields(fields, config):
 # json with top-level dict
 def sd_parse_meta_field(prompt, config=False):
     jfields = {}
+    kv_dict = {}
     try:
-        jfields = json.loads(prompt)
-    except json.JSONDecodeError:
-        # accept "field":"value",... without {} (also empty strings)
         try:
-            jfields = json.loads('{ ' + prompt + ' }')
+            jfields = json.loads(prompt)
         except json.JSONDecodeError:
-            print("Warning: couldn't parse meta prompt; it should be valid JSON.")
-    if not isinstance(jfields, dict):
-        jfields = {}
-    kv_dict = sd_process_meta_fields(jfields.items(), config)
+            # accept "field":"value",... without {} (also empty strings)
+            try:
+                jfields = json.loads('{ ' + prompt + ' }')
+            except json.JSONDecodeError:
+                print("Warning: couldn't parse meta prompt; it should be valid JSON.")
+        if not isinstance(jfields, dict):
+            jfields = {}
+        kv_dict = sd_process_meta_fields(jfields.items(), config)
+    except Exception:
+        pass
     return kv_dict
 
 
