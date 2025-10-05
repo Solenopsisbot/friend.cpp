@@ -48,10 +48,12 @@ std::vector<std::pair<std::string, std::string>> shader_fnames;
 std::locale c_locale("C");
 
 std::string GLSLC = "glslc";
+std::string input_dir = "vulkan-shaders";
 std::string input_filepath = "";
 std::string output_dir = "/tmp";
 std::string target_hpp = "";
 std::string target_cpp = "";
+bool no_clean = false;
 
 const std::vector<std::string> type_names = {
     "f32",
@@ -301,7 +303,7 @@ void write_file_if_changed(const std::string& path, const std::string& content) 
 static uint32_t compile_count = 0;
 static std::mutex compile_count_mutex;
 static std::condition_variable compile_count_cond;
-static bool generate_dep_file = true;
+static bool generate_dep_file = false;
 
 void decrement_compile_count(uint32_t * count) {
     if (count) {
@@ -402,18 +404,20 @@ void string_to_spv(std::string name, const std::string& source, const std::map<s
     name = name + (f16acc ? "_f16acc" : "") + (coopmat ? "_cm1" : "") + (coopmat2 ? "_cm2" : (fp16 ? "" : "_fp32"));
     std::string out_path = join_paths(output_dir, name + ".spv");
 
-    if (input_filepath == "") {
-        // No input source to compile, only generate header for all shaders
-        shader_fnames.push_back(std::pair(name, out_path));
-        return;
-    } else if (basename(input_filepath) != source) {
-        // Only compile shader variants matching the input filename
-        return;
-    }
+    // if (input_filepath == "") {
+    //     // No input source to compile, only generate header for all shaders
+    //     shader_fnames.push_back(std::pair(name, out_path));
+    //     return;
+    // } else if (basename(input_filepath) != source) {
+    //     // Only compile shader variants matching the input filename
+    //     return;
+    // }
+
+    std::string in_path = join_paths(input_dir, source);
 
     compile_count_guard slot = acquire_compile_slot();
     compiles.push_back(std::async(
-        string_to_spv_func, name, input_filepath, out_path, defines, coopmat, generate_dep_file, std::move(slot)));
+        string_to_spv_func, name, in_path, out_path, defines, coopmat, generate_dep_file, std::move(slot)));
     // Don't write the same dep file from multiple processes
     generate_dep_file = false;
 }
@@ -1064,6 +1068,134 @@ void write_output_files() {
     }
 }
 
+void write_output_files_combined() {
+    FILE* hdr = fopen(target_hpp.c_str(), "w");
+    FILE* src = fopen(target_cpp.c_str(), "w");
+
+    fprintf(hdr, "#include <cstdint>\n\n");
+    fprintf(src, "#include \"%s\"\n\n", basename(target_hpp).c_str());
+
+    std::sort(shader_fnames.begin(), shader_fnames.end());
+    for (const auto& pair : shader_fnames) {
+        const std::string& name = pair.first;
+        #ifdef _WIN32
+            std::string path = pair.second;
+            std::replace(path.begin(), path.end(), '/', '\\' );
+        #else
+            const std::string& path = pair.second;
+        #endif
+
+        FILE* spv = fopen(path.c_str(), "rb");
+        if (!spv) {
+            std::cerr << "Error opening SPIR-V file: " << path << " (" << strerror(errno) << ")\n";
+            continue;
+        }
+
+        fseek(spv, 0, SEEK_END);
+        size_t size = ftell(spv);
+        fseek(spv, 0, SEEK_SET);
+
+        std::vector<unsigned char> data(size);
+        size_t read_size = fread(data.data(), 1, size, spv);
+        fclose(spv);
+        if (read_size != size) {
+            std::cerr << "Error reading SPIR-V file: " << path << " (" << strerror(errno) << ")\n";
+            continue;
+        }
+
+        fprintf(hdr, "extern unsigned char %s_data[%zu];\n", name.c_str(), size);
+        fprintf(hdr, "const uint64_t %s_len = %zu;\n\n", name.c_str(), size);
+
+        fprintf(src, "unsigned char %s_data[%zu] = {\n", name.c_str(), size);
+        for (size_t i = 0; i < size; ++i) {
+            fprintf(src, "0x%02x,", data[i]);
+            if ((i + 1) % 12 == 0) fprintf(src, "\n");
+        }
+        fprintf(src, "\n};\n\n");
+
+        if (!no_clean) {
+            std::remove(path.c_str());
+        }
+    }
+
+    std::string suffixes[2] = {"_f32", "_f16"};
+    for (const char *op : {"add", "sub", "mul", "div", "add_rms"}) {
+        fprintf(hdr, "extern unsigned char *%s_data[2][2][2][2];\n", op);
+        fprintf(hdr, "extern uint64_t %s_len[2][2][2][2];\n", op);
+        std::string data = "unsigned char *" + std::string(op) + "_data[2][2][2][2] = ";
+        std::string len = "uint64_t " + std::string(op) + "_len[2][2][2][2] = ";
+        for (uint32_t t0 = 0; t0 < 2; ++t0) {
+            if (t0 == 0) {
+                data += "{";
+                len += "{";
+            }
+            for (uint32_t t1 = 0; t1 < 2; ++t1) {
+                if (t1 == 0) {
+                    data += "{";
+                    len += "{";
+                }
+                for (uint32_t t2 = 0; t2 < 2; ++t2) {
+                    if (t2 == 0) {
+                        data += "{";
+                        len += "{";
+                    }
+                    for (uint32_t rte = 0; rte < 2; ++rte) {
+                        if (rte == 0) {
+                            data += "{";
+                            len += "{";
+                        }
+                        data += op + suffixes[t0] + suffixes[t1] + suffixes[t2] + ((rte != 0) ? "_rte" : "");
+                        len  += op + suffixes[t0] + suffixes[t1] + suffixes[t2] + ((rte != 0) ? "_rte" : "");
+                        data += "_data,";
+                        len  += "_len,";
+                        if (rte == 1) {
+                            data += "}, ";
+                            len += "}, ";
+                        }
+                    }
+                    if (t2 == 1) {
+                        data += "}, ";
+                        len += "}, ";
+                    }
+                }
+                if (t1 == 1) {
+                    data += "}, ";
+                    len += "}, ";
+                }
+            }
+            if (t0 == 1) {
+                data += "};\n";
+                len += "};\n";
+            }
+        }
+        fputs(data.c_str(), src);
+        fputs(len.c_str(), src);
+    }
+
+    std::vector<std::string> btypes = {"f16", "f32"};
+
+#if defined(GGML_VULKAN_INTEGER_DOT_GLSLC_SUPPORT)
+    btypes.push_back("q8_1");
+#endif
+
+    for (const std::string& btype : btypes) {
+    for (const auto& tname : type_names) {
+        if (btype == "q8_1" && !is_legacy_quant(tname)) {
+            continue;
+        }
+        fprintf(hdr, "extern unsigned char *arr_dmmv_%s_%s_f32_data[3];\n", tname.c_str(), btype.c_str());
+        fprintf(hdr, "extern uint64_t arr_dmmv_%s_%s_f32_len[3];\n", tname.c_str(), btype.c_str());
+        std::string data = "unsigned char *arr_dmmv_" + tname + "_" + btype + "_f32_data[3] = {mul_mat_vec_" + tname + "_" + btype + "_f32_data, mul_mat_vec_" + tname + "_" + btype + "_f32_subgroup_data, mul_mat_vec_" + tname + "_" + btype + "_f32_subgroup_no_shmem_data};\n";
+        std::string len =  "uint64_t arr_dmmv_"       + tname + "_" + btype + "_f32_len[3] =  {mul_mat_vec_" + tname + "_" + btype + "_f32_len,  mul_mat_vec_" + tname + "_" + btype + "_f32_subgroup_len, mul_mat_vec_" + tname + "_" + btype + "_f32_subgroup_no_shmem_len};\n";
+        fputs(data.c_str(), src);
+        fputs(len.c_str(), src);
+    }
+    }
+
+    fclose(hdr);
+    fclose(src);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1086,6 +1218,9 @@ int main(int argc, char** argv) {
     if (args.find("--source") != args.end()) {
         input_filepath = args["--source"]; // The shader source file to compile
     }
+    if (args.find("--input-dir") != args.end()) {
+        input_dir = args["--input-dir"]; // Directory containing shader sources
+    }
     if (args.find("--output-dir") != args.end()) {
         output_dir = args["--output-dir"]; // Directory for containing SPIR-V output
     }
@@ -1094,6 +1229,11 @@ int main(int argc, char** argv) {
     }
     if (args.find("--target-cpp") != args.end()) {
         target_cpp = args["--target-cpp"]; // Path to generated cpp file
+    }
+
+    if (!directory_exists(input_dir)) {
+        std::cerr << "\"" << input_dir << "\" must be a valid directory containing shader sources" << std::endl;
+        return EXIT_FAILURE;
     }
 
     if (!directory_exists(output_dir)) {
@@ -1105,7 +1245,8 @@ int main(int argc, char** argv) {
 
     process_shaders();
 
-    write_output_files();
+    //write_output_files();
+    write_output_files_combined();
 
     return EXIT_SUCCESS;
 }
