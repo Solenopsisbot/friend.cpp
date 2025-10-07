@@ -368,7 +368,7 @@ std::string gguf_get_model_arch(const std::string & gguf_filename)
                 fileformatmeta->model_architecture = GGUFArch::ARCH_FALCON;
             }
             else if(modelarch=="mamba" || modelarch=="mamba2" || modelarch=="nemotron_h" || modelarch=="jamba" || modelarch=="granitehybrid" || modelarch=="lfm2"
-            || modelarch=="plamo2" || modelarch=="falcon-h1") //lazy approach, put all RNN models
+            || modelarch=="plamo2" || modelarch=="falcon-h1") //lazy approach, put all non rwkv RNN models
             {
                 fileformatmeta->model_architecture = GGUFArch::ARCH_MAMBALIKE;
             }
