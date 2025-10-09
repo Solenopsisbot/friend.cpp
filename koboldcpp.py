@@ -5801,7 +5801,9 @@ def show_gui():
             args.sdloramult = float(sd_loramult_var.get())
         else:
             args.sdlora = ""
-        args.sdgendefaults = sd_gen_defaults_var.get()
+
+        if sd_gen_defaults_var.get() != "":
+            args.sdgendefaults = sd_gen_defaults_var.get()
 
         if whisper_model_var.get() != "":
             args.whispermodel = whisper_model_var.get()
@@ -6028,7 +6030,7 @@ def show_gui():
 
         sd_lora_var.set(dict["sdlora"] if ("sdlora" in dict and dict["sdlora"]) else "")
         sd_loramult_var.set(str(dict["sdloramult"]) if ("sdloramult" in dict and dict["sdloramult"]) else "1.0")
-        sd_gen_defaults_var.set(dict.get("sdgendefaults", ""))
+        sd_gen_defaults_var.set(dict["sdgendefaults"] if ("sdgendefaults" in dict and dict["sdgendefaults"]) else "")
 
         whisper_model_var.set(dict["whispermodel"] if ("whispermodel" in dict and dict["whispermodel"]) else "")
 
