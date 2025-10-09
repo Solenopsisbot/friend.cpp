@@ -6510,10 +6510,13 @@ def reload_from_new_args(newargs):
     except Exception as e:
         print(f"Reload New Config Failed: {e}")
 
-def reload_new_config(filename): #for changing config after launch
+def reload_new_config(filename,defaultargs): #for changing config after launch
     with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
         try:
             config = json.load(f)
+            for key, value in defaultargs.items():   # Fill missing defaults directly into config
+                if key not in config:
+                    config[key] = value
             reload_from_new_args(config)
         except Exception as e:
             print(f"Reload New Config Failed: {e}")
@@ -6953,6 +6956,7 @@ def main(launch_args, default_args):
                             dirpath = os.path.abspath(args.admindir)
                             targetfilepath = os.path.join(dirpath, restart_target)
                             targetfilepath2 = os.path.join(dirpath, restart_override_config_target)
+                            defaultargs = vars(default_args)
                             if (os.path.exists(targetfilepath) or restart_target=="unload_model") and (restart_override_config_target=="" or os.path.exists(targetfilepath2)):
                                 print("Terminating old process...")
                                 global_memory["load_complete"] = False
@@ -6962,18 +6966,18 @@ def main(launch_args, default_args):
                                 print("Restarting KoboldCpp...")
                                 fault_recovery_mode = True
                                 if restart_target=="unload_model":
-                                    reload_from_new_args(vars(default_args))
+                                    reload_from_new_args(defaultargs)
                                     args.model_param = None
                                     args.model = None
                                     args.nomodel = True
                                 elif targetfilepath.endswith(".gguf") and restart_override_config_target=="":
-                                    reload_from_new_args(vars(default_args))
+                                    reload_from_new_args(defaultargs)
                                     args.model_param = targetfilepath
                                 elif targetfilepath.endswith(".gguf") and restart_override_config_target!="":
-                                    reload_new_config(targetfilepath2)
+                                    reload_new_config(targetfilepath2,defaultargs)
                                     args.model_param = targetfilepath
                                 else:
-                                    reload_new_config(targetfilepath)
+                                    reload_new_config(targetfilepath,defaultargs)
                                 kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "g_memory": global_memory, "gui_launcher": False})
                                 kcpp_instance.daemon = True
                                 kcpp_instance.start()
