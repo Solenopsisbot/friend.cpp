@@ -508,11 +508,11 @@ namespace Qwen {
                     }
                 }
             }
-            if (num_layers < model_layers) {
-                LOG_INFO("Qwen Image: some layers missing, assuming pruned model");
+            if (num_layers == 40 || num_layers == 41) {
+                qwen_image_params.num_layers = num_layers;
+                LOG_INFO("Qwen Image: Found %d layers instead of %d, assuming pruned model.",num_layers,model_layers);
             }
 
-            qwen_image_params.num_layers = num_layers;
             qwen_image                   = QwenImageModel(qwen_image_params);
             qwen_image.init(params_ctx, tensor_types, prefix);
         }
