@@ -825,7 +825,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             }
             else if(is_qwenimg)
             {
-                uint8_t * loaded = load_image_from_b64(extra_image_data[i],nx2,ny2,img2imgW,img2imgH,3);
+                uint8_t * loaded = load_image_from_b64(extra_image_data[i],nx2,ny2);
                 if(loaded)
                 {
                     input_extraimage_buffers.push_back(loaded);
