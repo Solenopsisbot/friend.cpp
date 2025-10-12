@@ -1929,7 +1929,7 @@ def sd_generate(genparams):
     inputs.sample_steps = sample_steps
     inputs.width = width
     inputs.height = height
-    inputs.seed = seed
+    inputs.seed = ((seed + 2**31) % 2**32) - 2**31
     inputs.sample_method = sample_method.encode("UTF-8")
     inputs.scheduler = scheduler.encode("UTF-8")
     inputs.clip_skip = clip_skip
