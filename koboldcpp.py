@@ -5423,7 +5423,7 @@ def show_gui():
     makelabelentry(model_tab, "Layers: ", draftgpulayers_var, 13, 50,padx=320,singleline=True,tooltip="How many layers to GPU offload for the draft model", labelpadx=270)
     makefileentry(model_tab, "Embeds Model:", "Select Embeddings Model File", embeddings_model_var, 15, width=130,singlerow=True, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select an embeddings GGUF model that can be used to generate embedding vectors.")
     makelabelentry(model_tab, "ECtx: ", embeddings_ctx_var, 15, 50,padx=335,singleline=True,tooltip="If set above 0, limits max context for embedding model to save memory.", labelpadx=302)
-    makecheckbox(model_tab, "GPU", embeddings_gpu_var, 15, 0,padx=390,tooltiptxt="Uses the GPU for TTS.")
+    makecheckbox(model_tab, "GPU", embeddings_gpu_var, 15, 0,padx=390,tooltiptxt="Uses the GPU for Embeddings.")
     embeddings_gpu_var.trace_add("write", gui_changed_modelfile)
     makefileentry(model_tab, "Preload Story:", "Select Preloaded Story File", preloadstory_var, 17,width=280,singlerow=True,tooltiptxt="Select an optional KoboldAI JSON savefile \nto be served on launch to any client.")
     makefileentry(model_tab, "SaveData File:", "Select or Create New SaveData Database File", savedatafile_var, 19,width=280,filetypes=[("KoboldCpp SaveDB", "*.jsondb")],singlerow=True,dialog_type=1,tooltiptxt="Selecting a file will allow data to be loaded and saved persistently to this KoboldCpp server remotely. File is created if it does not exist.")
