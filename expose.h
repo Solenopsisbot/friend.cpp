@@ -58,6 +58,7 @@ struct load_model_inputs
     const char * vulkan_info = nullptr;
     const int batchsize = 512;
     const bool autofit = false;
+    const int autofit_tax_mb = 0;
     const int gpulayers = 0;
     const float rope_freq_scale = 1.0f;
     const float rope_freq_base = 10000.0f;

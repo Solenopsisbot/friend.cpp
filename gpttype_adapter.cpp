@@ -2492,6 +2492,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         if(inputs.autofit)
         {
             common_params temp_params;
+            size_t taxmb = 1024 + inputs.autofit_tax_mb;
             printf("\nAttempting to use llama.cpp's automating fitting code. This will override all your layer configs, may or may not work!\n");
             //zero out any customizations made
             tenos.clear();
@@ -2499,8 +2500,9 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             model_params.tensor_buft_overrides = tenos.data();
             model_params.tensor_split = tensor_split_temp;
             model_params.n_gpu_layers = 999; //must be this value to be considered default
+            printf("Autofit Reserve Space: %d MB\n",taxmb);
             llama_params_fit(kcpp_data->model_filename.c_str(), &model_params, &llama_ctx_params,
-            tensor_split_temp, tenos.data(), 1024*1024*1024, kcpp_data->n_ctx,
+            tensor_split_temp, tenos.data(), taxmb*1024*1024, kcpp_data->n_ctx,
             GGML_LOG_LEVEL_DEBUG);
             printf("Autofit Result: ");
             print_fitted_params(model_params,llama_ctx_params);

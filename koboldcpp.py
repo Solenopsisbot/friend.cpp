@@ -200,6 +200,7 @@ class load_model_inputs(ctypes.Structure):
                 ("vulkan_info", ctypes.c_char_p),
                 ("batchsize", ctypes.c_int),
                 ("autofit", ctypes.c_bool),
+                ("autofit_tax_mb", ctypes.c_int),
                 ("gpulayers", ctypes.c_int),
                 ("rope_freq_scale", ctypes.c_float),
                 ("rope_freq_base", ctypes.c_float),
@@ -1158,6 +1159,24 @@ def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,
         except Exception:
             modelfile_extracted_meta = None
 
+def calculate_secondary_model_overheads(sdquant):
+    cost = 0
+    if modelfile_extracted_meta[3] > 1024*1024*1024*5: #sdxl tax
+        cost += 1024*1024*1024*(9 - sdquant * 1.5) # 9, 7.5, 6
+    elif modelfile_extracted_meta[3] > 1024*1024*512: #normal sd tax
+        cost += 1024*1024*1024*(4.25 - sdquant * 0.5) # 4.25, 3.75, 3.25
+    if modelfile_extracted_meta[4] > 1024*1024*10: #whisper tax
+        cost += max(350*1024*1024,modelfile_extracted_meta[4]*1.5)
+    if modelfile_extracted_meta[5] > 1024*1024*10: #mmproj tax
+        cost += max(350*1024*1024,modelfile_extracted_meta[5]*1.5)
+    if modelfile_extracted_meta[6] > 1024*1024*10: #draft model tax
+        cost += (modelfile_extracted_meta[6] * 1.5)
+    if modelfile_extracted_meta[7] > 1024*1024*10: #tts model tax
+        cost += max(600*1024*1024, modelfile_extracted_meta[7] * 3)
+    if modelfile_extracted_meta[8] > 1024*1024*10: #embeddings model tax
+        cost += max(350*1024*1024, modelfile_extracted_meta[8] * 1.5)
+    return cost
+
 def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to determine how many layers to use
     global showusedmemwarning, showmultigpuwarning, modelfile_extracted_meta # reference cached values instead
     gpumem = MaxMemory[0]
@@ -1186,21 +1205,9 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to dete
                             showmultigpuwarning = False
                             print("Multi-Part GGUF detected. Layer estimates may not be very accurate - recommend setting layers manually.")
                         fsize *= total_parts
-            sdquantsavings = sdquanted
-            if modelfile_extracted_meta[3] > 1024*1024*1024*5: #sdxl tax
-                mem -= 1024*1024*1024*(9 - sdquantsavings * 1.5) # 9, 7.5, 6
-            elif modelfile_extracted_meta[3] > 1024*1024*512: #normal sd tax
-                mem -= 1024*1024*1024*(4.25 - sdquantsavings * 0.5) # 4.25, 3.75, 3.25
-            if modelfile_extracted_meta[4] > 1024*1024*10: #whisper tax
-                mem -= max(350*1024*1024,modelfile_extracted_meta[4]*1.5)
-            if modelfile_extracted_meta[5] > 1024*1024*10: #mmproj tax
-                mem -= max(350*1024*1024,modelfile_extracted_meta[5]*1.5)
-            if modelfile_extracted_meta[6] > 1024*1024*10: #draft model tax
-                mem -= (modelfile_extracted_meta[6] * 1.5)
-            if modelfile_extracted_meta[7] > 1024*1024*10: #tts model tax
-                mem -= max(600*1024*1024, modelfile_extracted_meta[7] * 3)
-            if modelfile_extracted_meta[8] > 1024*1024*10: #embeddings model tax
-                mem -= max(350*1024*1024, modelfile_extracted_meta[8] * 1.5)
+
+            extracost = calculate_secondary_model_overheads(sdquanted)
+            mem -= extracost
             mem = 0 if mem < 0 else mem
 
             csmul = (cs/4096) if cs >= 8192 else 1.8 if cs > 4096 else 1.2 if cs > 2048 else 1.0
@@ -1490,6 +1497,7 @@ def load_model(model_filename):
         inputs.quant_k = inputs.quant_v = 0
     inputs.batchsize = args.batchsize
     inputs.autofit = args.autofit
+    inputs.autofit_tax_mb = int(calculate_secondary_model_overheads(args.sdquant)/(1024*1024))
     inputs.gpulayers = args.gpulayers
     if args.overridenativecontext and args.overridenativecontext>0:
         inputs.overridenativecontext = args.overridenativecontext
