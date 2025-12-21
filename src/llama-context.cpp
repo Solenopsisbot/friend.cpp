@@ -1923,7 +1923,7 @@ size_t llama_context::state_write_data(llama_io_write_i & io) {
 
     // write model info
     {
-        LLAMA_LOG_DEBUG("%s: - writing model info\n", __func__);
+        //LLAMA_LOG_DEBUG("%s: - writing model info\n", __func__);
 
         const std::string arch_str = llm_arch_name(model.arch);
         io.write_string(arch_str);
@@ -1932,7 +1932,7 @@ size_t llama_context::state_write_data(llama_io_write_i & io) {
 
     // write output ids
     {
-        LLAMA_LOG_DEBUG("%s: - writing output ids\n", __func__);
+        //LLAMA_LOG_DEBUG("%s: - writing output ids\n", __func__);
 
         const auto n_outputs    = this->n_outputs;
         const auto & output_ids = this->output_ids;
@@ -1960,7 +1960,7 @@ size_t llama_context::state_write_data(llama_io_write_i & io) {
 
     // write logits
     {
-        LLAMA_LOG_DEBUG("%s: - writing logits\n", __func__);
+        //LLAMA_LOG_DEBUG("%s: - writing logits\n", __func__);
 
         const uint64_t logits_size = std::min((uint64_t) this->logits_size, (uint64_t) n_outputs * model.vocab.n_tokens());
 
@@ -1973,7 +1973,7 @@ size_t llama_context::state_write_data(llama_io_write_i & io) {
 
     // write embeddings
     {
-        LLAMA_LOG_DEBUG("%s: - writing embeddings\n", __func__);
+        //LLAMA_LOG_DEBUG("%s: - writing embeddings\n", __func__);
 
         const uint64_t embd_size = std::min((uint64_t) this->embd_size, (uint64_t) n_outputs * model.hparams.n_embd);
 
@@ -1997,7 +1997,7 @@ size_t llama_context::state_read_data(llama_io_read_i & io) {
 
     // read model info
     {
-        LLAMA_LOG_DEBUG("%s: - reading model info\n", __func__);
+        //LLAMA_LOG_DEBUG("%s: - reading model info\n", __func__);
 
         const std::string cur_arch_str = llm_arch_name(model.arch);
 
@@ -2011,7 +2011,7 @@ size_t llama_context::state_read_data(llama_io_read_i & io) {
 
     // read output ids
     {
-        LLAMA_LOG_DEBUG("%s: - reading output ids\n", __func__);
+        //LLAMA_LOG_DEBUG("%s: - reading output ids\n", __func__);
 
         auto n_outputs = this->n_outputs;
         io.read_to(&n_outputs, sizeof(n_outputs));
@@ -2040,7 +2040,7 @@ size_t llama_context::state_read_data(llama_io_read_i & io) {
 
     // read logits
     {
-        LLAMA_LOG_DEBUG("%s: - reading logits\n", __func__);
+        //LLAMA_LOG_DEBUG("%s: - reading logits\n", __func__);
 
         uint64_t logits_size;
         io.read_to(&logits_size, sizeof(logits_size));
@@ -2056,7 +2056,7 @@ size_t llama_context::state_read_data(llama_io_read_i & io) {
 
     // read embeddings
     {
-        LLAMA_LOG_DEBUG("%s: - reading embeddings\n", __func__);
+        //LLAMA_LOG_DEBUG("%s: - reading embeddings\n", __func__);
 
         uint64_t embd_size;
         io.read_to(&embd_size, sizeof(embd_size));
