@@ -27,6 +27,16 @@ fi
 KCPP_CUDA=$(<conda/envs/linux/cudaver)
 KCPP_CUDAAPPEND=-cuda${KCPP_CUDA//.}$KCPP_APPEND
 
+if [ -n "$TRANSPLANT_TK" ]; then
+	echo Attempting to use a transplanted tkinter from ubuntu-24.04.3 to fix fontconfig issues
+	rm -f "conda/envs/linux/lib/libtcl8.6.so"
+	rm -f "conda/envs/linux/lib/libtk8.6.so"
+	chmod 755 "conda/envs/linux/lib/libtcl8.6.so" "conda/envs/linux/lib/libtk8.6.so"
+	curl -L https://github.com/LostRuins/koboldcpp/releases/download/cuda11_cublas_libraries/libtcl8.6.so --output conda/envs/linux/lib/libtcl8.6.so
+	curl -L https://github.com/LostRuins/koboldcpp/releases/download/cuda11_cublas_libraries/libtk8.6.so --output conda/envs/linux/lib/libtk8.6.so
+	echo Tkinter Transplant completed
+fi
+
 LLAMA_NOAVX1_FLAG=""
 LLAMA_NOAVX2_FLAG=""
 ARCHES_FLAG=""
