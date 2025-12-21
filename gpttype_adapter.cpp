@@ -4087,7 +4087,14 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             else if(embd_inp.size()==0)
             {
                 embd_inp.push_back(current_context_tokens[current_context_tokens.size()-1]);
+                current_context_tokens.pop_back();
                 n_past -= 1;
+                //another dirty hack
+                int maxedpos = llama_memory_seq_pos_max(llama_get_memory(llama_ctx_v4),0);
+                if(maxedpos==n_past)
+                {
+                    n_past += 1;
+                }
             }
             else if(embd_inp.size()>0 && current_context_tokens.size()>0 && last_n_tokens.size()>0)
             {
@@ -4423,6 +4430,21 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 if(allow_regular_prints)
                 {
                     printf("\n");
+                }
+
+                 //if running rnn model in smartcache mode, save progress before each gen
+                if(kcpp_data->smartcache && is_recurrent && file_format==FileFormat::GGUF_GENERIC && current_context_tokens.size() > 32)
+                {
+                    int identical_slot = get_identical_existing_slot();
+                    if(identical_slot==-1)
+                    {
+                        int oldest_slot = get_oldest_slot(-1);
+                        gpttype_save_state_kv(oldest_slot);
+                    }
+                    else
+                    {
+                        touch_slot(identical_slot);
+                    }
                 }
             }
 
