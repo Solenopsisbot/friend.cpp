@@ -19,7 +19,7 @@ dependencies:
   - libcblas
   - ocl-icd-system
   - libvulkan-loader
-  - tk
+  - tk=*=xft_*
   - psutil
   - jinja2
   - pip:
