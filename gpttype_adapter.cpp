@@ -4111,6 +4111,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                     n_past -=1;
                     embd_inp.insert(embd_inp.begin(), 1, tail);
                 }
+                else if(maxedpos==n_past)
+                {
+                     n_past += 1;
+                }
             }
         }
     }
@@ -5036,6 +5040,15 @@ size_t gpttype_save_state_kv(int slot)
             totalbytes += res;
             savestates[slot].current_savestate_size   = newsize;
             savestates[slot].savestate_context_tokens = current_context_tokens;
+            int maxedpos = llama_memory_seq_pos_max(llama_get_memory(llama_ctx_v4),0);
+            if(maxedpos > 0 && savestates[slot].savestate_context_tokens.size() > maxedpos && savestates[slot].savestate_context_tokens.size()-maxedpos<=2)
+            {
+                //dirty hack for the memory actually being off by 1 or 2, correct the state
+                while(savestates[slot].savestate_context_tokens.size() > maxedpos)
+                {
+                    savestates[slot].savestate_context_tokens.pop_back();
+                }
+            }
             touch_slot(slot);
             printf("\nKV Save State %d: Created SaveState of %zu tokens, costing %zu MB.\n",slot,current_context_tokens.size(),savestates[slot].current_savestate_size/(1024*1024));
         }
