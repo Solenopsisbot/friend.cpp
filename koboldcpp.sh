@@ -43,8 +43,9 @@ EOF
 	ldd "conda/envs/linux/lib/libtk8.6.so"
 	rm -f "conda/envs/linux/lib/libtcl8.6.so"
 	rm -f "conda/envs/linux/lib/libtk8.6.so"
-	ln -s /usr/lib/x86_64-linux-gnu/libtk8.6.so conda/envs/linux/lib/libtk8.6.so
-	ln -s /usr/lib/x86_64-linux-gnu/libtcl8.6.so conda/envs/linux/lib/libtcl8.6.so
+	curl -L https://github.com/LostRuins/koboldcpp/releases/download/cuda11_cublas_libraries/libtcl8.6.so --output conda/envs/linux/lib/libtcl8.6.so
+	curl -L https://github.com/LostRuins/koboldcpp/releases/download/cuda11_cublas_libraries/libtk8.6.so --output conda/envs/linux/lib/libtk8.6.so
+	chmod 755 "conda/envs/linux/lib/libtcl8.6.so" "conda/envs/linux/lib/libtk8.6.so"
 	ls -lah conda/envs/linux/lib
 	bin/micromamba run -r conda -p conda/envs/linux python - <<'EOF'
 import tkinter
