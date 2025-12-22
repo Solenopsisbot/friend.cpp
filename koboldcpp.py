@@ -106,6 +106,7 @@ pendingabortkey = "" #if an abort is received for the non-active request, rememb
 args = None #global args
 runmode_untouched = True
 modelfile_extracted_meta = None
+calulated_gpu_overhead = 0 # may be populated at runtime, can also be missing if undetected
 importvars_in_progress = False
 has_multiplayer = False
 has_audio_support = False
@@ -1159,26 +1160,8 @@ def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,
         except Exception:
             modelfile_extracted_meta = None
 
-def calculate_secondary_model_overheads(sdquant):
-    cost = 0
-    if modelfile_extracted_meta[3] > 1024*1024*1024*5: #sdxl tax
-        cost += 1024*1024*1024*(9 - sdquant * 1.5) # 9, 7.5, 6
-    elif modelfile_extracted_meta[3] > 1024*1024*512: #normal sd tax
-        cost += 1024*1024*1024*(4.25 - sdquant * 0.5) # 4.25, 3.75, 3.25
-    if modelfile_extracted_meta[4] > 1024*1024*10: #whisper tax
-        cost += max(350*1024*1024,modelfile_extracted_meta[4]*1.5)
-    if modelfile_extracted_meta[5] > 1024*1024*10: #mmproj tax
-        cost += max(350*1024*1024,modelfile_extracted_meta[5]*1.5)
-    if modelfile_extracted_meta[6] > 1024*1024*10: #draft model tax
-        cost += (modelfile_extracted_meta[6] * 1.5)
-    if modelfile_extracted_meta[7] > 1024*1024*10: #tts model tax
-        cost += max(600*1024*1024, modelfile_extracted_meta[7] * 3)
-    if modelfile_extracted_meta[8] > 1024*1024*10: #embeddings model tax
-        cost += max(350*1024*1024, modelfile_extracted_meta[8] * 1.5)
-    return cost
-
 def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to determine how many layers to use
-    global showusedmemwarning, showmultigpuwarning, modelfile_extracted_meta # reference cached values instead
+    global showusedmemwarning, showmultigpuwarning, modelfile_extracted_meta, calulated_gpu_overhead # reference cached values instead
     gpumem = MaxMemory[0]
     usedmem = 0
     if MaxFreeMemory[0]>0:
@@ -1206,8 +1189,23 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to dete
                             print("Multi-Part GGUF detected. Layer estimates may not be very accurate - recommend setting layers manually.")
                         fsize *= total_parts
 
-            extracost = calculate_secondary_model_overheads(sdquanted)
-            mem -= extracost
+            calulated_gpu_overhead = 0
+            if modelfile_extracted_meta[3] > 1024*1024*1024*5: #sdxl tax
+                calulated_gpu_overhead += 1024*1024*1024*(9 - sdquanted * 1.5) # 9, 7.5, 6
+            elif modelfile_extracted_meta[3] > 1024*1024*512: #normal sd tax
+                calulated_gpu_overhead += 1024*1024*1024*(4.25 - sdquanted * 0.5) # 4.25, 3.75, 3.25
+            if modelfile_extracted_meta[4] > 1024*1024*10: #whisper tax
+                calulated_gpu_overhead += max(350*1024*1024,modelfile_extracted_meta[4]*1.5)
+            if modelfile_extracted_meta[5] > 1024*1024*10: #mmproj tax
+                calulated_gpu_overhead += max(350*1024*1024,modelfile_extracted_meta[5]*1.5)
+            if modelfile_extracted_meta[6] > 1024*1024*10: #draft model tax
+                calulated_gpu_overhead += (modelfile_extracted_meta[6] * 1.5)
+            if modelfile_extracted_meta[7] > 1024*1024*10: #tts model tax
+                calulated_gpu_overhead += max(600*1024*1024, modelfile_extracted_meta[7] * 3)
+            if modelfile_extracted_meta[8] > 1024*1024*10: #embeddings model tax
+                calulated_gpu_overhead += max(350*1024*1024, modelfile_extracted_meta[8] * 1.5)
+
+            mem -= calulated_gpu_overhead
             mem = 0 if mem < 0 else mem
 
             csmul = (cs/4096) if cs >= 8192 else 1.8 if cs > 4096 else 1.2 if cs > 2048 else 1.0
@@ -1454,7 +1452,7 @@ def auto_set_backend_cli():
         print(f"Auto Selected Default Backend (flag={cpusupport})\n")
 
 def load_model(model_filename):
-    global args
+    global args, calulated_gpu_overhead
     inputs = load_model_inputs()
     inputs.model_filename = model_filename.encode("UTF-8")
     inputs.max_context_length = maxctx #initial value to use for ctx, can be overwritten
@@ -1497,7 +1495,7 @@ def load_model(model_filename):
         inputs.quant_k = inputs.quant_v = 0
     inputs.batchsize = args.batchsize
     inputs.autofit = args.autofit
-    inputs.autofit_tax_mb = int(calculate_secondary_model_overheads(args.sdquant)/(1024*1024))
+    inputs.autofit_tax_mb = calulated_gpu_overhead
     inputs.gpulayers = args.gpulayers
     if args.overridenativecontext and args.overridenativecontext>0:
         inputs.overridenativecontext = args.overridenativecontext
@@ -7830,6 +7828,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         ssl._create_default_https_context = ssl._create_unverified_context
 
     if args.gpulayers:
+        if args.autofit:
+            args.gpulayers = -1
         shouldavoidgpu = False
         if args.usecpu and sys.platform!="darwin":
             shouldavoidgpu = True
