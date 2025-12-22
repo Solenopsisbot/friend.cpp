@@ -4949,7 +4949,7 @@ def show_gui():
 
     #check for wayland with fractional scale
     def get_problematic_scaler():
-        if sys.platform != "linux" or os.environ.get("XDG_SESSION_TYPE") != "wayland":
+        if sys.platform != "linux":
             return False
         import xml.etree.ElementTree as ET
         from pathlib import Path
@@ -4964,7 +4964,7 @@ def show_gui():
             return False
         xml_path = Path.home() / ".config" / "monitors.xml"
         if not xml_path.exists(): #monitors.xml not found. if we have fractional scaling on gnome, just trigger the fallback
-            if fractional_enabled and "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP"):
+            if fractional_enabled and "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP") and os.environ.get("XDG_SESSION_TYPE") == "wayland":
                 return True
             return False
         try:
