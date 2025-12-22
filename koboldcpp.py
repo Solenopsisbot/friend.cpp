@@ -5180,7 +5180,7 @@ def show_gui():
     autofit_var = ctk.IntVar()
     tensor_split_str_vars = ctk.StringVar(value="")
     rowsplit_var = ctk.IntVar()
-    maingpu_var = ctk.StringVar(value="")
+    maingpu_var = ctk.StringVar(value="-1")
 
     contextshift_var = ctk.IntVar(value=1)
     fastforward_var = ctk.IntVar(value=1)
@@ -5846,7 +5846,7 @@ def show_gui():
     layercounter_label.grid(row=6, column=0, padx=230, sticky="W")
     layercounter_label.configure(text_color="#ffff00")
     tensor_split_entry,tensor_split_label = makelabelentry(hardware_tab, "Tensor Split:", tensor_split_str_vars, 8, 80, padx=160, singleline=True, tooltip='When using multiple GPUs this option controls how large tensors should be split across all GPUs.\nUses a comma-separated list of non-negative values that assigns the proportion of data that each GPU should get in order.\nFor example, "3,2" will assign 60% of the data to GPU 0 and 40% to GPU 1.')
-    maingpu_entry,maingpu_label = makelabelentry(hardware_tab, "Main GPU:" , maingpu_var, 8, 50,padx=340,singleline=True,tooltip="Only for multi-gpu, which GPU to set as main?\nIf left blank, uses default value.",labelpadx=270)
+    maingpu_entry,maingpu_label = makelabelentry(hardware_tab, "Main GPU:" , maingpu_var, 8, 50,padx=340,singleline=True,tooltip="Only for multi-gpu, which GPU to set as main?\nIf left blank or -1, uses default value.",labelpadx=270)
 
     # threads
     makelabelentry(hardware_tab, "Threads:" , threads_var, 11, 50, padx=160, singleline=True,tooltip="How many threads to use.\nRecommended value is your CPU core count, defaults are usually OK.")
@@ -6472,7 +6472,7 @@ def show_gui():
         if "maingpu" in dict:
             maingpu_var.set(dict["maingpu"])
         else:
-            maingpu_var.set("")
+            maingpu_var.set("-1")
         if "tensor_split" in dict and dict["tensor_split"]:
             tssep = ','.join(map(str, dict["tensor_split"]))
             tensor_split_str_vars.set(tssep)
