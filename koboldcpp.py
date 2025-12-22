@@ -6621,6 +6621,7 @@ def show_gui():
         kcpp_exporting_template = False
         export_vars()
         savdict = json.loads(json.dumps(args.__dict__,indent=2))
+        savdict["istemplate"] = False
         file_type = [("KoboldCpp Settings", "*.kcpps")]
         filename = zentk_asksaveasfilename(filetypes=file_type, defaultextension=".kcpps",title="Save kcpps settings config file")
         if not filename:
@@ -7140,6 +7141,8 @@ def save_config_cli(filename, template):
     savdict = json.loads(json.dumps(args.__dict__))
     if template:
         savdict = convert_args_to_template(savdict)
+    else:
+        savdict["istemplate"] = False
     if filename is None:
         return
     filenamestr = str(filename).strip()
