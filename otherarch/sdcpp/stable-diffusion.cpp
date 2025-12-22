@@ -285,9 +285,10 @@ public:
         bool isqwenimg = (tempver==VERSION_QWEN_IMAGE);
         bool iszimg = (tempver==VERSION_Z_IMAGE);
         bool isflux2 = (tempver==VERSION_FLUX2);
+        bool is_ovis =  (tempver==VERSION_OVIS_IMAGE);
 
         //kcpp qol fallback: if qwen image, and they loaded the qwen2vl llm as t5 by mistake
-        if((isqwenimg||iszimg||isflux2) && t5_path_fixed!="")
+        if((isqwenimg||iszimg||isflux2||is_ovis) && t5_path_fixed!="")
         {
             if(clipl_path_fixed=="" && clipg_path_fixed=="")
             {
@@ -319,7 +320,7 @@ public:
                 prefix = "cond_stage_model.transformer.";
                 LOG_INFO("swap clip_vision from '%s'", clipl_path_fixed.c_str());
             }
-            if(isqwenimg||iszimg||isflux2)
+            if(isqwenimg||iszimg||isflux2||is_ovis)
             {
                 prefix = "text_encoders.llm.";
                 LOG_INFO("swap llm from '%s'", clipl_path_fixed.c_str());
@@ -408,7 +409,7 @@ public:
             {
                 to_replace = "taesd_xl.embd";
             }
-            else if(sd_version_is_flux(version)||sd_version_is_z_image(version))
+            else if(sd_version_is_flux(version)||sd_version_is_z_image(version)||version == VERSION_OVIS_IMAGE)
             {
                 to_replace = "taesd_f.embd";
             }
@@ -416,11 +417,7 @@ public:
             {
                 to_replace = "taesd_3.embd";
             }
-            else if(version == VERSION_WAN2_2_TI2V)
-            {
-                to_replace = "taesd_w22.embd";
-            }
-            else if(sd_version_is_wan(version)||sd_version_is_qwen_image(version))
+            else if((sd_version_is_wan(version) && version != VERSION_WAN2_2_TI2V)||sd_version_is_qwen_image(version))
             {
                 to_replace = "taesd_w21.embd";
             }
@@ -440,7 +437,7 @@ public:
             }
             if (use_tiny_autoencoder && !file_exists(taesd_path_fixed))
             {
-                printf("\nCannot use TAESD: \"%s\" not found. TAESD Disabled!\n", taesd_path_fixed);
+                printf("\nCannot use TAESD: \"%s\" not found. TAESD Disabled!\n", taesd_path_fixed.c_str());
                 taesd_path_fixed = "";
                 use_tiny_autoencoder = false;
             }
