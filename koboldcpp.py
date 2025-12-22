@@ -4987,10 +4987,6 @@ def show_gui():
         return False
 
     corrupt_scaler = get_problematic_scaler()
-    if corrupt_scaler:
-        print("You seem to be using Wayland - because of increased reports of scaling issues, we will fallback to Bitmap Fonts. Don't worry about the error after this.")
-        #intentionally break fontconfig, forcing bitmap fonts
-        os.environ["FONTCONFIG_FILE"] = "nonexistent"
 
     # if args received, launch
     if len(sys.argv) != 1 and not args.showgui:
@@ -5027,6 +5023,9 @@ def show_gui():
     windowheight = original_windowheight
     ctk.set_appearance_mode("dark")
     root = ctk.CTk(fg_color="#2b2b2b")
+    if corrupt_scaler:
+        print("Adjusting tk scaling to try and fix scaling issues...")
+        root.tk.call('tk','scaling',2)
     root.geometry(str(windowwidth) + "x" + str(windowheight))
     root.title(f"KoboldCpp v{KcppVersion}")
 
