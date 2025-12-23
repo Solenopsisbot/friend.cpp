@@ -7122,6 +7122,7 @@ def convert_args_to_template(savdict):
     savdict["hordeworkername"] = ""
     savdict["sdthreads"] = 0
     savdict["password"] = None
+    savdict["adminpassword"] = None
     savdict["usemmap"] = False
     savdict["usemlock"] = False
     savdict["debugmode"] = 0
