@@ -716,11 +716,11 @@ struct LoraModel : public GGMLRunner {
         /* Don't worry if this message shows up twice in the logs per LoRA,
          * this function is called once to calculate the required buffer size
          * and then again to actually generate a graph to be used */
-        if (!at_runntime && applied_lora_tensors_count != total_lora_tensors_count) {
-            LOG_WARN("Only (%lu / %lu) LoRA tensors have been applied, lora_file_path = %s",
+        if (applied_lora_tensors_count != total_lora_tensors_count) {
+            printf("Only (%lu / %lu) LoRA tensors have been applied, lora_file_path = %s",
                      applied_lora_tensors_count, total_lora_tensors_count, file_path.c_str());
         } else {
-            LOG_INFO("(%lu / %lu) LoRA tensors have been applied, lora_file_path = %s",
+            LOG_WARN("(%lu / %lu) LoRA tensors have been applied, lora_file_path = %s",
                      applied_lora_tensors_count, total_lora_tensors_count, file_path.c_str());
         }
     }
