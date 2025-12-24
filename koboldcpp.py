@@ -334,13 +334,14 @@ class sd_generation_inputs(ctypes.Structure):
                 ("scheduler", ctypes.c_char_p),
                 ("clip_skip", ctypes.c_int),
                 ("vid_req_frames", ctypes.c_int),
-                ("vid_req_avi", ctypes.c_int),
+                ("video_output_type", ctypes.c_int),
                 ("remove_limits", ctypes.c_bool)]
 
 class sd_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
                 ("animated", ctypes.c_int),
-                ("data", ctypes.c_char_p)]
+                ("data", ctypes.c_char_p),
+                ("data_extra", ctypes.c_char_p)]
 
 class whisper_load_model_inputs(ctypes.Structure):
     _fields_ = [("model_filename", ctypes.c_char_p),
@@ -1977,7 +1978,7 @@ def sd_generate(genparams):
     clip_skip = tryparseint(genparams.get("clip_skip", -1),-1)
     vid_req_frames = tryparseint(genparams.get("frames", 1),1)
     vid_req_frames = 1 if (not vid_req_frames or vid_req_frames < 1) else vid_req_frames
-    vid_req_avi = 1 if genparams.get("avi_video", False) else 0
+    video_output_type = genparams.get("video_output_type", 0)
     extra_images_arr = genparams.get("extra_images", [])
     extra_images_arr = ([] if not extra_images_arr else extra_images_arr)
     extra_images_arr = [img for img in extra_images_arr if img not in (None, "")]
@@ -2020,15 +2021,17 @@ def sd_generate(genparams):
     inputs.scheduler = scheduler.encode("UTF-8")
     inputs.clip_skip = clip_skip
     inputs.vid_req_frames = vid_req_frames
-    inputs.vid_req_avi = vid_req_avi
+    inputs.video_output_type = video_output_type
     inputs.remove_limits = allow_remove_limits
     ret = handle.sd_generate(inputs)
-    outstr = ""
+    data_main = ""
+    data_extra = ""
     animated = False
     if ret.status==1:
-        outstr = ret.data.decode("UTF-8","ignore")
+        data_main = ret.data.decode("UTF-8","ignore")
+        data_extra = ret.data_extra.decode("UTF-8","ignore")
         animated = True if ret.animated else False
-    return {"animated": animated, "data":outstr}
+    return {"animated": animated, "data":data_main, "data_extra":data_extra}
 
 
 def whisper_load_model(model_filename):
@@ -4642,6 +4645,7 @@ Change Mode<br>
                         gen = sd_generate(genparams)
                         gendat = gen["data"]
                         genanim = gen["animated"]
+                        gendatextra = gen["data_extra"]
                         genresp = None
                         if is_comfyui_imggen:
                             if gendat:
@@ -4652,7 +4656,7 @@ Change Mode<br>
                         elif is_oai_imggen:
                             genresp = (json.dumps({"created":int(time.time()),"data":[{"b64_json":gendat}],"background":"opaque","output_format":"png","size":"1024x1024","quality":"medium"}).encode())
                         else:
-                            genresp = (json.dumps({"images":[gendat],"parameters":{},"info":"","animated":genanim}).encode())
+                            genresp = (json.dumps({"images":[gendat],"parameters":{},"info":"","animated":genanim,"extra_data":gendatextra}).encode())
                         self.send_response(200)
                         self.send_header('content-length', str(len(genresp)))
                         self.end_headers(content_type='application/json')
