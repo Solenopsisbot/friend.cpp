@@ -772,20 +772,22 @@ static speculative_draft_result speculative_decoding_eval_chunk(llama_context * 
 }
 
 // KCPP SAMPLING FUNCTIONS
-void sample_softmax(llama_token_data_array * cur_p) {
+void sample_softmax(llama_token_data_array * cur_p, bool do_sort=true) {
     GGML_ASSERT(cur_p->size > 0);
-
     // Sort the logits in descending order
-    if (!cur_p->sorted) {
+    if (!cur_p->sorted && do_sort) {
         std::sort(cur_p->data, cur_p->data + cur_p->size, [](const llama_token_data & a, const llama_token_data & b) {
             return a.logit > b.logit;
         });
         cur_p->sorted = true;
     }
-
     float max_l = cur_p->data[0].logit;
+    if (!cur_p->sorted) {
+        for (size_t i = 1; i < cur_p->size; ++i) {
+            max_l = std::max(max_l, cur_p->data[i].logit);
+        }
+    }
     float cum_sum = 0.0f;
-
     for (size_t i = 0; i < cur_p->size; ++i) {
         float p = expf(cur_p->data[i].logit - max_l);
         cur_p->data[i].p = p;
@@ -1262,6 +1264,51 @@ void sample_dry(int n_ctx, int penalty_range, float penalty_multiplier, float pe
         printf("]\n");
     }
 }
+
+void sample_power_law(
+float target,            // desired average probability (0..1), <=0 disables
+float & weighted_sum,    // persistent EMA state
+float & total_weight,    // persistent EMA state
+llama_token_data_array * cur_p)
+{
+    const float width = 0.3;             // DISTRIBUTION_WIDTH
+    const float peak_logit = 5.0;        // PEAK_LOGIT_VALUE
+
+    if (target <= 0.0f || cur_p->size == 0) {
+        return;
+    }
+
+    const float inv_width = 1.0f / width;
+
+    // Step 1: softmax to get original probabilities
+    sample_softmax(cur_p);
+
+    // Step 2: compute adaptive target (EMA feedback)
+    float computed_target;
+    if (total_weight == 0.0f) {
+        computed_target = target;
+    } else {
+        computed_target = 2.0f * target - (weighted_sum / total_weight);
+        computed_target = std::clamp(computed_target, 0.0f, 1.0f);
+    }
+
+    // Step 3: apply power-law shaping in logit space
+    for (size_t i = 0; i < cur_p->size; ++i) {
+        float dist  = (cur_p->data[i].p - computed_target) * inv_width;
+        float score = peak_logit / (1.0f + dist * dist);
+        cur_p->data[i].logit = score;
+    }
+
+    cur_p->sorted = false;
+
+    // Step 4: update EMA history AFTER sampling, update_power_law_history(original_prob[idx])
+}
+inline void power_law_update_history(float selected_token_prob, float & weighted_sum, float & total_weight) {
+    const float power_law_decay = 0.90f;
+    weighted_sum = selected_token_prob + power_law_decay * weighted_sum;
+    total_weight = 1.0f + power_law_decay * total_weight;
+}
+
 
 void sample_rep_pen(int n_ctx, int rep_pen_range, float rep_pen, float rep_pen_slope, float presence_penalty, llama_token_data_array * candidates_p)
 {
@@ -4425,6 +4472,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             const float dynatemp_exponent = kcpp_data->dynatemp_exponent;
             const float smoothing_factor = kcpp_data->smoothing_factor;
             const float smoothing_curve = kcpp_data->smoothing_curve;
+            const float power_law_target = kcpp_data->power_law_target;
 
             if (!startedsampling)
             {
@@ -4500,6 +4548,18 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 {
                     logitsPtr = logits.data(); //legacy rwkv, neox, gptj etc
                     lowestLogit = LowestLogit(logits);
+                }
+
+                //if power law sampling is used, we need to cache the original probabilities
+                std::vector<llama_token_data> original_candidates;
+                if(power_law_target > 0.0f)
+                {
+                    original_candidates.reserve(n_vocab);
+                    for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
+                        original_candidates.emplace_back(llama_token_data{token_id, logitsPtr[token_id], 0.0f});
+                    }
+                    llama_token_data_array original_candidates_p = { original_candidates.data(), original_candidates.size(), false };
+                    sample_softmax(&original_candidates_p,false);
                 }
 
                 if(file_format == FileFormat::GGUF_GENERIC && guidance_ctx && negprompt_tokens.size()>0 && inputs.guidance_scale!=1.0f)
