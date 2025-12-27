@@ -123,7 +123,7 @@ struct generation_inputs
     const float dynatemp_exponent = 1.0f;
     const float smoothing_factor = 0.0f;
     const float smoothing_curve = 1.0f;
-    const float power_law_target = -1.0f;
+    const float adaptive_target = -1.0f;
     const float dry_multiplier = 0.0f;
     const float dry_base = 0.0f;
     const int dry_allowed_length = 0;

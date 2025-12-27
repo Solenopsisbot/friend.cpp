@@ -265,7 +265,7 @@ class generation_inputs(ctypes.Structure):
                 ("dynatemp_exponent", ctypes.c_float),
                 ("smoothing_factor", ctypes.c_float),
                 ("smoothing_curve", ctypes.c_float),
-                ("power_law_target", ctypes.c_float),
+                ("adaptive_target", ctypes.c_float),
                 ("dry_multiplier", ctypes.c_float),
                 ("dry_base", ctypes.c_float),
                 ("dry_allowed_length", ctypes.c_int),
@@ -1604,8 +1604,8 @@ def generate(genparams, stream_flag=False):
     dynatemp_exponent = tryparsefloat(genparams.get('dynatemp_exponent', 1.0),1.0)
     smoothing_factor = tryparsefloat(genparams.get('smoothing_factor', 0.0),0.0)
     smoothing_curve = tryparsefloat(genparams.get('smoothing_curve', 1.0),1.0)
-    power_law_target = tryparsefloat(genparams.get('power_law_target', -1.0),-1.0)
-    if power_law_target>0 and min_p<=0 and top_p>=1.0: #power law sampler requires a truncation sampler first, force a tiny min-p
+    adaptive_target = tryparsefloat(genparams.get('adaptive_target', -1.0),-1.0)
+    if adaptive_target>0 and min_p<=0 and top_p>=1.0: #adaptive p sampler requires a truncation sampler first, force a tiny min-p
         min_p = 0.01
     logit_biases = genparams.get('logit_bias', {})
     render_special = genparams.get('render_special', False)
@@ -1670,7 +1670,7 @@ def generate(genparams, stream_flag=False):
     inputs.dynatemp_exponent = dynatemp_exponent
     inputs.smoothing_factor = smoothing_factor
     inputs.smoothing_curve = smoothing_curve
-    inputs.power_law_target = power_law_target
+    inputs.adaptive_target = adaptive_target
     inputs.grammar = grammar.encode("UTF-8")
     inputs.grammar_retain_state = grammar_retain_state
     inputs.allow_eos_token = not ban_eos_token
