@@ -1979,11 +1979,7 @@ def sd_generate(genparams):
     if seed < 0:
         seed = random.randint(100000, 999999)
     sample_method = (genparams.get("sampler_name") or "default").lower()
-    if sample_method == 'default' and 'sampler_name' in defparams:
-        sample_method = (defparams.get("sampler_name") or "default").lower()
     scheduler = (genparams.get("scheduler") or "default").lower()
-    if scheduler == 'default' and 'scheduler' in defparams:
-        scheduler = (defparams.get("scheduler") or "default").lower()
     clip_skip = tryparseint(genparams.get("clip_skip", -1),-1)
     vid_req_frames = tryparseint(genparams.get("frames", 1),1)
     vid_req_frames = 1 if (not vid_req_frames or vid_req_frames < 1) else vid_req_frames
@@ -8525,6 +8521,7 @@ if __name__ == '__main__':
     compatgroup3.add_argument("--nommap","--no-mmap", help=argparse.SUPPRESS, action='store_true')
     deprecatedgroup.add_argument("--sdnotile", help=argparse.SUPPRESS, action='store_true') # legacy option, see sdtiledvae
     deprecatedgroup.add_argument("--forceversion", help=argparse.SUPPRESS, action='store_true') #no longer used
+    deprecatedgroup.add_argument("--sdgendefaults", help=argparse.SUPPRESS, action='store_true') # legacy option, see gendefaults
 
     debuggroup = parser.add_argument_group('Debug Commands')
     debuggroup.add_argument("--testmemory", help=argparse.SUPPRESS, action='store_true')
