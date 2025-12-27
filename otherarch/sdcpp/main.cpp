@@ -26,12 +26,16 @@ const char* previews_str[] = {
     "vae",
 };
 
+std::regex format_specifier_regex("(?:[^%]|^)(?:%%)*(%\\d{0,3}d)");
+
 struct SDCliParams {
     SDMode mode             = IMG_GEN;
     std::string output_path = "output.png";
+    int output_begin_idx    = -1;
 
     bool verbose          = false;
     bool canny_preprocess = false;
+    bool convert_name     = false;
 
     preview_t preview_method = PREVIEW_NONE;
     int preview_interval     = 1;
@@ -49,7 +53,7 @@ struct SDCliParams {
         options.string_options = {
             {"-o",
              "--output",
-             "path to write result image to (default: ./output.png)",
+             "path to write result image to. you can use printf-style %d format specifiers for image sequences (default: ./output.png) (eg. output_%03d.png)",
              &output_path},
             {"",
              "--preview-path",
@@ -62,6 +66,10 @@ struct SDCliParams {
              "--preview-interval",
              "interval in denoising steps between consecutive updates of the image preview file (default is 1, meaning updating at every step)",
              &preview_interval},
+            {"",
+             "--output-begin-idx",
+             "starting index for output image sequence, must be non-negative (default 0 if specified %d in output path, 1 otherwise)",
+             &output_begin_idx},
         };
 
         options.bool_options = {
@@ -69,6 +77,10 @@ struct SDCliParams {
              "--canny",
              "apply canny preprocessor (edge detection)",
              true, &canny_preprocess},
+            {"",
+             "--convert-name",
+             "convert tensor name (for convert mode)",
+             true, &convert_name},
             {"-v",
              "--verbose",
              "print extra info",
@@ -174,6 +186,7 @@ struct SDCliParams {
             << "  verbose: " << (verbose ? "true" : "false") << ",\n"
             << "  color: " << (color ? "true" : "false") << ",\n"
             << "  canny_preprocess: " << (canny_preprocess ? "true" : "false") << ",\n"
+            << "  convert_name: " << (convert_name ? "true" : "false") << ",\n"
             << "  preview_method: " << previews_str[preview_method] << ",\n"
             << "  preview_interval: " << preview_interval << ",\n"
             << "  preview_path: \"" << preview_path << "\",\n"
@@ -338,6 +351,25 @@ void step_callback(int step, int frame_count, sd_image_t* image, bool is_noisy, 
     }
 }
 
+std::string format_frame_idx(std::string pattern, int frame_idx) {
+    std::smatch match;
+    std::string result = pattern;
+    while (std::regex_search(result, match, format_specifier_regex)) {
+        std::string specifier = match.str(1);
+        char buffer[32];
+        snprintf(buffer, sizeof(buffer), specifier.c_str(), frame_idx);
+        result.replace(match.position(1), match.length(1), buffer);
+    }
+
+    // Then replace all '%%' with '%'
+    size_t pos = 0;
+    while ((pos = result.find("%%", pos)) != std::string::npos) {
+        result.replace(pos, 2, "%");
+        pos += 1;
+    }
+    return result;
+}
+
 int main(int argc, const char* argv[]) {
     if (argc > 1 && std::string(argv[1]) == "--version") {
         std::cout << version_string() << "\n";
@@ -387,7 +419,8 @@ int main(int argc, const char* argv[]) {
                                ctx_params.vae_path.c_str(),
                                cli_params.output_path.c_str(),
                                ctx_params.wtype,
-                               ctx_params.tensor_type_rules.c_str());
+                               ctx_params.tensor_type_rules.c_str(),
+                               cli_params.convert_name);
         if (!success) {
             LOG_ERROR("convert '%s'/'%s' to '%s' failed",
                       ctx_params.model_path.c_str(),
@@ -610,7 +643,7 @@ int main(int argc, const char* argv[]) {
                     gen_params.pm_style_strength,
                 },  // pm_params
                 ctx_params.vae_tiling_params,
-                gen_params.easycache_params,
+                gen_params.cache_params,
             };
 
             results     = generate_image(sd_ctx, &img_gen_params);
@@ -635,7 +668,7 @@ int main(int argc, const char* argv[]) {
                 gen_params.seed,
                 gen_params.video_frames,
                 gen_params.vace_strength,
-                gen_params.easycache_params,
+                gen_params.cache_params,
             };
 
             results = generate_video(sd_ctx, &vid_gen_params, &num_results);
@@ -712,25 +745,59 @@ int main(int argc, const char* argv[]) {
         is_jpg                    = false;
     }
 
-    if (cli_params.mode == VID_GEN && num_results > 1) {
-        std::string vid_output_path = cli_params.output_path;
-        if (file_ext_lower == ".png") {
-            vid_output_path = base_path + ".avi";
+    if (std::regex_search(cli_params.output_path, format_specifier_regex)) {
+        std::string final_output_path = cli_params.output_path;
+        if (cli_params.output_begin_idx == -1) {
+            cli_params.output_begin_idx = 0;
         }
-        create_mjpg_avi_from_sd_images(vid_output_path.c_str(), results, num_results, gen_params.fps);
-        LOG_INFO("save result MJPG AVI video to '%s'\n", vid_output_path.c_str());
+        // writing image sequence, default to PNG
+        if (!is_jpg && file_ext_lower != ".png") {
+            base_path += file_ext;
+            file_ext = ".png";
+        }
+        final_output_path = base_path + file_ext;
+        for (int i = 0; i < num_results; i++) {
+            if (results[i].data == nullptr) {
+                continue;
+            }
+            std::string final_image_path = format_frame_idx(final_output_path, cli_params.output_begin_idx + i);
+            if (is_jpg) {
+                int write_ok = stbi_write_jpg(final_image_path.c_str(), results[i].width, results[i].height, results[i].channel,
+                                              results[i].data, 90, get_image_params(cli_params, ctx_params, gen_params, gen_params.seed + i).c_str());
+                LOG_INFO("save result JPEG image %d to '%s' (%s)", i, final_image_path.c_str(), write_ok == 0 ? "failure" : "success");
+            } else {
+                int write_ok = stbi_write_png(final_image_path.c_str(), results[i].width, results[i].height, results[i].channel,
+                                              results[i].data, 0, get_image_params(cli_params, ctx_params, gen_params, gen_params.seed + i).c_str());
+                LOG_INFO("save result PNG image %d to '%s' (%s)", i, final_image_path.c_str(), write_ok == 0 ? "failure" : "success");
+            }
+        }
+    } else if (cli_params.mode == VID_GEN && num_results > 1) {
+        std::string final_output_path = cli_params.output_path;
+        if (file_ext_lower != ".avi") {
+            if (!is_jpg && file_ext_lower != ".png") {
+                base_path += file_ext;
+            }
+            file_ext          = ".avi";
+            final_output_path = base_path + file_ext;
+        }
+        create_mjpg_avi_from_sd_images(final_output_path.c_str(), results, num_results, gen_params.fps);
+        LOG_INFO("save result MJPG AVI video to '%s'\n", final_output_path.c_str());
     } else {
         // appending ".png" to absent or unknown extension
         if (!is_jpg && file_ext_lower != ".png") {
             base_path += file_ext;
             file_ext = ".png";
         }
+        if (cli_params.output_begin_idx == -1) {
+            cli_params.output_begin_idx = 1;
+        }
         for (int i = 0; i < num_results; i++) {
             if (results[i].data == nullptr) {
                 continue;
             }
             int write_ok;
-            std::string final_image_path = i > 0 ? base_path + "_" + std::to_string(i + 1) + file_ext : base_path + file_ext;
+            std::string final_image_path;
+            final_image_path = i > 0 ? base_path + "_" + std::to_string(cli_params.output_begin_idx + i) + file_ext : base_path + file_ext;
             if (is_jpg) {
                 write_ok = stbi_write_jpg(final_image_path.c_str(), results[i].width, results[i].height, results[i].channel,
                                           results[i].data, 90, get_image_params(cli_params, ctx_params, gen_params, gen_params.seed + i).c_str());

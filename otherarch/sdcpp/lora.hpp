@@ -599,6 +599,8 @@ struct LoraModel : public GGMLRunner {
                                       forward_params.conv2d.d0,
                                       forward_params.conv2d.d1,
                                       forward_params.conv2d.direct,
+                                      forward_params.conv2d.circular_x,
+                                      forward_params.conv2d.circular_y,
                                       forward_params.conv2d.scale);
                 if (lora_mid) {
                     lx = ggml_ext_conv_2d(ctx,
@@ -612,6 +614,8 @@ struct LoraModel : public GGMLRunner {
                                           1,
                                           1,
                                           forward_params.conv2d.direct,
+                                          forward_params.conv2d.circular_x,
+                                          forward_params.conv2d.circular_y,
                                           forward_params.conv2d.scale);
                 }
                 lx = ggml_ext_conv_2d(ctx,
@@ -625,6 +629,8 @@ struct LoraModel : public GGMLRunner {
                                       1,
                                       1,
                                       forward_params.conv2d.direct,
+                                      forward_params.conv2d.circular_x,
+                                      forward_params.conv2d.circular_y,
                                       forward_params.conv2d.scale);
             }
 
@@ -716,11 +722,11 @@ struct LoraModel : public GGMLRunner {
         /* Don't worry if this message shows up twice in the logs per LoRA,
          * this function is called once to calculate the required buffer size
          * and then again to actually generate a graph to be used */
-        if (applied_lora_tensors_count != total_lora_tensors_count) {
-            printf("Only (%lu / %lu) LoRA tensors have been applied, lora_file_path = %s",
+        if (!at_runntime && applied_lora_tensors_count != total_lora_tensors_count) {
+            LOG_WARN("Only (%lu / %lu) LoRA tensors have been applied, lora_file_path = %s",
                      applied_lora_tensors_count, total_lora_tensors_count, file_path.c_str());
         } else {
-            LOG_WARN("(%lu / %lu) LoRA tensors have been applied, lora_file_path = %s",
+            LOG_INFO("(%lu / %lu) LoRA tensors have been applied, lora_file_path = %s",
                      applied_lora_tensors_count, total_lora_tensors_count, file_path.c_str());
         }
     }
@@ -779,6 +785,8 @@ public:
                                    forward_params.conv2d.d0,
                                    forward_params.conv2d.d1,
                                    forward_params.conv2d.direct,
+                                   forward_params.conv2d.circular_x,
+                                   forward_params.conv2d.circular_y,
                                    forward_params.conv2d.scale);
         }
         for (auto& lora_model : lora_models) {
