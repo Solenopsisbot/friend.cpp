@@ -1053,16 +1053,6 @@ std::string convert_tensor_name(std::string name, SDVersion version) {
         if (sd_version_is_unet(version) || is_underline || is_lycoris_underline) {
             name = convert_sep_to_dot(name);
         }
-
-        //kcpp hack: name surgery for qwen image, https://github.com/leejet/stable-diffusion.cpp/issues/1131
-        const std::string badprefix = "unet_transformer_blocks_";
-        const std::string goodprefix = "lora.model.diffusion_model.transformer_blocks.";
-        if(is_lora && sd_version_is_qwen_image(version) && starts_with(name,badprefix))
-        {
-            name = goodprefix + name.substr(badprefix.size());
-            name = convert_sep_to_dot(name);
-        }
-        return name;
     }
 
     std::unordered_map<std::string, std::string> prefix_map = {
