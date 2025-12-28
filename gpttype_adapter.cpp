@@ -2551,7 +2551,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             tenos.push_back({nullptr, nullptr});
             model_params.tensor_buft_overrides = tenos.data();
             model_params.tensor_split = tensor_split_temp;
-            model_params.n_gpu_layers = 999; //must be this value to be considered default
+            model_params.n_gpu_layers = -1; //must be this value to be considered default
             printf("Autofit Reserve Space: %d MB\n",taxmb);
             llama_params_fit(kcpp_data->model_filename.c_str(), &model_params, &llama_ctx_params,
             tensor_split_temp, tenos.data(), taxmb*1024*1024, kcpp_data->n_ctx,
