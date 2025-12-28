@@ -4504,7 +4504,18 @@ Change Mode<br>
 
                 gendefaults = gendefaults_parse_meta_field(args.gendefaults or '')
                 gen_new_keys = {k: v for k, v in gendefaults.items() if k not in genparams}
+                #special handling for some params that should be overwritten if equal to literal string default
+                special_fields = ["sampler_name", "scheduler"]
+                special_fields_overwrite = {}
+                if not args.gendefaultsoverwrite:
+                    for field in special_fields:
+                        if genparams.get(field, "default") == "default" and field in gendefaults:
+                            value = gendefaults.get(field, "default")
+                            if isinstance(value, str):
+                                value = value.lower()
+                            special_fields_overwrite[field] = value
                 genparams.update(gendefaults if args.gendefaultsoverwrite else gen_new_keys)
+                genparams.update(special_fields_overwrite)
 
                 trunc_len = 8000
                 if args.debugmode >= 1:
