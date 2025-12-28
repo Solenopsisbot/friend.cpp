@@ -13990,7 +13990,7 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
         /* .async                 = */ true,
         /* .host_buffer           = */ true,
         /* .buffer_from_host_ptr  = */ false,
-        /* .events                = */ true,
+        /* .events                = */ false, //kcpp: triage disable events ref https://github.com/ggml-org/llama.cpp/pull/18397
     };
 }
 
