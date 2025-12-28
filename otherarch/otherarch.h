@@ -51,6 +51,7 @@ struct kcpp_params {
     float   dynatemp_range     = 0.0f;  // enables DynaTemp if neq 0. dynatemp_min = temperature - dt_range, dynatemp_max = temperature + dt_range
     float   dynatemp_exponent  = 1.0f;
     float adaptive_target     = -1.0f; // 0.0 - 1.0, <=0.0 is disabled
+    float adaptive_decay      = 0.9f;
 
     std::string model_filename       = ""; // model path
     std::string prompt               = "";

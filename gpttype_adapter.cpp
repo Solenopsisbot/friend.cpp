@@ -1303,16 +1303,13 @@ llama_token_data_array * cur_p)
 
     //update EMA history AFTER sampling, update_adaptive_p_history(original_prob[idx])
 }
-inline void adaptive_p_update_history(float selected_token_prob, float & weighted_sum, float & total_weight) {
+inline void adaptive_p_update_history(float selected_token_prob, float & weighted_sum, float & total_weight, float adaptive_decay) {
     // decay controls how quickly history influence fades (0.0 to 0.99)
     // lower values = faster adaptation, more reactive to recent tokens
     // higher values = slower adaptation, more stable over time
-    // effective history length ≈ 1/(1-decay) tokens
-    // example: decay=0.5 --> ~2 tokens; decay=0.9 --> ~10 tokens; decay=0.95 --> ~20 tokens
     // keep <= 0.99 to prevent unbounded accumulation
-    const float adaptive_p_decay = 0.90f;
-    weighted_sum = selected_token_prob + adaptive_p_decay * weighted_sum;
-    total_weight = 1.0f + adaptive_p_decay * total_weight;
+    weighted_sum = selected_token_prob + adaptive_decay * weighted_sum;
+    total_weight = 1.0f + adaptive_decay * total_weight;
 }
 
 
@@ -3656,6 +3653,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     kcpp_data->smoothing_factor = inputs.smoothing_factor;
     kcpp_data->smoothing_curve = inputs.smoothing_curve;
     kcpp_data->adaptive_target = inputs.adaptive_target;
+    kcpp_data->adaptive_decay = inputs.adaptive_decay;
 
     // Parse dry sequence breakers / restart sequences
     kcpp_data->dry_sequence_breakers.clear();
@@ -4485,6 +4483,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             const float smoothing_factor = kcpp_data->smoothing_factor;
             const float smoothing_curve = kcpp_data->smoothing_curve;
             const float adaptive_target = kcpp_data->adaptive_target;
+            const float adaptive_decay = kcpp_data->adaptive_decay;
 
             if (!startedsampling)
             {
@@ -4622,7 +4621,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
                 if (adaptive_target > 0.0f) {
                     float original_prob = original_candidates[id].p;
-                    adaptive_p_update_history(original_prob, adaptive_p_weighted_sum, adaptive_p_total_weight);
+                    adaptive_p_update_history(original_prob, adaptive_p_weighted_sum, adaptive_p_total_weight, adaptive_decay);
                 }
 
                 if(draft_used)
