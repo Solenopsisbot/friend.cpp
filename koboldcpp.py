@@ -4507,6 +4507,9 @@ Change Mode<br>
                 gen_new_keys = {k: v for k, v in gendefaults.items() if k not in genparams}
                 #special handling for some params that should be overwritten if equal to literal string default
                 special_fields = ["sampler_name", "scheduler"]
+                for field in special_fields:
+                    if field in genparams and isinstance(genparams[field], str):
+                        genparams[field] = genparams[field].lower()
                 special_fields_overwrite = {}
                 if not args.gendefaultsoverwrite:
                     for field in special_fields:
