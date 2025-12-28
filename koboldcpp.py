@@ -1504,7 +1504,7 @@ def load_model(model_filename):
         inputs.quant_k = inputs.quant_v = 0
     inputs.batchsize = args.batchsize
     inputs.autofit = args.autofit
-    inputs.autofit_tax_mb = int(calulated_gpu_overhead)
+    inputs.autofit_tax_mb = int(calulated_gpu_overhead/(1024*1024))
     inputs.gpulayers = args.gpulayers
     if args.overridenativecontext and args.overridenativecontext>0:
         inputs.overridenativecontext = args.overridenativecontext
