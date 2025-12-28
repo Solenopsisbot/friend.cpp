@@ -3441,9 +3441,6 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         }
     }
 
-    adaptive_p_weighted_sum = 0;
-    adaptive_p_total_weight = 0;
-
     //handle custom token bans and antislop phrase banning
     banned_phrases.clear();
     delayed_generated_tokens_limit = 0;
@@ -3654,6 +3651,14 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     kcpp_data->smoothing_curve = inputs.smoothing_curve;
     kcpp_data->adaptive_target = inputs.adaptive_target;
     kcpp_data->adaptive_decay = inputs.adaptive_decay;
+
+    adaptive_p_weighted_sum = 0;
+    adaptive_p_total_weight = 0;
+    if(kcpp_data->adaptive_target > 0.0f && kcpp_data->adaptive_decay<1.0f)
+    {
+        adaptive_p_weighted_sum = kcpp_data->adaptive_target / (1.0f - kcpp_data->adaptive_decay);
+        adaptive_p_total_weight = 1.0f / (1.0f - kcpp_data->adaptive_decay);
+    }
 
     // Parse dry sequence breakers / restart sequences
     kcpp_data->dry_sequence_breakers.clear();

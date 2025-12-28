@@ -1607,6 +1607,7 @@ def generate(genparams, stream_flag=False):
     smoothing_curve = tryparsefloat(genparams.get('smoothing_curve', 1.0),1.0)
     adaptive_target = tryparsefloat(genparams.get('adaptive_target', -1.0),-1.0)
     adaptive_decay = tryparsefloat(genparams.get('adaptive_decay', 0.9),0.9)
+    adaptive_decay = 0.01 if adaptive_decay < 0.01 else (0.99 if adaptive_decay > 0.99 else adaptive_decay)
     if adaptive_target>0 and min_p<=0 and top_p>=1.0: #adaptive p sampler requires a truncation sampler first, force a tiny min-p
         min_p = 0.002
     logit_biases = genparams.get('logit_bias', {})
