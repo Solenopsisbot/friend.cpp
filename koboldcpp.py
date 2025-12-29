@@ -2835,6 +2835,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
             audio_added = []
             continue_assistant_turn = genparams.get('continue_assistant_turn', False)
             latest_turn_was_assistant = False
+            latest_turn_was_tool = False
 
             # handle structured outputs
             respformat = genparams.get('response_format', None)
@@ -2886,6 +2887,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 for message in messages_array:
                     message_index += 1
                     latest_turn_was_assistant = False
+                    latest_turn_was_tool = False
                     if message['role'] == "system":
                         messages_string += system_message_start
                     elif message['role'] == "user":
@@ -2894,6 +2896,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                         messages_string += assistant_message_start
                         latest_turn_was_assistant = True
                     elif message['role'] == "tool":
+                        latest_turn_was_tool = True
                         messages_string += tools_message_start
                         tcid = message.get("tool_call_id","")
                         tcid = ("" if not tcid else f" {tcid}")
@@ -2984,6 +2987,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
             else:
                 genparams["stop_sequence"].append(user_message_start.strip())
                 genparams["stop_sequence"].append(assistant_message_start.strip())
+            if not used_tool_json and jinjatools and latest_turn_was_tool:
+                genparams["stop_sequence"].append("(Made a function call") # qol prevent fake toolcalls
             genparams["trim_stop"] = True
 
 
