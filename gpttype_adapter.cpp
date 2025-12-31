@@ -1291,7 +1291,7 @@ llama_token_data_array * cur_p)
     float computed_target = std::clamp(total_weight == 0.0f ? target : 2.0f * target - (weighted_sum / total_weight),0.0f, 1.0f);
 
     // adaptive p transform
-    const float k = 4.0f; // controls sharpness
+    const float k = 10.0f; // controls sharpness
     for (size_t i = 0; i < cur_p->size; ++i) {
         float dist = (cur_p->data[i].p - computed_target) * inv_width;
         float abs_dist = fabs(dist);
