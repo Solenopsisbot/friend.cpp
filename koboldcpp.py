@@ -7785,7 +7785,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     global maxhordelen, maxhordectx, showdebug, has_multiplayer, savedata_obj
     if args.hordemodelname and args.hordemodelname!="":
         friendlymodelname = args.hordemodelname
-        if args.debugmode == 1:
+        if args.debugmode == 1 or args.gendefaults:
             friendlymodelname = "debug-" + friendlymodelname
         if not friendlymodelname.startswith("koboldcpp/"):
             friendlymodelname = "koboldcpp/" + friendlymodelname
