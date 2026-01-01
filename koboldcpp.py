@@ -337,7 +337,9 @@ class sd_generation_inputs(ctypes.Structure):
                 ("clip_skip", ctypes.c_int),
                 ("vid_req_frames", ctypes.c_int),
                 ("video_output_type", ctypes.c_int),
-                ("remove_limits", ctypes.c_bool)]
+                ("remove_limits", ctypes.c_bool),
+                ("circular_x", ctypes.c_bool),
+                ("circular_y", ctypes.c_bool)]
 
 class sd_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2032,6 +2034,8 @@ def sd_generate(genparams):
     inputs.vid_req_frames = vid_req_frames
     inputs.video_output_type = video_output_type
     inputs.remove_limits = allow_remove_limits
+    inputs.circular_x = tryparseint(adapter_obj.get("circular_x", genparams.get("circular_x",0)),0)
+    inputs.circular_y = tryparseint(adapter_obj.get("circular_y", genparams.get("circular_y",0)),0)
     ret = handle.sd_generate(inputs)
     data_main = ""
     data_extra = ""

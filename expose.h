@@ -217,6 +217,8 @@ struct sd_generation_inputs
     const int vid_req_frames = 1;
     const int video_output_type = 0; //0=gif, 1=avi, 2=both
     const bool remove_limits = false;
+    const bool circular_x = false;
+    const bool circular_y = false;
 };
 struct sd_generation_outputs
 {

@@ -2732,6 +2732,26 @@ public:
         ggml_ext_tensor_clamp_inplace(result, 0.0f, 1.0f);
         return result;
     }
+
+    //added for kcpp
+    void SetCircularAxesAll(bool circular_x, bool circular_y)
+    {
+        diffusion_model->set_circular_axes(circular_x, circular_y);
+        if (high_noise_diffusion_model) {
+            high_noise_diffusion_model->set_circular_axes(circular_x, circular_y);
+        }
+        if (control_net) {
+            control_net->set_circular_axes(circular_x, circular_y);
+        }
+        if (first_stage_model) {
+            first_stage_model->set_circular_axes(circular_x, circular_y);
+        }
+        if (tae_first_stage) {
+            tae_first_stage->set_circular_axes(circular_x, circular_y);
+        }
+    }
+    //end added for kcpp
+
 };
 
 /*================================================= SD API ==================================================*/
@@ -4331,3 +4351,10 @@ SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* s
 
     return result_images;
 }
+
+//added for kcpp
+void SetCircularAxesAll(sd_ctx_t* sd_ctx, bool circular_x, bool circular_y)
+{
+    sd_ctx->sd->SetCircularAxesAll(circular_x, circular_y);
+}
+//end added for kcpp
