@@ -2110,6 +2110,7 @@ void kcpp_init_audio_proj(clip_ctx * ctx_a)
         case PROJECTOR_TYPE_ULTRAVOX:
         case PROJECTOR_TYPE_VOXTRAL:
         case PROJECTOR_TYPE_GLMA:
+        case PROJECTOR_TYPE_MUSIC_FLAMINGO:
             audio_preproc = std::make_unique<mtmd_audio_preprocessor_whisper>(ctx_a);
             break;
         case PROJECTOR_TYPE_LFM2A:
