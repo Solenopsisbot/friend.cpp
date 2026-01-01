@@ -2665,14 +2665,19 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
                 printf("Clip will use CPU for this model!\n");
             }
             #endif
+            clip_flash_attn_type clip_fa = (kcpp_data->flash_attn?CLIP_FLASH_ATTN_TYPE_ENABLED:CLIP_FLASH_ATTN_TYPE_DISABLED); //kcpp: disabled in 1.102.2 as some headsizes break on turing
+            #if defined(GGML_USE_CUDA)
+            clip_fa = CLIP_FLASH_ATTN_TYPE_DISABLED; //kcpp: disabled in 1.102.2 as some headsizes break on turing
+            #endif
             if(inputs.mmproj_cpu)
             {
                 set_clip_uses_gpu(false);
                 printf("Clip forced to use CPU!\n");
+                clip_fa = (kcpp_data->flash_attn?CLIP_FLASH_ATTN_TYPE_ENABLED:CLIP_FLASH_ATTN_TYPE_DISABLED); //however if using CPU, fa is fine
             }
             clip_context_params ctx_clip_params {
                 /* use_gpu           */ true,
-                /* flash_attn_type   */ CLIP_FLASH_ATTN_TYPE_DISABLED, //kcpp: disabled in 1.102.2 as some headsizes break on turing
+                /* flash_attn_type   */ clip_fa,
                 /* image_min_tokens  */ -1,
                 /* image_max_tokens  */ -1,
             };
