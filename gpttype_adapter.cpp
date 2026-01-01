@@ -4019,6 +4019,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 for(int i=0;i<savestate_limit;++i)
                 {
                     bool target_usable = FullyContainedPrefix(savestates[i].savestate_context_tokens,embd_inp);
+                    if(savestates[i].media_signature!=media_composite_image_signature)
+                    {
+                        target_usable = false;
+                    }
                     int target_len = savestates[i].savestate_context_tokens.size();
                     if(target_usable && target_len>bestlen)
                     {
@@ -4085,6 +4089,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 for(int i=0;i<savestate_limit;++i)
                 {
                     float similaritybeat = ComputePrefixMatchPercent(savestates[i].savestate_context_tokens,embd_inp);
+                    if(savestates[i].media_signature!=media_composite_image_signature)
+                    {
+                        continue;
+                    }
                     if(similaritybeat > similarity_threshold || (shiftable && CanContextShift(savestates[i].savestate_context_tokens, embd_inp, inputs.max_length, nctx)))
                     {
                         //found a match. save to the oldest slot thats not the one we are loading
@@ -5110,6 +5118,7 @@ size_t gpttype_save_state_kv(int slot)
             savestates[slot].savestate_context_tokens.clear();
             savestates[slot].current_savestate_size = 0;
             savestates[slot].current_draft_savestate_size = 0;
+            savestates[slot].media_signature = "";
         }
         size_t newsize = llama_state_get_size(llama_ctx_v4);
         try {
@@ -5127,6 +5136,7 @@ size_t gpttype_save_state_kv(int slot)
             totalbytes += res;
             savestates[slot].current_savestate_size   = newsize;
             savestates[slot].savestate_context_tokens = current_context_tokens;
+            savestates[slot].media_signature = media_composite_image_signature;
             int maxedpos = llama_memory_seq_pos_max(llama_get_memory(llama_ctx_v4),0);
             if(maxedpos > 0 && savestates[slot].savestate_context_tokens.size() > maxedpos && savestates[slot].savestate_context_tokens.size()-maxedpos<=2)
             {
@@ -5211,6 +5221,7 @@ bool gpttype_clear_state_kv(bool shrink)
                 }
                 savestates[slot].savestate_context_tokens.clear();
                 savestates[slot].current_savestate_size = 0;
+                savestates[slot].media_signature = "";
                 if(draft_ctx && savestates[slot].current_draft_savestate_size>0)
                 {
                     savestates[slot].current_draft_savestate_buffer.clear();
@@ -5240,7 +5251,7 @@ int get_identical_existing_slot() //returns slot number of slot containing exact
     int currctxsize = current_context_tokens.size();
     for(int i=0;i<savestate_limit;++i)
     {
-        if(savestates[i].savestate_context_tokens.size() == currctxsize)
+        if(savestates[i].savestate_context_tokens.size() == currctxsize && savestates[i].media_signature==media_composite_image_signature)
         {
             bool is_identical = true;
             const auto& slot_tokens = savestates[i].savestate_context_tokens;
