@@ -2597,6 +2597,24 @@ def strip_oaicontent_of_media(oaicontent):
         return outarr
     return oaicontent
 
+def strip_mcpcontent_of_media(mcpcontentstr):
+    try:
+        if isinstance(mcpcontentstr, str):
+            #we try to strip out the b64 of MCP type tool responses with images for past turns
+            mcp_pl = json.loads(mcpcontentstr)
+            pl_modified = False
+            if isinstance(mcp_pl, dict) and isinstance(mcp_pl.get("content",None),list):
+                pl_arr = mcp_pl.get("content",[])
+                for idx in range(len(pl_arr)):
+                    if pl_arr[idx].get("type","")=="image" and pl_arr[idx].get("data","")!="":
+                        pl_arr[idx]["data"] = "(base64 data attached)"
+                        pl_modified = True
+                if pl_modified:
+                    mcpcontentstr = json.dumps(mcp_pl)
+    except Exception:
+        pass
+    return mcpcontentstr
+
 #returns the found JSON of the correct tool to use, or None if no tool is suitable
 def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_followup_tool):
     # tools handling: Check if user is passing a openai tools array, if so add to end of prompt before assistant prompt unless tool_choice has been set to None
@@ -2629,7 +2647,9 @@ def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_
         tool_call_chunk = []
         for message in reversed_messages:
             if message["role"] == "tool":
-                tool_call_chunk.append(message["content"])
+                toolrespstr = message["content"]
+                # toolrespstr = strip_mcpcontent_of_media(toolrespstr)
+                tool_call_chunk.append(toolrespstr)
             else:
                 break
         tmp_tool_replies = list(reversed(tool_call_chunk))
@@ -2734,6 +2754,15 @@ def sweep_media_from_messages(messages_array):
                     data = item.get("input_audio", {}).get("data")
                     if data:
                         audio.append(data)
+        elif message.get("role", "")=="tool" and isinstance(curr_content, str): #handle mcp returned images
+            try:
+                mcp_pl = json.loads(curr_content)
+                if isinstance(mcp_pl, dict) and isinstance(mcp_pl.get("content",None),list):
+                    pl_arr = mcp_pl.get("content",[])
+                    if len(pl_arr)>0 and pl_arr[0].get("type","")=="image" and pl_arr[0].get("data","")!="":
+                        images.append(pl_arr[0].get("data",""))
+            except Exception:
+                pass
         imgs_ollama = message.get("images", None)
         if imgs_ollama:
             for img in imgs_ollama:
@@ -2944,6 +2973,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
                                 messages_string += "\n(Made a function call)\n"
                         pass  # do nothing
                     elif isinstance(curr_content, str):
+                        if latest_turn_was_tool and message_index < len(messages_array):
+                            curr_content = strip_mcpcontent_of_media(curr_content)
                         messages_string += curr_content
                     elif isinstance(curr_content, list): #is an array
                         for item in curr_content:
