@@ -53,7 +53,8 @@ default_draft_amount = 8
 default_ttsmaxlen = 4096
 default_visionmaxres = 1024
 net_save_slots = 12
-savestate_limit = 5 #savestate slots
+savestate_limit_default = 5
+savestate_limit = 0 #savestate slots start at 0, only set when load model
 default_vae_tile_threshold = 768
 default_native_ctx = 16384
 overridekv_max = 4
@@ -66,7 +67,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.105"
+KcppVersion = "1.105.1"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":""}
@@ -220,6 +221,7 @@ class load_model_inputs(ctypes.Structure):
                 ("highpriority", ctypes.c_bool),
                 ("swa_support", ctypes.c_bool),
                 ("smartcache", ctypes.c_bool),
+                ("smartcacheslots", ctypes.c_int),
                 ("pipelineparallel", ctypes.c_bool),
                 ("lora_multiplier", ctypes.c_float),
                 ("quiet", ctypes.c_bool),
@@ -1463,7 +1465,7 @@ def auto_set_backend_cli():
         print(f"Auto Selected Default Backend (flag={cpusupport})\n")
 
 def load_model(model_filename):
-    global args, calulated_gpu_overhead
+    global args, calulated_gpu_overhead, savestate_limit
     inputs = load_model_inputs()
     inputs.model_filename = model_filename.encode("UTF-8")
     inputs.max_context_length = maxctx #initial value to use for ctx, can be overwritten
@@ -1545,7 +1547,11 @@ def load_model(model_filename):
     inputs.check_slowness = (not args.highpriority and os.name == 'nt' and 'Intel' in platform.processor())
     inputs.highpriority = args.highpriority
     inputs.swa_support = args.useswa
-    inputs.smartcache = args.smartcache
+    scint = int(args.smartcache)
+    inputs.smartcache = False if scint<=0 else True
+    sclimit = (savestate_limit_default if scint<=1 else scint)
+    savestate_limit = sclimit
+    inputs.smartcacheslots = sclimit
     inputs.pipelineparallel = args.pipelineparallel
     inputs = set_backend_props(inputs)
     ret = handle.load_model(inputs)
@@ -3964,7 +3970,7 @@ Change Mode<br>
         return
 
     def do_POST(self):
-        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey, lastuploadedcomfyimg, lastgeneratedcomfyimg, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, net_save_slots, has_vision_support
+        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey, lastuploadedcomfyimg, lastgeneratedcomfyimg, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, net_save_slots, has_vision_support, savestate_limit
         contlenstr = self.headers['content-length']
         content_length = 0
         body = None
@@ -4403,7 +4409,7 @@ Change Mode<br>
                 else:
                     response_body = (json.dumps({"success": False, "old_states":[], "new_state_size":0, "new_tokens":0}).encode())
             elif self.path.endswith('/api/admin/load_state'):
-                if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                if global_memory and savestate_limit>0 and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                     targetslot = 0
                     try:
                         tempbody = json.loads(body)
@@ -4418,7 +4424,7 @@ Change Mode<br>
                 else:
                     response_body = (json.dumps({"success": False, "new_tokens":0}).encode())
             elif self.path.endswith('/api/admin/save_state'):
-                if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                if global_memory and savestate_limit>0 and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                     targetslot = 0
                     try:
                         tempbody = json.loads(body)
@@ -4433,7 +4439,7 @@ Change Mode<br>
                 else:
                     response_body = (json.dumps({"success": False, "new_state_size":0, "new_tokens":0}).encode())
             elif self.path.endswith('/api/admin/clear_state'):
-                if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                if global_memory and savestate_limit>0 and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                     result = handle.clear_state_kv()
                     response_body = (json.dumps({"success": result}).encode())
                 else:
@@ -5232,6 +5238,7 @@ def show_gui():
     fastforward_var = ctk.IntVar(value=1)
     swa_var = ctk.IntVar(value=0)
     smartcache_var = ctk.IntVar(value=0)
+    smartcacheslots_var = ctk.StringVar(value=str(savestate_limit_default))
     remotetunnel_var = ctk.IntVar(value=0)
     smartcontext_var = ctk.IntVar()
     flashattention_var = ctk.IntVar(value=0)
@@ -5933,6 +5940,7 @@ def show_gui():
     makecheckbox(context_tab, "Use FastForwarding", fastforward_var, 3,tooltiptxt="Use fast forwarding to recycle previous context (always reprocess if disabled).\nRecommended.", command=togglefastforward)
     makecheckbox(context_tab, "Use Sliding Window Attention (SWA)", swa_var, 4,tooltiptxt="Allows Sliding Window Attention (SWA) KV Cache, which saves memory but cannot be used with context shifting.", command=toggleswa)
     makecheckbox(context_tab, "Use SmartCache", smartcache_var, 5,tooltiptxt="Enables intelligent context switching by saving KV cache snapshots to RAM. Requires fast forwarding.", command=togglesmartcache)
+    makelabelentry(context_tab, "CacheSlots:", smartcacheslots_var, row=5, padx=(300), singleline=True, tooltip="Number of slots for smartcache",labelpadx=(220))
 
     # context size
     makeslider(context_tab, "Context Size:",contextsize_text, context_var, 0, len(contextsize_text)-1, 18, width=280, set=7,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
@@ -6231,7 +6239,7 @@ def show_gui():
         args.noshift = contextshift_var.get()==0
         args.nofastforward = fastforward_var.get()==0
         args.useswa = swa_var.get()==1
-        args.smartcache = smartcache_var.get()==1
+        args.smartcache = (0 if smartcache_var.get()!=1 else int(smartcacheslots_var.get()))
         args.remotetunnel = remotetunnel_var.get()==1
         args.foreground = keepforeground.get()==1
         args.cli = terminalonly.get()==1
@@ -6456,6 +6464,7 @@ def show_gui():
         fastforward_var.set(0 if "nofastforward" in dict and dict["nofastforward"] else 1)
         swa_var.set(1 if "useswa" in dict and dict["useswa"] else 0)
         smartcache_var.set(1 if "smartcache" in dict and dict["smartcache"] else 0)
+        smartcacheslots_var.set(dict["smartcache"] if ("smartcache" in dict and dict["smartcache"] and int(dict["smartcache"])>1) else savestate_limit_default)
         remotetunnel_var.set(1 if "remotetunnel" in dict and dict["remotetunnel"] else 0)
         keepforeground.set(1 if "foreground" in dict and dict["foreground"] else 0)
         terminalonly.set(1 if "cli" in dict and dict["cli"] else 0)
@@ -8438,7 +8447,7 @@ if __name__ == '__main__':
     advparser.add_argument("--noshift","--no-context-shift", help="If set, do not attempt to Trim and Shift the GGUF context.", action='store_true')
     advparser.add_argument("--nofastforward", help="If set, do not attempt to fast forward GGUF context (always reprocess). Will also enable noshift", action='store_true')
     advparser.add_argument("--useswa", help="If set, allows Sliding Window Attention (SWA) KV Cache, which saves memory but cannot be used with context shifting.", action='store_true')
-    advparser.add_argument("--smartcache", help="Enables intelligent context switching by saving KV cache snapshots to RAM. Requires fast forwarding.", action='store_true')
+    advparser.add_argument("--smartcache", help="Enables intelligent context switching by saving KV cache snapshots to RAM. Requires fast forwarding.", metavar=('limit'), nargs='?', const=1, type=int, default=0)
     advparser.add_argument("--ropeconfig", help="If set, uses customized RoPE scaling from configured frequency scale and frequency base (e.g. --ropeconfig 0.25 10000). Otherwise, uses NTK-Aware scaling set automatically based on context size. For linear rope, simply set the freq-scale and ignore the freq-base",metavar=('[rope-freq-scale]', '[rope-freq-base]'), default=[0.0, 10000.0], type=float, nargs='+')
     advparser.add_argument("--overridenativecontext", help="Overrides the native trained context of the loaded model with a custom value to be used for Rope scaling.",metavar=('[trained context]'), type=int, default=0)
     compatgroup3 = advparser.add_mutually_exclusive_group()

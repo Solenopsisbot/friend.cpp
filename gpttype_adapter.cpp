@@ -154,8 +154,8 @@ static int delayed_generated_tokens_limit = 0;
 std::deque<std::string> delayed_generated_tokens; //for use with antislop sampling
 static std::map<int,std::vector<int>> antislop_banned_token_ids; //first is the npast position, second is the array of banned ids at that index
 
-const int savestate_limit = 5;
-static savestate_data savestates[savestate_limit];
+static int savestate_limit = 0;
+static std::vector<savestate_data> savestates;
 
 inline int kcpp_cpu_has_blas(void) {
 #if defined(GGML_USE_BLAS) || defined(GGML_USE_CUDA) || defined(GGML_USE_VULKAN) || defined(GGML_USE_CLBLAST) || defined(GGML_USE_SYCL)
@@ -2143,6 +2143,13 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     kcpp_data->use_contextshift = inputs.use_contextshift;
     kcpp_data->use_fastforward = inputs.use_fastforward;
     kcpp_data->smartcache = inputs.smartcache;
+    //prepare savestate slots
+    savestate_limit = inputs.smartcacheslots;
+    savestates.resize(savestate_limit);
+    if(kcpp_data->smartcache)
+    {
+        printf("SmartCache: Prepared %d KV slots\n",savestate_limit);
+    }
     kcpp_pipeline_parallelism = inputs.pipelineparallel;
     if(!kcpp_data->use_fastforward && kcpp_data->smartcache)
     {
