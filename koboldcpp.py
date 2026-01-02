@@ -2608,7 +2608,11 @@ def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_
     last_user_message = ""
     tool_call_results = ""
 
+    images_added = [] #sometimes images are needed to make a decision too
+    audio_added = []
+
     if messages:
+        images_added, audio_added = sweep_media_from_messages(messages)
         reversed_messages = list(reversed(messages))
         for message in reversed_messages:
             if message["role"] == "user":
@@ -2660,6 +2664,10 @@ def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_
                 "ban_eos_token":False,
                 "grammar":toolquerygrammar
             }
+            if len(images_added)>0:
+                temp_poll["images"] = images_added
+            if len(audio_added)>0:
+                temp_poll["audio"] = audio_added
             temp_poll_result = generate(genparams=temp_poll)
             temp_poll_text = temp_poll_result['text'].strip().rstrip('.')
             temp_poll_data_arr = extract_json_from_string(temp_poll_text)
