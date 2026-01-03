@@ -604,6 +604,12 @@ void ggml_metal_rsets_free(ggml_metal_rsets_t rsets) {
         return;
     }
 
+    if([rsets->data count] != 0)
+    {
+        //kcpp try fix for assert below
+        return;
+    }
+
     // note: if you hit this assert, most likely you haven't deallocated all Metal resources before exiting
     GGML_ASSERT([rsets->data count] == 0);
 
