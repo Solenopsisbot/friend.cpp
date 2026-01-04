@@ -114,6 +114,7 @@ has_audio_support = False
 has_vision_support = False
 cached_chat_template = None
 savedata_obj = None
+mcp_connections = [] #every element is linked to one mcp source, contains obj {"process":optional_MCPStdioClient, "url":"optional_str", "tools":[]}
 multiplayer_story_data_compressed = None #stores the full compressed story of the current multiplayer session
 multiplayer_turn_major = 1 # to keep track of when a client needs to sync their stories
 multiplayer_turn_minor = 1
@@ -440,6 +441,105 @@ class StdoutRedirector:
             pass
     def flush(self):
         self.terminal.flush()
+
+class MCPStdioClient:
+    def __init__(self,command,largs,env=None,cwd=None):
+        if isinstance(command, str):
+            cmd = [command]
+        else:
+            cmd = list(command)
+        if largs:
+            cmd.extend(largs)
+        full_env = os.environ.copy()
+        if env:
+            full_env.update(env)
+        self.process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            env=full_env,
+            cwd=cwd
+        )
+        self.lock = threading.Lock()
+    def send(self, message: dict) -> dict: # Send JSON-RPC request and wait for one response.
+        line = json.dumps(message)
+        with self.lock:
+            if self.process.stdin.closed:
+                raise RuntimeError("MCP server stdin is closed")
+            self.process.stdin.write(line + "\n")
+            self.process.stdin.flush()
+            response = self.process.stdout.readline()
+        if not response:
+            raise RuntimeError("MCP server closed stdout")
+        return json.loads(response)
+    def notify(self, message: dict) -> None: # Send JSON-RPC notification (no response expected).
+        line = json.dumps(message)
+        with self.lock:
+            if self.process.stdin.closed:
+                raise RuntimeError("MCP server stdin is closed")
+            self.process.stdin.write(line + "\n")
+            self.process.stdin.flush()
+    def terminate(self):
+        self.process.terminate()
+
+class MCPHTTPClient:
+    def __init__(self, url, headers=None, timeout=60.0):
+        self.url = url
+        self.headers = {"Content-Type": "application/json","Accept": "application/json, text/event-stream"}
+        if headers:
+            self.headers.update(headers)
+        self.timeout = timeout
+
+    def _read_sse(self, response) -> bytes:
+        last_json = None
+        for raw in response:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line or line.startswith(":"):
+                continue
+            if line.startswith("data:"):
+                payload = line[5:].strip()
+                if payload and payload[0] in "{[":
+                    last_json = payload
+        if not last_json:
+            raise RuntimeError("MCP HTTP server returned no JSON SSE response")
+        return last_json.encode("utf-8")
+
+    def send(self, message: dict) -> dict: # Send JSON-RPC request and return response.
+        data = json.dumps(message).encode("utf-8")
+        req = urllib.request.Request(self.url, data=data, headers=self.headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as response:
+                sid = response.headers.get("MCP-Session-Id","92604d65-d82c-468a-96e9-cf4463ba68fc")
+                if sid:
+                    self.headers["MCP-Session-Id"] = sid
+                ctype = response.headers.get("Content-Type","")
+                body = self._read_sse(response) if "text/event-stream" in ctype else response.read()
+        except urllib.error.HTTPError as e: # HTTP error with possible body
+            error_body = e.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"MCP HTTP error {e.code}: {error_body}") from e
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"MCP HTTP connection failed: {e.reason}") from e
+        if not body:
+            raise RuntimeError("MCP HTTP server returned empty response")
+        try:
+            return json.loads(body.decode("utf-8"))
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"MCP HTTP server returned invalid JSON: {body!r}") from e
+
+    def notify(self, message: dict) -> None: # Send JSON-RPC notification (no response expected).
+        data = json.dumps(message).encode("utf-8")
+        req = urllib.request.Request(self.url,data=data,headers=self.headers,method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout):
+                pass
+        except urllib.error.HTTPError as e: # Notifications may still return 204/empty; HTTPError means failure
+            error_body = e.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"MCP HTTP notification failed ({e.code}): {error_body}") from e
+        except urllib.error.URLError as e:
+            raise RuntimeError(f"MCP HTTP notification connection failed: {e.reason}") from e
 
 
 def getdirpath():
@@ -4354,6 +4454,31 @@ Change Mode<br>
         elif self.path.endswith('/set_tts_settings'): #return dummy response
             response_body = (json.dumps({"message": "Settings successfully applied"}).encode())
 
+        elif self.path=="/mcp": #simple mcp proxy
+            try:
+                tempbody = json.loads(body)
+                method = tempbody.get("method","")
+                if method == "initialize":
+                    reply = {
+                        "jsonrpc": "2.0",
+                        "id": random.randint(100000, 999999),
+                        "result": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {"tools": {"listChanged": False}},
+                            "serverInfo": {"name": "mcp-koboldcpp", "version": "1.0.0"},
+                        },
+                    }
+                    response_body = (json.dumps(reply).encode())
+                elif method == "tools/list":
+                    reply = {}
+                    response_body = (json.dumps(reply).encode())
+                else: #probably a notify, send empty response
+                    self.send_response(200)
+                    return
+            except Exception:
+                response_code = 400
+                response_body = (json.dumps({"error": {"code": -32700, "message": "Parse error"}}).encode())
+
         elif self.path=="/api/extra/shutdown":
             # if args.singleinstance:
             client_ip = self.client_address[0]
@@ -5318,6 +5443,7 @@ def show_gui():
     loramult_var = ctk.StringVar(value="1.0")
     preloadstory_var = ctk.StringVar()
     savedatafile_var = ctk.StringVar()
+    mcpfile_var = ctk.StringVar()
     mmproj_var = ctk.StringVar()
     mmprojcpu_var = ctk.IntVar(value=0)
     visionmaxres_var = ctk.StringVar(value=str(default_visionmaxres))
@@ -6069,6 +6195,7 @@ def show_gui():
     embeddings_gpu_var.trace_add("write", gui_changed_modelfile)
     makefileentry(model_tab, "Preload Story:", "Select Preloaded Story File", preloadstory_var, 17,width=280,singlerow=True,tooltiptxt="Select an optional KoboldAI JSON savefile \nto be served on launch to any client.")
     makefileentry(model_tab, "SaveData File:", "Select or Create New SaveData Database File", savedatafile_var, 19,width=280,filetypes=[("KoboldCpp SaveDB", "*.jsondb")],singlerow=True,dialog_type=1,tooltiptxt="Selecting a file will allow data to be loaded and saved persistently to this KoboldCpp server remotely. File is created if it does not exist.")
+    makefileentry(model_tab, "MCP JSON:", "Select a mcp.json configuration file", mcpfile_var, 21,width=280,filetypes=[("MCP JSON", "*.json")],singlerow=True,tooltiptxt="Specify path to mcp.json which contains the Cladue Desktop compatible MCP server config.")
     makefileentry(model_tab, "ChatCompletions Adapter:", "Select ChatCompletions Adapter File", chatcompletionsadapter_var, 24, width=250, filetypes=[("JSON Adapter", "*.json")], tooltiptxt="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.")
     def pickpremadetemplate():
         initialDir = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'kcpp_adapters')
@@ -6399,6 +6526,7 @@ def show_gui():
         args.loramult = (float(loramult_var.get()) if loramult_var.get()!="" else 1.0)
         args.preloadstory = None if preloadstory_var.get() == "" else preloadstory_var.get()
         args.savedatafile = None if savedatafile_var.get() == "" else savedatafile_var.get()
+        args.mcpfile = None if mcpfile_var.get() == "" else mcpfile_var.get()
         try:
             if kcpp_exporting_template and isinstance(args.preloadstory, str) and args.preloadstory!="" and os.path.exists(args.preloadstory):
                 print("Embedding preload story...")   # parse and save embedded preload story
@@ -6668,6 +6796,7 @@ def show_gui():
         password_var.set(dict["password"] if ("password" in dict and dict["password"]) else "")
         preloadstory_var.set(dict["preloadstory"] if ("preloadstory" in dict and dict["preloadstory"]) else "")
         savedatafile_var.set(dict["savedatafile"] if ("savedatafile" in dict and dict["savedatafile"]) else "")
+        mcpfile_var.set(dict["mcpfile"] if ("mcpfile" in dict and dict["mcpfile"]) else "")
         chatcompletionsadapter_var.set(dict["chatcompletionsadapter"] if ("chatcompletionsadapter" in dict and dict["chatcompletionsadapter"]) else "")
         port_var.set(dict["port_param"] if ("port_param" in dict and dict["port_param"]) else defaultport)
         host_var.set(dict["host"] if ("host" in dict and dict["host"]) else "")
@@ -7856,7 +7985,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         friendlymodelname = "koboldcpp/" + sanitize_string(newmdldisplayname)
 
     # horde worker settings
-    global maxhordelen, maxhordectx, showdebug, has_multiplayer, savedata_obj
+    global maxhordelen, maxhordectx, showdebug, has_multiplayer, savedata_obj, mcp_connections
     if args.hordemodelname and args.hordemodelname!="":
         friendlymodelname = args.hordemodelname
         if args.debugmode == 1 or args.gendefaults:
@@ -7900,6 +8029,71 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 print(f"Failed to create savedatafile '{filepath}': {e}")
         except Exception as e:
             print(f"Failed to access savedatafile '{filepath}': {e}")
+
+    if args.mcpfile and isinstance(args.mcpfile, str):
+        filepath = os.path.abspath(args.mcpfile)  # Ensure it's an absolute path
+        if not filepath.lower().endswith(".json"):
+            filepath += ".json"
+            args.mcpfile += ".json"
+        try:
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                loaded = json.load(f)
+                if not isinstance(loaded, dict):
+                    raise ValueError("MCP config must be a JSON object")
+                servers = loaded.get("mcpServers")
+                if not isinstance(servers, dict):
+                    raise ValueError("MCP config missing 'mcpServers' object")
+                #start all mcp servers, initialize them and fetch their tools
+                mcp_connections = [] # each item is {"client":obj, "tools":[]}
+                for name, cfg in servers.items():
+                    try:
+                        if not isinstance(cfg, dict):
+                            raise ValueError(f"MCP server '{name}' must be an object")
+                        mcpurl = cfg.get("url", "") #only one of these should be filled
+                        mcpcmd = cfg.get("command","")
+                        if mcpcmd and not mcpurl: #stdio type
+                            mcpargs = cfg.get("args", [])
+                            mcpenv = cfg.get("env", {})
+                            client = MCPStdioClient(command=mcpcmd,largs=mcpargs,env=mcpenv)
+                            mcp_connections.append({"client":client,"tools":[]})
+                        elif mcpurl:
+                            headers = cfg.get("headers", {})
+                            client = MCPHTTPClient(url=mcpurl, headers=headers)
+                            mcp_connections.append({"client":client,"tools":[]})
+                        else:
+                            raise ValueError(f"MCP server '{name}' missing 'command' and 'url'")
+                    except Exception as e:
+                        print(f"MCP Init Error: {e}")
+                for conn in mcp_connections: #establish init and tool for each server
+                    try:
+                        init_payload = {
+                            "jsonrpc": "2.0",
+                            "id": random.randint(100000, 999999),
+                            "method": "initialize",
+                            "params": {
+                                "protocolVersion": "2024-11-05",
+                                "capabilities": {},
+                                "clientInfo": {"name": "koboldcpp", "version": "1.0.0"}
+                            }
+                        }
+                        toolget_payload = {
+                            "jsonrpc": "2.0",
+                            "id": random.randint(100000, 999999),
+                            "method": "tools/list",
+                            "params": {}
+                        }
+                        resp1 = conn["client"].send(init_payload)
+                        if "result" not in resp1:
+                            continue
+                        resp2 = conn["client"].send(toolget_payload)
+                        if "result" not in resp2 or "tools" not in resp2["result"]:
+                            continue
+                        conn["tools"] = resp2["result"]["tools"]
+                    except Exception as e:
+                        print(f"MCP Setup Error: {e}")
+                print(f"Loaded existing MCP json file at '{filepath}'.")
+        except Exception as e:
+            print(f"Failed to parse MCP json file at '{filepath}': {e}")
 
     if args.highpriority:
         print("Setting process to Higher Priority - Use Caution")
@@ -8561,6 +8755,7 @@ if __name__ == '__main__':
     advparser.add_argument("--pipelineparallel", help="Enable Pipeline Parallelism for faster multigpu speeds but using more memory, only active for multigpu.", action='store_true')
     advparser.add_argument("--gendefaults", metavar=('{"parameter":"value",...}'), help="Sets extra default parameters for some fields in API requests, as a JSON string.", default="")
     advparser.add_argument("--gendefaultsoverwrite", help="Allow the gendefaults parameters to overwrite the original value in API payloads.", action='store_true')
+    advparser.add_argument("--mcpfile", metavar=('[mcp json file]'), help="Specify path to mcp.json which contains the Cladue Desktop compatible MCP server config.", default="")
 
     hordeparsergroup = parser.add_argument_group('Horde Worker Commands')
     hordeparsergroup.add_argument("--hordemodelname", metavar=('[name]'), help="Sets your AI Horde display model name.", default="")
