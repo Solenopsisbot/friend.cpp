@@ -67,7 +67,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.106"
+KcppVersion = "1.105.2"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":""}
@@ -2803,6 +2803,7 @@ number ::= ("-"? ([0-9] | [1-9] [0-9]{0,15})) ("." [0-9]+)? ([eE] [-+]? [1-9] [0
 ws ::= | " " | "\n" [ \t]{0,20}
 """
 
+    used_tool_json = None
     #api format 1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat
     #alias all nonstandard alternative names for rep pen.
     rp1 = float(genparams.get('repeat_penalty', 1.0))
@@ -4750,7 +4751,28 @@ Change Mode<br>
                     return
                 elif is_transcribe:
                     try:
-                        gendat = whisper_generate(genparams)
+                        global fullwhispermodelpath, has_audio_support
+                        gendat = None
+                        if genparams.get("audio_data","") and fullwhispermodelpath=="" and has_audio_support: #if we have no whisper model but an audio-capable projector, use that instead
+                            adapter_obj = {} if chatcompl_adapter is None else chatcompl_adapter
+                            user_message_start = adapter_obj.get("user_start", "### Instruction:")
+                            assistant_message_start = adapter_obj.get("assistant_start", "### Response:")
+                            assistant_message_gen = adapter_obj.get("assistant_gen", assistant_message_start)
+                            prompt = f"{user_message_start} Transcribe all speech in the audio.\n{assistant_message_gen}"
+                            rawaudio = genparams.get("audio_data","").replace("data:audio/wav;base64,","")
+                            temp_poll = {
+                                "prompt": prompt,
+                                "max_length":300,
+                                "temperature":0.1,
+                                "top_k":1,
+                                "rep_pen":1,
+                                "ban_eos_token":False,
+                                "audio": [rawaudio]
+                            }
+                            temp_poll_result = generate(genparams=temp_poll)
+                            gendat = temp_poll_result['text']
+                        else:
+                            gendat = whisper_generate(genparams)
                         genresp = (json.dumps({"text":gendat}).encode())
                         self.send_response(200)
                         self.send_header('content-length', str(len(genresp)))
