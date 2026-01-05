@@ -1065,7 +1065,6 @@ struct ggml_cuda_graph {
     cudaGraphExec_t instance = nullptr;
     size_t num_nodes = 0;
     std::vector<cudaGraphNode_t> nodes;
-    std::vector<cudaKernelNodeParams> params;
     bool disable_due_to_gpu_arch = false;
     bool disable_due_to_too_many_updates = false;
     bool disable_due_to_failed_graph_capture = false;
