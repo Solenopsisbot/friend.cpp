@@ -1072,7 +1072,7 @@ def convert_json_to_gbnf(json_obj):
         return ""
 
 def get_capabilities():
-    global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, has_audio_support, has_vision_support
+    global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, has_audio_support, has_vision_support, mcp_connections
     has_llm = not (friendlymodelname=="inactive")
     has_txt2img = not (friendlysdmodelname=="inactive" or fullsdmodelpath=="")
     has_password = (password!="")
@@ -1082,8 +1082,9 @@ def get_capabilities():
     has_embeddings = (embeddingsmodelpath!="")
     has_guidance = True if args.enableguidance else False
     has_jinja = True if args.jinja else False
+    has_mcp = True if (args.mcpfile and mcp_connections and len(mcp_connections) > 0) else False
     admin_type = (2 if args.admin and args.admindir and args.adminpassword else (1 if args.admin and args.admindir else 0))
-    return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":has_vision_support,"audio":has_audio_support,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts, "embeddings":has_embeddings, "savedata":(savedata_obj is not None), "admin": admin_type, "guidance": has_guidance, "jinja": has_jinja}
+    return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":has_vision_support,"audio":has_audio_support,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts, "embeddings":has_embeddings, "savedata":(savedata_obj is not None), "admin": admin_type, "guidance": has_guidance, "jinja": has_jinja, "mcp":has_mcp}
 
 def dump_gguf_metadata(file_path): #if you're gonna copy this into your own project at least credit concedo
     chunk_size = 1024*1024*12  # read first 12mb of file
@@ -4456,6 +4457,8 @@ Change Mode<br>
             response_body = (json.dumps({"message": "Settings successfully applied"}).encode())
 
         elif self.path=="/mcp": #simple mcp proxy
+            if not self.secure_endpoint():
+                return
             try:
                 tempbody = json.loads(body)
                 method = tempbody.get("method","")
@@ -5261,7 +5264,7 @@ def show_gui():
             if dlfile:
                 args.model_param = dlfile
             load_config_cli(args.model_param)
-        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.nomodel:
+        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.mcpfile and not args.nomodel:
             global exitcounter
             exitcounter = 999
             exit_with_error(2,"No gguf model or kcpps file was selected. Exiting.")
@@ -6962,7 +6965,7 @@ def show_gui():
         kcpp_exporting_template = False
         export_vars()
 
-        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.nomodel:
+        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.mcpfile and not args.nomodel:
             exitcounter = 999
             print("")
             time.sleep(0.5)
@@ -7793,7 +7796,7 @@ def main(launch_args, default_args):
         load_config_cli(args.model_param)
 
     # show the GUI launcher if a model was not provided
-    if args.showgui or (not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.nomodel):
+    if args.showgui or (not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.mcpfile and not args.nomodel):
         #give them a chance to pick a file
         print("For command line arguments, please refer to --help")
         print("***")
@@ -8500,6 +8503,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     enabledmlist.append("TextToSpeech") if "tts" in caps and caps["tts"] else disabledmlist.append("TextToSpeech")
     enabledmlist.append("VectorEmbeddings") if "embeddings" in caps and caps["embeddings"] else disabledmlist.append("VectorEmbeddings")
     enabledmlist.append("AdminControl") if "admin" in caps and caps["admin"]!=0 else disabledmlist.append("AdminControl")
+    enabledmlist.append("MCPBridge") if "mcp" in caps and caps["mcp"] else disabledmlist.append("MCPBridge")
 
     print(f"======\nActive Modules: {' '.join(enabledmlist)}")
     print(f"Inactive Modules: {' '.join(disabledmlist)}")
