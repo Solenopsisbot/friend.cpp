@@ -5449,7 +5449,7 @@ def show_gui():
     smartcacheslots_var = ctk.StringVar(value=str(savestate_limit_default))
     remotetunnel_var = ctk.IntVar(value=0)
     smartcontext_var = ctk.IntVar()
-    flashattention_var = ctk.IntVar(value=0)
+    flashattention_var = ctk.IntVar(value=1)
     context_var = ctk.IntVar()
     customrope_var = ctk.IntVar()
     manualrope_var = ctk.IntVar()
