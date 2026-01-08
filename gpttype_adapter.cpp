@@ -641,6 +641,7 @@ static void speculative_decoding_setup(std::string spec_model_filename, const ll
 
     draft_model_params.use_mmap = base_model_params.use_mmap;
     draft_model_params.use_mlock = base_model_params.use_mlock;
+    draft_model_params.use_direct_io = base_model_params.use_direct_io;
     draft_model_params.n_gpu_layers = draft_gpulayers; //layers offload the speculative model.
     draft_ctx_params.n_ctx = base_ctx_params.n_ctx;
     draft_ctx_params.offload_kqv = base_ctx_params.offload_kqv;
@@ -2371,6 +2372,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         llama_ctx_params.kv_unified = true;
         model_params.use_mmap = inputs.use_mmap;
         model_params.use_mlock = inputs.use_mlock;
+        model_params.use_direct_io = false; //no direct io for now until stable
         model_params.n_gpu_layers = inputs.gpulayers;
 
         #if defined(GGML_USE_CLBLAST)
@@ -2549,6 +2551,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
 
         //apply overrides from autofit
         float tensor_split_temp[128] = {0}; //temp buffer for autofit
+        std::vector<size_t> fit_params_target = std::vector<size_t>(llama_max_devices(),1024*1024*1024);
         if(inputs.autofit)
         {
             common_params temp_params;
@@ -2561,8 +2564,9 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             model_params.tensor_split = tensor_split_temp;
             model_params.n_gpu_layers = -1; //must be this value to be considered default
             printf("Autofit Reserve Space: %d MB\n",taxmb);
+            fit_params_target[0] = taxmb*1024*1024;
             llama_params_fit(kcpp_data->model_filename.c_str(), &model_params, &llama_ctx_params,
-            tensor_split_temp, tenos.data(), taxmb*1024*1024, kcpp_data->n_ctx,
+            tensor_split_temp, tenos.data(), fit_params_target.data(), kcpp_data->n_ctx,
             GGML_LOG_LEVEL_DEBUG);
             printf("Autofit Result: ");
             print_fitted_params(model_params,llama_ctx_params);
