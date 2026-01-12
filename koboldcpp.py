@@ -2992,7 +2992,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
             tools_message_end = adapter_obj.get("tools_end", "")
             images_added = []
             audio_added = []
-            continue_assistant_turn = genparams.get('continue_assistant_turn', False)
+            continue_assistant_turn = genparams.get('continue_assistant_turn', True)
             latest_turn_was_assistant = False
             latest_turn_was_tool = False
 
