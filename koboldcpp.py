@@ -2832,7 +2832,16 @@ def compress_tools_array(tools_array):
         params = tool_data.get("parameters", {})
         props = params.get("properties", {})
         for prop_name, prop_data in props.items():
-            tool_props[prop_name] = prop_data['type']
+            prop_type = prop_data.get("type")
+            if prop_type is None and "anyOf" in prop_data:
+                for option in prop_data["anyOf"]:
+                    option_type = option.get("type")
+                    if option_type and option_type != "null":
+                        prop_type = option_type
+                        break
+            if prop_type is None:
+                prop_type = "string"
+            tool_props[prop_name] = prop_type
         tools_array_filtered.append({
             "name": tool_data['name'],
             "description": tool_data['description'],
