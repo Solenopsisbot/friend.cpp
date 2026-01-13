@@ -4205,7 +4205,7 @@ bool clip_is_glm(const struct clip_ctx * ctx) {
     return ctx->proj_type() == PROJECTOR_TYPE_GLM_EDGE;
 }
 
-bool clip_is_mrope(const struct clip_ctx * ctx) {
+bool clip_is_mrope(const struct clip_ctx * ctx) { //kcpp: this was removed in https://github.com/ggml-org/llama.cpp/pull/18793 and moved to mtmd_decode_use_mrope
     switch (ctx->proj_type()) {
         case PROJECTOR_TYPE_QWEN2VL:
         case PROJECTOR_TYPE_QWEN25VL:
