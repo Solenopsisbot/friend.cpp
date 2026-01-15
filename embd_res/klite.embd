@@ -994,8 +994,8 @@ Current version indicated by LITEVER below.
 	}
 	.box-label {
 		color: var(--theme_color_text);
-		padding-left: 10px;
-		padding-right: 10px;
+		padding-left: 8px;
+		padding-right: 8px;
 		padding-bottom: 5px;
 		padding-top: 5px;
 		display: inline-block;
@@ -1171,6 +1171,42 @@ Current version indicated by LITEVER below.
 		}
 	}
 
+	.nikosquare{
+		display: inline-block;
+		height: 38px;
+		width: 38px;
+		padding: 3px 3px 3px 3px;
+		border-radius: 8%;
+		background: var(--img_nikosquare);
+		background-clip: content-box;
+		background-position: 50% 50%;
+		background-size: 100% 100%;
+		background-origin: content-box;
+		background-repeat: no-repeat;
+		border:none;
+		cursor: pointer;
+		vertical-align: middle;
+		margin-right: 3px;
+	}
+
+	.humansquare{
+		display: inline-block;
+		height: 38px;
+		width: 38px;
+		padding: 3px 3px 3px 3px;
+		border-radius: 8%;
+		background: var(--img_humansquare);
+		background-clip: content-box;
+		background-position: 50% 50%;
+		background-size: 100% 100%;
+		background-origin: content-box;
+		background-repeat: no-repeat;
+		border:none;
+		cursor: pointer;
+		vertical-align: middle;
+		margin-right: 3px;
+	}
+
 	/* Classic UI Main Text */
 	#gamescreen {
 		overflow-x: hidden;
@@ -1193,6 +1229,7 @@ Current version indicated by LITEVER below.
 		overflow-y: auto;
 		white-space: pre-wrap;
 		overflow-anchor: none;
+		align-self: flex-end;
 		color: var(--theme_color_ai_msg_fg);
 	}
 	#gametext, chunk, chunk * {
@@ -1241,18 +1278,18 @@ Current version indicated by LITEVER below.
 		padding-left: 4px;
 		padding-right: 4px;
 	}
-	#actionmenu input[type=checkbox] {
-		min-width: 13px;
-		min-height: 13px;
+	#actionmenu input[type=checkbox], .smallcheckbox{
+		min-width: 14px;
+		min-height: 14px;
 		appearance: none;
 		margin: 2px;
 		background: var(--theme_color_input_bg);
 		accent-color: var(--theme_color_input_bg);
 		border: 1px solid var(--theme_color_border);
 	}
-	#actionmenu input[type=checkbox]:checked {
-		min-width: 13px;
-		min-height: 13px;
+	#actionmenu input[type=checkbox]:checked, .smallcheckbox:checked {
+		min-width: 14px;
+		min-height: 14px;
 		appearance: auto;
 	}
 	@media (max-width: 600px) {
@@ -14578,8 +14615,8 @@ Current version indicated by LITEVER below.
 						let curr = worker_data[i];
 						let cm = (curr.models && curr.models.length > 0) ? curr.models[0] : "None";
 						let cn = curr.name;
-						let style = (curr.trusted ? "style=\"color:#b700ff;\"" : "");
-						style = (curr.maintenance_mode ? "style=\"color:#ee4444;\"" : style);
+						let style = (curr.trusted ? "" : "");
+						style = (curr.maintenance_mode ? "" : style);
 						let extratag = (curr.trusted ? " 💜" : "");
 						extratag = (curr.maintenance_mode ? " ⛔" : extratag);
 						let warndebugtag = (cm.toLowerCase().includes("debug-") ? " ⚠️" : "");
@@ -16140,22 +16177,34 @@ Current version indicated by LITEVER below.
 		}
 	}
 
-	function toggle_uistyle()
+	function toggle_uistyle(from_general_tab)
 	{
-		//show or hide the 'Customize UI' button based on whether the Aesthetic Instruct UI Mode is active or not.
-		if (document.getElementById('gui_type').value == 2) {
-			document.getElementById('btn_aesthetics').classList.remove('hidden');
+		if(from_general_tab)
+		{
+			document.getElementById("gui_type2").value = document.getElementById("gui_type").value;
 		}
-		else {
-			document.getElementById('btn_aesthetics').classList.add('hidden');
+		else
+		{
+			document.getElementById("gui_type").value = document.getElementById("gui_type2").value;
 		}
-		document.getElementById("guitypedesc").innerText = get_theme_desc(document.getElementById('gui_type').value);
 
-		if (document.getElementById('gui_type').value == 0) {
-			document.getElementById('classicmodeoptions').classList.remove('hidden');
+		//show or hide the 'Customize UI' button based on whether the Aesthetic Instruct UI Mode is active or not.
+		if (document.getElementById("gui_type").value == 2) {
+			document.getElementById("btn_aesthetics").classList.remove('hidden');
+			document.getElementById("btn_aesthetics2").classList.remove('hidden');
 		}
 		else {
-			document.getElementById('classicmodeoptions').classList.add('hidden');
+			document.getElementById("btn_aesthetics").classList.add('hidden');
+			document.getElementById("btn_aesthetics2").classList.add('hidden');
+		}
+		document.getElementById("guitypedesc").innerText = get_theme_desc(document.getElementById("gui_type").value);
+		document.getElementById("guitypedesc2").innerText = get_theme_desc(document.getElementById("gui_type").value);
+
+		if (document.getElementById("gui_type").value == 0) {
+			document.getElementById("classicmodeoptions").classList.remove('hidden');
+		}
+		else {
+			document.getElementById("classicmodeoptions").classList.add('hidden');
 		}
 	}
 
@@ -16223,53 +16272,69 @@ Current version indicated by LITEVER below.
 		document.getElementById('uipicker_messenger').classList.add('hidden');
 		document.getElementById('uipicker_aesthetic').classList.add('hidden');
 		document.getElementById('uipicker_corpo').classList.add('hidden');
+		document.getElementById('uipicker2_classic').classList.remove('hidden');
+		document.getElementById('uipicker2_messenger').classList.add('hidden');
+		document.getElementById('uipicker2_aesthetic').classList.add('hidden');
+		document.getElementById('uipicker2_corpo').classList.add('hidden');
 		document.getElementById('chatnamessection').classList.add('hidden');
 		document.getElementById('instructtagsection').classList.add('hidden');
 		document.getElementById('adventuresettingssection').classList.add('hidden');
 
 		if (document.getElementById('opmode').value == 1) {
-			document.getElementById('gui_type').value = localsettings.gui_type_story;
+			document.getElementById("gui_type").value = localsettings.gui_type_story;
 			document.getElementById('uipicker_aesthetic').classList.remove('hidden');
 			document.getElementById('uipicker_corpo').classList.remove('hidden');
+			document.getElementById('uipicker2_aesthetic').classList.remove('hidden');
+			document.getElementById('uipicker2_corpo').classList.remove('hidden');
 		}
 		if (document.getElementById('opmode').value == 2) {
-			document.getElementById('gui_type').value = localsettings.gui_type_adventure;
+			document.getElementById("gui_type").value = localsettings.gui_type_adventure;
 			document.getElementById('uipicker_aesthetic').classList.remove('hidden');
 			document.getElementById('uipicker_corpo').classList.remove('hidden');
+			document.getElementById('uipicker2_aesthetic').classList.remove('hidden');
+			document.getElementById('uipicker2_corpo').classList.remove('hidden');
 			document.getElementById('adventuresettingssection').classList.remove('hidden');
 		}
 		if (document.getElementById('opmode').value == 3) {
-			document.getElementById('gui_type').value = localsettings.gui_type_chat;
+			document.getElementById("gui_type").value = localsettings.gui_type_chat;
 			document.getElementById('uipicker_messenger').classList.remove('hidden');
 			document.getElementById('uipicker_aesthetic').classList.remove('hidden');
 			document.getElementById('uipicker_corpo').classList.remove('hidden');
+			document.getElementById('uipicker2_messenger').classList.remove('hidden');
+			document.getElementById('uipicker2_aesthetic').classList.remove('hidden');
+			document.getElementById('uipicker2_corpo').classList.remove('hidden');
 		}
 		if (document.getElementById('opmode').value == 4) {
-			document.getElementById('gui_type').value = localsettings.gui_type_instruct;
+			document.getElementById("gui_type").value = localsettings.gui_type_instruct;
 			document.getElementById('uipicker_messenger').classList.remove('hidden');
 			document.getElementById('uipicker_aesthetic').classList.remove('hidden');
 			document.getElementById('uipicker_corpo').classList.remove('hidden');
+			document.getElementById('uipicker2_messenger').classList.remove('hidden');
+			document.getElementById('uipicker2_aesthetic').classList.remove('hidden');
+			document.getElementById('uipicker2_corpo').classList.remove('hidden');
 			document.getElementById('instructtagsection').classList.remove('hidden');
 		}
 		toggle_include_chatnames();
 
 		//deselect invalid
 
-		let curropt = document.getElementById('gui_type').options[document.getElementById('gui_type').selectedIndex];
+		let curropt = document.getElementById("gui_type").options[document.getElementById("gui_type").selectedIndex];
 
 		if (curropt.classList.contains('hidden')) {
 			// The selected option is hidden, deselect it
-			document.getElementById('gui_type').value = 0;
+			document.getElementById("gui_type").value = 0;
 		}
 
-		if (document.getElementById('gui_type').value == 2) {
-			document.getElementById('btn_aesthetics').classList.remove('hidden');
+		if (document.getElementById("gui_type").value == 2) {
+			document.getElementById("btn_aesthetics").classList.remove('hidden');
+			document.getElementById("btn_aesthetics2").classList.remove('hidden');
 		}
 		else {
-			document.getElementById('btn_aesthetics').classList.add('hidden');
+			document.getElementById("btn_aesthetics").classList.add('hidden');
+			document.getElementById("btn_aesthetics2").classList.add('hidden');
 		}
 
-		toggle_uistyle();
+		toggle_uistyle(true);
 	}
 
 	//triggers if advanced load is enabled
@@ -22953,6 +23018,30 @@ Current version indicated by LITEVER below.
 		});
 	}
 
+	function splitIntoGroups(inputstr, chunks_per_group) { //function to break up a massive story into more managable parts, so we can keep them as distinct spans in the DOM
+		const MARKER = '<span class="txtchunk">';
+		const parts = inputstr.split(MARKER);
+		const result = [];
+		let buffer = [];
+		let count = 0;
+		if (parts[0]) { // leading junk before first txtchunk
+			buffer.push(parts[0]);
+		}
+		for (let i = 1; i < parts.length; i++) {
+			buffer.push(MARKER, parts[i]);
+			count++;
+			if (count === chunks_per_group) {
+				result.push(buffer.join(''));
+				buffer.length = 0; // reuse array
+				count = 0;
+			}
+		}
+		if (buffer.length) {
+			result.push(buffer.join(''));
+		}
+		return result;
+	}
+
 	function merge_edit_field() {
 		gametext_focused = false;
 		if (gametext_arr.length > 0 && document.getElementById("allowediting").checked) {
@@ -23395,7 +23484,7 @@ Current version indicated by LITEVER below.
 
 			// ---- WRITE PHASE (no reads) ----
 			suppressScrollEvent = true;
-			for (const item of scrollData) {
+			for (let item of scrollData) {
 				if (item.shouldScroll) {
 					item.el.scrollTop = item.maxScrollTop;
 				}
@@ -23620,14 +23709,14 @@ Current version indicated by LITEVER below.
 
 					if(curr.myturn)
 					{
-						fulltxt += `<hr style="margin-top: 12px; margin-bottom: 12px;"><span class="color_kobotext"><img src="${human_square}" onclick="classic_click_turn(this,${i})" style="height:38px;width:auto;padding:3px 6px 3px 3px;border-radius: 8%;"/>${currmsg}</span>`;
+						fulltxt += `<hr style="margin-top: 12px; margin-bottom: 12px;"><span class="color_kobotext"><span class="humansquare" onclick="classic_click_turn(this,${i})"></span>${currmsg}</span>`;
 					}
 					else
 					{
 						if (i == 0) {
 							fulltxt += `${currmsg}`;
 						} else {
-							fulltxt += `<hr style="margin-top: 12px; margin-bottom: 12px;"><img src="${niko_square}" onclick="classic_click_turn(this,${i})" style="height:38px;width:auto;padding:3px 6px 3px 3px;border-radius: 8%;"/>${currmsg}</span>`;
+							fulltxt += `<hr style="margin-top: 12px; margin-bottom: 12px;"><span><span class="nikosquare" onclick="classic_click_turn(this,${i})"></span>${currmsg}</span>`;
 						}
 					}
 				}
@@ -23662,8 +23751,8 @@ Current version indicated by LITEVER below.
 			}
 
 			//this is a hacky fix to handle instruct tags that use arrow brackets only
-			fulltxt = replaceAll(fulltxt, `%SpnStg%`, `<span class=\"txtchunk\">`);
-			fulltxt = replaceAll(fulltxt, `%SclStg%`,`<span class=\"color_gray\">`);
+			fulltxt = replaceAll(fulltxt, `%SpnStg%`, `<span class="txtchunk">`);
+			fulltxt = replaceAll(fulltxt, `%SclStg%`,`<span class="color_gray">`);
 			fulltxt = replaceAll(fulltxt, `%SpnEtg%`, `</span>`);
 
 			if(localsettings.opmode==3)
@@ -23730,6 +23819,16 @@ Current version indicated by LITEVER below.
 			if(fulltxt == "" && gametext_arr.length == 0 && synchro_pending_stream=="" && pending_response_id!="")
 			{
 				fulltxt = "Generating...";
+			}
+			if(inEditMode)
+			{
+				//fix to prevent layout thrashing due to forced reflow in chrome when deleting text, break into multiple spans with nothing else in between
+				let multigroups = splitIntoGroups(fulltxt, 150);
+				for(let i=0;i<multigroups.length;++i)
+				{
+					multigroups[i] = "<span>"+multigroups[i]+"</span>";
+				}
+				fulltxt = multigroups.join('');
 			}
 			document.getElementById("gametext").innerHTML = fulltxt;
 		}
@@ -27637,10 +27736,10 @@ Current version indicated by LITEVER below.
 		<div id="normalinterface" class="pagebox">
 		<div id="maineditbody" class="viewport_height">
 			<div class="gamescreenbgnormal viewport_height" id="gamescreen">
-				<span id="gametext" contenteditable="false" onclick="click_gametext()" onblur="merge_edit_field()">
+				<div id="gametext" contenteditable="false" onclick="click_gametext()" onblur="merge_edit_field()">
 					<p id="tempgtloadtxt">Loading...</p>
 					<noscript><style>#tempgtloadtxt { display: none; } #gametext { white-space: normal!important; }</style><p>Sorry, KoboldAI Lite requires Javascript to function.</p></noscript>
-				</span>
+				</div>
 				<div class="hidden" id="wordsearch_panel" style="flex:250px">
 					<div style="display:flex; padding:6px">
 					<input title="Word Search Input" class="form-control menuinput_inline" style="width: calc(100% - 34px); margin-right:2px;" type="text" placeholder="WordSearch" value="" onkeyup="trigger_wordsearch_candidates_key();" id="wordsearch_input">
@@ -28038,6 +28137,18 @@ Current version indicated by LITEVER below.
 							</div>
 							<div id="opmodedesc" class="settingsdesctxt justifyright"></div>
 						</div>
+						<div id="uipicker" class="settinglabel">
+							<div class="justifyleft">UI style <span class="helpicon">?<span class="helptext">Select your preferred UI style, which affects text formatting and display. Some UIs are only available for specific modes.</span></span></div>
+							<div class="push-right">
+							<select title="UI Style Selection" id="gui_type" class="form-control push-right" onchange="toggle_uistyle(true)">
+								<option id="uipicker_classic" value="0">Classic Theme</option>
+								<option id="uipicker_messenger" value="1">Messenger Theme</option>
+								<option id="uipicker_aesthetic" value="2">Aesthetic Theme</option>
+								<option id="uipicker_corpo" value="3">Corpo Theme</option>
+							</select></div>
+							<button type="button" class="btn btn-primary" id="btn_aesthetics" onclick="openAestheticUISettingsMenu()" style="border-color: #bbbbbb; width: 28px; margin-left: 3px; padding-top: 2px; padding-left: 1px; padding-right: 1px; padding-bottom: 2px;">⚙️</button>
+						</div>
+						<div id="guitypedesc" class="settingsdesctxt justifyright"></div>
 
 						<div id="instructtagsection">
 							<h3>Instruct Settings</h3>
@@ -28242,18 +28353,18 @@ Current version indicated by LITEVER below.
 				<div id="settingsmenuappearance" class="settingsmenu hidden" onchange="setting_tweaked()">
 					<div class="settingitem wide">
 						<h3 style="margin-top: 4px;">Appearance Settings</h3>
-						<div id="uipicker" class="settinglabel">
+						<div id="uipicker2" class="settinglabel">
 							<div class="justifyleft">UI style <span class="helpicon">?<span class="helptext">Select your preferred UI style, which affects text formatting and display. Some UIs are only available for specific modes.</span></span></div>
 							<div class="push-right">
-							<select title="UI Style Selection" id="gui_type" class="form-control push-right" onchange="toggle_uistyle()">
-								<option id="uipicker_classic" value="0">Classic Theme</option>
-								<option id="uipicker_messenger" value="1">Messenger Theme</option>
-								<option id="uipicker_aesthetic" value="2">Aesthetic Theme</option>
-								<option id="uipicker_corpo" value="3">Corpo Theme</option>
+							<select title="UI Style Selection" id="gui_type2" class="form-control push-right" onchange="toggle_uistyle(false)">
+								<option id="uipicker2_classic" value="0">Classic Theme</option>
+								<option id="uipicker2_messenger" value="1">Messenger Theme</option>
+								<option id="uipicker2_aesthetic" value="2">Aesthetic Theme</option>
+								<option id="uipicker2_corpo" value="3">Corpo Theme</option>
 							</select></div>
-							<button type="button" class="btn btn-primary" id="btn_aesthetics" onclick="openAestheticUISettingsMenu()" style="border-color: #bbbbbb; width: 28px; margin-left: 3px; padding-top: 2px; padding-left: 1px; padding-right: 1px; padding-bottom: 2px;">⚙️</button>
+							<button type="button" class="btn btn-primary" id="btn_aesthetics2" onclick="openAestheticUISettingsMenu()" style="border-color: #bbbbbb; width: 28px; margin-left: 3px; padding-top: 2px; padding-left: 1px; padding-right: 1px; padding-bottom: 2px;">⚙️</button>
 						</div>
-						<div id="guitypedesc" class="settingsdesctxt justifyright"></div>
+						<div id="guitypedesc2" class="settingsdesctxt justifyright"></div>
 
 						<div class="settinglabel">
 							<div class="justifyleft">Color scheme <span class="helpicon">?<span
@@ -28894,9 +29005,9 @@ Current version indicated by LITEVER below.
 					</div>
 
 					<div class="settingitem wide">
-						<h3>Audio</h3>
+						<h3>Audio Output</h3>
 						<div class="settinglabel">
-							<div class="justifyleft">Text to speech <span class="helpicon">?<span class="helptext">Enable Text-To-Speech to have your story or chat automatically read to you.</span></span></div>
+							<div class="justifyleft">Text to speech <span class="helpicon">?<span class="helptext">Enable Text-To-Speech to have your story or chat automatically read to you. You can also generate audio clips with this enabled in the Add File menu.</span></span></div>
 							<div class="push-right">
 							<select title="Text To Speech" class="form-control" id="ttsselect" onchange="toggle_tts_mode()">
 								<option value="0">Disabled</option>
@@ -29047,7 +29158,9 @@ Current version indicated by LITEVER below.
 							<input title="Save Narrations" type="checkbox" id="embed_narrations" class="push-right">
 						</div>
 
-						<div class="settingssep"></div>
+					</div>
+					<div class="settingitem wide">
+						<h3>Audio Input</h3>
 
 						<div class="settinglabel" style="margin-top: 4px;">
 							<div class="justifyleft" style="margin-top: 4px;">Voice Input <span class="helpicon">?<span class="helptext">Requires KoboldCpp with Whisper model loaded. Enables Speech-To-Text voice input. Automatically listens for speech in 'On' mode (Voice Detection), or use Push-To-Talk (PTT).</span></span></div>
@@ -29805,7 +29918,7 @@ Current version indicated by LITEVER below.
 					Select By Worker <span class="helpicon">?
 						<span class="helptext">This option explicitly assigns worker IDs, fixed based on the current workers available at model selection time.</span>
 					</span>
-					<input title="Select by Worker" type="checkbox" id="manualworker" onclick="toggle_manual_horde_worker()">
+					<input title="Select by Worker" class="smallcheckbox" style="vertical-align: middle;" type="checkbox" id="manualworker" onclick="toggle_manual_horde_worker()">
 
 					<span style="float:right;">
 						<input title="Quick Search" class="settinglabel miniinput" style="margin: 3px; width: 90px;" type="text" placeholder="Quick Search" value="" id="modelquicksearch" oninput="model_quick_search()">
