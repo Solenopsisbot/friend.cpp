@@ -51,6 +51,7 @@
 #define LLAMA_MAX_URL_LENGTH 2084 // Maximum URL Length in Chrome: 2083
 
 extern const char * LICENSES[];
+const char * LICENSES[] = {};
 
 using json = nlohmann::ordered_json;
 using namespace common_arg_utils;
