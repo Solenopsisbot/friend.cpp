@@ -444,8 +444,15 @@ class StdoutRedirector:
         self.terminal.flush()
 
 class MCPStdioClient:
+    def resolve_command(self, command):
+        resolved = shutil.which(command)
+        if resolved:
+            return resolved
+        return command # fallback
+
     def __init__(self,command,largs,env=None,cwd=None):
         if isinstance(command, str):
+            command = self.resolve_command(command)
             cmd = [command]
         else:
             cmd = list(command)
