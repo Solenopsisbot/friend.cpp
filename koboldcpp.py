@@ -465,6 +465,26 @@ class MCPStdioClient:
             cwd=cwd
         )
         self.lock = threading.Lock()
+        self.stderr_buffer = []
+        self.stderr_limit = 20
+        self.alive = True
+        self.stderr_thread = threading.Thread(
+            target=self._read_stderr,
+            daemon=True
+        )
+        self.stderr_thread.start()
+    def _read_stderr(self):
+        try:
+            for line in self.process.stderr:
+                if not line:
+                    break
+                line = line.rstrip()
+                self.stderr_buffer.append(line)
+                if len(self.stderr_buffer) > self.stderr_limit:
+                    self.stderr_buffer.pop(0)
+        finally:
+            self.alive = False
+
     def send(self, message: dict) -> dict: # Send JSON-RPC request and wait for one response.
         line = json.dumps(message)
         with self.lock:
@@ -474,6 +494,8 @@ class MCPStdioClient:
             self.process.stdin.flush()
             response = self.process.stdout.readline()
         if not response:
+            errmsg = "\n".join(self.stderr_buffer[-10:])
+            print(f"[MCP Server Error!]\n{errmsg}")
             raise RuntimeError("MCP server closed stdout")
         return json.loads(response)
     def notify(self, message: dict) -> None: # Send JSON-RPC notification (no response expected).
@@ -7646,6 +7668,7 @@ def load_mcp_async(args):
                 raise ValueError("MCP config missing 'mcpServers' object")
             for name, cfg in servers.items():
                 try:
+                    print(f"Connecting to MCP Server {name}...")
                     if not isinstance(cfg, dict):
                         raise ValueError(f"MCP server '{name}' must be an object")
                     mcpurl = cfg.get("url", "")
@@ -7660,7 +7683,7 @@ def load_mcp_async(args):
                     else:
                         raise ValueError(f"MCP server '{name}' missing 'command' and 'url'")
                     with mcp_lock:
-                        mcp_connections.append({"client":client,"tools":[]})
+                        mcp_connections.append({"client":client,"tools":[],"name":name})
                 except Exception as e:
                     print(f"MCP Init Error: {e}")
             for conn in list(mcp_connections):
@@ -8136,9 +8159,6 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         except Exception as e:
             print(f"Failed to access savedatafile '{filepath}': {e}")
 
-    if args.mcpfile and isinstance(args.mcpfile, str):
-        threading.Thread(target=load_mcp_async, args=(args,), daemon=True).start()
-
     if args.highpriority:
         print("Setting process to Higher Priority - Use Caution")
         try:
@@ -8533,6 +8553,9 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         endpoint_url = f"{httpsaffix}://localhost:{args.port}"
     else:
         endpoint_url = f"{httpsaffix}://{args.host}:{args.port}"
+
+    if args.mcpfile and isinstance(args.mcpfile, str):
+        threading.Thread(target=load_mcp_async, args=(args,), daemon=True).start()
 
     if start_server:
         if not args.remotetunnel:
