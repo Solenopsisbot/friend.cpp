@@ -15,7 +15,6 @@
 #include "json-schema-to-grammar.cpp"
 #include "llama.h"
 #include "sampling.h"
-#include "chat.cpp"
 #include "ggml/src/ggml-opt.cpp" //dear god pls
 
 #include <algorithm>

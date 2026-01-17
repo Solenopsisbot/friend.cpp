@@ -8512,6 +8512,10 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     except Exception:
         print("Could not find Embedded llama.cpp UI.")
 
+    if args.mcpfile and isinstance(args.mcpfile, str):
+        threading.Thread(target=load_mcp_async, args=(args,), daemon=True).start()
+        time.sleep(0.2) # short delay to allow get_capabilities to work
+
     # print enabled modules
     caps = get_capabilities()
     enabledmlist = []
@@ -8560,9 +8564,6 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         endpoint_url = f"{httpsaffix}://localhost:{args.port}"
     else:
         endpoint_url = f"{httpsaffix}://{args.host}:{args.port}"
-
-    if args.mcpfile and isinstance(args.mcpfile, str):
-        threading.Thread(target=load_mcp_async, args=(args,), daemon=True).start()
 
     if start_server:
         if not args.remotetunnel:
