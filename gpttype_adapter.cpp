@@ -643,6 +643,7 @@ static void speculative_decoding_setup(std::string spec_model_filename, const ll
     draft_model_params.use_mlock = base_model_params.use_mlock;
     draft_model_params.use_direct_io = base_model_params.use_direct_io;
     draft_model_params.n_gpu_layers = draft_gpulayers; //layers offload the speculative model.
+    draft_model_params.devices = base_model_params.devices;
     draft_ctx_params.n_ctx = base_ctx_params.n_ctx;
     draft_ctx_params.offload_kqv = base_ctx_params.offload_kqv;
     draft_model_params.main_gpu = base_model_params.main_gpu;
@@ -2375,6 +2376,19 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         model_params.use_direct_io = false; //no direct io for now until stable
         model_params.n_gpu_layers = inputs.gpulayers;
 
+        //set device overrides if needed
+        std::vector<ggml_backend_dev_t> devices_override;
+        std::string dev_override_str = inputs.devices_override;
+        if(dev_override_str!="")
+        {
+            devices_override = kcpp_parse_device_list(dev_override_str);
+            if(devices_override.size()>0)
+            {
+                printf("\nOverriding with %d devices...\n",devices_override.size()-1);
+                model_params.devices = devices_override.data();
+            }
+        }
+
         #if defined(GGML_USE_CLBLAST)
         if(file_format==FileFormat::GGUF_GENERIC && model_params.n_gpu_layers>0)
         {
@@ -2483,11 +2497,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         }
         //handle override tensor
         std::string tensoroverrides = inputs.override_tensors;
-        // if(file_format_meta.model_architecture==GGUFArch::ARCH_GEMMA3N)
-        // {
-        //     std::string forced = "per_layer_token_embd.weight=CPU"; //this tensor on gpu is problematic on unsloth q4_0
-        //     tensoroverrides = (tensoroverrides=="" ? forced: (forced+","+tensoroverrides));
-        // }
+
         if(ggml_backend_dev_count()>1 && inputs.moecpu>0)
         {
             std::string toadd = "";

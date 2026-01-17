@@ -80,6 +80,7 @@ struct load_model_inputs
     const int smartcacheslots = 0;
     const bool pipelineparallel = false;
     const float lora_multiplier = 1.0f;
+    const char * devices_override = nullptr;
     const bool quiet = false;
     const int debugmode = 0;
 };
@@ -192,6 +193,7 @@ struct sd_load_model_inputs
     const char * photomaker_filename = nullptr;
     const int img_hard_limit = 0;
     const int img_soft_limit = 0;
+    const char * devices_override = nullptr;
     const bool quiet = false;
     const int debugmode = 0;
 };
@@ -241,6 +243,7 @@ struct whisper_load_model_inputs
     const int clblast_info = 0;
     const int kcpp_main_gpu = 0;
     const char * vulkan_info = nullptr;
+    const char * devices_override = nullptr;
     const bool quiet = false;
     const int debugmode = 0;
 };
@@ -269,6 +272,7 @@ struct tts_load_model_inputs
     const int gpulayers = 0;
     const bool flash_attention = false;
     const int ttsmaxlen = 4096;
+    const char * devices_override = nullptr;
     const bool quiet = false;
     const int debugmode = 0;
 };
@@ -299,6 +303,7 @@ struct embeddings_load_model_inputs
     const bool flash_attention = false;
     const bool use_mmap = false;
     const int embeddingsmaxctx = 0;
+    const char * devices_override = nullptr;
     const bool quiet = false;
     const int debugmode = 0;
 };

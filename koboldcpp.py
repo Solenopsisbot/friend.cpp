@@ -226,6 +226,7 @@ class load_model_inputs(ctypes.Structure):
                 ("smartcacheslots", ctypes.c_int),
                 ("pipelineparallel", ctypes.c_bool),
                 ("lora_multiplier", ctypes.c_float),
+                ("devices_override", ctypes.c_char_p),
                 ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int)]
 
@@ -317,6 +318,7 @@ class sd_load_model_inputs(ctypes.Structure):
                 ("photomaker_filename", ctypes.c_char_p),
                 ("img_hard_limit", ctypes.c_int),
                 ("img_soft_limit", ctypes.c_int),
+                ("devices_override", ctypes.c_char_p),
                 ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int)]
 
@@ -361,6 +363,7 @@ class whisper_load_model_inputs(ctypes.Structure):
                 ("clblast_info", ctypes.c_int),
                 ("kcpp_main_gpu", ctypes.c_int),
                 ("vulkan_info", ctypes.c_char_p),
+                ("devices_override", ctypes.c_char_p),
                 ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int)]
 
@@ -385,6 +388,7 @@ class tts_load_model_inputs(ctypes.Structure):
                 ("gpulayers", ctypes.c_int),
                 ("flash_attention", ctypes.c_bool),
                 ("ttsmaxlen", ctypes.c_int),
+                ("devices_override", ctypes.c_char_p),
                 ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int)]
 
@@ -411,6 +415,7 @@ class embeddings_load_model_inputs(ctypes.Structure):
                 ("flash_attention", ctypes.c_bool),
                 ("use_mmap", ctypes.c_bool),
                 ("embeddingsmaxctx", ctypes.c_int),
+                ("devices_override", ctypes.c_char_p),
                 ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int)]
 
@@ -833,6 +838,7 @@ def set_backend_props(inputs):
         inputs.vulkan_info = "".encode("UTF-8")
 
     # set universal flags
+    inputs.devices_override = (args.device if args.device else "").encode("UTF-8")
     inputs.quiet = args.quiet
     inputs.debugmode = args.debugmode
     inputs.executable_path = (getdirpath()+"/").encode("UTF-8")
@@ -8832,6 +8838,7 @@ if __name__ == '__main__':
     advparser.add_argument("--gendefaults", metavar=('{"parameter":"value",...}'), help="Sets extra default parameters for some fields in API requests, as a JSON string.", default="")
     advparser.add_argument("--gendefaultsoverwrite", help="Allow the gendefaults parameters to overwrite the original value in API payloads.", action='store_true')
     advparser.add_argument("--mcpfile", metavar=('[mcp json file]'), help="Specify path to mcp.json which contains the Cladue Desktop compatible MCP server config.", default="")
+    advparser.add_argument("--device", "-dev", metavar=('<dev1,dev2,..>'), help="Set llama.cpp compatible device selection override. Comma separated. Overrides normal device choices.", default="")
 
     hordeparsergroup = parser.add_argument_group('Horde Worker Commands')
     hordeparsergroup.add_argument("--hordemodelname", metavar=('[name]'), help="Sets your AI Horde display model name.", default="")
