@@ -60,7 +60,8 @@ extern "C"
                 vulkan_info_str += ",";
             }
         }
-        if(vulkan_info_str!="")
+        const char* existingenv = getenv("GGML_VK_VISIBLE_DEVICES");
+        if(!existingenv && vulkan_info_str!="")
         {
             vulkandeviceenv = "GGML_VK_VISIBLE_DEVICES="+vulkan_info_str;
             putenv((char*)vulkandeviceenv.c_str());

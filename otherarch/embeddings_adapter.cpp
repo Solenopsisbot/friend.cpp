@@ -101,7 +101,8 @@ bool embeddingstype_load_model(const embeddings_load_model_inputs inputs)
             vulkan_info_str += ",";
         }
     }
-    if(vulkan_info_str!="")
+    const char* existingenv = getenv("GGML_VK_VISIBLE_DEVICES");
+    if(!existingenv && vulkan_info_str!="")
     {
         ttsvulkandeviceenv = "GGML_VK_VISIBLE_DEVICES="+vulkan_info_str;
         putenv((char*)ttsvulkandeviceenv.c_str());
