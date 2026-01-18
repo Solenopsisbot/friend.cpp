@@ -33,6 +33,7 @@ const char* model_version_to_str[] = {
     "SD 2.x",
     "SD 2.x Inpaint",
     "SD 2.x Tiny UNet",
+    "SDXS",
     "SDXL",
     "SDXL Inpaint",
     "SDXL Instruct-Pix2Pix",
@@ -49,6 +50,7 @@ const char* model_version_to_str[] = {
     "Wan 2.2 TI2V",
     "Qwen Image",
     "Flux.2",
+    "Flux.2 klein",
     "Z-Image",
     "Ovis Image",
 };
@@ -307,10 +309,11 @@ public:
         bool isqwenimg = (tempver==VERSION_QWEN_IMAGE);
         bool iszimg = (tempver==VERSION_Z_IMAGE);
         bool isflux2 = (tempver==VERSION_FLUX2);
+        bool isflux2k = (tempver==VERSION_FLUX2_KLEIN);
         bool is_ovis =  (tempver==VERSION_OVIS_IMAGE);
 
         //kcpp qol fallback: if qwen image, and they loaded the qwen2vl llm as t5 by mistake
-        if((isqwenimg||iszimg||isflux2||is_ovis) && t5_path_fixed!="")
+        if((isqwenimg||iszimg||isflux2||isflux2k||is_ovis) && t5_path_fixed!="")
         {
             if(clipl_path_fixed=="" && clipg_path_fixed=="")
             {
@@ -342,7 +345,7 @@ public:
                 prefix = "cond_stage_model.transformer.";
                 LOG_INFO("swap clip_vision from '%s'", clipl_path_fixed.c_str());
             }
-            if(isqwenimg||iszimg||isflux2||is_ovis)
+            if(isqwenimg||iszimg||isflux2||isflux2k||is_ovis)
             {
                 prefix = "text_encoders.llm.";
                 LOG_INFO("swap llm from '%s'", clipl_path_fixed.c_str());
@@ -542,6 +545,11 @@ public:
             vae_decode_only = false;
         }
 
+        bool tae_preview_only = sd_ctx_params->tae_preview_only;
+        if (version == VERSION_SDXS) {
+            tae_preview_only = false;
+        }
+
         if (sd_ctx_params->circular_x || sd_ctx_params->circular_y) {
             LOG_INFO("Using circular padding for convolutions");
         }
@@ -726,7 +734,7 @@ public:
                 vae_backend = backend;
             }
 
-            if (!use_tiny_autoencoder || sd_ctx_params->tae_preview_only) {
+            if (!(use_tiny_autoencoder || version == VERSION_SDXS) || tae_preview_only) {
                 if (sd_version_is_wan(version) || sd_version_is_qwen_image(version)) {
                     first_stage_model = std::make_shared<WAN::WanVAERunner>(vae_backend,
                                                                             offload_params_to_cpu,
@@ -764,8 +772,7 @@ public:
                     first_stage_model->get_param_tensors(tensors, "first_stage_model");
                 }
             }
-
-            if (use_tiny_autoencoder) {
+            if (use_tiny_autoencoder || version == VERSION_SDXS) {
                 if (sd_version_is_wan(version) || sd_version_is_qwen_image(version)) {
                     tae_first_stage = std::make_shared<TinyVideoAutoEncoder>(vae_backend,
                                                                              offload_params_to_cpu,
@@ -780,6 +787,10 @@ public:
                                                                              "decoder.layers",
                                                                              vae_decode_only,
                                                                              version);
+                    if (version == VERSION_SDXS) {
+                        tae_first_stage->alloc_params_buffer();
+                        tae_first_stage->get_param_tensors(tensors, "first_stage_model");
+                    }
                 }
                 if (sd_ctx_params->vae_conv_direct) {
                     LOG_INFO("Using Conv2d direct in the tae model");
@@ -921,14 +932,15 @@ public:
                 unet_params_mem_size += high_noise_diffusion_model->get_params_buffer_size();
             }
             size_t vae_params_mem_size = 0;
-            if (!use_tiny_autoencoder || sd_ctx_params->tae_preview_only) {
+            if (!(use_tiny_autoencoder || version == VERSION_SDXS) || tae_preview_only) {
                 vae_params_mem_size = first_stage_model->get_params_buffer_size();
             }
-            if (use_tiny_autoencoder) {
-                if (!tae_first_stage->load_from_file(taesd_path_fixed, n_threads)) {
+            if (use_tiny_autoencoder || version == VERSION_SDXS) {
+                if (use_tiny_autoencoder && !tae_first_stage->load_from_file(taesd_path_fixed, n_threads)) {
                     return false;
                 }
-                vae_params_mem_size = tae_first_stage->get_params_buffer_size();
+                use_tiny_autoencoder = true;  // now the processing is identical for VERSION_SDXS
+                vae_params_mem_size  = tae_first_stage->get_params_buffer_size();
             }
             size_t control_net_params_mem_size = 0;
             if (control_net) {
@@ -1084,7 +1096,7 @@ public:
         }
 
         ggml_free(ctx);
-        use_tiny_autoencoder = use_tiny_autoencoder && !sd_ctx_params->tae_preview_only;
+        use_tiny_autoencoder = use_tiny_autoencoder && !tae_preview_only;
         return true;
     }
 
