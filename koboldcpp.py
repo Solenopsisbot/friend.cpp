@@ -5485,6 +5485,7 @@ def show_gui():
     tensor_split_str_vars = ctk.StringVar(value="")
     rowsplit_var = ctk.IntVar()
     maingpu_var = ctk.StringVar(value="-1")
+    deviceoverride_var = ctk.StringVar(value="")
 
     contextshift_var = ctk.IntVar(value=1)
     fastforward_var = ctk.IntVar(value=1)
@@ -6159,6 +6160,7 @@ def show_gui():
     makelabelentry(hardware_tab, "Threads:" , threads_var, 11, 50, padx=160, singleline=True,tooltip="How many threads to use.\nRecommended value is your CPU core count, defaults are usually OK.")
     # blas thread specifier
     makelabelentry(hardware_tab, "Batch Threads:" , blas_threads_var, 11, 50,padx=340, singleline=True,tooltip="How many threads to use during batched processing.\nIf left blank, uses same value as regular thread count.",labelpadx=240)
+    makelabelentry(hardware_tab, "Device Override", deviceoverride_var, 15, 120, padx=(160), singleline=True, tooltip="Set llama.cpp compatible device selection override. Comma separated (e.g. Vulkan0,Vulkan1). Overrides normal device choices.")
 
     # hardware checkboxes
     hardware_boxes = {
@@ -6563,6 +6565,7 @@ def show_gui():
 
         args.maingpu = -1 if maingpu_var.get()=="" else int(maingpu_var.get())
         args.blasthreads = None if blas_threads_var.get()=="" else int(blas_threads_var.get())
+        args.device = deviceoverride_var.get()
         args.batchsize = int(batchsize_values[int(blas_size_var.get())])
         args.autofit = autofit_var.get() == 1
         args.contextsize = int(contextsize_text[context_var.get()])
@@ -6797,6 +6800,10 @@ def show_gui():
             blas_threads_var.set(str(dict["blasthreads"]))
         else:
             blas_threads_var.set("")
+        if "device" in dict and dict["device"]:
+            deviceoverride_var.set(str(dict["device"]))
+        else:
+            deviceoverride_var.set("")
         if "contextsize" in dict and dict["contextsize"]:
             context_var.set(contextsize_text.index(str(dict["contextsize"])))
         if "overridenativecontext" in dict and dict["overridenativecontext"]>0:
