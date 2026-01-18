@@ -11852,7 +11852,7 @@ Current version indicated by LITEVER below.
 					let cn = lpc[i];
 					lastlogprobsstr += `<td style="color:lime">${escape_html(cn.token)}<br>(${(Math.exp(cn.logprob)*100).toFixed(2)}%)</td>`;
 					let addspace = false;
-					for(let j=0;j<15;++j)
+					for(let j=0;j<5;++j)
 					{
 						if(j>=cn.top_logprobs.length)
 						{
