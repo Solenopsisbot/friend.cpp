@@ -804,6 +804,18 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         }
     }
 
+    if(loadedsdver == SDVersion::VERSION_SDXS)
+    {
+        if(sd_params->cfg_scale > 1.0f || sd_params->sample_steps > 1)
+        {
+            if (!sd_is_quiet && sddebugmode) {
+                printf("SDXS: clamping steps and cfg to 1\n");
+            }
+            sd_params->cfg_scale = 1.0f;
+            sd_params->sample_steps = 1;
+        }
+    }
+
     if(is_wan && extra_image_data.size()==0 && is_img2img)
     {
         extra_image_data.push_back(img2img_data);
