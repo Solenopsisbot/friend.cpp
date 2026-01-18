@@ -4732,7 +4732,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                     std::string topstr = toppick.selected_token;
                     ::utreplace(topstr, "\n", "\\n");
                     printf("(%s <%d> %.2f%%)", RemoveBell(topstr).c_str(), toppick.selected_tokenid, toppick.selected_probability*100);
-                    int maxtoshow = (toppick.tokenid.size()>4?4:toppick.tokenid.size());
+                    int maxtoshow = (toppick.tokenid.size()>4?4:toppick.tokenid.size()); //hardcode limit even if we have more logprobs_max
                     for (int i=0;i<maxtoshow;++i)
                     {
                         if(toppick.tokenid[i]==toppick.selected_tokenid)

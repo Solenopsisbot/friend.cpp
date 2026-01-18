@@ -4,7 +4,7 @@
 const int tensor_split_max = 16;
 const int images_max = 8;
 const int audio_max = 4;
-const int logprobs_max = 5;
+const int logprobs_max = 10;
 const int overridekv_max = 4;
 
 // match kobold's sampler list and order
