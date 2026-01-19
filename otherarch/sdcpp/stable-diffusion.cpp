@@ -442,6 +442,10 @@ public:
             {
                 to_replace = "taesd_3.embd";
             }
+            else if(sd_version_is_flux2(version))
+            {
+                to_replace = "taesd_f2.embd";
+            }
             else if((sd_version_is_wan(version) && version != VERSION_WAN2_2_TI2V)||sd_version_is_qwen_image(version))
             {
                 to_replace = "taesd_w21.embd";
