@@ -318,6 +318,7 @@ class sd_load_model_inputs(ctypes.Structure):
                 ("lora_multiplier", ctypes.c_float),
                 ("lora_apply_mode", ctypes.c_int),
                 ("photomaker_filename", ctypes.c_char_p),
+                ("upscaler_filename", ctypes.c_char_p),
                 ("img_hard_limit", ctypes.c_int),
                 ("img_soft_limit", ctypes.c_int),
                 ("devices_override", ctypes.c_char_p),
@@ -354,6 +355,10 @@ class sd_generation_outputs(ctypes.Structure):
                 ("animated", ctypes.c_int),
                 ("data", ctypes.c_char_p),
                 ("data_extra", ctypes.c_char_p)]
+
+class sd_upscale_inputs(ctypes.Structure):
+    _fields_ = [("init_images", ctypes.c_char_p),
+                ("upscaling_resize", ctypes.c_int)]
 
 class sd_info_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -771,6 +776,8 @@ def init_library():
     handle.sd_load_model.restype = ctypes.c_bool
     handle.sd_generate.argtypes = [sd_generation_inputs]
     handle.sd_generate.restype = sd_generation_outputs
+    handle.sd_upscale.argtypes = [sd_upscale_inputs]
+    handle.sd_upscale.restype = sd_generation_outputs
     handle.sd_get_info.argtypes = []
     handle.sd_get_info.restype = sd_info_outputs
     handle.whisper_load_model.argtypes = [whisper_load_model_inputs]
@@ -1969,7 +1976,7 @@ def sd_quant_option(value):
     except Exception:
         return 0
 
-def sd_load_model(model_filename,vae_filename,lora_filename,t5xxl_filename,clip1_filename,clip2_filename,photomaker_filename):
+def sd_load_model(model_filename,vae_filename,lora_filename,t5xxl_filename,clip1_filename,clip2_filename,photomaker_filename,upscaler_filename):
     global args
     inputs = sd_load_model_inputs()
     inputs.model_filename = model_filename.encode("UTF-8")
@@ -1998,6 +2005,7 @@ def sd_load_model(model_filename,vae_filename,lora_filename,t5xxl_filename,clip1
     inputs.clip1_filename = clip1_filename.encode("UTF-8")
     inputs.clip2_filename = clip2_filename.encode("UTF-8")
     inputs.photomaker_filename = photomaker_filename.encode("UTF-8")
+    inputs.upscaler_filename = upscaler_filename.encode("UTF-8")
     inputs.img_hard_limit = args.sdclamped
     inputs.img_soft_limit = args.sdclampedsoft
     inputs.lora_apply_mode = 0 #auto for now
@@ -2090,6 +2098,17 @@ def gendefaults_parse_meta_field(input_str):
             result[canonical] = value
     result.update(parsed)  # Second pass: explicit keys override aliases
     return result
+
+def sd_upscale(genparams):
+    init_images = genparams.get("image", "")
+    inputs = sd_upscale_inputs()
+    inputs.init_images = init_images.encode("UTF-8")
+    inputs.upscaling_resize = tryparseint(genparams.get("upscaling_resize", 2),2) # how many times to upscale
+    ret = handle.sd_upscale(inputs)
+    data_main = ""
+    if ret.status==1:
+        data_main = ret.data.decode("UTF-8","ignore")
+    return data_main
 
 def sd_generate(genparams):
     global maxctx, args, currentusergenkey, totalgens, pendingabortkey, chatcompl_adapter
@@ -3974,6 +3993,12 @@ Change Mode<br>
         elif clean_path.endswith('/v1/models') or clean_path=='/models':
             response_body = (json.dumps({"object":"list","data":[{"id":friendlymodelname,"object":"model","created":int(time.time()),"owned_by":"koboldcpp","permission":[],"root":"koboldcpp"}]}).encode())
 
+        elif clean_path.endswith('/sdapi/v1/upscalers'):
+            if args.sdupscaler:
+                response_body = (json.dumps([{"name":"ESRGAN_4x","model_name":"ESRGAN_4x","model_path":"upscaler_model.gguf","model_url":None,"scale":4}]).encode())
+            else:
+                response_body = (json.dumps([]).encode())
+
         elif clean_path.endswith('/sdapi/v1/sd-models'):
             if friendlysdmodelname=="inactive" or fullsdmodelpath=="":
                 response_body = (json.dumps([]).encode())
@@ -4627,6 +4652,7 @@ Change Mode<br>
             is_imggen = False
             is_comfyui_imggen = False
             is_oai_imggen = False
+            is_img_upscale = False
             is_transcribe = False
             is_tts = False
             is_embeddings = False
@@ -4712,6 +4738,8 @@ Change Mode<br>
                 api_format = 6
             elif self.path.endswith('/api/chat'): #ollama
                 api_format = 7
+            elif self.path.endswith('/sdapi/v1/extra-single-image') or self.path.endswith('/sdapi/v1/upscale'):
+                is_img_upscale = True
             elif self.path=="/prompt" or self.path=="/images/generations" or self.path.endswith('/v1/images/generations') or self.path.endswith('/sdapi/v1/txt2img') or self.path.endswith('/sdapi/v1/img2img'):
                 is_imggen = True
                 if self.path=="/prompt":
@@ -4730,11 +4758,11 @@ Change Mode<br>
                 self.send_header('content-length', str(len(response_body)))
                 self.end_headers(content_type='application/json')
                 self.wfile.write(response_body)
-            elif is_imggen or is_transcribe or is_tts or is_embeddings or api_format > 0:
+            elif is_imggen or is_img_upscale or is_transcribe or is_tts or is_embeddings or api_format > 0:
                 global last_req_time
                 last_req_time = time.time()
 
-                if not is_imggen and not self.path.endswith('/tts_to_audio') and api_format!=5:
+                if not is_imggen and not is_img_upscale and not self.path.endswith('/tts_to_audio') and api_format!=5:
                     if not self.secure_endpoint():
                         return
 
@@ -4923,6 +4951,19 @@ Change Mode<br>
                         time.sleep(0.2) #short delay
                     return
 
+                elif is_img_upscale: #esrgan upscale
+                    try:
+                        gen = sd_upscale(genparams)
+                        genresp = (json.dumps({"html_info":"<p>Postprocess upscale by: 2.0, Postprocess upscaler: ESRGAN_4x</p>","image":gen}).encode())
+                        self.send_response(200)
+                        self.send_header('content-length', str(len(genresp)))
+                        self.end_headers(content_type='application/json')
+                        self.wfile.write(genresp)
+                    except Exception as ex:
+                        utfprint(ex,1)
+                        print("Upscale Image: The response could not be sent, maybe connection was terminated?")
+                        time.sleep(0.2) #short delay
+                    return
                 elif is_imggen: #image gen
                     try:
                         if is_comfyui_imggen:
@@ -5559,6 +5600,7 @@ def show_gui():
     sd_clip1_var = ctk.StringVar()
     sd_clip2_var = ctk.StringVar()
     sd_photomaker_var = ctk.StringVar()
+    sd_upscaler_var = ctk.StringVar()
     sd_flash_attention_var = ctk.IntVar(value=0)
     sd_offload_cpu_var = ctk.IntVar(value=0)
     sd_vae_cpu_var = ctk.IntVar(value=0)
@@ -6358,6 +6400,8 @@ def show_gui():
     makefileentry(images_tab, "Clip-1 File:", "Select First Clip model file (Clip-L for SD3 or Flux, or other vision encoder)",sd_clip1_var, 26, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select a .safetensors Clip-1 file to be loaded.\nThis is Clip-L for SD3 and Flux, Clip Vision for WAN, and Qwen2.5VL for QwenImage")
     makefileentry(images_tab, "Clip-2 File:", "Select Second Clip model file (Clip-G for SD3)",sd_clip2_var, 28, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select a .safetensors Clip-2 file to be loaded.\nThis is Clip-G for SD3")
     makefileentry(images_tab, "PhotoMaker:", "Select Optional PhotoMaker model file (SDXL)",sd_photomaker_var, 30, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="PhotoMaker is a model that allows face cloning.\nSelect a .safetensors PhotoMaker file to be loaded (SDXL only).")
+    makefileentry(images_tab, "Upscaler:", "Select Optional Upscaling model file (ESRGAN)",sd_upscaler_var, 32, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select an upscaler model file.\nCurrently only ESRGAN is supported.")
+
 
     sdvaeitem1,sdvaeitem2,sdvaeitem3 = makefileentry(images_tab, "Image VAE:", "Select Optional SD VAE file",sd_vae_var, 40, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf", "*.safetensors *.gguf")],tooltiptxt="Select a .safetensors or .gguf SD VAE file to be loaded.")
     def toggletaesd(a,b,c):
@@ -6675,6 +6719,8 @@ def show_gui():
             args.sdclip2 = sd_clip2_var.get()
         if sd_photomaker_var.get() != "":
             args.sdphotomaker = sd_photomaker_var.get()
+        if sd_upscaler_var.get() != "":
+            args.sdupscaler = sd_upscaler_var.get()
         args.sdquant = sd_quant_option(sd_quant_var.get())
         if sd_lora_var.get() != "":
             args.sdlora = sd_lora_var.get()
@@ -6917,6 +6963,7 @@ def show_gui():
         sd_clip1_var.set(dict["sdclip1"] if ("sdclip1" in dict and dict["sdclip1"]) else "")
         sd_clip2_var.set(dict["sdclip2"] if ("sdclip2" in dict and dict["sdclip2"]) else "")
         sd_photomaker_var.set(dict["sdphotomaker"] if ("sdphotomaker" in dict and dict["sdphotomaker"]) else "")
+        sd_upscaler_var.set(dict["sdupscaler"] if ("sdupscaler" in dict and dict["sdupscaler"]) else "")
         sd_vaeauto_var.set(1 if ("sdvaeauto" in dict and dict["sdvaeauto"]) else 0)
         sd_tiled_vae_var.set(str(dict["sdtiledvae"]) if ("sdtiledvae" in dict and dict["sdtiledvae"]) else str(default_vae_tile_threshold))
 
@@ -8100,6 +8147,10 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         dlfile = download_model_from_url(args.sdphotomaker,[".gguf",".safetensors"],min_file_size=500000)
         if dlfile:
             args.sdphotomaker = dlfile
+    if args.sdupscaler and args.sdupscaler!="":
+        dlfile = download_model_from_url(args.sdupscaler,[".gguf",".safetensors"],min_file_size=500000)
+        if dlfile:
+            args.sdupscaler = dlfile
     if args.sdvae and args.sdvae!="":
         dlfile = download_model_from_url(args.sdvae,[".gguf",".safetensors"],min_file_size=500000)
         if dlfile:
@@ -8384,6 +8435,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             imgclip1 = ""
             imgclip2 = ""
             imgphotomaker = ""
+            imgupscaler = ""
             if args.sdlora:
                 if os.path.exists(args.sdlora):
                     imglora = os.path.abspath(args.sdlora)
@@ -8414,13 +8466,18 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                     imgphotomaker = os.path.abspath(args.sdphotomaker)
                 else:
                     print("Missing SD Photomaker model file...")
+            if args.sdupscaler:
+                if os.path.exists(args.sdupscaler):
+                    imgupscaler = os.path.abspath(args.sdupscaler)
+                else:
+                    print("Missing SD Upscaler model file...")
 
             imgmodel = os.path.abspath(imgmodel)
             fullsdmodelpath = imgmodel
             friendlysdmodelname = os.path.basename(imgmodel)
             friendlysdmodelname = os.path.splitext(friendlysdmodelname)[0]
             friendlysdmodelname = sanitize_string(friendlysdmodelname)
-            loadok = sd_load_model(imgmodel,imgvae,imglora,imgt5xxl,imgclip1,imgclip2,imgphotomaker)
+            loadok = sd_load_model(imgmodel,imgvae,imglora,imgt5xxl,imgclip1,imgclip2,imgphotomaker,imgupscaler)
             print("Load Image Model OK: " + str(loadok))
             if not loadok:
                 exitcounter = 999
@@ -8869,6 +8926,7 @@ if __name__ == '__main__':
     sdparsergroup.add_argument("--sdclip1", "--sdclipl", metavar=('[filename]'), help="Specify first safetensors Clip model (SD3 or Flux Clip-L, WAN or QwenImg vision). Leave blank if prebaked or unused.", default="")
     sdparsergroup.add_argument("--sdclip2", "--sdclipg", metavar=('[filename]'), help="Specify second safetensors Clip model (SD3 Clip-G). Leave blank if prebaked or unused.", default="")
     sdparsergroup.add_argument("--sdphotomaker", metavar=('[filename]'), help="PhotoMaker is a model that allows face cloning. Specify a PhotoMaker safetensors model which will be applied replacing img2img. SDXL models only. Leave blank if unused.", default="")
+    sdparsergroup.add_argument("--sdupscaler", metavar=('[filename]'), help="You can use ESRGAN as an upscaling model to resize images. Leave blank if unused.", default="")
     sdparsergroup.add_argument("--sdflashattention", help="Enables Flash Attention for image generation.", action='store_true')
     sdparsergroup.add_argument("--sdoffloadcpu", help="Offload image weights in RAM to save VRAM, swap into VRAM when needed.", action='store_true')
     sdparsergroup.add_argument("--sdvaecpu", help="Force VAE to CPU only for image generation.", action='store_true')

@@ -220,6 +220,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     std::string clip1_filename = inputs.clip1_filename;
     std::string clip2_filename = inputs.clip2_filename;
     std::string photomaker_filename = inputs.photomaker_filename;
+    std::string upscaler_filename = inputs.upscaler_filename;
     cfg_tiled_vae_threshold = inputs.tiled_vae_threshold;
     cfg_tiled_vae_threshold = (cfg_tiled_vae_threshold > 8192 ? 8192 : cfg_tiled_vae_threshold);
     cfg_tiled_vae_threshold = (cfg_tiled_vae_threshold <= 0 ? 8192 : cfg_tiled_vae_threshold); //if negative dont tile
@@ -266,6 +267,10 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     {
         printf("With PhotoMaker Model: %s\n",photomaker_filename.c_str());
         photomaker_enabled = true;
+    }
+    if(upscaler_filename!="")
+    {
+        printf("With Upscaler Model: %s\n",upscaler_filename.c_str());
     }
     if(inputs.flash_attention)
     {
@@ -1249,6 +1254,22 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     output.status = 1;
     total_img_gens += 1;
     return output;
+}
+
+sd_generation_outputs sdtype_upscale(const sd_upscale_inputs inputs)
+{
+    sd_generation_outputs output;
+    if(sd_ctx == nullptr || sd_params == nullptr)
+    {
+        printf("\nWarning: KCPP image generation not initialized!\n");
+        output.data = "";
+        output.data_extra = "";
+        output.animated = 0;
+        output.status = 0;
+        return output;
+    }
+
+     return output;
 }
 
 sd_info_outputs sdtype_get_info()

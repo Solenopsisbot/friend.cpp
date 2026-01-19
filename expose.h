@@ -193,6 +193,7 @@ struct sd_load_model_inputs
     const float lora_multiplier = 1.0f;
     const int lora_apply_mode = 0;
     const char * photomaker_filename = nullptr;
+    const char * upscaler_filename = nullptr;
     const int img_hard_limit = 0;
     const int img_soft_limit = 0;
     const char * devices_override = nullptr;
@@ -231,6 +232,11 @@ struct sd_generation_outputs
     int animated = 0;
     const char * data = "";
     const char * data_extra = "";
+};
+struct sd_upscale_inputs
+{
+    const char * init_images = "";
+    const int upscaling_resize = 0;
 };
 struct sd_info_outputs
 {
