@@ -225,6 +225,7 @@ struct sd_generation_inputs
     const bool remove_limits = false;
     const bool circular_x = false;
     const bool circular_y = false;
+    const bool upscale = false;
 };
 struct sd_generation_outputs
 {

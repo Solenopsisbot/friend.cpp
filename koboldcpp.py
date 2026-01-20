@@ -348,7 +348,8 @@ class sd_generation_inputs(ctypes.Structure):
                 ("video_output_type", ctypes.c_int),
                 ("remove_limits", ctypes.c_bool),
                 ("circular_x", ctypes.c_bool),
-                ("circular_y", ctypes.c_bool)]
+                ("circular_y", ctypes.c_bool),
+                ("upscale", ctypes.c_bool)]
 
 class sd_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2200,6 +2201,7 @@ def sd_generate(genparams):
     inputs.remove_limits = allow_remove_limits
     inputs.circular_x = tryparseint(adapter_obj.get("circular_x", genparams.get("circular_x",0)),0)
     inputs.circular_y = tryparseint(adapter_obj.get("circular_y", genparams.get("circular_y",0)),0)
+    inputs.upscale = (True if tryparseint(genparams.get("enable_hr", 0),0) else False)
     ret = handle.sd_generate(inputs)
     data_main = ""
     data_extra = ""
@@ -6400,7 +6402,7 @@ def show_gui():
     makefileentry(images_tab, "Clip-1 File:", "Select First Clip model file (Clip-L for SD3 or Flux, or other vision encoder)",sd_clip1_var, 26, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select a .safetensors Clip-1 file to be loaded.\nThis is Clip-L for SD3 and Flux, Clip Vision for WAN, and Qwen2.5VL for QwenImage")
     makefileentry(images_tab, "Clip-2 File:", "Select Second Clip model file (Clip-G for SD3)",sd_clip2_var, 28, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select a .safetensors Clip-2 file to be loaded.\nThis is Clip-G for SD3")
     makefileentry(images_tab, "PhotoMaker:", "Select Optional PhotoMaker model file (SDXL)",sd_photomaker_var, 30, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="PhotoMaker is a model that allows face cloning.\nSelect a .safetensors PhotoMaker file to be loaded (SDXL only).")
-    makefileentry(images_tab, "Upscaler:", "Select Optional Upscaling model file (ESRGAN)",sd_upscaler_var, 32, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select an upscaler model file.\nCurrently only ESRGAN is supported.")
+    makefileentry(images_tab, "Upscaler:", "Select Optional Upscaling model file (ESRGAN)",sd_upscaler_var, 32, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf *.pth","*.safetensors *.gguf *.pth")],tooltiptxt="Select an upscaler model file.\nCurrently only ESRGAN is supported.")
 
 
     sdvaeitem1,sdvaeitem2,sdvaeitem3 = makefileentry(images_tab, "Image VAE:", "Select Optional SD VAE file",sd_vae_var, 40, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf", "*.safetensors *.gguf")],tooltiptxt="Select a .safetensors or .gguf SD VAE file to be loaded.")
@@ -8148,7 +8150,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         if dlfile:
             args.sdphotomaker = dlfile
     if args.sdupscaler and args.sdupscaler!="":
-        dlfile = download_model_from_url(args.sdupscaler,[".gguf",".safetensors"],min_file_size=500000)
+        dlfile = download_model_from_url(args.sdupscaler,[".gguf",".safetensors",".pth"],min_file_size=500000)
         if dlfile:
             args.sdupscaler = dlfile
     if args.sdvae and args.sdvae!="":
