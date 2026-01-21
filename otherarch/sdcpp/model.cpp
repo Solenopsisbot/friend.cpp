@@ -1068,6 +1068,7 @@ SDVersion ModelLoader::get_sd_version() {
     int64_t patch_embedding_channels = 0;
     bool has_img_emb                 = false;
     bool has_middle_block_1          = false;
+    bool has_output_block_311        = false;
     bool has_output_block_71         = false;
 
     for (auto& [name, tensor_storage] : tensor_storage_map) {
@@ -1128,6 +1129,9 @@ SDVersion ModelLoader::get_sd_version() {
             tensor_storage.name.find("unet.mid_block.resnets.1.") != std::string::npos) {
             has_middle_block_1 = true;
         }
+        if (tensor_storage.name.find("model.diffusion_model.output_blocks.3.1.transformer_blocks.1") != std::string::npos) {
+            has_output_block_311 = true;
+        }
         if (tensor_storage.name.find("model.diffusion_model.output_blocks.7.1") != std::string::npos) {
             has_output_block_71 = true;
         }
@@ -1166,6 +1170,9 @@ SDVersion ModelLoader::get_sd_version() {
             return VERSION_SDXL_PIX2PIX;
         }
         if (!has_middle_block_1) {
+            if (!has_output_block_311) {
+                return VERSION_SDXL_VEGA;
+            }
             return VERSION_SDXL_SSD1B;
         }
         return VERSION_SDXL;
