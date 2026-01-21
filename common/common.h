@@ -4,6 +4,7 @@
 
 #include "ggml-opt.h"
 #include "llama-cpp.h"
+#include "build-info.h"
 
 #include <set>
 #include <sstream>
@@ -52,6 +53,8 @@ struct common_adapter_lora_info {
 using llama_tokens = std::vector<llama_token>;
 
 // build info
+
+const static std::string build_info("b" + std::to_string(LLAMA_BUILD_NUMBER) + "-" + LLAMA_COMMIT);
 
 struct common_control_vector_load_info;
 
@@ -280,6 +283,7 @@ struct common_params_diffusion {
 };
 
 // reasoning API response format (not to be confused as chat template's reasoning format)
+// only used by server
 enum common_reasoning_format {
     COMMON_REASONING_FORMAT_NONE,
     COMMON_REASONING_FORMAT_AUTO,            // Same as deepseek, using `message.reasoning_content`
