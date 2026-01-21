@@ -5521,7 +5521,7 @@ def show_gui():
     debugmode = ctk.IntVar()
     keepforeground = ctk.IntVar()
     terminalonly = ctk.IntVar()
-    pipelineparallel = ctk.IntVar()
+    pipelineparallel = ctk.IntVar(value=1)
     quietmode = ctk.IntVar(value=0)
     nocertifymode = ctk.IntVar(value=0)
 
