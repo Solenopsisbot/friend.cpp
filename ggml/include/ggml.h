@@ -701,14 +701,7 @@ extern "C" {
 
         void * extra; // extra things e.g. for ggml-cuda.cu
 
-        union {
         char padding[8];
-        union {
-        char trimmed_pad_1[3];
-        char clblast_offload_gpu; //we sneak the flag for gpu offloading for clblast into the padding
-        char trimmed_pad_2[4];
-        };
-        };
     };
 
     static const size_t GGML_TENSOR_SIZE = sizeof(struct ggml_tensor);

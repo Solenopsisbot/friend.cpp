@@ -131,10 +131,6 @@
 #include "models/mistral3.cpp"
 #include "models/graph-context-mamba.cpp"
 
-#if defined(GGML_USE_CLBLAST)
-#  include "ggml_v3b-opencl.h"
-#endif
-
 const char * llm_type_name(llm_type type) {
     switch (type) {
         case LLM_TYPE_14M:           return "14M";
@@ -2638,12 +2634,6 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
     }
 
     int i_gpu_start = std::max(int(hparams.n_layer) + 1 - n_gpu_layers, 0);
-
-    #if defined(GGML_USE_CLBLAST)
-    printf("\nOpenCL GPU Offload Fallback...\n");
-    clblast_offload_fallback_layers = n_gpu_layers;
-    i_gpu_start = std::max((int64_t) hparams.n_layer, (int64_t) 0);
-    #endif
 
     const int act_gpu_layers = devices.empty() ? 0 : std::min(n_gpu_layers, int(n_layer) + 1);
     auto get_layer_buft_list = [&](int il) -> llama_model::impl::layer_dev {
@@ -7563,9 +7553,6 @@ static bool buft_supported(ggml_backend_buffer_type_t buft, ggml_backend_dev_t d
         throw std::runtime_error(format("failed to create ggml context"));
     }
 
-    #if defined(GGML_USE_CLBLAST)
-    ggml_cl_init();
-    #endif
     ggml_backend_buffer_ptr buf { ggml_backend_buft_alloc_buffer(buft, 0) };
     ggml_tensor * op_tensor = fn(ctx.get());
     for (int i = 0; i < GGML_MAX_SRC; i++) {

@@ -8,10 +8,6 @@
 #include <cstring>
 #include <future>
 
-#if defined(GGML_USE_CLBLAST)
-#  include "ggml_v3b-opencl.h"
-#endif
-
 static const size_t kiB = 1024;
 static const size_t MiB = 1024*kiB;
 static const size_t GiB = 1024*MiB;
@@ -973,7 +969,6 @@ void llama_model_loader::load_data_for(struct ggml_tensor * cur) const {
     }
 }
 
-static int clblast_offload_fallback_layers = 0;
 static int layer_name_to_number(std::string inputString)
 {
     size_t firstDotPosition = inputString.find('.');
@@ -1219,18 +1214,6 @@ bool llama_model_loader::load_all_data(
                 }
             }
         }
-
-        #if defined(GGML_USE_CLBLAST)
-        int layernum = layer_name_to_number(cur->name);
-        bool shouldoffload = (layernum>=0 && clblast_offload_fallback_layers>layernum);
-        if(shouldoffload)
-        {
-            cur->clblast_offload_gpu = true;
-            ggml_cl_transform_tensor(cur->data, cur);
-        }else{
-            cur->clblast_offload_gpu = false;
-        }
-        #endif
 
         size_done += n_size;
     }

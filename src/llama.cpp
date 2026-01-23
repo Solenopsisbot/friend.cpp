@@ -43,8 +43,6 @@ static bool old_mixtral_warning_showed = false;
 
 #ifdef GGML_USE_CUDA
 #  include "ggml-cuda.h"
-#elif defined(GGML_USE_CLBLAST)
-#  include "ggml_v3b-opencl.h"
 #endif
 
 #if defined(_MSC_VER)
@@ -804,13 +802,9 @@ bool llama_supports_mlock(void) {
 }
 
 bool llama_supports_gpu_offload(void) {
-    #if defined(GGML_USE_CLBLAST)
-        return true;
-    #else
     return ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) != nullptr ||
            ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU) != nullptr ||
            llama_supports_rpc();
-    #endif
 }
 
 bool llama_supports_rpc(void) {

@@ -158,7 +158,7 @@ static int savestate_limit = 0;
 static std::vector<savestate_data> savestates;
 
 inline int kcpp_cpu_has_blas(void) {
-#if defined(GGML_USE_BLAS) || defined(GGML_USE_CUDA) || defined(GGML_USE_VULKAN) || defined(GGML_USE_CLBLAST) || defined(GGML_USE_SYCL)
+#if defined(GGML_USE_BLAS) || defined(GGML_USE_CUDA) || defined(GGML_USE_VULKAN) || defined(GGML_USE_SYCL)
     return 1;
 #else
     return 0;
@@ -2389,21 +2389,6 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             }
         }
 
-        #if defined(GGML_USE_CLBLAST)
-        if(file_format==FileFormat::GGUF_GENERIC && model_params.n_gpu_layers>0)
-        {
-            if(file_format_meta.model_architecture == GGUFArch::ARCH_FALCON)
-            {
-                printf("\nOpenCL does not support GPU Layer offloading for this model architecture! GPU Offload has been disabled.\n");
-                model_params.n_gpu_layers = 0;
-            }
-            else if(file_format_meta.n_expert_count>1)
-            {
-                printf("\nOpenCL cannot use regular GPU offloading for this model architecture. A fallback GPU offloader will be used with degraded performance.\n");
-
-            }
-        }
-        #endif
         #if defined(GGML_USE_CUDA)
         if(kcpp_parseinfo_maindevice>0)
         {
@@ -3278,7 +3263,7 @@ int GetThreadsToUse(bool blasmode)
 {
     if (blasmode)
     {
-        #if defined(GGML_USE_CLBLAST) || defined(GGML_USE_CUDA) || defined(GGML_USE_VULKAN)
+        #if defined(GGML_USE_CUDA) || defined(GGML_USE_VULKAN)
             return kcpp_data->n_blasthreads;
         #else
             return std::min(kcpp_data->n_blasthreads, 4);
