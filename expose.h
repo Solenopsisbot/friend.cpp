@@ -53,7 +53,6 @@ struct load_model_inputs
     const bool use_smartcontext = false;
     const bool use_contextshift = false;
     const bool use_fastforward = false;
-    const int clblast_info = 0;
     const int kcpp_main_gpu = 0;
     const char * vulkan_info = nullptr;
     const int batchsize = 512;
@@ -172,7 +171,6 @@ struct sd_load_model_inputs
 {
     const char * model_filename = nullptr;
     const char * executable_path = nullptr;
-    const int clblast_info = 0;
     const int kcpp_main_gpu = 0;
     const char * vulkan_info = nullptr;
     const int threads = 0;
@@ -249,7 +247,6 @@ struct whisper_load_model_inputs
 {
     const char * model_filename = nullptr;
     const char * executable_path = nullptr;
-    const int clblast_info = 0;
     const int kcpp_main_gpu = 0;
     const char * vulkan_info = nullptr;
     const char * devices_override = nullptr;
@@ -275,7 +272,6 @@ struct tts_load_model_inputs
     const char * ttc_model_filename = nullptr;
     const char * cts_model_filename = nullptr;
     const char * executable_path = nullptr;
-    const int clblast_info = 0;
     const int kcpp_main_gpu = 0;
     const char * vulkan_info = nullptr;
     const int gpulayers = 0;
@@ -305,7 +301,6 @@ struct embeddings_load_model_inputs
     const int threads = 4;
     const char * model_filename = nullptr;
     const char * executable_path = nullptr;
-    const int clblast_info = 0;
     const int kcpp_main_gpu = 0;
     const char * vulkan_info = nullptr;
     const int gpulayers = 0;

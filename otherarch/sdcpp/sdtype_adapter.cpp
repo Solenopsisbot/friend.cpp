@@ -108,7 +108,7 @@ static uint8_t * upscale_src_buffer = NULL;
 static std::vector<uint8_t *> input_extraimage_buffers;
 const int max_extra_images = 4;
 
-static std::string sdplatformenv, sddeviceenv, sdvulkandeviceenv;
+static std::string sdvulkandeviceenv;
 static int cfg_tiled_vae_threshold = 0;
 static int cfg_square_limit = 0;
 static int cfg_side_limit = 0;
@@ -292,16 +292,6 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     }
 
     //duplicated from expose.cpp
-    int cl_parseinfo = inputs.clblast_info; //first digit is whether configured, second is platform, third is devices
-    std::string usingclblast = "GGML_OPENCL_CONFIGURED="+std::to_string(cl_parseinfo>0?1:0);
-    putenv((char*)usingclblast.c_str());
-    cl_parseinfo = cl_parseinfo%100; //keep last 2 digits
-    int platform = cl_parseinfo/10;
-    int devices = cl_parseinfo%10;
-    sdplatformenv = "GGML_OPENCL_PLATFORM="+std::to_string(platform);
-    sddeviceenv = "GGML_OPENCL_DEVICE="+std::to_string(devices);
-    putenv((char*)sdplatformenv.c_str());
-    putenv((char*)sddeviceenv.c_str());
     std::string vulkan_info_raw = inputs.vulkan_info;
     std::string vulkan_info_str = "";
     for (size_t i = 0; i < vulkan_info_raw.length(); ++i) {
