@@ -14,6 +14,7 @@ static bool old_mixtral_warning_showed = false;
 #include "llama-kv-cache.cpp"
 #include "llama-kv-cache-iswa.cpp"
 #include "llama-memory-hybrid.cpp"
+#include "llama-memory-hybrid-iswa.cpp"
 #include "llama-memory-recurrent.cpp"
 #include "llama-model-loader.cpp"
 #include "llama-model-saver.cpp"
