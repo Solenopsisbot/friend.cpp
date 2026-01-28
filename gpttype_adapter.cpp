@@ -2758,7 +2758,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             printf("\nThis architecture has explicitly disabled the BOS token - if you need it, you must add it manually.\n");
             add_bos_token = false;
         }
-        if (file_format == FileFormat::GGUF_GENERIC && file_format_meta.model_architecture == GGUFArch::ARCH_GLM4) {
+        if (file_format == FileFormat::GGUF_GENERIC && (file_format_meta.model_architecture == GGUFArch::ARCH_GLM4 || file_format_meta.model_architecture == GGUFArch::ARCH_DEEPSEEK2)) {
             std::string temp = gpttype_get_chat_template();
             if (temp.find("[gMASK]<sop>") != std::string::npos) {
                 printf("GLM-4 will have no automatic BOS token.\n");
@@ -3728,7 +3728,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     //need to add a cursed hack to improve coherency for GLM4, by ensuring injection for gmask, sop and an extra space
     //any complaints please direct them to henky
-    if (file_format == FileFormat::GGUF_GENERIC && file_format_meta.model_architecture == GGUFArch::ARCH_GLM4) {
+    //deepseek2 is actually used for glm 4.7 flash
+    if (file_format == FileFormat::GGUF_GENERIC && (file_format_meta.model_architecture == GGUFArch::ARCH_GLM4 || file_format_meta.model_architecture == GGUFArch::ARCH_DEEPSEEK2)) {
         std::string temp = gpttype_get_chat_template();
         if (temp.find("[gMASK]<sop>") != std::string::npos) {
             if (addedmemory == "") {
