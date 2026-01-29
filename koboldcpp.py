@@ -7627,7 +7627,11 @@ def load_mcp_async(args):
                 raise ValueError("MCP config must be a JSON object")
             servers = loaded.get("mcpServers")
             if not isinstance(servers, dict):
-                raise ValueError("MCP config missing 'mcpServers' object")
+                serversVsCode = loaded.get("servers")
+                if isinstance(serversVsCode, dict):
+                    servers = serversVsCode
+                else:
+                    raise ValueError("MCP config missing 'mcpServers' object")
             for name, cfg in servers.items():
                 try:
                     print(f"Connecting to MCP Server {name}...")
