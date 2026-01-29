@@ -5253,7 +5253,7 @@ def show_gui():
             return False
         xml_path = Path.home() / ".config" / "monitors.xml"
         if not xml_path.exists(): #monitors.xml not found. if we have fractional scaling on gnome, just trigger the fallback
-            if fractional_enabled and "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP") and os.environ.get("XDG_SESSION_TYPE") == "wayland":
+            if fractional_enabled and ("GNOME" in os.environ.get("XDG_CURRENT_DESKTOP") or "KDE" in os.environ.get("XDG_CURRENT_DESKTOP")) and os.environ.get("XDG_SESSION_TYPE") == "wayland":
                 return True
             return False
         try:
