@@ -7644,7 +7644,9 @@ def load_mcp_async(args):
                         mcpenv = cfg.get("env", {})
                         client = MCPStdioClient(command=mcpcmd,largs=mcpargs,env=mcpenv)
                     elif mcpurl:
+                        mcp_ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36'
                         headers = cfg.get("headers", {})
+                        headers.setdefault('User-Agent', mcp_ua)
                         client = MCPHTTPClient(url=mcpurl, headers=headers)
                     else:
                         raise ValueError(f"MCP server '{name}' missing 'command' and 'url'")
