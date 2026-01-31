@@ -787,6 +787,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     bool is_wan = (loadedsdver == SDVersion::VERSION_WAN2 || loadedsdver == SDVersion::VERSION_WAN2_2_I2V || loadedsdver == SDVersion::VERSION_WAN2_2_TI2V);
     bool is_qwenimg = (loadedsdver == SDVersion::VERSION_QWEN_IMAGE);
     bool is_kontext = (loadedsdver==SDVersion::VERSION_FLUX && !loaded_model_is_chroma(sd_ctx));
+    bool is_flux2 = (loadedsdver == SDVersion::VERSION_FLUX2 || loadedsdver == SDVersion::VERSION_FLUX2_KLEIN);
 
     if (loadedsdver == SDVersion::VERSION_FLUX)
     {
@@ -914,7 +915,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                     wan_imgs.push_back(extraimage_reference);
                 }
             }
-            else if(is_qwenimg)
+            else if(is_qwenimg || is_flux2)
             {
                 uint8_t * loaded = load_image_from_b64(extra_image_data[i],nx2,ny2);
                 if(loaded)
