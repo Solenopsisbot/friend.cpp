@@ -525,11 +525,15 @@ class MCPStdioClient:
 
 class MCPHTTPClient:
     def __init__(self, url, headers=None, timeout=60.0):
+        global nocertify
         self.url = url
         self.headers = {"Content-Type": "application/json","Accept": "application/json, text/event-stream"}
         if headers:
             self.headers.update(headers)
         self.timeout = timeout
+        ssl_cert_dir = os.environ.get('SSL_CERT_DIR')
+        if not ssl_cert_dir and not nocertify and os.name != 'nt':
+            os.environ['SSL_CERT_DIR'] = '/etc/ssl/certs'
 
     def _read_sse(self, response) -> bytes:
         last_json = None
