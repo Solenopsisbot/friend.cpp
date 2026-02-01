@@ -809,12 +809,12 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
     if(!remove_limits && loadedsdver == SDVersion::VERSION_Z_IMAGE)
     {
-        if(sd_params->cfg_scale > 3.0f)
+        if(sd_params->cfg_scale > 4.0f)
         {
             if (!sd_is_quiet && sddebugmode) {
-                printf("Z-Image: clamping CFG Scale to 3.0 to preserve quality\n");
+                printf("Z-Image: clamping CFG Scale to 4.0 to preserve quality\n");
             }
-            sd_params->cfg_scale = 3.0f;
+            sd_params->cfg_scale = 4.0f;
         }
     }
 
