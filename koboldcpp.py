@@ -5247,6 +5247,20 @@ def show_gui():
         import xml.etree.ElementTree as ET
         from pathlib import Path
         fractional_enabled = False # Check if fractional scaling is enabled
+        xdg_curr_desk = os.environ.get("XDG_CURRENT_DESKTOP")
+        if xdg_curr_desk and "KDE" in xdg_curr_desk and os.environ.get("XDG_SESSION_TYPE") == "wayland": #first handle kde
+            dpi = 0
+            try:
+                output = subprocess.check_output(["xrdb", "-query"], text=True).strip()
+                if output:
+                    for line in output.splitlines():
+                        if line.startswith("Xft.dpi:"):
+                            dpi = float(line.split(":")[1].strip())
+                            break
+            except Exception:
+                pass
+            if dpi > 100:
+                return True
         try:
             features = subprocess.check_output(
                 ["gsettings", "get", "org.gnome.mutter", "experimental-features"],
@@ -5257,7 +5271,7 @@ def show_gui():
             return False
         xml_path = Path.home() / ".config" / "monitors.xml"
         if not xml_path.exists(): #monitors.xml not found. if we have fractional scaling on gnome, just trigger the fallback
-            if fractional_enabled and ("GNOME" in os.environ.get("XDG_CURRENT_DESKTOP") or "KDE" in os.environ.get("XDG_CURRENT_DESKTOP")) and os.environ.get("XDG_SESSION_TYPE") == "wayland":
+            if fractional_enabled and "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP") and os.environ.get("XDG_SESSION_TYPE") == "wayland":
                 return True
             return False
         try:
@@ -5410,6 +5424,7 @@ def show_gui():
         else:
             gtooltip_label.configure(text=tooltip_text)
 
+        gtooltip_box.update_idletasks()
         x, y = root.winfo_pointerxy()
         gtooltip_box.wm_geometry(f"+{x + 10}+{y + 10}")
         gtooltip_box.deiconify()
