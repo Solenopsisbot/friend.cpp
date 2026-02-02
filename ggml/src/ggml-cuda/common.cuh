@@ -1172,7 +1172,7 @@ struct ggml_cuda_graph {
         } else {
             number_consecutive_updates = 0;
         }
-        if (number_consecutive_updates >= 4) {
+        if (number_consecutive_updates >= 4 && !disable_due_to_too_many_updates) {
             GGML_LOG_DEBUG("%s: disabling CUDA graphs due to too many consecutive updates\n", __func__);
             disable_due_to_too_many_updates = true;
         }

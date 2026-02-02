@@ -3929,13 +3929,18 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
 }
 
 #ifdef USE_CUDA_GRAPH
+static bool cugraph_warned = false;
 static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, const void * graph_key) {
     ggml_cuda_graph * graph = cuda_ctx->cuda_graph(graph_key);
 
     if (graph->graph == nullptr) {
         if (ggml_cuda_info().devices[cuda_ctx->device].cc < GGML_CUDA_CC_AMPERE) {
             if (!graph->disable_due_to_gpu_arch) {
-                GGML_LOG_DEBUG("%s: disabling CUDA graphs due to GPU architecture\n", __func__);
+                if(!cugraph_warned)
+                {
+                    cugraph_warned = true;
+                    GGML_LOG_DEBUG("%s: disabling CUDA graphs due to GPU architecture\n", __func__);
+                }
             }
             graph->disable_due_to_gpu_arch = true;
         }
