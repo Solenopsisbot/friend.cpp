@@ -5244,11 +5244,8 @@ def show_gui():
     def get_problematic_scaler():
         if sys.platform != "linux":
             return False
-        import xml.etree.ElementTree as ET
-        from pathlib import Path
-        fractional_enabled = False # Check if fractional scaling is enabled
         xdg_curr_desk = os.environ.get("XDG_CURRENT_DESKTOP")
-        if xdg_curr_desk and "KDE" in xdg_curr_desk and os.environ.get("XDG_SESSION_TYPE") == "wayland": #first handle kde
+        if xdg_curr_desk and ("KDE" in xdg_curr_desk or "GNOME" in xdg_curr_desk or "Cinnamon" in xdg_curr_desk): # broad spectrum dpi handler
             dpi = 0
             try:
                 output = subprocess.check_output(["xrdb", "-query"], text=True).strip()
@@ -5261,6 +5258,10 @@ def show_gui():
                 pass
             if dpi > 100:
                 return True
+
+        import xml.etree.ElementTree as ET
+        from pathlib import Path
+        fractional_enabled = False # Check if fractional scaling is enabled
         try:
             features = subprocess.check_output(
                 ["gsettings", "get", "org.gnome.mutter", "experimental-features"],
