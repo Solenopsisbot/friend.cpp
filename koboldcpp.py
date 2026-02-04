@@ -67,7 +67,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.107.1"
+KcppVersion = "1.107.2"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":""}
@@ -3383,7 +3383,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         recvtxt = genout['text']
         prompttokens = genout['prompt_tokens']
         comptokens = genout['completion_tokens']
-        currfinishreason = ("length" if (genout['stopreason'] != 1) else "stop")
+        currfinishreason = "error" if (genout['stopreason'] == -2) else ("length" if (genout['stopreason'] != 1) else "stop")
 
         # grab logprobs if not streaming
         logprobsdict = None
@@ -3476,7 +3476,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 streamDone = handle.has_finished() #exit next loop on done
                 if streamDone:
                     sr = handle.get_last_stop_reason()
-                    currfinishreason = ("length" if (sr!=1) else "stop")
+                    currfinishreason = "error" if sr==-2 else ("length" if (sr!=1) else "stop")
                 tokenStr = ""
                 streamcount = handle.get_stream_count()
                 while current_token < streamcount:

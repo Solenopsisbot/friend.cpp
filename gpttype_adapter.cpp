@@ -3396,7 +3396,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         output.text = nullptr;
         output.status = 0;
         output.prompt_tokens = output.completion_tokens = 0;
-        output.stopreason = stop_reason::INVALID;
+        last_stop_reason = stop_reason::ERROR_ENCOUNTERED;
+        output.stopreason = last_stop_reason;
         generation_finished = true;
         return output;
     }
@@ -4482,7 +4483,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 output.text = nullptr;
                 output.status = 0;
                 output.prompt_tokens = output.completion_tokens = 0;
-                output.stopreason = stop_reason::INVALID;
+                last_stop_reason = stop_reason::ERROR_ENCOUNTERED;
+                output.stopreason = last_stop_reason;
                 generation_finished = true;
                 return output;
             }
@@ -4944,7 +4946,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                                     output.text = nullptr;
                                     output.status = 0;
                                     output.prompt_tokens = output.completion_tokens = 0;
-                                    output.stopreason = stop_reason::INVALID;
+                                    last_stop_reason = stop_reason::ERROR_ENCOUNTERED;
+                                    output.stopreason = last_stop_reason;
                                     generation_finished = true;
                                     return output;
                                 }
@@ -4974,7 +4977,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                             output.text = nullptr;
                             output.status = 0;
                             output.prompt_tokens = output.completion_tokens = 0;
-                            output.stopreason = stop_reason::INVALID;
+                            last_stop_reason = stop_reason::ERROR_ENCOUNTERED;
+                            output.stopreason = last_stop_reason;
                             generation_finished = true;
                             return output;
                         }
