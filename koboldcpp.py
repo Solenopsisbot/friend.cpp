@@ -560,7 +560,7 @@ class MCPHTTPClient:
         return json_events[-1].encode("utf-8")
 
 
-    def send(self, message: dict) -> dict: # Send JSON-RPC request and return response.
+    def send(self, message: dict, await_response=True) -> dict: # Send JSON-RPC request and return response.
         data = json.dumps(message).encode("utf-8")
         req = urllib.request.Request(self.url, data=data, headers=self.headers, method="POST")
         try:
@@ -575,6 +575,8 @@ class MCPHTTPClient:
             raise RuntimeError(f"MCP HTTP error {e.code}: {error_body}") from e
         except urllib.error.URLError as e:
             raise RuntimeError(f"MCP HTTP connection failed: {e.reason}") from e
+        if not await_response:
+            return None
         if not body:
             raise RuntimeError("MCP HTTP server returned empty response")
         try:
