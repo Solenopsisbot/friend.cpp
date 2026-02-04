@@ -536,18 +536,29 @@ class MCPHTTPClient:
             os.environ['SSL_CERT_DIR'] = '/etc/ssl/certs'
 
     def _read_sse(self, response) -> bytes:
-        last_json = None
+        json_events = []
+        buf = []
         for raw in response:
-            line = raw.decode("utf-8", errors="replace").strip()
-            if not line or line.startswith(":"):
+            line = raw.decode("utf-8", errors="replace").rstrip("\n")
+            if not line: # end of SSE event
+                if buf:
+                    payload = "\n".join(buf)
+                    if payload and payload[0] in "{[":
+                        json_events.append(payload)
+                    buf = []
+                continue
+            if line.startswith(":"):
                 continue
             if line.startswith("data:"):
-                payload = line[5:].strip()
-                if payload and payload[0] in "{[":
-                    last_json = payload
-        if not last_json:
+                buf.append(line[5:].lstrip())
+        if buf: # flush last event
+            payload = "\n".join(buf)
+            if payload and payload[0] in "{[":
+                json_events.append(payload)
+        if not json_events:
             raise RuntimeError("MCP HTTP server returned no JSON SSE response")
-        return last_json.encode("utf-8")
+        return json_events[-1].encode("utf-8")
+
 
     def send(self, message: dict) -> dict: # Send JSON-RPC request and return response.
         data = json.dumps(message).encode("utf-8")
