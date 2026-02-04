@@ -370,6 +370,9 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     params.lora_apply_mode = (lora_apply_mode_t)lora_apply_mode;
     // params.flow_shift = 5.0f;
 
+    // also switches flash attn for the vae and conditioner
+    params.flash_attn = params.diffusion_flash_attn;
+
     if (params.chroma_use_dit_mask && params.diffusion_flash_attn) {
         // note we don't know yet if it's a Chroma model
         params.chroma_use_dit_mask = false;
@@ -619,6 +622,14 @@ static enum sample_method_t sampler_from_name(const std::string& sampler)
     else if(sampler=="dpm++ 2m karras" || sampler=="dpm++ 2m" || sampler=="k_dpmpp_2m")
     {
         return sample_method_t::DPMPP2M_SAMPLE_METHOD;
+    }
+    else if(sampler=="res multistep" || sampler=="k_res_multistep")
+    {
+        return sample_method_t::RES_MULTISTEP_SAMPLE_METHOD;
+    }
+    else if(sampler=="res 2s" || sampler=="k_res_2s")
+    {
+        return sample_method_t::RES_2S_SAMPLE_METHOD;
     }
     else
     {
