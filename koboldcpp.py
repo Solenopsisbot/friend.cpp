@@ -1102,6 +1102,7 @@ def convert_json_to_gbnf(json_obj):
         dotall=False,
         raw_pattern=False)
         schema = json.loads(json.dumps(json_obj))
+        schema = converter.resolve_refs(schema, '')
         converter.visit(schema, '')
         outstr = converter.format_grammar()
         return outstr
