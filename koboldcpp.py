@@ -6969,7 +6969,7 @@ def show_gui():
                     noobmodels.append(entry[:-6])
             for m in resp["siblings"]:
                 entry = m["rfilename"]
-                if entry.endswith(".kcppt") and "MedSpec" in entry:
+                if entry.endswith(".kcppt") and "MidSpec" in entry:
                     noobmodels.append(entry[:-6])
             for m in resp["siblings"]:
                 entry = m["rfilename"]
@@ -6992,7 +6992,7 @@ def show_gui():
         noobbox = ctk.CTkComboBox(popup, values=[], width=280, variable=noobbox_var, state="readonly")
         noobbox.pack(pady=5)
         ctk.CTkButton(popup, text="Load Template", command=load_noob_template).pack(pady=5)
-        ctk.CTkLabel(popup, text="LowSpec = 6GB+ VRAM\nMidSpec = 12GB+ VRAM\nHighSpec = 24GB+ VRAM").pack(pady=(10, 0))
+        ctk.CTkLabel(popup, text="LowSpec = Recommend 6GB VRAM\nMidSpec = Recommend 12GB VRAM\nHighSpec = Recommend 24GB VRAM").pack(pady=(10, 0))
         ctk.CTkLabel(popup, text="Everything = All Features         Text = Text Generation\nImages = Image Generation         Vision = Image Recognition\nVoice = Speech Generation         Audio = Speech Recognition").pack(pady=(10, 0))
         fetch_noob_templates()
         popup.transient(root)
