@@ -5786,7 +5786,6 @@ def show_gui():
                 modelsearch2_var.set("")
                 fileinfotxt_var.set("")
                 print(f"Error: {e}")
-
         def fetch_search_models():
             from tkinter import messagebox
             nonlocal searchbox1, searchbox2, modelsearch1_var, modelsearch2_var, fileinfotxt_var
@@ -6952,9 +6951,58 @@ def show_gui():
             import_vars(dict)
         pass
 
+    def display_help():
+        popup = ctk.CTkToplevel(root)
+        popup.title("Help Menu")
+        popup.geometry("380x380")
+        noobbox_var = ctk.StringVar(value="")
+        def display_hf():
+            popup.destroy()
+            model_searcher()
+        def fetch_noob_templates():
+            nonlocal noobbox
+            noobmodels = []
+            resp = make_url_request("https://huggingface.co/api/models/koboldcpp/newbie-templates",None,'GET',{},10)
+            for m in resp["siblings"]:
+                entry = m["rfilename"]
+                if entry.endswith(".kcppt") and "LowSpec" in entry:
+                    noobmodels.append(entry[:-6])
+            for m in resp["siblings"]:
+                entry = m["rfilename"]
+                if entry.endswith(".kcppt") and "MedSpec" in entry:
+                    noobmodels.append(entry[:-6])
+            for m in resp["siblings"]:
+                entry = m["rfilename"]
+                if entry.endswith(".kcppt") and "HighSpec" in entry:
+                    noobmodels.append(entry[:-6])
+            noobbox.configure(values=noobmodels)
+            if len(noobmodels)>0:
+                noobbox_var.set(noobmodels[0])
+        def load_noob_template():
+            fname = f"https://huggingface.co/koboldcpp/newbie-templates/resolve/main/{noobbox_var.get()}.kcppt"
+            data = make_url_request(fname,data=None,method="GET")
+            if data is not None:
+                import_vars(data)
+            popup.destroy()
+        ctk.CTkLabel(popup, text="Newbie Resources").pack(pady=(5, 0))
+        ctk.CTkButton(popup, text="Read the Wiki", command=display_wiki).pack(pady=5)
+        ctk.CTkButton(popup, text="Read Starter Guides", command=display_starter_guides).pack(pady=5)
+        ctk.CTkButton(popup, text="Search Model on Hugginface", command=display_hf).pack(pady=5)
+        ctk.CTkLabel(popup, text="Easy Templates for Newbies").pack(pady=(12, 0))
+        noobbox = ctk.CTkComboBox(popup, values=[], width=280, variable=noobbox_var, state="readonly")
+        noobbox.pack(pady=5)
+        ctk.CTkButton(popup, text="Load Template", command=load_noob_template).pack(pady=5)
+        ctk.CTkLabel(popup, text="LowSpec = 6GB+ VRAM\nMidSpec = 12GB+ VRAM\nHighSpec = 24GB+ VRAM").pack(pady=(10, 0))
+        ctk.CTkLabel(popup, text="Everything = All Features         Text = Text Generation\nImages = Image Generation         Vision = Image Recognition\nVoice = Speech Generation         Audio = Speech Recognition").pack(pady=(10, 0))
+        fetch_noob_templates()
+        popup.transient(root)
+
     def display_help_models():
         LaunchWebbrowser("https://github.com/LostRuins/koboldcpp/wiki#what-models-does-koboldcpp-support-what-architectures-are-supported","Cannot launch help in browser.")
-
+    def display_starter_guides():
+        LaunchWebbrowser("https://github.com/LostRuins/koboldcpp/wiki#step-by-step-guides","Cannot launch help in browser.")
+    def display_wiki():
+        LaunchWebbrowser("https://github.com/LostRuins/koboldcpp/wiki#the-koboldcpp-faq-and-knowledgebase","Cannot launch help in browser.")
     def display_updates():
         LaunchWebbrowser("https://github.com/LostRuins/koboldcpp/releases/latest","Cannot launch updates in browser.")
 
@@ -6963,7 +7011,7 @@ def show_gui():
     ctk.CTkButton(tabs , text = "Update", fg_color="#9900cc", hover_color="#aa11dd", command = display_updates, width=90, height = 35 ).grid(row=1,column=0, stick="sw", padx= 5, pady=5)
     ctk.CTkButton(tabs , text = "Save Config", fg_color="#084a66", hover_color="#085a88", command = save_config_gui, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= 5, pady=5)
     ctk.CTkButton(tabs , text = "Load Config", fg_color="#084a66", hover_color="#085a88", command = load_config_gui, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= (92), pady=5)
-    ctk.CTkButton(tabs , text = "Help (Find Models)", fg_color="#992222", hover_color="#bb3333", command = display_help_models, width=100, height = 35 ).grid(row=1,column=1, stick="sw", padx= (180), pady=5)
+    ctk.CTkButton(tabs , text = "Help", fg_color="#992222", hover_color="#bb3333", command = display_help, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= (180), pady=5)
 
     # start a thread that tries to get actual gpu names and layer counts
     gpuinfo_thread = threading.Thread(target=auto_set_backend_gui)
