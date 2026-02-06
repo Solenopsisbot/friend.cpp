@@ -5545,6 +5545,7 @@ def show_gui():
     draftgpulayers_var = ctk.StringVar(value=str(999))
     draftgpusplit_str_vars = ctk.StringVar(value="")
     nomodel = ctk.IntVar(value=0)
+    download_dir_var = ctk.StringVar()
 
     port_var = ctk.StringVar(value=defaultport)
     host_var = ctk.StringVar(value="")
@@ -6249,18 +6250,19 @@ def show_gui():
     makefileentry(model_tab, "Preload Story:", "Select Preloaded Story File", preloadstory_var, 17,width=280,singlerow=True,tooltiptxt="Select an optional KoboldAI JSON savefile \nto be served on launch to any client.")
     makefileentry(model_tab, "SaveData File:", "Select or Create New SaveData Database File", savedatafile_var, 19,width=280,filetypes=[("KoboldCpp SaveDB", "*.jsondb")],singlerow=True,dialog_type=1,tooltiptxt="Selecting a file will allow data to be loaded and saved persistently to this KoboldCpp server remotely. File is created if it does not exist.")
     makefileentry(model_tab, "MCP JSON:", "Select a mcp.json configuration file", mcpfile_var, 21,width=280,filetypes=[("MCP JSON", "*.json")],singlerow=True,tooltiptxt="Specify path to mcp.json which contains the Cladue Desktop compatible MCP server config.")
-    makefileentry(model_tab, "ChatCompletions Adapter:", "Select ChatCompletions Adapter File", chatcompletionsadapter_var, 24, width=250, filetypes=[("JSON Adapter", "*.json")], tooltiptxt="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.")
+    makefileentry(model_tab, "Chat Adapter:", "Select ChatCompletions Adapter File", chatcompletionsadapter_var, 24, width=184, filetypes=[("JSON Adapter", "*.json")], singlerow=True, tooltiptxt="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.")
     def pickpremadetemplate():
         initialDir = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'kcpp_adapters')
         initialDir = initialDir if os.path.isdir(initialDir) else None
         fnam = zentk_askopenfilename(title="Pick Premade ChatCompletions Adapter",filetypes=[("JSON Adapter", "*.json")], initialdir=initialDir)
         if fnam:
             chatcompletionsadapter_var.set(fnam)
-    ctk.CTkButton(model_tab, 64, text="Pick Premade", command=pickpremadetemplate).grid(row=25, column=0, padx=(322), pady=2, stick="nw")
+    ctk.CTkButton(model_tab, 64, text="Pick Premade", command=pickpremadetemplate).grid(row=24, column=0, padx=(350), pady=2, stick="nw")
 
     mmproj_var.trace_add("write", gui_changed_modelfile)
     draftmodel_var.trace_add("write", gui_changed_modelfile)
-    makecheckbox(model_tab, "Allow Launch Without Models", nomodel, 27, tooltiptxt="Allows running the WebUI with no model loaded.")
+    makefileentry(model_tab, "Download Dir:", "Select directory to store all model downloads", download_dir_var, 27, width=280, singlerow=True, dialog_type=2, tooltiptxt="Specify a directory to store any downloaded models.")
+    makecheckbox(model_tab, "Allow Launch Without Models", nomodel, 40, tooltiptxt="Allows running the WebUI with no model loaded.")
 
     # Network Tab
     network_tab = tabcontent["Network"]
@@ -6578,6 +6580,7 @@ def show_gui():
         args.preloadstory = None if preloadstory_var.get() == "" else preloadstory_var.get()
         args.savedatafile = None if savedatafile_var.get() == "" else savedatafile_var.get()
         args.mcpfile = None if mcpfile_var.get() == "" else mcpfile_var.get()
+        args.downloaddir = download_dir_var.get()
         try:
             if kcpp_exporting_template and isinstance(args.preloadstory, str) and args.preloadstory!="" and os.path.exists(args.preloadstory):
                 print("Embedding preload story...")   # parse and save embedded preload story
@@ -6859,6 +6862,7 @@ def show_gui():
         multiuser_var.set(dict["multiuser"] if ("multiuser" in dict) else 1)
         multiplayer_var.set(dict["multiplayer"] if ("multiplayer" in dict) else 0)
         websearch_var.set(dict["websearch"] if ("websearch" in dict) else 0)
+        download_dir_var.set(dict["downloaddir"] if ("downloaddir" in dict and dict["downloaddir"]) else "")
 
         horde_name_var.set(dict["hordemodelname"] if ("hordemodelname" in dict and dict["hordemodelname"]) else "koboldcpp")
         horde_context_var.set(dict["hordemaxctx"] if ("hordemaxctx" in dict and dict["hordemaxctx"]) else maxhordectx)
@@ -6985,11 +6989,11 @@ def show_gui():
             if data is not None:
                 import_vars(data)
             popup.destroy()
-        ctk.CTkLabel(popup, text="Newbie Resources").pack(pady=(5, 0))
+        ctk.CTkLabel(popup, text="Helpful Newbie Resources").pack(pady=(5, 0))
         ctk.CTkButton(popup, text="Read the Wiki", command=display_wiki).pack(pady=5)
         ctk.CTkButton(popup, text="Read Starter Guides", command=display_starter_guides).pack(pady=5)
         ctk.CTkButton(popup, text="Search Model on Hugginface", command=display_hf).pack(pady=5)
-        ctk.CTkLabel(popup, text="Easy Templates for Newbies").pack(pady=(12, 0))
+        ctk.CTkLabel(popup, text="Or, Pick an Easy Template for Newbies").pack(pady=(12, 0))
         noobbox = ctk.CTkComboBox(popup, values=[], width=280, variable=noobbox_var, state="readonly")
         noobbox.pack(pady=5)
         ctk.CTkButton(popup, text="Load Template", command=load_noob_template).pack(pady=5)
@@ -7012,7 +7016,7 @@ def show_gui():
     ctk.CTkButton(tabs , text = "Update", fg_color="#9900cc", hover_color="#aa11dd", command = display_updates, width=90, height = 35 ).grid(row=1,column=0, stick="sw", padx= 5, pady=5)
     ctk.CTkButton(tabs , text = "Save Config", fg_color="#084a66", hover_color="#085a88", command = save_config_gui, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= 5, pady=5)
     ctk.CTkButton(tabs , text = "Load Config", fg_color="#084a66", hover_color="#085a88", command = load_config_gui, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= (92), pady=5)
-    ctk.CTkButton(tabs , text = "Help", fg_color="#992222", hover_color="#bb3333", command = display_help, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= (180), pady=5)
+    ctk.CTkButton(tabs , text = "Get Help", fg_color="#992222", hover_color="#bb3333", command = display_help, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= (180), pady=5)
 
     # start a thread that tries to get actual gpu names and layer counts
     gpuinfo_thread = threading.Thread(target=auto_set_backend_gui)
@@ -7542,21 +7546,28 @@ def sanitize_string(input_string):
     return sanitized_string
 
 def downloader_internal(input_url, output_filename, capture_output, min_file_size=64): # 64 bytes required by default
+    download_dir_path = args.downloaddir
     if "https://huggingface.co/" in input_url and "/blob/main/" in input_url:
         input_url = input_url.replace("/blob/main/", "/resolve/main/")
+    if download_dir_path:
+        download_dir_path = os.path.abspath(download_dir_path)
+        os.makedirs(download_dir_path, exist_ok=True)
     if output_filename == "auto":
-        cwd = os.getcwd()
-        non_writable = False
-        if os.name == "nt":
-            parts = [p.lower() for p in os.path.normpath(cwd).split(os.sep)]
-            if "windows" in parts and ("system32" in parts or "syswow64" in parts):
-                non_writable = True
-        if not non_writable:
-            output_filename = os.path.basename(input_url).split('?')[0].split('#')[0]
+        filename = os.path.basename(input_url).split('?')[0].split('#')[0]
+        if download_dir_path:
+            output_filename = os.path.join(download_dir_path, filename)
         else:
-            exe_dir = os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__)
-            filename = os.path.basename(input_url).split('?')[0].split('#')[0]
-            output_filename = os.path.join(exe_dir, filename)
+            cwd = os.getcwd()
+            non_writable = False
+            if os.name == "nt":
+                parts = [p.lower() for p in os.path.normpath(cwd).split(os.sep)]
+                if "windows" in parts and ("system32" in parts or "syswow64" in parts):
+                    non_writable = True
+            if not non_writable:
+                output_filename = filename
+            else:
+                exe_dir = os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else __file__)
+                output_filename = os.path.join(exe_dir, filename)
     incomplete_dl_exist = (os.path.exists(output_filename+".aria2") and os.path.getsize(output_filename+".aria2") > 16)
     if os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size and not incomplete_dl_exist:
         print(f"{output_filename} already exists, using existing file.")
@@ -8894,6 +8905,7 @@ if __name__ == '__main__':
     advparser.add_argument("--gendefaultsoverwrite", help="Allow the gendefaults parameters to overwrite the original value in API payloads.", action='store_true')
     advparser.add_argument("--mcpfile", metavar=('[mcp json file]'), help="Specify path to mcp.json which contains the Cladue Desktop compatible MCP server config.", default="")
     advparser.add_argument("--device", "-dev", metavar=('<dev1,dev2,..>'), help="Set llama.cpp compatible device selection override. Comma separated. Overrides normal device choices.", default="")
+    advparser.add_argument("--downloaddir", metavar=('[directory]'), help="Specify a directory that models will be downloaded to or searched from, if unset uses the working directory.", default="")
 
     hordeparsergroup = parser.add_argument_group('Horde Worker Commands')
     hordeparsergroup.add_argument("--hordemodelname", metavar=('[name]'), help="Sets your AI Horde display model name.", default="")
