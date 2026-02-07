@@ -3479,6 +3479,10 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("connection", "keep-alive")
         self.end_headers(content_type='text/event-stream')
 
+        encap_in_thinking = False
+        encap_first_loop = True
+        thinkpairs = [{"start":"<|channel|>analysis<|message|>","end":"<|start|>assistant<|channel|>final<|message|>"},
+                      {"start":"<think>","end":"</think>"}]
         current_token = 0
         incomplete_token_buffer = bytearray()
         async_sleep_short = 0.02
@@ -3529,9 +3533,37 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
                         if tokenStr!="" or streamDone:
                             need_split_final_msg = True if (currfinishreason is not None and streamDone and tokenStr!="") else False
+
+                            # hack for lcppui reasoning_content for thinking models
+                            delta = {'role':'assistant','content':tokenStr}
+                            if genparams.get('encapsulate_thinking', False):
+                                for pair in thinkpairs:
+                                    if encap_first_loop and not encap_in_thinking and genparams.get("prompt","").endswith(pair["start"]):
+                                        encap_in_thinking = True
+                                        delta = {'role':'assistant','reasoning_content':tokenStr}
+                                        thinkpairs = [pair] #remove all others
+                                        break
+                                    elif not encap_in_thinking and (pair["start"] in tokenStr):
+                                        encap_in_thinking = True
+                                        out1, out2 = tokenStr.split(pair["start"], 1)
+                                        delta = {'role':'assistant','reasoning_content':out2}
+                                        thinkpairs = [pair] #remove all others
+                                        break
+                                    elif encap_in_thinking and pair["end"] in tokenStr:
+                                        encap_in_thinking = False
+                                        out1, out2 = tokenStr.split(pair["end"], 1)
+                                        delta = {'role':'assistant','reasoning_content':out1,'content':out2}
+                                        thinkpairs = [pair] #remove all others
+                                        break
+                                    elif encap_in_thinking:
+                                        delta = {'role':'assistant','reasoning_content':tokenStr}
+                                    else:
+                                        delta = {'role':'assistant','content':tokenStr}
+                                encap_first_loop = False
+
                             if need_split_final_msg: #we need to send one message without the finish reason, then send a finish reason with no msg to follow standards
                                 if api_format == 4:  # if oai chat, set format to expected openai streaming response
-                                    event_str = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"delta":{'role':'assistant','content':tokenStr}}]})
+                                    event_str = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"delta":delta}]})
                                     await self.send_oai_sse_event(event_str)
                                 elif api_format == 3:  # non chat completions
                                     event_str = json.dumps({"id":"koboldcpp","object":"text_completion","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"text":tokenStr}]})
@@ -3546,7 +3578,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                     logprobsdict = parse_last_logprobs(lastlogprobs)
                                     addonstr = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"delta":{'role':'assistant','content':''},"logprobs":logprobsdict}]})
                                     await self.send_oai_sse_event(addonstr)
-                                event_str = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":currfinishreason,"delta":{'role':'assistant','content':tokenStr}}]})
+                                event_str = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":currfinishreason,"delta":delta}]})
                                 await self.send_oai_sse_event(event_str)
                             elif api_format == 3:  # non chat completions
                                 if streamDone and ("logprobs" in genparams and genparams["logprobs"]): # this is a hack that sends an extra message containing ALL the logprobs
@@ -4777,6 +4809,7 @@ Change Mode<br>
                 # payload modifications for lcpp endpoint. we detect this by the timings_per_token field existing
                 if "timings_per_token" in genparams:
                     genparams["continue_assistant_turn"] = True
+                    genparams["encapsulate_thinking"] = True
 
                 printablegenparams_raw = truncate_long_json(genparams,trunc_len)
                 utfprint("\nInput: " + json.dumps(printablegenparams_raw,ensure_ascii=False),1)
