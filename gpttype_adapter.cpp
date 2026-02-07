@@ -2564,15 +2564,22 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             model_params.n_gpu_layers = -1; //must be this value to be considered default
             printf("Autofit Reserve Space: %d MB\n",taxmb);
             //disable log spam
+            bool dospam = (debugmode==1 && !is_quiet);
             ggml_log_callback currlogger;
             void * curruserdat;
-            llama_log_get(&currlogger, &curruserdat);
-            llama_log_set(log_callback_off, nullptr);
+            if(!dospam)
+            {
+                llama_log_get(&currlogger, &curruserdat);
+                llama_log_set(log_callback_off, nullptr);
+            }
             fit_params_target[0] = taxmb*1024*1024;
             bool success = (llama_params_fit(kcpp_data->model_filename.c_str(), &model_params, &llama_ctx_params,
             tensor_split_temp, tenos.data(), fit_params_target.data(), kcpp_data->n_ctx,
             GGML_LOG_LEVEL_NONE)==0);
-            llama_log_set(currlogger, curruserdat);
+            if(!dospam)
+            {
+                llama_log_set(currlogger, curruserdat);
+            }
             printf("Autofit Success: %d, Autofit Result: ",success);
             print_fitted_params(model_params,llama_ctx_params);
         }
