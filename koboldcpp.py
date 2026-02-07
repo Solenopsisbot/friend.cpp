@@ -5963,11 +5963,11 @@ def show_gui():
         layercounter_label.grid(row=6, column=0, padx=230, sticky="W")
         quick_layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
         if sys.platform=="darwin" and gpulayers_var.get()=="-1" and max_gpu_layers:
-            quick_layercounter_label.configure(text=f"(Auto: {max_gpu_layers} Total Layers)")
-            layercounter_label.configure(text=f"(Auto: {max_gpu_layers} Total Layers)")
+            quick_layercounter_label.configure(text=f"(Auto) ({max_gpu_layers} Total Layers)")
+            layercounter_label.configure(text=f"(Auto) ({max_gpu_layers} Total Layers)")
         elif gpu_be and gpulayers_var.get()=="-1" and max_gpu_layers:
-            quick_layercounter_label.configure(text=f"(Auto: {max_gpu_layers} Total Layers)")
-            layercounter_label.configure(text=f"(Auto: {max_gpu_layers} Total Layers)")
+            quick_layercounter_label.configure(text=f"(Auto) ({max_gpu_layers} Total Layers)")
+            layercounter_label.configure(text=f"(Auto) ({max_gpu_layers} Total Layers)")
         elif gpu_be and gpulayers_var.get()=="":
             quick_layercounter_label.configure(text="(Set -1 for Auto)")
             layercounter_label.configure(text="(Set -1 for Auto)")
@@ -8365,6 +8365,11 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                     layeramt = autoset_gpu_layers(args.contextsize,args.sdquant,args.batchsize,(0 if args.noflashattention else args.quantkv))
                     print(f"Auto Recommended GPU Layers: {layeramt}")
                     args.gpulayers = layeramt
+                    # enable autofit also if permissible
+                    if not args.autofit and not args.tensor_split and not args.overridetensors:
+                        args.autofit = True
+                        args.autofitpadding = default_autofit_padding
+                        print("GPU layers is default: Will enable AutoFit for increased estimation accuracy.")
                 else:
                     print("No GPU backend found, or could not automatically determine GPU layers. Please set it manually.")
                     args.gpulayers = 0
