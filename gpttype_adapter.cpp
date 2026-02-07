@@ -2554,7 +2554,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         if(inputs.autofit)
         {
             common_params temp_params;
-            size_t taxmb = 1024 + inputs.autofit_tax_mb;
+            size_t taxmb = inputs.autofit_tax_mb;
             printf("\nAttempting to use llama.cpp's automating fitting code. This will override all your layer configs, may or may not work!\n");
             //zero out any customizations made
             tenos.clear();
