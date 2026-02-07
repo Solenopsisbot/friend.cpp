@@ -5956,21 +5956,18 @@ def show_gui():
         changed_gpulayers_estimate()
 
     def changed_gpulayers_estimate(*args):
-        predicted_gpu_layers = autoset_gpu_layers(int(contextsize_text[context_var.get()]),sd_quant_option(sd_quant_var.get()),int(batchsize_values[int(blas_size_var.get())]),(quantkv_var.get() if flashattention_var.get()==1 else 0))
-        max_gpu_layers = (f"/{modelfile_extracted_meta[1][0]+1}" if (modelfile_extracted_meta and modelfile_extracted_meta[1] and modelfile_extracted_meta[1][0]!=0) else "")
+        autoset_gpu_layers(int(contextsize_text[context_var.get()]),sd_quant_option(sd_quant_var.get()),int(batchsize_values[int(blas_size_var.get())]),(quantkv_var.get() if flashattention_var.get()==1 else 0))
+        max_gpu_layers = (f"{modelfile_extracted_meta[1][0]+1}" if (modelfile_extracted_meta and modelfile_extracted_meta[1] and modelfile_extracted_meta[1][0]!=0) else "")
         index = runopts_var.get()
         gpu_be = (index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use Vulkan (Older CPU)" or index == "Use CUDA" or index == "Use hipBLAS (ROCm)")
         layercounter_label.grid(row=6, column=0, padx=230, sticky="W")
         quick_layercounter_label.grid(row=6, column=1, padx=75, sticky="W")
-        if sys.platform=="darwin" and gpulayers_var.get()=="-1":
-            quick_layercounter_label.configure(text="(Auto: All Layers)")
-            layercounter_label.configure(text="(Auto: All Layers)")
-        elif gpu_be and gpulayers_var.get()=="-1" and predicted_gpu_layers>0:
-            quick_layercounter_label.configure(text=f"(Auto: {predicted_gpu_layers}{max_gpu_layers} Layers)")
-            layercounter_label.configure(text=f"(Auto: {predicted_gpu_layers}{max_gpu_layers} Layers)")
-        elif gpu_be and gpulayers_var.get()=="-1" and predicted_gpu_layers<=0 and (modelfile_extracted_meta and modelfile_extracted_meta[2]):
-            quick_layercounter_label.configure(text="(Auto: No Offload)")
-            layercounter_label.configure(text="(Auto: No Offload)")
+        if sys.platform=="darwin" and gpulayers_var.get()=="-1" and max_gpu_layers:
+            quick_layercounter_label.configure(text=f"(Auto: {max_gpu_layers} Total Layers)")
+            layercounter_label.configure(text=f"(Auto: {max_gpu_layers} Total Layers)")
+        elif gpu_be and gpulayers_var.get()=="-1" and max_gpu_layers:
+            quick_layercounter_label.configure(text=f"(Auto: {max_gpu_layers} Total Layers)")
+            layercounter_label.configure(text=f"(Auto: {max_gpu_layers} Total Layers)")
         elif gpu_be and gpulayers_var.get()=="":
             quick_layercounter_label.configure(text="(Set -1 for Auto)")
             layercounter_label.configure(text="(Set -1 for Auto)")
@@ -6161,7 +6158,7 @@ def show_gui():
     # load model
     makefileentry(quick_tab, "GGUF Text Model:", "Select GGUF or GGML Model File", model_var, 50, 280, onchoosefile=on_picked_model_file,tooltiptxt="Select a GGUF or GGML model file on disk to be loaded.")
     model_var.trace_add("write", gui_changed_modelfile)
-    ctk.CTkButton(quick_tab, width=70, text = "HF Search", command = model_searcher ).grid(row=51,column=1, stick="sw", padx= 202, pady=2)
+    ctk.CTkButton(quick_tab, width=70, text = "HF Search", command = model_searcher ).grid(row=51,column=1, stick="sw", padx=184, pady=2)
 
     # Hardware Tab
     hardware_tab = tabcontent["Hardware"]
