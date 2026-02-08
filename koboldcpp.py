@@ -5289,7 +5289,7 @@ def show_gui():
     global using_gui_launcher
     using_gui_launcher = True
 
-    #check for wayland with fractional scale
+    #check for potential scaling issues
     def get_problematic_scaler():
         if sys.platform != "linux":
             return False
@@ -5384,7 +5384,7 @@ def show_gui():
     root = ctk.CTk(fg_color="#2b2b2b")
     if corrupt_scaler:
         print("Adjusting tk scaling to try and fix scaling issues...")
-        root.tk.call('tk','scaling',2)
+        root.tk.call('tk','scaling', 2.25)
     root.geometry(str(windowwidth) + "x" + str(windowheight))
     root.title(f"KoboldCpp v{KcppVersion}")
 
