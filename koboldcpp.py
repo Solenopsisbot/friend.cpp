@@ -7612,6 +7612,8 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
     if download_dir_path:
         download_dir_path = os.path.abspath(download_dir_path)
         os.makedirs(download_dir_path, exist_ok=True)
+    if output_filename != "auto" and download_dir_path and not os.path.isabs(output_filename):
+        output_filename = os.path.join(download_dir_path, output_filename)
     if output_filename == "auto":
         filename = os.path.basename(input_url).split('?')[0].split('#')[0]
         if download_dir_path:
