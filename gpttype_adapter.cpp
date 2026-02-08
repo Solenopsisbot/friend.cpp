@@ -2582,6 +2582,11 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             }
             printf("Autofit Success: %d, Autofit Result: ",success);
             print_fitted_params(model_params,llama_ctx_params);
+            if(!success)
+            {
+                //revert to previous
+                model_params.n_gpu_layers = inputs.gpulayers;
+            }
         }
 
         llama_model * llamamodel = llama_model_load_from_file(kcpp_data->model_filename.c_str(), model_params);
