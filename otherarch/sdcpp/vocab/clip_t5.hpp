@@ -1,4 +1,4 @@
-static unsigned char merges_utf8_c_str[] = {
+static const unsigned char clip_merges_utf8_c_str[] = {
     0x23,
     0x76,
     0x65,
@@ -524620,7 +524620,7 @@ static unsigned char merges_utf8_c_str[] = {
     0x0a,
 };
 
-static unsigned char t5_tokenizer_json_str[] = {
+static const unsigned char t5_tokenizer_json_str[] = {
     0x7b,
     0x0a,
     0x20,
