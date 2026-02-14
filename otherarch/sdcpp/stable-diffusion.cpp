@@ -863,7 +863,10 @@ public:
 
             if (sd_ctx_params->flash_attn) {
                 LOG_INFO("Using flash attention");
-                cond_stage_model->set_flash_attention_enabled(true);
+                if(!sd_version_is_qwen_image(version)) //kcpp: edit 14feb, breaks qwen image edit
+                {
+                    cond_stage_model->set_flash_attention_enabled(true);
+                }
                 if (clip_vision) {
                     clip_vision->set_flash_attention_enabled(true);
                 }
