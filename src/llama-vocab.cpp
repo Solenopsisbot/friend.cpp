@@ -2716,10 +2716,10 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
                 attr = LLAMA_TOKEN_ATTR_USER_DEFINED;
             }
 
-            if(t.first=="[THINK]" || t.first=="[/THINK]" || t.first=="<think>" || t.first=="</think>")
-            {
-                 LLAMA_LOG_WARN("%s: setting token '%s' (%d) attribute to USER_DEFINED (%u), old attributes: %u\n",
-                        __func__, t.first.c_str(), t.second, LLAMA_TOKEN_ATTR_USER_DEFINED, attr);
+            if (t.first == "[THINK]" || t.first == "[/THINK]" || t.first == "<think>" || t.first == "</think>" ||
+                t.first == "[CALL_ID]" || t.first == "[TOOL_CONTENT]" || t.first == "[TOOL_CALLS]" || t.first == "[ARGS]") {
+                LLAMA_LOG_WARN("%s: setting token '%s' (%d) attribute to USER_DEFINED (%u), old attributes: %u\n",
+                               __func__, t.first.c_str(), t.second, LLAMA_TOKEN_ATTR_USER_DEFINED, attr);
                 attr = LLAMA_TOKEN_ATTR_USER_DEFINED;
             }
         }
