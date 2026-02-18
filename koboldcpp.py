@@ -68,7 +68,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.108"
+KcppVersion = "1.108.1"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":""}
@@ -5955,7 +5955,10 @@ def show_gui():
         pass
 
     def changed_autofit(*args):
+        global runmode_untouched
+        orig_rmu = runmode_untouched
         changerunmode(1,1,1)
+        runmode_untouched = orig_rmu
         changed_gpulayers_estimate()
 
     def changed_gpulayers_estimate(*args):
@@ -6148,7 +6151,7 @@ def show_gui():
         "Use ContextShift": [contextshift_var, "Uses Context Shifting to reduce reprocessing.\nRecommended. Check the wiki for more info."],
         "Remote Tunnel": [remotetunnel_var,  "Creates a trycloudflare tunnel.\nAllows you to access koboldcpp from other devices over an internet URL."],
         "Use FlashAttention": [flashattention_var, "Enable flash attention for GGUF models."],
-        "AutoFit": [autofit_var, "Automatically attempt to fit the model in the best possible way. Overrides everything else.\nNot recommended for multi model setups. Experimental."],
+        "Force AutoFit": [autofit_var, "Automatically attempt to fit the model in the best possible way. Overrides everything else.\nNot recommended for multi model setups. Experimental."],
         "Quiet Mode": [quietmode, "Prevents all generation related terminal output from being displayed."]
     }
 
@@ -6217,7 +6220,7 @@ def show_gui():
 
     makecheckbox(hardware_tab, "Use FlashAttention", flashattention_var, 100, command=toggleflashattn,  tooltiptxt="Enable flash attention for GGUF models.")
 
-    makecheckbox(hardware_tab, "AutoFit", autofit_var, 100,0,command=changed_autofit,padx=160, tooltiptxt="Automatically attempt to fit the model in the best possible way. Overrides everything else.\nNot recommended for multi model setups. Experimental.")
+    makecheckbox(hardware_tab, "Force AutoFit", autofit_var, 100,0,command=changed_autofit,padx=160, tooltiptxt="Automatically attempt to fit the model in the best possible way. Overrides everything else.\nNot recommended for multi model setups. Experimental.")
     ctk.CTkButton(hardware_tab , text = "Run Benchmark", command = guibench ).grid(row=110,column=0, stick="nw", padx= 8, pady=2)
 
 
