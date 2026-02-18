@@ -5383,6 +5383,7 @@ def show_gui():
     windowwidth = original_windowwidth
     windowheight = original_windowheight
     ctk.set_appearance_mode("dark")
+    ctk.deactivate_automatic_dpi_awareness()
     root = ctk.CTk(fg_color="#2b2b2b")
     if corrupt_scaler:
         print("Adjusting tk scaling to try and fix scaling issues...")
