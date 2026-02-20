@@ -1,5 +1,6 @@
 #include "ttscpp.h"
 #include <mutex>
+#include "llama-impl.h"
 
 // A list of all of the top level GGUF names under kokoro.duration_predictor that have quantization compatible tensors.
 static constexpr std::array<const char *, 5> DURATION_PREDICTOR_QUANTIZATION_COMPATIBLE_PARTS = {
@@ -337,12 +338,6 @@ static void zeros(std::ofstream & file, size_t n) {
     }
 }
 
-template <typename T>
-struct do_no_init {
-    T value;
-    do_no_init() { /* do nothing */ }
-};
-
 void quantize_gguf(const std::string & ifile, const std::string & ofile, struct quantization_params * params) {
     ggml_context * weight_ctx = NULL;
     struct gguf_init_params gguf_params = {
@@ -376,7 +371,7 @@ void quantize_gguf(const std::string & ifile, const std::string & ofile, struct 
         }
     }
 
-    std::vector<do_no_init<uint8_t>> work;
+    std::vector<no_init<uint8_t>> work;
 
     std::ofstream fout;
     auto close_ofstream = [&]() {
