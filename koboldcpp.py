@@ -8722,16 +8722,15 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             voicecount = 0
             voicelist = []
 
-            voicelist.append("kobo")
-            voicebank["kobo"] = ""
-            voicelist.append("cheery")
-            voicebank["cheery"] = ""
-            voicelist.append("sleepy")
-            voicebank["sleepy"] = ""
-            voicelist.append("shouty")
-            voicebank["shouty"] = ""
-            voicelist.append("chatty")
-            voicebank["chatty"] = ""
+            try:
+                with open(os.path.join(embddir, "qwen3tts_voices_json.embd"), mode='r', encoding='utf-8', errors='ignore') as f:
+                    vdict = json.load(f)
+                    for key, value in vdict.items():
+                        voicelist.append(key)
+                        voicebank[key] = value
+            except Exception:
+                print("Could not find Embedded Qwen3TTS voices.")
+
             voicelist.append("random")
             voicebank["random"] = ""
 
