@@ -20,12 +20,12 @@ static const char * BYTE_TO_UNICODE[256] = {
     "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "{", "|", "}", "~", "ġ",
     "Ģ", "ģ", "Ĥ", "ĥ", "Ħ", "ħ", "Ĩ", "ĩ", "Ī", "ī", "Ĭ", "ĭ", "Į", "į", "İ", "ı",
     "Ĳ", "ĳ", "Ĵ", "ĵ", "Ķ", "ķ", "ĸ", "Ĺ", "ĺ", "Ļ", "ļ", "Ľ", "ľ", "Ŀ", "ŀ", "Ł",
-    "ł", "¡", "¢", "£", "¤", "¥", "¦", "§", "¨", "©", "ª", "«", "¬", "®", "¯", "°",
-    "±", "²", "³", "´", "µ", "¶", "·", "¸", "¹", "º", "»", "¼", "½", "¾", "¿", "À",
-    "Á", "Â", "Ã", "Ä", "Å", "Æ", "Ç", "È", "É", "Ê", "Ë", "Ì", "Í", "Î", "Ï", "Ð",
-    "Ñ", "Ò", "Ó", "Ô", "Õ", "Ö", "×", "Ø", "Ù", "Ú", "Û", "Ü", "Ý", "Þ", "ß", "à",
-    "á", "â", "ã", "ä", "å", "æ", "ç", "è", "é", "ê", "ë", "ì", "í", "î", "ï", "ð",
-    "ñ", "ò", "ó", "ô", "õ", "ö", "÷", "ø", "ù", "ú", "û", "ü", "ý", "þ", "ÿ", "Ń"
+    "ł", "¡", "¢", "£", "¤", "¥", "¦", "§", "¨", "©", "ª", "«", "¬", "Ń", "®", "¯",
+    "°", "±", "²", "³", "´", "µ", "¶", "·", "¸", "¹", "º", "»", "¼", "½", "¾", "¿",
+    "À", "Á", "Â", "Ã", "Ä", "Å", "Æ", "Ç", "È", "É", "Ê", "Ë", "Ì", "Í", "Î", "Ï",
+    "Ð", "Ñ", "Ò", "Ó", "Ô", "Õ", "Ö", "×", "Ø", "Ù", "Ú", "Û", "Ü", "Ý", "Þ", "ß",
+    "à", "á", "â", "ã", "ä", "å", "æ", "ç", "è", "é", "ê", "ë", "ì", "í", "î", "ï",
+    "ð", "ñ", "ò", "ó", "ô", "õ", "ö", "÷", "ø", "ù", "ú", "û", "ü", "ý", "þ", "ÿ"
 };
 
 // Build reverse mapping at runtime
@@ -82,23 +82,23 @@ bool TextTokenizer::load_from_gguf(struct gguf_context * ctx) {
         error_msg_ = "GGUF context is null";
         return false;
     }
-    
+
     // Get vocabulary
     int64_t tokens_key = gguf_find_key(ctx, "tokenizer.ggml.tokens");
     if (tokens_key < 0) {
         error_msg_ = "tokenizer.ggml.tokens not found in GGUF";
         return false;
     }
-    
+
     size_t n_vocab = gguf_get_arr_n(ctx, tokens_key);
     if (n_vocab == 0) {
         error_msg_ = "Empty vocabulary";
         return false;
     }
-    
+
     config_.vocab_size = (int32_t)n_vocab;
     id_to_token_.resize(n_vocab);
-    
+
     for (size_t i = 0; i < n_vocab; i++) {
         const char * token = gguf_get_arr_str(ctx, tokens_key, i);
         if (token) {
@@ -106,7 +106,7 @@ bool TextTokenizer::load_from_gguf(struct gguf_context * ctx) {
             vocab_[token] = (int32_t)i;
         }
     }
-    
+
     // Get merges
     int64_t merges_key = gguf_find_key(ctx, "tokenizer.ggml.merges");
     if (merges_key >= 0) {
@@ -125,51 +125,51 @@ bool TextTokenizer::load_from_gguf(struct gguf_context * ctx) {
             }
         }
     }
-    
+
     // Get special token IDs (optional, use defaults if not found)
     int64_t bos_key = gguf_find_key(ctx, "tokenizer.ggml.bos_token_id");
     if (bos_key >= 0) {
         config_.bos_token_id = (int32_t)gguf_get_val_u32(ctx, bos_key);
     }
-    
+
     int64_t eos_key = gguf_find_key(ctx, "tokenizer.ggml.eos_token_id");
     if (eos_key >= 0) {
         config_.eos_token_id = (int32_t)gguf_get_val_u32(ctx, eos_key);
     }
-    
+
     int64_t pad_key = gguf_find_key(ctx, "tokenizer.ggml.padding_token_id");
     if (pad_key >= 0) {
         config_.pad_token_id = (int32_t)gguf_get_val_u32(ctx, pad_key);
     }
-    
+
     // Find special tokens by content
     auto find_token = [this](const std::string & text) -> int32_t {
         auto it = vocab_.find(text);
         return (it != vocab_.end()) ? it->second : -1;
     };
-    
+
     assistant_token_id_ = find_token("assistant");
     if (assistant_token_id_ < 0) {
         // Try with space prefix (GPT-2 style)
         assistant_token_id_ = find_token("Ġassistant");
     }
-    
+
     // Newline token
     newline_token_id_ = find_token("Ċ");  // GPT-2 encoding for '\n'
     if (newline_token_id_ < 0) {
         newline_token_id_ = find_token("\n");
     }
-    
+
     loaded_ = true;
     return true;
 }
 
 std::pair<std::string, std::string> TextTokenizer::get_min_pair(
     const std::vector<std::string> & word) const {
-    
+
     std::pair<std::string, std::string> min_pair;
     int32_t min_rank = std::numeric_limits<int32_t>::max();
-    
+
     for (size_t i = 0; i + 1 < word.size(); i++) {
         auto pair = std::make_pair(word[i], word[i + 1]);
         auto it = bpe_ranks_.find(pair);
@@ -178,7 +178,7 @@ std::pair<std::string, std::string> TextTokenizer::get_min_pair(
             min_pair = pair;
         }
     }
-    
+
     return min_pair;
 }
 
@@ -186,7 +186,7 @@ std::vector<std::string> TextTokenizer::bpe(const std::string & token) const {
     if (token.empty()) {
         return {};
     }
-    
+
     // Split into unicode characters
     std::vector<std::string> word;
     size_t i = 0;
@@ -195,24 +195,24 @@ std::vector<std::string> TextTokenizer::bpe(const std::string & token) const {
         word.push_back(token.substr(i, len));
         i += len;
     }
-    
+
     if (word.size() == 1) {
         return word;
     }
-    
+
     // Iteratively merge pairs
     while (true) {
         auto min_pair = get_min_pair(word);
         if (min_pair.first.empty()) {
             break;  // No more merges possible
         }
-        
+
         // Merge all occurrences of the pair
         std::vector<std::string> new_word;
         size_t j = 0;
         while (j < word.size()) {
-            if (j + 1 < word.size() && 
-                word[j] == min_pair.first && 
+            if (j + 1 < word.size() &&
+                word[j] == min_pair.first &&
                 word[j + 1] == min_pair.second) {
                 new_word.push_back(min_pair.first + min_pair.second);
                 j += 2;
@@ -222,12 +222,12 @@ std::vector<std::string> TextTokenizer::bpe(const std::string & token) const {
             }
         }
         word = std::move(new_word);
-        
+
         if (word.size() == 1) {
             break;
         }
     }
-    
+
     return word;
 }
 
@@ -235,22 +235,22 @@ std::vector<int32_t> TextTokenizer::encode(const std::string & text) const {
     if (!loaded_) {
         return {};
     }
-    
+
     std::vector<int32_t> tokens;
-    
+
     // Convert text to GPT-2 unicode representation
     std::string unicode_text = bytes_to_unicode(text);
-    
+
     // Simple word splitting (no regex pre-tokenization for now)
     // Split on spaces but keep the space with the following word (GPT-2 style)
     std::vector<std::string> words;
     std::string current_word;
-    
+
     size_t i = 0;
     while (i < unicode_text.size()) {
         size_t len = utf8_len(unicode_text[i]);
         std::string ch = unicode_text.substr(i, len);
-        
+
         // Check if this is a space (Ġ in GPT-2 encoding)
         if (ch == "Ġ") {
             if (!current_word.empty()) {
@@ -266,7 +266,7 @@ std::vector<int32_t> TextTokenizer::encode(const std::string & text) const {
     if (!current_word.empty()) {
         words.push_back(current_word);
     }
-    
+
     // BPE encode each word
     for (const auto & word : words) {
         auto bpe_tokens = bpe(word);
@@ -286,7 +286,7 @@ std::vector<int32_t> TextTokenizer::encode(const std::string & text) const {
             }
         }
     }
-    
+
     return tokens;
 }
 
@@ -294,38 +294,38 @@ std::vector<int32_t> TextTokenizer::encode_for_tts(const std::string & text) con
     if (!loaded_) {
         return {};
     }
-    
+
     // Format: <|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n
     std::vector<int32_t> tokens;
-    
+
     // <|im_start|>
     tokens.push_back(config_.bos_token_id);
-    
+
     // assistant
     tokens.push_back(assistant_token_id_);
-    
+
     // \n
     tokens.push_back(newline_token_id_);
-    
+
     // Encode the text
     auto text_tokens = encode(text);
     tokens.insert(tokens.end(), text_tokens.begin(), text_tokens.end());
-    
+
     // <|im_end|>
     tokens.push_back(config_.eos_token_id);
-    
+
     // \n
     tokens.push_back(newline_token_id_);
-    
+
     // <|im_start|>
     tokens.push_back(config_.bos_token_id);
-    
+
     // assistant
     tokens.push_back(assistant_token_id_);
-    
+
     // \n
     tokens.push_back(newline_token_id_);
-    
+
     return tokens;
 }
 
@@ -341,9 +341,9 @@ std::string TextTokenizer::decode_token(int32_t token_id) const {
     if (token_id < 0 || token_id >= (int32_t)id_to_token_.size()) {
         return "";
     }
-    
+
     const std::string & token = id_to_token_[token_id];
-    
+
     // Convert from GPT-2 unicode back to bytes
     return unicode_to_bytes(token);
 }
