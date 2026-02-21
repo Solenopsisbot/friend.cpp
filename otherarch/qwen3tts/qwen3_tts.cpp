@@ -90,8 +90,7 @@ bool Qwen3TTS::load_models(const std::string & tts_model_path, const std::string
     transformer_loaded_ = false;
     decoder_loaded_ = false;
 
-    const char * low_mem_env = std::getenv("QWEN3_TTS_LOW_MEM");
-    low_mem_mode_ = low_mem_env && low_mem_env[0] != '\0' && low_mem_env[0] != '0';
+    low_mem_mode_ = false;
     if (low_mem_mode_) {
         fprintf(stderr, "  Low-memory mode enabled (lazy decoder + component unloads)\n");
     }

@@ -53,73 +53,41 @@ bool TTSTransformer::load_model(const std::string & model_path) {
     unload_model();
 
     skip_ggml_code_pred_layers_ = false;
-#if defined(__APPLE__)
-    const char * use_coreml_env = std::getenv("QWEN3_TTS_USE_COREML");
-    bool coreml_disabled = false;
-    if (use_coreml_env && use_coreml_env[0] != '\0') {
-        std::string use_coreml = use_coreml_env;
-        std::transform(use_coreml.begin(), use_coreml.end(), use_coreml.begin(),
-                       [](unsigned char c) { return (char) std::tolower(c); });
-        coreml_disabled = use_coreml == "0" || use_coreml == "false" ||
-                          use_coreml == "off" || use_coreml == "no";
-    }
-
-    if (!coreml_disabled) {
-        std::string coreml_path;
-        const char * override_env = std::getenv("QWEN3_TTS_COREML_MODEL");
-        if (override_env && override_env[0] != '\0') {
-            coreml_path = override_env;
-        } else {
-            size_t slash = model_path.find_last_of("/\\");
-            const std::string model_dir = (slash == std::string::npos) ? "." : model_path.substr(0, slash);
-            coreml_path = model_dir + "/coreml/code_predictor.mlpackage";
-        }
-
-        struct stat st = {};
-        if (stat(coreml_path.c_str(), &st) == 0) {
-            // Skip GGML code-predictor weights when CoreML package is present.
-            skip_ggml_code_pred_layers_ = true;
-        } else if (use_coreml_env && use_coreml_env[0] != '\0') {
-            // Explicit opt-in should remain strict to surface configuration errors.
-            skip_ggml_code_pred_layers_ = true;
-        }
-    }
-#endif
 
     struct ggml_context * meta_ctx = nullptr;
     struct gguf_init_params params = {
         /*.no_alloc =*/ true,
         /*.ctx      =*/ &meta_ctx,
     };
-    
+
     struct gguf_context * ctx = gguf_init_from_file(model_path.c_str(), params);
     if (!ctx) {
         error_msg_ = "Failed to open GGUF file: " + model_path;
         return false;
     }
-    
+
     if (!parse_config(ctx)) {
         gguf_free(ctx);
         if (meta_ctx) ggml_free(meta_ctx);
         return false;
     }
-    
+
     if (!create_tensors(ctx)) {
         gguf_free(ctx);
         if (meta_ctx) ggml_free(meta_ctx);
         return false;
     }
-    
+
     if (!load_tensor_data(model_path, ctx)) {
         free_transformer_model(model_);
         gguf_free(ctx);
         if (meta_ctx) ggml_free(meta_ctx);
         return false;
     }
-    
+
     gguf_free(ctx);
     if (meta_ctx) ggml_free(meta_ctx);
-    
+
     state_.backend = init_preferred_backend("TTSTransformer", &error_msg_);
     if (!state_.backend) {
         return false;
@@ -135,7 +103,7 @@ bool TTSTransformer::load_model(const std::string & model_path) {
             return false;
         }
     }
-    
+
     std::vector<ggml_backend_t> backends;
     backends.push_back(state_.backend);
     if (state_.backend_cpu) {
@@ -146,13 +114,13 @@ bool TTSTransformer::load_model(const std::string & model_path) {
         error_msg_ = "Failed to create backend scheduler";
         return false;
     }
-    
+
     state_.compute_meta.resize(ggml_tensor_overhead() * QWEN3_TTS_MAX_NODES + ggml_graph_overhead());
 
     if (!try_init_coreml_code_predictor(model_path)) {
         return false;
     }
-    
+
     return true;
 }
 
@@ -160,53 +128,7 @@ bool TTSTransformer::try_init_coreml_code_predictor(const std::string & model_pa
     use_coreml_code_predictor_ = false;
     coreml_code_predictor_path_.clear();
 
-    const char * use_coreml_env = std::getenv("QWEN3_TTS_USE_COREML");
-    bool coreml_disabled = false;
-    if (use_coreml_env && use_coreml_env[0] != '\0') {
-        std::string use_coreml = use_coreml_env;
-        std::transform(use_coreml.begin(), use_coreml.end(), use_coreml.begin(),
-                       [](unsigned char c) { return (char) std::tolower(c); });
-        coreml_disabled = use_coreml == "0" || use_coreml == "false" ||
-                          use_coreml == "off" || use_coreml == "no";
-    }
-
-    if (coreml_disabled) {
-        return true;
-    }
-
-#if !defined(__APPLE__)
-    if (use_coreml_env && use_coreml_env[0] != '\0') {
-        fprintf(stderr, "  CoreML code predictor requested but this build is not on Apple platform\n");
-    }
     return true;
-#else
-    std::string coreml_path;
-    const char * override_env = std::getenv("QWEN3_TTS_COREML_MODEL");
-    if (override_env && override_env[0] != '\0') {
-        coreml_path = override_env;
-    } else {
-        size_t slash = model_path.find_last_of("/\\");
-        const std::string model_dir = (slash == std::string::npos) ? "." : model_path.substr(0, slash);
-        coreml_path = model_dir + "/coreml/code_predictor.mlpackage";
-    }
-
-    if (!coreml_code_predictor_.load(coreml_path, model_.config.n_codebooks - 1)) {
-        if (skip_ggml_code_pred_layers_) {
-            error_msg_ = "CoreML code predictor load failed in strict mode: " + coreml_code_predictor_.get_error();
-            return false;
-        } else {
-            fprintf(stderr, "  CoreML code predictor load failed: %s\n",
-                    coreml_code_predictor_.get_error().c_str());
-            fprintf(stderr, "  Falling back to GGML code predictor\n");
-            return true;
-        }
-    }
-
-    use_coreml_code_predictor_ = true;
-    coreml_code_predictor_path_ = coreml_path;
-    fprintf(stderr, "  CoreML code predictor enabled: %s\n", coreml_code_predictor_path_.c_str());
-    return true;
-#endif
 }
 
 bool TTSTransformer::parse_config(struct gguf_context * ctx) {
@@ -219,7 +141,7 @@ bool TTSTransformer::parse_config(struct gguf_context * ctx) {
         }
         return default_val;
     };
-    
+
     auto get_f32_any = [&](std::initializer_list<const char *> keys, float default_val) -> float {
         for (const char * key : keys) {
             int64_t idx = gguf_find_key(ctx, key);
@@ -229,7 +151,7 @@ bool TTSTransformer::parse_config(struct gguf_context * ctx) {
         }
         return default_val;
     };
-    
+
     auto & cfg = model_.config;
     cfg.text_vocab_size = get_u32_any({
         "qwen3-tts.text.vocab_size",
@@ -339,43 +261,43 @@ bool TTSTransformer::parse_config(struct gguf_context * ctx) {
         "qwen3-tts.codec.language.english_id",
         "qwen3-tts.language_id",
     }, 2050);
-    
+
     return true;
 }
 
 bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
     const int64_t n_tensors = gguf_get_n_tensors(ctx);
     const auto & cfg = model_.config;
-    
+
     const size_t ctx_size = n_tensors * ggml_tensor_overhead();
     struct ggml_init_params params = {
         /*.mem_size   =*/ ctx_size,
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
-    
+
     model_.ctx = ggml_init(params);
     if (!model_.ctx) {
         error_msg_ = "Failed to create GGML context";
         return false;
     }
-    
+
     model_.layers.resize(cfg.n_layers);
     model_.code_pred_layers.resize(cfg.code_pred_layers);
     model_.code_pred_embd.resize(cfg.n_codebooks - 1);
     model_.code_pred_head.resize(cfg.n_codebooks - 1);
-    
+
     for (int64_t i = 0; i < n_tensors; ++i) {
         const char * name = gguf_get_tensor_name(ctx, i);
         enum ggml_type type = gguf_get_tensor_type(ctx, i);
-        
+
         int64_t ne[GGML_MAX_DIMS] = {1, 1, 1, 1};
         int n_dims = 0;
-        
+
         if (strstr(name, "spk_enc.") || strstr(name, "tok_")) {
             continue;
         }
-        
+
         if (strstr(name, "talker.text_embd.weight")) {
             ne[0] = cfg.text_embd_dim;
             ne[1] = cfg.text_vocab_size;
@@ -407,9 +329,9 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
             n_dims = 1;
         } else if (strstr(name, "talker.blk.")) {
             int layer_idx = -1;
-            if (sscanf(name, "talker.blk.%d.", &layer_idx) == 1 && 
+            if (sscanf(name, "talker.blk.%d.", &layer_idx) == 1 &&
                 layer_idx >= 0 && layer_idx < cfg.n_layers) {
-                
+
                 if (strstr(name, "attn_norm.weight")) {
                     ne[0] = cfg.hidden_size;
                     n_dims = 1;
@@ -461,9 +383,9 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
                 continue;
             }
             int layer_idx = -1;
-            if (sscanf(name, "code_pred.blk.%d.", &layer_idx) == 1 && 
+            if (sscanf(name, "code_pred.blk.%d.", &layer_idx) == 1 &&
                 layer_idx >= 0 && layer_idx < cfg.code_pred_layers) {
-                
+
                 if (strstr(name, "attn_norm.weight")) {
                     ne[0] = cfg.hidden_size;
                     n_dims = 1;
@@ -542,7 +464,7 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
          } else {
              continue;
          }
-        
+
         struct ggml_tensor * tensor = ggml_new_tensor(model_.ctx, type, n_dims, ne);
         if (!tensor) {
             error_msg_ = "Failed to create tensor: " + std::string(name);
@@ -550,7 +472,7 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
         }
         ggml_set_name(tensor, name);
         model_.tensors[name] = tensor;
-        
+
         if (strstr(name, "talker.text_embd.weight")) {
             model_.text_embd = tensor;
         } else if (strstr(name, "talker.text_proj.fc1.weight")) {
@@ -617,7 +539,7 @@ bool TTSTransformer::create_tensors(struct gguf_context * ctx) {
              model_.code_pred_output_norm = tensor;
          }
      }
-     
+
      return true;
  }
 
@@ -626,109 +548,109 @@ bool TTSTransformer::load_tensor_data(const std::string & path, struct gguf_cont
     if (!backend) {
         return false;
     }
-    
+
     model_.buffer = ggml_backend_alloc_ctx_tensors(model_.ctx, backend);
     if (!model_.buffer) {
         error_msg_ = "Failed to allocate tensor buffer";
         release_preferred_backend(backend);
         return false;
     }
-    
+
     FILE * f = fopen(path.c_str(), "rb");
     if (!f) {
         error_msg_ = "Failed to open file for reading: " + path;
         release_preferred_backend(backend);
         return false;
     }
-    
+
     const size_t data_offset = gguf_get_data_offset(ctx);
     const int64_t n_tensors = gguf_get_n_tensors(ctx);
     std::vector<uint8_t> read_buf;
-    
+
     for (int64_t i = 0; i < n_tensors; ++i) {
         const char * name = gguf_get_tensor_name(ctx, i);
         size_t offset = gguf_get_tensor_offset(ctx, i);
-        
+
         auto it = model_.tensors.find(name);
         if (it == model_.tensors.end()) {
             continue;
         }
-        
+
         struct ggml_tensor * tensor = it->second;
         size_t nbytes = ggml_nbytes(tensor);
-        
+
         read_buf.resize(nbytes);
-        
+
         if (fseek(f, data_offset + offset, SEEK_SET) != 0) {
             error_msg_ = "Failed to seek to tensor data: " + std::string(name);
             fclose(f);
             release_preferred_backend(backend);
             return false;
         }
-        
+
         if (fread(read_buf.data(), 1, nbytes, f) != nbytes) {
             error_msg_ = "Failed to read tensor data: " + std::string(name);
             fclose(f);
             release_preferred_backend(backend);
             return false;
         }
-        
+
         ggml_backend_tensor_set(tensor, read_buf.data(), 0, nbytes);
     }
-    
+
     fclose(f);
     release_preferred_backend(backend);
-    
+
     return true;
 }
 
 bool TTSTransformer::init_kv_cache(int32_t n_ctx) {
     const auto & cfg = model_.config;
-    
+
     free_tts_kv_cache(state_.cache);
-    
+
     state_.cache.n_ctx = n_ctx;
     state_.cache.n_used = 0;
     state_.cache.head_dim = cfg.head_dim;
     state_.cache.n_kv_heads = cfg.n_key_value_heads;
     state_.cache.n_layers = cfg.n_layers;
-    
+
     const size_t n_tensors = cfg.n_layers * 2;
     const size_t ctx_size = n_tensors * ggml_tensor_overhead();
-    
+
     struct ggml_init_params params = {
         /*.mem_size   =*/ ctx_size,
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
-    
+
     state_.cache.ctx = ggml_init(params);
     if (!state_.cache.ctx) {
         error_msg_ = "Failed to create KV cache context";
         return false;
     }
-    
+
     state_.cache.k_cache.resize(cfg.n_layers);
     state_.cache.v_cache.resize(cfg.n_layers);
-    
+
     for (int il = 0; il < cfg.n_layers; ++il) {
         state_.cache.k_cache[il] = ggml_new_tensor_3d(
             state_.cache.ctx, GGML_TYPE_F16,
             cfg.head_dim, cfg.n_key_value_heads, n_ctx);
         ggml_format_name(state_.cache.k_cache[il], "k_cache_%d", il);
-        
+
         state_.cache.v_cache[il] = ggml_new_tensor_3d(
             state_.cache.ctx, GGML_TYPE_F16,
             cfg.head_dim, cfg.n_key_value_heads, n_ctx);
         ggml_format_name(state_.cache.v_cache[il], "v_cache_%d", il);
     }
-    
+
     state_.cache.buffer = ggml_backend_alloc_ctx_tensors(state_.cache.ctx, state_.backend);
     if (!state_.cache.buffer) {
         error_msg_ = "Failed to allocate KV cache buffer";
         return false;
     }
-    
+
     return true;
 }
 
@@ -738,51 +660,51 @@ void TTSTransformer::clear_kv_cache() {
 
 bool TTSTransformer::init_code_pred_kv_cache(int32_t n_ctx) {
     const auto & cfg = model_.config;
-    
+
     free_tts_kv_cache(state_.code_pred_cache);
-    
+
     state_.code_pred_cache.n_ctx = n_ctx;
     state_.code_pred_cache.n_used = 0;
     state_.code_pred_cache.head_dim = cfg.head_dim;
     state_.code_pred_cache.n_kv_heads = cfg.n_key_value_heads;
     state_.code_pred_cache.n_layers = cfg.code_pred_layers;
-    
+
     const size_t n_tensors = cfg.code_pred_layers * 2;
     const size_t ctx_size = n_tensors * ggml_tensor_overhead();
-    
+
     struct ggml_init_params params = {
         /*.mem_size   =*/ ctx_size,
         /*.mem_buffer =*/ nullptr,
         /*.no_alloc   =*/ true,
     };
-    
+
     state_.code_pred_cache.ctx = ggml_init(params);
     if (!state_.code_pred_cache.ctx) {
         error_msg_ = "Failed to create code predictor KV cache context";
         return false;
     }
-    
+
     state_.code_pred_cache.k_cache.resize(cfg.code_pred_layers);
     state_.code_pred_cache.v_cache.resize(cfg.code_pred_layers);
-    
+
     for (int il = 0; il < cfg.code_pred_layers; ++il) {
         state_.code_pred_cache.k_cache[il] = ggml_new_tensor_3d(
             state_.code_pred_cache.ctx, GGML_TYPE_F16,
             cfg.head_dim, cfg.n_key_value_heads, n_ctx);
         ggml_format_name(state_.code_pred_cache.k_cache[il], "code_pred_k_cache_%d", il);
-        
+
         state_.code_pred_cache.v_cache[il] = ggml_new_tensor_3d(
             state_.code_pred_cache.ctx, GGML_TYPE_F16,
             cfg.head_dim, cfg.n_key_value_heads, n_ctx);
         ggml_format_name(state_.code_pred_cache.v_cache[il], "code_pred_v_cache_%d", il);
     }
-    
+
     state_.code_pred_cache.buffer = ggml_backend_alloc_ctx_tensors(state_.code_pred_cache.ctx, state_.backend);
     if (!state_.code_pred_cache.buffer) {
         error_msg_ = "Failed to allocate code predictor KV cache buffer";
         return false;
     }
-    
+
     return true;
 }
 
@@ -1130,125 +1052,125 @@ struct ggml_cgraph * TTSTransformer::build_prefill_forward_graph(int32_t n_token
     const float eps = cfg.rms_norm_eps;
     const float rope_theta = cfg.rope_theta;
     const int n_layer = cfg.n_layers;
-    
+
     struct ggml_init_params params = {
         /*.mem_size   =*/ state_.compute_meta.size(),
         /*.mem_buffer =*/ state_.compute_meta.data(),
         /*.no_alloc   =*/ true,
     };
-    
+
     struct ggml_context * ctx0 = ggml_init(params);
     struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, QWEN3_TTS_MAX_NODES, false);
 
     struct ggml_tensor * inp_prefill_embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_size, n_tokens);
     ggml_set_name(inp_prefill_embd, "inp_prefill_embd");
     ggml_set_input(inp_prefill_embd);
-    
+
     struct ggml_tensor * inp_pos = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens);
     ggml_set_name(inp_pos, "inp_pos");
     ggml_set_input(inp_pos);
 
     struct ggml_tensor * cur = inp_prefill_embd;
-    
+
     struct ggml_tensor * inpL = cur;
-    
+
     const float KQscale = 1.0f / sqrtf(float(head_dim));
-    
+
     for (int il = 0; il < n_layer; ++il) {
         const auto & layer = model_.layers[il];
-        
+
         cur = ggml_rms_norm(ctx0, inpL, eps);
         cur = ggml_mul(ctx0, cur, layer.attn_norm);
-        
+
         struct ggml_tensor * Qcur = ggml_mul_mat(ctx0, layer.attn_q, cur);
         struct ggml_tensor * Kcur = ggml_mul_mat(ctx0, layer.attn_k, cur);
         struct ggml_tensor * Vcur = ggml_mul_mat(ctx0, layer.attn_v, cur);
-        
+
         Qcur = ggml_reshape_3d(ctx0, Qcur, head_dim, n_head, n_tokens);
         Kcur = ggml_reshape_3d(ctx0, Kcur, head_dim, n_kv_head, n_tokens);
         Vcur = ggml_reshape_3d(ctx0, Vcur, head_dim, n_kv_head, n_tokens);
-        
+
         if (layer.attn_q_norm) {
             Qcur = ggml_rms_norm(ctx0, Qcur, eps);
             Qcur = ggml_mul(ctx0, Qcur, layer.attn_q_norm);
         }
-        
+
         if (layer.attn_k_norm) {
             Kcur = ggml_rms_norm(ctx0, Kcur, eps);
             Kcur = ggml_mul(ctx0, Kcur, layer.attn_k_norm);
         }
-        
+
         Qcur = ggml_rope_ext(ctx0, Qcur, inp_pos, nullptr,
                              head_dim, GGML_ROPE_TYPE_NEOX, 0,
                              rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-        
+
         Kcur = ggml_rope_ext(ctx0, Kcur, inp_pos, nullptr,
                              head_dim, GGML_ROPE_TYPE_NEOX, 0,
                              rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-        
+
         struct ggml_tensor * k_cache = state_.cache.k_cache[il];
         struct ggml_tensor * v_cache = state_.cache.v_cache[il];
-        
+
         struct ggml_tensor * k_cache_view = ggml_view_3d(ctx0, k_cache,
             head_dim, n_kv_head, n_tokens,
             k_cache->nb[1], k_cache->nb[2],
             n_past * k_cache->nb[2]);
-        
+
         struct ggml_tensor * v_cache_view = ggml_view_3d(ctx0, v_cache,
             head_dim, n_kv_head, n_tokens,
             v_cache->nb[1], v_cache->nb[2],
             n_past * v_cache->nb[2]);
-        
+
         ggml_build_forward_expand(gf, ggml_cpy(ctx0, Kcur, k_cache_view));
         ggml_build_forward_expand(gf, ggml_cpy(ctx0, Vcur, v_cache_view));
-        
+
         int n_kv = n_past + n_tokens;
-        
+
         struct ggml_tensor * K = ggml_view_3d(ctx0, k_cache,
             head_dim, n_kv_head, n_kv,
             k_cache->nb[1], k_cache->nb[2], 0);
-        
+
         struct ggml_tensor * V = ggml_view_3d(ctx0, v_cache,
             head_dim, n_kv_head, n_kv,
             v_cache->nb[1], v_cache->nb[2], 0);
-        
+
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
         K = ggml_permute(ctx0, K, 0, 2, 1, 3);
         V = ggml_permute(ctx0, V, 0, 2, 1, 3);
-        
+
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
         KQ = ggml_scale(ctx0, KQ, KQscale);
         KQ = ggml_diag_mask_inf(ctx0, KQ, n_past);
         KQ = ggml_soft_max(ctx0, KQ);
-        
+
         V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
-        
+
         struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, n_tokens);
-        
+
         cur = ggml_mul_mat(ctx0, layer.attn_output, cur);
         cur = ggml_add(ctx0, cur, inpL);
         struct ggml_tensor * inpFF = cur;
-        
+
         cur = ggml_rms_norm(ctx0, inpFF, eps);
         cur = ggml_mul(ctx0, cur, layer.ffn_norm);
-        
+
         struct ggml_tensor * gate = ggml_mul_mat(ctx0, layer.ffn_gate, cur);
         struct ggml_tensor * up = ggml_mul_mat(ctx0, layer.ffn_up, cur);
-        
+
         gate = ggml_silu(ctx0, gate);
-        
+
         cur = ggml_mul(ctx0, gate, up);
-        
+
         struct ggml_tensor * ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
         cur = ggml_mul_mat(ctx0, ffn_down_f32, cur);
-        
+
         inpL = ggml_add(ctx0, cur, inpFF);
     }
-    
+
     cur = inpL;
-    
+
     cur = ggml_rms_norm(ctx0, cur, eps);
     cur = ggml_mul(ctx0, cur, model_.output_norm);
     ggml_set_name(cur, "hidden_states");
@@ -1257,11 +1179,11 @@ struct ggml_cgraph * TTSTransformer::build_prefill_forward_graph(int32_t n_token
     struct ggml_tensor * logits = ggml_mul_mat(ctx0, model_.codec_head, cur);
     ggml_set_name(logits, "logits");
     ggml_set_output(logits);
-    
+
     ggml_build_forward_expand(gf, logits);
-    
+
     ggml_free(ctx0);
-    
+
     return gf;
 }
 
@@ -1275,138 +1197,138 @@ struct ggml_cgraph * TTSTransformer::build_step_graph(int32_t n_past) {
     const float rope_theta = cfg.rope_theta;
     const int n_layer = cfg.n_layers;
     const int n_tokens = 1;
-    
+
     struct ggml_init_params params = {
         /*.mem_size   =*/ state_.compute_meta.size(),
         /*.mem_buffer =*/ state_.compute_meta.data(),
         /*.no_alloc   =*/ true,
     };
-    
+
     struct ggml_context * ctx0 = ggml_init(params);
     struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, QWEN3_TTS_MAX_NODES, false);
 
     struct ggml_tensor * inp_step_embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hidden_size, 1);
     ggml_set_name(inp_step_embd, "inp_step_embd");
     ggml_set_input(inp_step_embd);
-    
+
     struct ggml_tensor * inp_pos = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, 1);
     ggml_set_name(inp_pos, "inp_pos");
     ggml_set_input(inp_pos);
 
     struct ggml_tensor * cur = inp_step_embd;
-    
+
     struct ggml_tensor * inpL = cur;
-    
+
     const float KQscale = 1.0f / sqrtf(float(head_dim));
-    
+
     for (int il = 0; il < n_layer; ++il) {
         const auto & layer = model_.layers[il];
-        
+
         cur = ggml_rms_norm(ctx0, inpL, eps);
         cur = ggml_mul(ctx0, cur, layer.attn_norm);
-        
+
         struct ggml_tensor * Qcur = ggml_mul_mat(ctx0, layer.attn_q, cur);
         struct ggml_tensor * Kcur = ggml_mul_mat(ctx0, layer.attn_k, cur);
         struct ggml_tensor * Vcur = ggml_mul_mat(ctx0, layer.attn_v, cur);
-        
+
         Qcur = ggml_reshape_3d(ctx0, Qcur, head_dim, n_head, n_tokens);
         Kcur = ggml_reshape_3d(ctx0, Kcur, head_dim, n_kv_head, n_tokens);
         Vcur = ggml_reshape_3d(ctx0, Vcur, head_dim, n_kv_head, n_tokens);
-        
+
         if (layer.attn_q_norm) {
             Qcur = ggml_rms_norm(ctx0, Qcur, eps);
             Qcur = ggml_mul(ctx0, Qcur, layer.attn_q_norm);
         }
-        
+
         if (layer.attn_k_norm) {
             Kcur = ggml_rms_norm(ctx0, Kcur, eps);
             Kcur = ggml_mul(ctx0, Kcur, layer.attn_k_norm);
         }
-        
+
         Qcur = ggml_rope_ext(ctx0, Qcur, inp_pos, nullptr,
                              head_dim, GGML_ROPE_TYPE_NEOX, 0,
                              rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-        
+
         Kcur = ggml_rope_ext(ctx0, Kcur, inp_pos, nullptr,
                              head_dim, GGML_ROPE_TYPE_NEOX, 0,
                              rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-        
+
         struct ggml_tensor * k_cache = state_.cache.k_cache[il];
         struct ggml_tensor * v_cache = state_.cache.v_cache[il];
-        
+
         struct ggml_tensor * k_cache_view = ggml_view_3d(ctx0, k_cache,
             head_dim, n_kv_head, n_tokens,
             k_cache->nb[1], k_cache->nb[2],
             n_past * k_cache->nb[2]);
-        
+
         struct ggml_tensor * v_cache_view = ggml_view_3d(ctx0, v_cache,
             head_dim, n_kv_head, n_tokens,
             v_cache->nb[1], v_cache->nb[2],
             n_past * v_cache->nb[2]);
-        
+
         ggml_build_forward_expand(gf, ggml_cpy(ctx0, Kcur, k_cache_view));
         ggml_build_forward_expand(gf, ggml_cpy(ctx0, Vcur, v_cache_view));
-        
+
         int n_kv = n_past + n_tokens;
-        
+
         struct ggml_tensor * K = ggml_view_3d(ctx0, k_cache,
             head_dim, n_kv_head, n_kv,
             k_cache->nb[1], k_cache->nb[2], 0);
-        
+
         struct ggml_tensor * V = ggml_view_3d(ctx0, v_cache,
             head_dim, n_kv_head, n_kv,
             v_cache->nb[1], v_cache->nb[2], 0);
-        
+
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
         K = ggml_permute(ctx0, K, 0, 2, 1, 3);
         V = ggml_permute(ctx0, V, 0, 2, 1, 3);
-        
+
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
         KQ = ggml_scale(ctx0, KQ, KQscale);
         KQ = ggml_diag_mask_inf(ctx0, KQ, n_past);
         KQ = ggml_soft_max(ctx0, KQ);
-        
+
         V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
-        
+
         struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, n_tokens);
-        
+
         cur = ggml_mul_mat(ctx0, layer.attn_output, cur);
         cur = ggml_add(ctx0, cur, inpL);
         struct ggml_tensor * inpFF = cur;
-        
+
         cur = ggml_rms_norm(ctx0, inpFF, eps);
         cur = ggml_mul(ctx0, cur, layer.ffn_norm);
-        
+
         struct ggml_tensor * gate = ggml_mul_mat(ctx0, layer.ffn_gate, cur);
         struct ggml_tensor * up = ggml_mul_mat(ctx0, layer.ffn_up, cur);
-        
+
         gate = ggml_silu(ctx0, gate);
-        
+
         cur = ggml_mul(ctx0, gate, up);
-        
+
         struct ggml_tensor * ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
         cur = ggml_mul_mat(ctx0, ffn_down_f32, cur);
-        
+
         inpL = ggml_add(ctx0, cur, inpFF);
     }
-    
+
     cur = inpL;
-    
+
     cur = ggml_rms_norm(ctx0, cur, eps);
     cur = ggml_mul(ctx0, cur, model_.output_norm);
     ggml_set_name(cur, "hidden_states");
     ggml_set_output(cur);
-    
+
     struct ggml_tensor * logits = ggml_mul_mat(ctx0, model_.codec_head, cur);
     ggml_set_name(logits, "logits");
     ggml_set_output(logits);
-    
+
     ggml_build_forward_expand(gf, logits);
-    
+
     ggml_free(ctx0);
-    
+
     return gf;
 }
 
@@ -1419,29 +1341,29 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_graph(int32_t n_prev_codes)
     const float eps = cfg.rms_norm_eps;
     const int n_layer = cfg.code_pred_layers;
     const int n_codebooks = cfg.n_codebooks;
-    
+
     struct ggml_init_params params = {
         /*.mem_size   =*/ state_.compute_meta.size(),
         /*.mem_buffer =*/ state_.compute_meta.data(),
         /*.no_alloc   =*/ true,
     };
-    
+
     struct ggml_context * ctx0 = ggml_init(params);
     struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, QWEN3_TTS_MAX_NODES, false);
-    
+
     struct ggml_tensor * inp_hidden = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_size);
     ggml_set_name(inp_hidden, "inp_hidden");
     ggml_set_input(inp_hidden);
-    
+
     struct ggml_tensor * inp_prev_codes = nullptr;
     if (n_prev_codes > 0) {
         inp_prev_codes = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_prev_codes);
         ggml_set_name(inp_prev_codes, "inp_prev_codes");
         ggml_set_input(inp_prev_codes);
     }
-    
+
     struct ggml_tensor * cur = ggml_reshape_2d(ctx0, inp_hidden, hidden_size, 1);
-    
+
     if (n_prev_codes > 0 && inp_prev_codes) {
         for (int cb = 0; cb < n_prev_codes && cb < n_codebooks - 1; ++cb) {
             struct ggml_tensor * code_idx = ggml_view_1d(ctx0, inp_prev_codes, 1, cb * sizeof(int32_t));
@@ -1449,71 +1371,71 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_graph(int32_t n_prev_codes)
             cur = ggml_add(ctx0, cur, code_embd);
         }
     }
-    
+
     struct ggml_tensor * inpL = cur;
-    
+
     const float KQscale = 1.0f / sqrtf(float(head_dim));
-    
+
     for (int il = 0; il < n_layer; ++il) {
         const auto & layer = model_.code_pred_layers[il];
-        
+
         cur = ggml_rms_norm(ctx0, inpL, eps);
         cur = ggml_mul(ctx0, cur, layer.attn_norm);
-        
+
         struct ggml_tensor * Qcur = ggml_mul_mat(ctx0, layer.attn_q, cur);
         struct ggml_tensor * Kcur = ggml_mul_mat(ctx0, layer.attn_k, cur);
         struct ggml_tensor * Vcur = ggml_mul_mat(ctx0, layer.attn_v, cur);
-        
+
         Qcur = ggml_reshape_3d(ctx0, Qcur, head_dim, n_head, 1);
         Kcur = ggml_reshape_3d(ctx0, Kcur, head_dim, n_kv_head, 1);
         Vcur = ggml_reshape_3d(ctx0, Vcur, head_dim, n_kv_head, 1);
-        
+
         if (layer.attn_q_norm) {
             Qcur = ggml_rms_norm(ctx0, Qcur, eps);
             Qcur = ggml_mul(ctx0, Qcur, layer.attn_q_norm);
         }
-        
+
         if (layer.attn_k_norm) {
             Kcur = ggml_rms_norm(ctx0, Kcur, eps);
             Kcur = ggml_mul(ctx0, Kcur, layer.attn_k_norm);
         }
-        
+
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
         struct ggml_tensor * K = ggml_permute(ctx0, Kcur, 0, 2, 1, 3);
         struct ggml_tensor * V = ggml_permute(ctx0, Vcur, 0, 2, 1, 3);
-        
+
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
         KQ = ggml_scale(ctx0, KQ, KQscale);
         KQ = ggml_soft_max(ctx0, KQ);
-        
+
         V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
-        
+
         struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, 1);
-        
+
         cur = ggml_mul_mat(ctx0, layer.attn_output, cur);
         cur = ggml_add(ctx0, cur, inpL);
         struct ggml_tensor * inpFF = cur;
-        
+
         cur = ggml_rms_norm(ctx0, inpFF, eps);
         cur = ggml_mul(ctx0, cur, layer.ffn_norm);
-        
+
         struct ggml_tensor * gate = ggml_mul_mat(ctx0, layer.ffn_gate, cur);
         struct ggml_tensor * up = ggml_mul_mat(ctx0, layer.ffn_up, cur);
-        
+
         gate = ggml_silu(ctx0, gate);
-        
+
         cur = ggml_mul(ctx0, gate, up);
-        
+
         struct ggml_tensor * old_ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
         cur = ggml_mul_mat(ctx0, old_ffn_down_f32, cur);
-        
+
         inpL = ggml_add(ctx0, cur, inpFF);
     }
-    
+
     cur = inpL;
-    
+
     std::vector<struct ggml_tensor *> all_logits;
     for (int cb = 0; cb < n_codebooks - 1; ++cb) {
         struct ggml_tensor * cb_logits = ggml_mul_mat(ctx0, model_.code_pred_head[cb], cur);
@@ -1521,13 +1443,13 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_graph(int32_t n_prev_codes)
         ggml_set_output(cb_logits);
         all_logits.push_back(cb_logits);
     }
-    
+
     for (auto * logits : all_logits) {
         ggml_build_forward_expand(gf, logits);
     }
-    
+
     ggml_free(ctx0);
-    
+
     return gf;
 }
 
@@ -1541,137 +1463,137 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_prefill_graph() {
     const float rope_theta = cfg.rope_theta;
     const int n_layer = cfg.code_pred_layers;
     const int n_tokens = 2;
-    
+
     struct ggml_init_params params = {
         /*.mem_size   =*/ state_.compute_meta.size(),
         /*.mem_buffer =*/ state_.compute_meta.data(),
         /*.no_alloc   =*/ true,
     };
-    
+
     struct ggml_context * ctx0 = ggml_init(params);
     struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, QWEN3_TTS_MAX_NODES, false);
-    
+
     // Input: past_hidden from talker [hidden_size]
     struct ggml_tensor * inp_hidden = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_size);
     ggml_set_name(inp_hidden, "inp_hidden");
     ggml_set_input(inp_hidden);
-    
+
     // Input: codebook 0 token embedding [hidden_size] (pre-computed using talker's codec_embd)
     struct ggml_tensor * inp_cb0_embd = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_size);
     ggml_set_name(inp_cb0_embd, "inp_cb0_embd");
     ggml_set_input(inp_cb0_embd);
-    
+
     struct ggml_tensor * inp_pos = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens);
     ggml_set_name(inp_pos, "inp_pos");
     ggml_set_input(inp_pos);
-    
+
     // Concatenate [past_hidden, cb0_embd] -> [2, hidden_size]
     struct ggml_tensor * hidden_2d = ggml_reshape_2d(ctx0, inp_hidden, hidden_size, 1);
     struct ggml_tensor * cb0_2d = ggml_reshape_2d(ctx0, inp_cb0_embd, hidden_size, 1);
     struct ggml_tensor * cur = ggml_concat(ctx0, hidden_2d, cb0_2d, 1);
-    
+
     struct ggml_tensor * inpL = cur;
-    
+
     const float KQscale = 1.0f / sqrtf(float(head_dim));
-    
+
     for (int il = 0; il < n_layer; ++il) {
         const auto & layer = model_.code_pred_layers[il];
-        
+
         cur = ggml_rms_norm(ctx0, inpL, eps);
         cur = ggml_mul(ctx0, cur, layer.attn_norm);
-        
+
         struct ggml_tensor * Qcur = ggml_mul_mat(ctx0, layer.attn_q, cur);
         struct ggml_tensor * Kcur = ggml_mul_mat(ctx0, layer.attn_k, cur);
         struct ggml_tensor * Vcur = ggml_mul_mat(ctx0, layer.attn_v, cur);
-        
+
         Qcur = ggml_reshape_3d(ctx0, Qcur, head_dim, n_head, n_tokens);
         Kcur = ggml_reshape_3d(ctx0, Kcur, head_dim, n_kv_head, n_tokens);
         Vcur = ggml_reshape_3d(ctx0, Vcur, head_dim, n_kv_head, n_tokens);
-        
+
         if (layer.attn_q_norm) {
             Qcur = ggml_rms_norm(ctx0, Qcur, eps);
             Qcur = ggml_mul(ctx0, Qcur, layer.attn_q_norm);
         }
-        
+
         if (layer.attn_k_norm) {
             Kcur = ggml_rms_norm(ctx0, Kcur, eps);
             Kcur = ggml_mul(ctx0, Kcur, layer.attn_k_norm);
         }
-        
+
         Qcur = ggml_rope_ext(ctx0, Qcur, inp_pos, nullptr,
                              head_dim, GGML_ROPE_TYPE_NEOX, 0,
                              rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-        
+
         Kcur = ggml_rope_ext(ctx0, Kcur, inp_pos, nullptr,
                              head_dim, GGML_ROPE_TYPE_NEOX, 0,
                              rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-        
+
         struct ggml_tensor * k_cache = state_.code_pred_cache.k_cache[il];
         struct ggml_tensor * v_cache = state_.code_pred_cache.v_cache[il];
-        
+
         // Store at position 0 (prefill starts fresh)
         struct ggml_tensor * k_cache_view = ggml_view_3d(ctx0, k_cache,
             head_dim, n_kv_head, n_tokens,
             k_cache->nb[1], k_cache->nb[2], 0);
-        
+
         struct ggml_tensor * v_cache_view = ggml_view_3d(ctx0, v_cache,
             head_dim, n_kv_head, n_tokens,
             v_cache->nb[1], v_cache->nb[2], 0);
-        
+
         ggml_build_forward_expand(gf, ggml_cpy(ctx0, Kcur, k_cache_view));
         ggml_build_forward_expand(gf, ggml_cpy(ctx0, Vcur, v_cache_view));
-        
+
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
         struct ggml_tensor * K = ggml_permute(ctx0, Kcur, 0, 2, 1, 3);
         struct ggml_tensor * V = ggml_permute(ctx0, Vcur, 0, 2, 1, 3);
-        
+
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
         KQ = ggml_scale(ctx0, KQ, KQscale);
         KQ = ggml_diag_mask_inf(ctx0, KQ, 0);
         KQ = ggml_soft_max(ctx0, KQ);
-        
+
         V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
-        
+
         struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, n_tokens);
-        
+
         cur = ggml_mul_mat(ctx0, layer.attn_output, cur);
         cur = ggml_add(ctx0, cur, inpL);
         struct ggml_tensor * inpFF = cur;
-        
+
         cur = ggml_rms_norm(ctx0, inpFF, eps);
         cur = ggml_mul(ctx0, cur, layer.ffn_norm);
-        
+
         struct ggml_tensor * gate = ggml_mul_mat(ctx0, layer.ffn_gate, cur);
         struct ggml_tensor * up = ggml_mul_mat(ctx0, layer.ffn_up, cur);
-        
+
         gate = ggml_silu(ctx0, gate);
-        
+
         cur = ggml_mul(ctx0, gate, up);
-        
+
         struct ggml_tensor * ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
         cur = ggml_mul_mat(ctx0, ffn_down_f32, cur);
-        
+
         inpL = ggml_add(ctx0, cur, inpFF);
     }
-    
+
      cur = inpL;
-     
+
      cur = ggml_rms_norm(ctx0, cur, eps);
      cur = ggml_mul(ctx0, cur, model_.code_pred_output_norm);
-     
-     struct ggml_tensor * last_hidden = ggml_view_2d(ctx0, cur, hidden_size, 1, 
+
+     struct ggml_tensor * last_hidden = ggml_view_2d(ctx0, cur, hidden_size, 1,
                                                       cur->nb[1], hidden_size * sizeof(float));
-     
+
      struct ggml_tensor * logits = ggml_mul_mat(ctx0, model_.code_pred_head[0], last_hidden);
     ggml_set_name(logits, "logits");
     ggml_set_output(logits);
-    
+
     ggml_build_forward_expand(gf, logits);
-    
+
     ggml_free(ctx0);
-    
+
     return gf;
 }
 
@@ -1685,28 +1607,28 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_step_graph(int32_t n_past, 
     const float rope_theta = cfg.rope_theta;
     const int n_layer = cfg.code_pred_layers;
     const int n_tokens = 1;
-    
+
     struct ggml_init_params params = {
         /*.mem_size   =*/ state_.compute_meta.size(),
         /*.mem_buffer =*/ state_.compute_meta.data(),
         /*.no_alloc   =*/ true,
     };
-    
+
     struct ggml_context * ctx0 = ggml_init(params);
     struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, QWEN3_TTS_MAX_NODES, false);
-    
+
     struct ggml_tensor * inp_hidden = ggml_new_tensor_1d(ctx0, GGML_TYPE_F32, hidden_size);
     ggml_set_name(inp_hidden, "inp_hidden");
     ggml_set_input(inp_hidden);
-    
+
     struct ggml_tensor * inp_code = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, 1);
     ggml_set_name(inp_code, "inp_code");
     ggml_set_input(inp_code);
-    
+
     struct ggml_tensor * inp_pos = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, 1);
     ggml_set_name(inp_pos, "inp_pos");
     ggml_set_input(inp_pos);
-    
+
     struct ggml_tensor * cur;
     if (generation_step == 0) {
         cur = ggml_reshape_2d(ctx0, inp_hidden, hidden_size, 1);
@@ -1714,117 +1636,117 @@ struct ggml_cgraph * TTSTransformer::build_code_pred_step_graph(int32_t n_past, 
         cur = ggml_get_rows(ctx0, model_.code_pred_embd[generation_step - 1], inp_code);
         cur = ggml_reshape_2d(ctx0, cur, hidden_size, 1);
     }
-    
+
     struct ggml_tensor * inpL = cur;
-    
+
     const float KQscale = 1.0f / sqrtf(float(head_dim));
-    
+
     for (int il = 0; il < n_layer; ++il) {
         const auto & layer = model_.code_pred_layers[il];
-        
+
         cur = ggml_rms_norm(ctx0, inpL, eps);
         cur = ggml_mul(ctx0, cur, layer.attn_norm);
-        
+
         struct ggml_tensor * Qcur = ggml_mul_mat(ctx0, layer.attn_q, cur);
         struct ggml_tensor * Kcur = ggml_mul_mat(ctx0, layer.attn_k, cur);
         struct ggml_tensor * Vcur = ggml_mul_mat(ctx0, layer.attn_v, cur);
-        
+
         Qcur = ggml_reshape_3d(ctx0, Qcur, head_dim, n_head, n_tokens);
         Kcur = ggml_reshape_3d(ctx0, Kcur, head_dim, n_kv_head, n_tokens);
         Vcur = ggml_reshape_3d(ctx0, Vcur, head_dim, n_kv_head, n_tokens);
-        
+
         if (layer.attn_q_norm) {
             Qcur = ggml_rms_norm(ctx0, Qcur, eps);
             Qcur = ggml_mul(ctx0, Qcur, layer.attn_q_norm);
         }
-        
+
         if (layer.attn_k_norm) {
             Kcur = ggml_rms_norm(ctx0, Kcur, eps);
             Kcur = ggml_mul(ctx0, Kcur, layer.attn_k_norm);
         }
-        
+
         Qcur = ggml_rope_ext(ctx0, Qcur, inp_pos, nullptr,
                              head_dim, GGML_ROPE_TYPE_NEOX, 0,
                              rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-        
+
         Kcur = ggml_rope_ext(ctx0, Kcur, inp_pos, nullptr,
                              head_dim, GGML_ROPE_TYPE_NEOX, 0,
                              rope_theta, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f);
-        
+
         struct ggml_tensor * k_cache = state_.code_pred_cache.k_cache[il];
         struct ggml_tensor * v_cache = state_.code_pred_cache.v_cache[il];
-        
+
         struct ggml_tensor * k_cache_view = ggml_view_3d(ctx0, k_cache,
             head_dim, n_kv_head, n_tokens,
             k_cache->nb[1], k_cache->nb[2],
             n_past * k_cache->nb[2]);
-        
+
         struct ggml_tensor * v_cache_view = ggml_view_3d(ctx0, v_cache,
             head_dim, n_kv_head, n_tokens,
             v_cache->nb[1], v_cache->nb[2],
             n_past * v_cache->nb[2]);
-        
+
         ggml_build_forward_expand(gf, ggml_cpy(ctx0, Kcur, k_cache_view));
         ggml_build_forward_expand(gf, ggml_cpy(ctx0, Vcur, v_cache_view));
-        
+
         int n_kv = n_past + n_tokens;
-        
+
         struct ggml_tensor * K = ggml_view_3d(ctx0, k_cache,
             head_dim, n_kv_head, n_kv,
             k_cache->nb[1], k_cache->nb[2], 0);
-        
+
         struct ggml_tensor * V = ggml_view_3d(ctx0, v_cache,
             head_dim, n_kv_head, n_kv,
             v_cache->nb[1], v_cache->nb[2], 0);
-        
+
         struct ggml_tensor * Q = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
         K = ggml_permute(ctx0, K, 0, 2, 1, 3);
         V = ggml_permute(ctx0, V, 0, 2, 1, 3);
-        
+
         struct ggml_tensor * KQ = ggml_mul_mat(ctx0, K, Q);
         KQ = ggml_scale(ctx0, KQ, KQscale);
         KQ = ggml_diag_mask_inf(ctx0, KQ, n_past);
         KQ = ggml_soft_max(ctx0, KQ);
-        
+
         V = ggml_cont(ctx0, ggml_transpose(ctx0, V));
-        
+
         struct ggml_tensor * KQV = ggml_mul_mat(ctx0, V, KQ);
         KQV = ggml_permute(ctx0, KQV, 0, 2, 1, 3);
         cur = ggml_cont_2d(ctx0, KQV, n_head * head_dim, n_tokens);
-        
+
         cur = ggml_mul_mat(ctx0, layer.attn_output, cur);
         cur = ggml_add(ctx0, cur, inpL);
         struct ggml_tensor * inpFF = cur;
-        
+
         cur = ggml_rms_norm(ctx0, inpFF, eps);
         cur = ggml_mul(ctx0, cur, layer.ffn_norm);
-        
+
         struct ggml_tensor * gate = ggml_mul_mat(ctx0, layer.ffn_gate, cur);
         struct ggml_tensor * up = ggml_mul_mat(ctx0, layer.ffn_up, cur);
-        
+
         gate = ggml_silu(ctx0, gate);
-        
+
         cur = ggml_mul(ctx0, gate, up);
-        
+
         struct ggml_tensor * step_ffn_down_f32 = ggml_cast(ctx0, layer.ffn_down, GGML_TYPE_F32);
         cur = ggml_mul_mat(ctx0, step_ffn_down_f32, cur);
-        
+
         inpL = ggml_add(ctx0, cur, inpFF);
     }
-    
+
      cur = inpL;
-     
+
      cur = ggml_rms_norm(ctx0, cur, eps);
      cur = ggml_mul(ctx0, cur, model_.code_pred_output_norm);
-     
+
      struct ggml_tensor * logits = ggml_mul_mat(ctx0, model_.code_pred_head[generation_step], cur);
      ggml_set_name(logits, "logits");
      ggml_set_output(logits);
-     
+
      ggml_build_forward_expand(gf, logits);
-    
+
     ggml_free(ctx0);
-    
+
     return gf;
 }
 
@@ -1843,19 +1765,19 @@ bool TTSTransformer::forward_prefill(const float * prefill_embd, int32_t n_token
         error_msg_ = "n_tokens must be > 0";
         return false;
     }
-    
+
     if (state_.cache.n_ctx == 0) {
         const int32_t min_ctx = std::max<int32_t>(256, n_past + n_tokens + 16);
         if (!init_kv_cache(min_ctx)) {
             return false;
         }
     }
-    
+
     if (n_past + n_tokens > state_.cache.n_ctx) {
         error_msg_ = "Context length exceeded";
         return false;
     }
-    
+
 #ifdef QWEN3_TTS_TIMING
     using clk = std::chrono::high_resolution_clock;
     auto t0 = clk::now(), t1 = t0;
@@ -1890,7 +1812,7 @@ bool TTSTransformer::forward_prefill(const float * prefill_embd, int32_t n_token
         ggml_backend_tensor_set(inp_prefill, prefill_embd, 0,
                                 (size_t)n_tokens * model_.config.hidden_size * sizeof(float));
     }
-    
+
     struct ggml_tensor * inp_pos = ggml_graph_get_tensor(gf, "inp_pos");
     if (inp_pos) {
         std::vector<int32_t> positions(n_tokens);
@@ -1916,7 +1838,7 @@ bool TTSTransformer::forward_prefill(const float * prefill_embd, int32_t n_token
     t1 = clk::now();
     if (timing_) timing_->t_prefill_compute_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
 #endif
-    
+
     struct ggml_tensor * hidden = ggml_graph_get_tensor(gf, "hidden_states");
     if (!hidden) {
         error_msg_ = "Failed to find hidden_states tensor";
@@ -1929,9 +1851,9 @@ bool TTSTransformer::forward_prefill(const float * prefill_embd, int32_t n_token
 #endif
     output.resize(n_tokens * model_.config.hidden_size);
     ggml_backend_tensor_get(hidden, output.data(), 0, output.size() * sizeof(float));
-    
+
     last_hidden_.resize(model_.config.hidden_size);
-    ggml_backend_tensor_get(hidden, last_hidden_.data(), 
+    ggml_backend_tensor_get(hidden, last_hidden_.data(),
                            (n_tokens - 1) * model_.config.hidden_size * sizeof(float),
                            model_.config.hidden_size * sizeof(float));
 
@@ -1948,15 +1870,15 @@ bool TTSTransformer::forward_prefill(const float * prefill_embd, int32_t n_token
                                 (n_tokens - 1) * model_.config.codec_vocab_size * sizeof(float),
                                 model_.config.codec_vocab_size * sizeof(float));
     }
-    
+
     state_.cache.n_used = n_past + n_tokens;
-    
+
     ggml_backend_sched_reset(state_.sched);
 #ifdef QWEN3_TTS_TIMING
     t1 = clk::now();
     if (timing_) timing_->t_prefill_data_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
 #endif
-    
+
     return true;
 }
 
@@ -2013,7 +1935,7 @@ bool TTSTransformer::forward_step(const float * step_embd, int32_t n_past,
         error_msg_ = "Context length exceeded";
         return false;
     }
-    
+
 #ifdef QWEN3_TTS_TIMING
     using clk = std::chrono::high_resolution_clock;
     auto t0 = clk::now(), t1 = t0;
@@ -2048,7 +1970,7 @@ bool TTSTransformer::forward_step(const float * step_embd, int32_t n_past,
         ggml_backend_tensor_set(inp_step, step_embd, 0,
                                 model_.config.hidden_size * sizeof(float));
     }
-    
+
     struct ggml_tensor * inp_pos = ggml_graph_get_tensor(gf, "inp_pos");
     if (inp_pos) {
         int32_t pos = n_past;
@@ -2071,7 +1993,7 @@ bool TTSTransformer::forward_step(const float * step_embd, int32_t n_past,
     t1 = clk::now();
     if (timing_) timing_->t_talker_compute_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
 #endif
-    
+
     struct ggml_tensor * hidden = ggml_graph_get_tensor(gf, "hidden_states");
 
 #ifdef QWEN3_TTS_TIMING
@@ -2079,31 +2001,31 @@ bool TTSTransformer::forward_step(const float * step_embd, int32_t n_past,
 #endif
     if (hidden) {
         last_hidden_.resize(model_.config.hidden_size);
-        ggml_backend_tensor_get(hidden, last_hidden_.data(), 0, 
+        ggml_backend_tensor_get(hidden, last_hidden_.data(), 0,
                                model_.config.hidden_size * sizeof(float));
         if (hidden_out) {
             *hidden_out = last_hidden_;
         }
     }
-    
+
     struct ggml_tensor * logits = ggml_graph_get_tensor(gf, "logits");
     if (!logits) {
         error_msg_ = "Failed to find logits tensor";
         ggml_backend_sched_reset(state_.sched);
         return false;
     }
-    
+
     output.resize(model_.config.codec_vocab_size);
     ggml_backend_tensor_get(logits, output.data(), 0, output.size() * sizeof(float));
-    
+
     state_.cache.n_used = n_past + 1;
-    
+
     ggml_backend_sched_reset(state_.sched);
 #ifdef QWEN3_TTS_TIMING
     t1 = clk::now();
     if (timing_) timing_->t_talker_data_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
 #endif
-    
+
     return true;
 }
 
@@ -2133,37 +2055,37 @@ bool TTSTransformer::predict_codes(const float * hidden, const int32_t * prev_co
         error_msg_ = "Model not loaded";
         return false;
     }
-    
+
     const auto & cfg = model_.config;
     int n_prev = (prev_codes != nullptr) ? cfg.n_codebooks - 1 : 0;
-    
+
     struct ggml_cgraph * gf = build_code_pred_graph(n_prev);
-    
+
     if (!ggml_backend_sched_alloc_graph(state_.sched, gf)) {
         error_msg_ = "Failed to allocate code predictor graph";
         return false;
     }
-    
+
     struct ggml_tensor * inp_hidden = ggml_graph_get_tensor(gf, "inp_hidden");
     if (inp_hidden) {
         ggml_backend_tensor_set(inp_hidden, hidden, 0, cfg.hidden_size * sizeof(float));
     }
-    
+
     if (n_prev > 0) {
         struct ggml_tensor * inp_prev = ggml_graph_get_tensor(gf, "inp_prev_codes");
         if (inp_prev) {
             ggml_backend_tensor_set(inp_prev, prev_codes, 0, n_prev * sizeof(int32_t));
         }
     }
-    
+
     if (ggml_backend_sched_graph_compute(state_.sched, gf) != GGML_STATUS_SUCCESS) {
         error_msg_ = "Failed to compute code predictor graph";
         ggml_backend_sched_reset(state_.sched);
         return false;
     }
-    
+
     output.resize((cfg.n_codebooks - 1) * cfg.code_pred_vocab_size);
-    
+
     for (int cb = 0; cb < cfg.n_codebooks - 1; ++cb) {
         char name[32];
         snprintf(name, sizeof(name), "logits_cb%d", cb + 1);
@@ -2173,9 +2095,9 @@ bool TTSTransformer::predict_codes(const float * hidden, const int32_t * prev_co
                                    0, cfg.code_pred_vocab_size * sizeof(float));
         }
     }
-    
+
     ggml_backend_sched_reset(state_.sched);
-    
+
     return true;
 }
 
@@ -2314,7 +2236,7 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
         error_msg_ = "Model not loaded";
         return false;
     }
-    
+
     const auto & cfg = model_.config;
 
 #ifdef QWEN3_TTS_TIMING
@@ -2332,19 +2254,19 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
         fprintf(stderr, "  CoreML code predictor failed, falling back to GGML: %s\n", error_msg_.c_str());
         use_coreml_code_predictor_ = false;
     }
-    
+
     if (state_.code_pred_cache.n_ctx < 16) {
         if (!init_code_pred_kv_cache(16)) {
             return false;
         }
     }
     clear_code_pred_kv_cache();
-    
+
     output.resize(15);
     std::vector<float> logits_data(cfg.code_pred_vocab_size);
-    
+
     std::vector<float> code_probs(cfg.code_pred_vocab_size);
-    
+
     // Helper lambda: temperature + top-k sampling (or greedy if temperature <= 0)
     auto sample_or_argmax = [&](float * logits_ptr, int32_t vocab_size) -> int32_t {
         if (temperature <= 0.0f) {
@@ -2385,7 +2307,7 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
         std::discrete_distribution<int32_t> dist(code_probs.begin(), code_probs.begin() + vocab_size);
         return dist(rng_);
     };
-    
+
     std::vector<float> cb0_embd(cfg.hidden_size);
     if (!lookup_single_embedding_row(model_.codec_embd, codebook_0_token, cb0_embd.data())) {
         return false;
@@ -2394,7 +2316,7 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
     t1 = clk::now();
     if (timing_) timing_->t_code_pred_init_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
 #endif
-    
+
     // Prefill with 2 tokens [past_hidden, cb0_embd]
     {
 #ifdef QWEN3_TTS_TIMING
@@ -2429,12 +2351,12 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
         if (inp_hidden) {
             ggml_backend_tensor_set(inp_hidden, hidden, 0, cfg.hidden_size * sizeof(float));
         }
-        
+
         struct ggml_tensor * inp_cb0_embd = ggml_graph_get_tensor(gf, "inp_cb0_embd");
         if (inp_cb0_embd) {
             ggml_backend_tensor_set(inp_cb0_embd, cb0_embd.data(), 0, cfg.hidden_size * sizeof(float));
         }
-        
+
         struct ggml_tensor * inp_pos = ggml_graph_get_tensor(gf, "inp_pos");
         if (inp_pos) {
             int32_t positions[2] = {0, 1};
@@ -2457,7 +2379,7 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
         t1 = clk::now();
         if (timing_) timing_->t_code_pred_compute_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
 #endif
-        
+
         struct ggml_tensor * logits = ggml_graph_get_tensor(gf, "logits");
         if (!logits) {
             error_msg_ = "Failed to find logits tensor in prefill";
@@ -2468,11 +2390,11 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
 #ifdef QWEN3_TTS_TIMING
         t0 = clk::now();
 #endif
-        ggml_backend_tensor_get(logits, logits_data.data(), 0, 
+        ggml_backend_tensor_get(logits, logits_data.data(), 0,
                                  cfg.code_pred_vocab_size * sizeof(float));
-        
+
         output[0] = sample_or_argmax(logits_data.data(), cfg.code_pred_vocab_size);
-        
+
         ggml_backend_sched_reset(state_.sched);
 #ifdef QWEN3_TTS_TIMING
         t1 = clk::now();
@@ -2480,7 +2402,7 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
         if (timing_) timing_->t_code_pred_prefill_ms += std::chrono::duration<double, std::milli>(t1 - t_pf_start).count();
 #endif
     }
-    
+
     // Generate 14 more tokens autoregressively
 #ifdef QWEN3_TTS_TIMING
     auto t_steps_start = clk::now();
@@ -2516,13 +2438,13 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
         if (inp_hidden) {
             ggml_backend_tensor_set(inp_hidden, hidden, 0, cfg.hidden_size * sizeof(float));
         }
-        
+
         struct ggml_tensor * inp_code = ggml_graph_get_tensor(gf, "inp_code");
         if (inp_code) {
             int32_t prev_code = output[step - 1];
             ggml_backend_tensor_set(inp_code, &prev_code, 0, sizeof(int32_t));
         }
-        
+
         struct ggml_tensor * inp_pos = ggml_graph_get_tensor(gf, "inp_pos");
         if (inp_pos) {
             int32_t pos = n_past;
@@ -2545,7 +2467,7 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
         t1 = clk::now();
         if (timing_) timing_->t_code_pred_compute_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
 #endif
-        
+
         struct ggml_tensor * logits = ggml_graph_get_tensor(gf, "logits");
         if (!logits) {
             error_msg_ = "Failed to find logits tensor";
@@ -2556,11 +2478,11 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
 #ifdef QWEN3_TTS_TIMING
         t0 = clk::now();
 #endif
-        ggml_backend_tensor_get(logits, logits_data.data(), 0, 
+        ggml_backend_tensor_get(logits, logits_data.data(), 0,
                                  cfg.code_pred_vocab_size * sizeof(float));
-        
+
         output[step] = sample_or_argmax(logits_data.data(), cfg.code_pred_vocab_size);
-        
+
         ggml_backend_sched_reset(state_.sched);
 #ifdef QWEN3_TTS_TIMING
         t1 = clk::now();
@@ -2570,7 +2492,7 @@ bool TTSTransformer::predict_codes_autoregressive(const float * hidden, int32_t 
 #ifdef QWEN3_TTS_TIMING
     if (timing_) timing_->t_code_pred_steps_ms += std::chrono::duration<double, std::milli>(clk::now() - t_steps_start).count();
 #endif
-    
+
     return true;
 }
 
@@ -2605,7 +2527,7 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
         output.clear();
         return true;
     }
-    
+
     const auto & cfg = model_.config;
 
     std::vector<float> prefill_embd;
@@ -2634,7 +2556,7 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
         }
     }
     clear_kv_cache();
-    
+
     std::vector<float> hidden_out;
     std::vector<float> logits;
 
@@ -2648,19 +2570,19 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
     t1 = clk::now();
     timing.t_prefill_forward_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
 #endif
-    
+
     output.clear();
     output.reserve(max_len * cfg.n_codebooks);
-    
+
     int32_t n_past = prefill_len;
     std::vector<int32_t> frame_codes(cfg.n_codebooks);
     std::unordered_set<int32_t> generated_cb0_tokens;
     const int32_t suppress_start = cfg.codec_vocab_size - 1024;
-    
+
     std::vector<float> probs(cfg.codec_vocab_size);
     std::vector<float> step_embd(cfg.hidden_size, 0.0f);
     std::vector<float> embd_row(cfg.hidden_size);
-    
+
     for (int frame = 0; frame < max_len; ++frame) {
         // Suppress tokens in [codec_vocab_size - 1024, codec_vocab_size), except codec_eos_id
         for (int32_t i = suppress_start; i < cfg.codec_vocab_size; ++i) {
@@ -2720,14 +2642,14 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
             std::discrete_distribution<int32_t> dist(probs.begin(), probs.end());
             next_token = dist(rng_);
         }
-        
+
         if (next_token == cfg.codec_eos_id) {
             break;
         }
-        
+
         frame_codes[0] = next_token;
         generated_cb0_tokens.insert(next_token);
-        
+
 #ifdef QWEN3_TTS_TIMING
         t0 = clk::now();
 #endif
@@ -2739,11 +2661,11 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
         t1 = clk::now();
         timing.t_code_pred_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
 #endif
-        
+
         for (int cb = 1; cb < cfg.n_codebooks; ++cb) {
             frame_codes[cb] = codes_1_15[cb - 1];
         }
-        
+
         for (int cb = 0; cb < cfg.n_codebooks; ++cb) {
             output.push_back(frame_codes[cb]);
         }
@@ -2799,10 +2721,10 @@ bool TTSTransformer::generate(const int32_t * text_tokens, int32_t n_tokens,
         t1 = clk::now();
         timing.t_talker_forward_ms += std::chrono::duration<double, std::milli>(t1 - t0).count();
 #endif
-        
+
         n_past++;
     }
-    
+
 #ifdef QWEN3_TTS_TIMING
     timing.t_generate_total_ms = std::chrono::duration<double, std::milli>(clk::now() - t_gen_start).count();
     timing_ = nullptr;

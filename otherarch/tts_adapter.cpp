@@ -1216,23 +1216,40 @@ static tts_generation_outputs ttstype_generate_qwen3tts(const tts_generation_inp
     }
     else
     {
+        double ttstime = 0;
+        timer_start();
+
         qwen3_tts::tts_result result;
         std::string prompt = inputs.prompt;
         qwen3_tts::tts_params qwen3tts_params;
-        double ttstime = 0;
-        timer_start();
+        std::string custom_reference_audio_str = inputs.reference_audio;
+        std::vector<float> custom_reference_audio_pcmf32;
+
+        if(custom_reference_audio_str!="")
+        {
+            std::vector<uint8_t> media_data_buffer = kcpp_base64_decode(custom_reference_audio_str);
+
+            //qwen3tts uses 24khz
+            bool ok = kcpp_decode_audio_from_buf(media_data_buffer.data(), media_data_buffer.size(), 24000, custom_reference_audio_pcmf32);
+            if (!ok) {
+                printf("\nError: Cannot read input audio file.\n");
+                output.data = "";
+                output.status = 0;
+                return output;
+            }
+        }
+
         if(!tts_is_quiet)
         {
             printf("\nTTS Generating...");
         }
 
-       // if (reference_audio.empty()) {
-        result = qwen3tts_runner.synthesize(prompt, qwen3tts_params);
-        // } else {
-        //     fprintf(stderr, "Synthesizing with voice cloning: \"%s\"\n", text.c_str());
-        //     fprintf(stderr, "Reference audio: %s\n", reference_audio.c_str());
-        //     result = tts.synthesize_with_voice(text, reference_audio, params);
-        // }
+        if (custom_reference_audio_pcmf32.empty()) {
+            result = qwen3tts_runner.synthesize(prompt, qwen3tts_params);
+        } else {
+            printf("\nUsing reference voice... (Warning, lengthy sample audio will be very slow. Use short clips!)\n");
+            result = qwen3tts_runner.synthesize_with_voice(prompt, custom_reference_audio_pcmf32.data(),custom_reference_audio_pcmf32.size(), qwen3tts_params);
+        }
 
         if (!result.success) {
             printf("\nError: TTS vocoder generation failed : %s\n", result.error_msg.c_str());

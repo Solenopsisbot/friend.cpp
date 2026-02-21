@@ -403,7 +403,8 @@ class tts_generation_inputs(ctypes.Structure):
                 ("audio_seed", ctypes.c_int),
                 ("custom_speaker_voice", ctypes.c_char_p),
                 ("custom_speaker_text", ctypes.c_char_p),
-                ("custom_speaker_data", ctypes.c_char_p)]
+                ("custom_speaker_data", ctypes.c_char_p),
+                ("reference_audio", ctypes.c_char_p)]
 
 class tts_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2248,7 +2249,8 @@ def tts_generate(genparams):
     prompt = genparams.get("input", genparams.get("text", ""))
     prompt = prompt.strip()
     voice = 1
-    speaker_json = tts_prepare_voice_json(genparams.get("speaker_json","")) #handle custom cloned voices
+    speaker_json = tts_prepare_voice_json(genparams.get("speaker_json","")) #handle custom json voices
+    reference_audio = genparams.get("reference_audio","") #for cloned voices in qwen3tts
     voicestr = genparams.get("voice", genparams.get("speaker_wav", ""))
     oai_voicemap = ["alloy","onyx","echo","nova","shimmer"] # map to kcpp defaults
     voice_mapping = ["kobo","cheery","sleepy","shouty","chatty"]
@@ -2278,6 +2280,9 @@ def tts_generate(genparams):
     else:
         inputs.custom_speaker_text = "".encode("UTF-8")
         inputs.custom_speaker_data = "".encode("UTF-8")
+    if reference_audio and reference_audio.startswith("data:audio"):
+        reference_audio = reference_audio.split(",", 1)[1]
+    inputs.reference_audio = reference_audio.encode("UTF-8")
     ret = handle.tts_generate(inputs)
     outstr = ""
     if ret.status==1:
