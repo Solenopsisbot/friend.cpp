@@ -202,10 +202,10 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
     return synthesize_with_voice(text, ref_samples.data(), (int32_t)ref_samples.size(), params);
 }
 
-static std::vector<float> speaker_embedding;
+static std::map<std::size_t, std::vector<float>> speaker_embeddings;
 tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
                                             const float * ref_samples, int32_t n_ref_samples,
-                                            const tts_params & params, bool regenerate) {
+                                            const tts_params & params, std::size_t reuse_hash_val) {
     tts_result result;
 
     if (!models_loaded_) {
@@ -232,13 +232,26 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
     }
 
     int64_t t_encode_start = get_time_ms();
+    std::vector<float> speaker_embedding;
 
-    if(speaker_embedding.size()==0 || regenerate)
+    if(speaker_embeddings.size()>0 || reuse_hash_val>0)
     {
-        speaker_embedding.clear();
+        auto it = speaker_embeddings.find(reuse_hash_val);
+        if (it != speaker_embeddings.end()) {
+            speaker_embedding = it->second;
+        }
+    }
+
+    if(speaker_embedding.size()==0)
+    {
+        printf("Creating Voice Embedding ID=%u... (Warning, lengthy sample audio will be very slow. Use short clips!)\n",reuse_hash_val);
         if (!audio_encoder_.encode(ref_samples, n_ref_samples, speaker_embedding)) {
             result.error_msg = "Failed to extract speaker embedding: " + audio_encoder_.get_error();
             return result;
+        }
+        if(reuse_hash_val!=0)
+        {
+            speaker_embeddings[reuse_hash_val] = speaker_embedding;
         }
     }
     result.t_encode_ms = get_time_ms() - t_encode_start;

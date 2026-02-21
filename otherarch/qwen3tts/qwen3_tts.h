@@ -109,7 +109,7 @@ public:
     // params: generation parameters
     tts_result synthesize_with_voice(const std::string & text,
                                       const float * ref_samples, int32_t n_ref_samples,
-                                      const tts_params & params = tts_params(), bool regenerate=true);
+                                      const tts_params & params = tts_params(), std::size_t reuse_hash_val=0);
 
     // Set progress callback
     void set_progress_callback(tts_progress_callback_t callback);

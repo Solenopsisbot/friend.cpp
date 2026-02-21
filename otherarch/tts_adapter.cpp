@@ -549,7 +549,6 @@ static std::string detectedarch = "";
 //qwen3tts specific
 static bool is_qwen3tts_file = false;
 static qwen3_tts::Qwen3TTS qwen3tts_runner;
-static std::string last_qwen3tts_reference_audio_str = "";
 
 int total_tts_gens = 0;
 static std::string tts_executable_path = "";
@@ -1282,19 +1281,11 @@ static tts_generation_outputs ttstype_generate_qwen3tts(const tts_generation_inp
         if (custom_reference_audio_pcmf32.empty()) {
             result = qwen3tts_runner.synthesize(prompt, qwen3tts_params);
         } else {
-            bool regenerate = (last_qwen3tts_reference_audio_str=="" || last_qwen3tts_reference_audio_str!=custom_reference_audio_str);
-            std::string msg = "\nUsing reference voice...";
-            if(regenerate)
-            {
-                msg += "Regenerating... (Warning, lengthy sample audio will be very slow. Use short clips!)";
-            }
-            msg += "\n";
+            std::size_t reuse_hash_value = std::hash<std::string>{}(custom_reference_audio_str);
+
+            std::string msg = "\nUsing reference voice...\n";
             printf("%s",msg.c_str());
-            result = qwen3tts_runner.synthesize_with_voice(prompt, custom_reference_audio_pcmf32.data(),custom_reference_audio_pcmf32.size(), qwen3tts_params, regenerate);
-            if(regenerate)
-            {
-                last_qwen3tts_reference_audio_str = custom_reference_audio_str;
-            }
+            result = qwen3tts_runner.synthesize_with_voice(prompt, custom_reference_audio_pcmf32.data(),custom_reference_audio_pcmf32.size(), qwen3tts_params, reuse_hash_value);
         }
 
         if (!result.success) {
