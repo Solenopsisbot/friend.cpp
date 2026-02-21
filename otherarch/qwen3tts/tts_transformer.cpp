@@ -49,6 +49,15 @@ void TTSTransformer::unload_model() {
     embd_row_fp16_scratch_.clear();
 }
 
+void TTSTransformer::set_seed(int seed)
+{
+    if (seed <= 0 || seed==0xFFFFFFFF)
+    {
+        seed = (((uint32_t)time(NULL)) % 1000000u);
+    }
+    this->rng_ = std::mt19937(seed);
+}
+
 bool TTSTransformer::load_model(const std::string & model_path) {
     unload_model();
 

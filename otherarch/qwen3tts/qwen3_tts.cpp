@@ -68,6 +68,11 @@ Qwen3TTS::Qwen3TTS() = default;
 
 Qwen3TTS::~Qwen3TTS() = default;
 
+void Qwen3TTS::set_seed(int seed)
+{
+   this->transformer_.set_seed(seed);
+}
+
 bool Qwen3TTS::load_models(const std::string & model_dir) {
     // Construct model paths
     std::string tts_model_path = model_dir + "/qwen3-tts-0.6b-f16.gguf";
@@ -197,9 +202,10 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
     return synthesize_with_voice(text, ref_samples.data(), (int32_t)ref_samples.size(), params);
 }
 
+static std::vector<float> speaker_embedding;
 tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
                                             const float * ref_samples, int32_t n_ref_samples,
-                                            const tts_params & params) {
+                                            const tts_params & params, bool regenerate) {
     tts_result result;
 
     if (!models_loaded_) {
@@ -226,11 +232,14 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
     }
 
     int64_t t_encode_start = get_time_ms();
-    std::vector<float> speaker_embedding;
 
-    if (!audio_encoder_.encode(ref_samples, n_ref_samples, speaker_embedding)) {
-        result.error_msg = "Failed to extract speaker embedding: " + audio_encoder_.get_error();
-        return result;
+    if(speaker_embedding.size()==0 || regenerate)
+    {
+        speaker_embedding.clear();
+        if (!audio_encoder_.encode(ref_samples, n_ref_samples, speaker_embedding)) {
+            result.error_msg = "Failed to extract speaker embedding: " + audio_encoder_.get_error();
+            return result;
+        }
     }
     result.t_encode_ms = get_time_ms() - t_encode_start;
 

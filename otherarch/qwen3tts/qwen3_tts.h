@@ -81,6 +81,8 @@ public:
     Qwen3TTS();
     ~Qwen3TTS();
 
+    void set_seed(int seed);
+
     // Load all models from directory
     // model_dir should contain: transformer.gguf, tokenizer.gguf, vocoder.gguf
     bool load_models(const std::string & model_dir);
@@ -107,7 +109,7 @@ public:
     // params: generation parameters
     tts_result synthesize_with_voice(const std::string & text,
                                       const float * ref_samples, int32_t n_ref_samples,
-                                      const tts_params & params = tts_params());
+                                      const tts_params & params = tts_params(), bool regenerate=true);
 
     // Set progress callback
     void set_progress_callback(tts_progress_callback_t callback);

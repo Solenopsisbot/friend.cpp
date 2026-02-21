@@ -115,6 +115,7 @@ importvars_in_progress = False
 has_multiplayer = False
 has_audio_support = False
 has_vision_support = False
+has_whisper = False
 cached_chat_template = None
 savedata_obj = None
 mcp_connections = [] #every element is linked to one mcp source, contains obj {"client":obj, "tools":[]}
@@ -136,6 +137,8 @@ embedded_kcpp_docs_gz = None
 embedded_kcpp_sdui = None
 embedded_kcpp_sdui_gz = None
 embedded_lcpp_ui_gz = None
+voicebank = {}
+voicelist = ["kobo","cheery","sleepy","shouty","chatty"]
 sslvalid = False
 nocertify = False
 start_time = time.time()
@@ -2245,15 +2248,14 @@ def tts_prepare_voice_json(jsonstr):
         return None
 
 def tts_generate(genparams):
-    global args
+    global args, voicebank, voicelist
     prompt = genparams.get("input", genparams.get("text", ""))
     prompt = prompt.strip()
     voice = 1
     speaker_json = tts_prepare_voice_json(genparams.get("speaker_json","")) #handle custom json voices
-    reference_audio = genparams.get("reference_audio","") #for cloned voices in qwen3tts
     voicestr = genparams.get("voice", genparams.get("speaker_wav", ""))
     oai_voicemap = ["alloy","onyx","echo","nova","shimmer"] # map to kcpp defaults
-    voice_mapping = ["kobo","cheery","sleepy","shouty","chatty"]
+    voice_mapping = voicelist
     normalized_voice = voicestr.strip().lower() if voicestr else ""
     if normalized_voice.endswith(".wav"):
         normalized_voice = normalized_voice[:-4]
@@ -2280,6 +2282,7 @@ def tts_generate(genparams):
     else:
         inputs.custom_speaker_text = "".encode("UTF-8")
         inputs.custom_speaker_data = "".encode("UTF-8")
+    reference_audio = voicebank.get(voicestr,"") #for cloned voices in qwen3tts
     if reference_audio and reference_audio.startswith("data:audio"):
         reference_audio = reference_audio.split(",", 1)[1]
     inputs.reference_audio = reference_audio.encode("UTF-8")
@@ -3856,7 +3859,7 @@ Change Mode<br>
     def do_GET(self):
         global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, embedded_kailite_gz, embedded_kcpp_docs_gz, embedded_kcpp_sdui_gz, embedded_lcpp_ui_gz
         global last_req_time, start_time, cached_chat_template, has_vision_support, has_audio_support, has_whisper, friendlymodelname
-        global savedata_obj, has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastuploadedcomfyimg, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, password, friendlyembeddingsmodelname
+        global savedata_obj, has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastuploadedcomfyimg, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, password, friendlyembeddingsmodelname, voicelist
 
         clean_path = self.path.split("?")[0] #for cases where we do not want query params
         if clean_path=="/lcpp": #fix for svelte redirect issues, browser path needs to end with slash
@@ -4043,11 +4046,14 @@ Change Mode<br>
             pass
 
         elif clean_path.endswith('/speakers_list'): #xtts compatible
-            response_body = (json.dumps(["kobo","cheery","sleepy","shouty","chatty"]).encode()) #some random voices for them to enjoy
+            response_body = (json.dumps(voicelist).encode()) #some random voices for them to enjoy
         elif clean_path.endswith('/speakers'): #xtts compatible
-            response_body = (json.dumps([{"name":"kobo","voice_id":"kobo","preview_url":""},{"name":"cheery","voice_id":"cheery","preview_url":""},{"name":"sleepy","voice_id":"sleepy","preview_url":""},{"name":"shouty","voice_id":"shouty","preview_url":""},{"name":"chatty","voice_id":"chatty","preview_url":""}]).encode()) #some random voices for them to enjoy
+            tmplist = []
+            for itm in voicelist:
+                tmplist.append({"name":itm,"voice_id":itm,"preview_url":""})
+            response_body = (json.dumps(tmplist).encode()) #some random voices for them to enjoy
         elif clean_path.endswith('/v1/audio/voices') or clean_path=='/audio/voices':
-            response_body = (json.dumps({"status":"ok","voices":["kobo","cheery","sleepy","shouty","chatty"]}).encode()) #some random voices for them to enjoy
+            response_body = (json.dumps({"status":"ok","voices":voicelist}).encode()) #some random voices for them to enjoy
         elif clean_path.endswith('/get_tts_settings'): #xtts compatible
             response_body = (json.dumps({"temperature":0.75,"speed":1,"length_penalty":1,"repetition_penalty":1,"top_p":1,"top_k":4,"enable_text_splitting":True,"stream_chunk_size":100}).encode()) #some random voices for them to enjoy
 
@@ -5662,6 +5668,7 @@ def show_gui():
     ttsgpu_var = ctk.IntVar(value=0)
     tts_threads_var = ctk.StringVar(value=str(default_threads))
     ttsmaxlen_var = ctk.StringVar(value=str(default_ttsmaxlen))
+    tts_dir_var = ctk.StringVar()
 
     embeddings_model_var = ctk.StringVar()
     embeddings_ctx_var = ctk.StringVar(value=str(""))
@@ -6459,6 +6466,8 @@ def show_gui():
     ttsgpu_var.trace_add("write", gui_changed_modelfile)
     makefileentry(audio_tab, "WavTokenizer Model (Required for some models):", "Select WavTokenizer GGUF Model File", wavtokenizer_var, 11, width=280, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select a WavTokenizer GGUF model file on disk to be loaded for Narration.")
     wavtokenizer_var.trace_add("write", gui_changed_modelfile)
+    makefileentry(audio_tab, "TTS Voices Dir:", "Select directory containing voices for voice cloning", tts_dir_var, 20, width=280, singlerow=True, dialog_type=2, tooltiptxt="Select directory containing voices for voice cloning")
+
 
     admin_tab = tabcontent["Admin"]
     def toggleadmin(a,b,c):
@@ -6771,6 +6780,7 @@ def show_gui():
             args.ttswavtokenizer = wavtokenizer_var.get()
             args.ttsgpu = (ttsgpu_var.get()==1)
             args.ttsmaxlen = (default_ttsmaxlen if ttsmaxlen_var.get()=="" else int(ttsmaxlen_var.get()))
+            args.ttsdir = tts_dir_var.get()
 
         args.admin = (admin_var.get()==1 and not args.cli)
         args.admindir = admin_dir_var.get()
@@ -7012,6 +7022,7 @@ def show_gui():
         wavtokenizer_var.set(dict["ttswavtokenizer"] if ("ttswavtokenizer" in dict and dict["ttswavtokenizer"]) else "")
         ttsgpu_var.set(dict["ttsgpu"] if ("ttsgpu" in dict) else 0)
         ttsmaxlen_var.set(str(dict["ttsmaxlen"]) if ("ttsmaxlen" in dict and dict["ttsmaxlen"]) else str(default_ttsmaxlen))
+        tts_dir_var.set(dict["ttsdir"] if ("ttsdir" in dict and dict["ttsdir"]) else "")
 
         embeddings_model_var.set(dict["embeddingsmodel"] if ("embeddingsmodel" in dict and dict["embeddingsmodel"]) else "")
         embeddings_ctx_var.set(str(dict["embeddingsmaxctx"]) if ("embeddingsmaxctx" in dict and dict["embeddingsmaxctx"]) else "")
@@ -8703,6 +8714,39 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     except Exception:
         print("Could not find Embedded llama.cpp UI.")
 
+    # load all TTS audio files
+    if args.ttsdir and args.ttsmodel and os.path.isdir(args.ttsdir):
+        try:
+            global voicebank, voicelist
+            voicebank = {}
+            voicecount = 0
+            voicelist = []
+
+            voicelist.append("kobo")
+            voicebank["kobo"] = ""
+            voicelist.append("cheery")
+            voicebank["cheery"] = ""
+            voicelist.append("sleepy")
+            voicebank["sleepy"] = ""
+            voicelist.append("shouty")
+            voicebank["shouty"] = ""
+            voicelist.append("chatty")
+            voicebank["chatty"] = ""
+            voicelist.append("random")
+            voicebank["random"] = ""
+
+            for filename in os.listdir(args.ttsdir):
+                if filename.lower().endswith((".mp3", ".wav")):
+                    full_path = os.path.join(args.ttsdir, filename)
+                    with open(full_path, "rb") as f:
+                        encoded = base64.b64encode(f.read()).decode("utf-8")
+                        voicebank[filename] = encoded
+                        voicecount += 1
+                        voicelist.append(os.path.basename(filename))
+            print(f"Loaded {voicecount} TTS voices.")
+        except Exception:
+            print("Could not load TTS voices.")
+
     if args.mcpfile and isinstance(args.mcpfile, str):
         threading.Thread(target=load_mcp_async, args=(args,), daemon=True).start()
         time.sleep(0.2) # short delay to allow get_capabilities to work
@@ -9065,6 +9109,7 @@ if __name__ == '__main__':
     ttsparsergroup.add_argument("--ttsgpu", help="Use the GPU for TTS.", action='store_true')
     ttsparsergroup.add_argument("--ttsmaxlen", help="Limit number of audio tokens generated with TTS.",  type=int, default=default_ttsmaxlen)
     ttsparsergroup.add_argument("--ttsthreads", metavar=('[threads]'), help="Use a different number of threads for TTS if specified. Otherwise, has the same value as --threads.", type=int, default=0)
+    ttsparsergroup.add_argument("--ttsdir", metavar=('[directory]'), help="Select directory containing voices for voice cloning.", default="")
 
     embeddingsparsergroup = parser.add_argument_group('Embeddings Model Commands')
     embeddingsparsergroup.add_argument("--embeddingsmodel", metavar=('[filename]'), help="Specify an embeddings model to be loaded for generating embedding vectors.", default="")
