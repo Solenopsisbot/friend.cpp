@@ -69,6 +69,13 @@ Qwen3TTS::Qwen3TTS() = default;
 Qwen3TTS::~Qwen3TTS() = default;
 
 bool Qwen3TTS::load_models(const std::string & model_dir) {
+    // Construct model paths
+    std::string tts_model_path = model_dir + "/qwen3-tts-0.6b-f16.gguf";
+    std::string tokenizer_model_path = model_dir + "/qwen3-tts-tokenizer-f16.gguf";
+    return load_models(tts_model_path,tokenizer_model_path);
+}
+
+bool Qwen3TTS::load_models(const std::string & tts_model_path, const std::string & tokenizer_model_path) {
     int64_t t_start = get_time_ms();
     log_memory_usage("load/start");
 
@@ -77,9 +84,6 @@ bool Qwen3TTS::load_models(const std::string & model_dir) {
     transformer_loaded_ = false;
     decoder_loaded_ = false;
 
-    // Construct model paths
-    std::string tts_model_path = model_dir + "/qwen3-tts-0.6b-f16.gguf";
-    std::string tokenizer_model_path = model_dir + "/qwen3-tts-tokenizer-f16.gguf";
     tts_model_path_ = tts_model_path;
     decoder_model_path_ = tokenizer_model_path;
     encoder_loaded_ = false;
