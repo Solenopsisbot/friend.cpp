@@ -24,7 +24,7 @@ GGUFLoader::~GGUFLoader() {
     close();
 }
 
-ggml_backend_t init_preferred_backend(const char * component_name, std::string * error_msg) {
+ggml_backend_t init_preferred_backend(const char * component_name, std::string * error_msg, bool allow_gpu) {
     if (error_msg) error_msg->clear();
 
     auto & shared = get_shared_backend_state();
@@ -34,8 +34,11 @@ ggml_backend_t init_preferred_backend(const char * component_name, std::string *
     }
 
     ggml_backend_t backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU, nullptr);
+    if(allow_gpu)
+    {
     if (!backend) {
         backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_GPU, nullptr);
+    }
     }
     if (!backend) {
         backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_ACCEL, nullptr);
@@ -78,20 +81,20 @@ void release_preferred_backend(ggml_backend_t backend) {
 
 bool GGUFLoader::open(const std::string & path) {
     close();  // Close any previously opened file
-    
+
     file_path_ = path;
-    
+
     struct gguf_init_params params = {
         /*.no_alloc =*/ true,
         /*.ctx      =*/ &meta_ctx_,
     };
-    
+
     ctx_ = gguf_init_from_file(path.c_str(), params);
     if (!ctx_) {
         error_msg_ = "Failed to open GGUF file: " + path;
         return false;
     }
-    
+
     return true;
 }
 
@@ -168,7 +171,7 @@ bool load_tensor_data_from_file(
         error_msg = "Failed to initialize backend for GGUF tensor loader";
         return false;
     }
-    
+
     // Allocate buffer for all tensors
     buffer = ggml_backend_alloc_ctx_tensors(model_ctx, backend);
     if (!buffer) {
@@ -176,7 +179,7 @@ bool load_tensor_data_from_file(
         ggml_backend_free(backend);
         return false;
     }
-    
+
     // Open file for reading tensor data
     FILE * f = fopen(path.c_str(), "rb");
     if (!f) {
@@ -184,45 +187,45 @@ bool load_tensor_data_from_file(
         ggml_backend_free(backend);
         return false;
     }
-    
+
     const size_t data_offset = gguf_get_data_offset(ctx);
     const int64_t n_tensors = gguf_get_n_tensors(ctx);
     std::vector<uint8_t> read_buf;
-    
+
     for (int64_t i = 0; i < n_tensors; ++i) {
         const char * name = gguf_get_tensor_name(ctx, i);
         size_t offset = gguf_get_tensor_offset(ctx, i);
-        
+
         auto it = tensors.find(name);
         if (it == tensors.end()) {
             continue;  // Skip tensors not in our map
         }
-        
+
         struct ggml_tensor * tensor = it->second;
         size_t nbytes = ggml_nbytes(tensor);
-        
+
         read_buf.resize(nbytes);
-        
+
         if (fseek(f, data_offset + offset, SEEK_SET) != 0) {
             error_msg = "Failed to seek to tensor data: " + std::string(name);
             fclose(f);
             ggml_backend_free(backend);
             return false;
         }
-        
+
         if (fread(read_buf.data(), 1, nbytes, f) != nbytes) {
             error_msg = "Failed to read tensor data: " + std::string(name);
             fclose(f);
             ggml_backend_free(backend);
             return false;
         }
-        
+
         ggml_backend_tensor_set(tensor, read_buf.data(), 0, nbytes);
     }
-    
+
     fclose(f);
     ggml_backend_free(backend);
-    
+
     return true;
 }
 
