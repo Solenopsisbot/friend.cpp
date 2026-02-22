@@ -3141,7 +3141,11 @@ ws ::= | " " | "\n" [ \t]{0,20}
 
                     # If last message, add any tools calls after message content and before message end token if any
                     if message_index == len(messages_array):
-                        used_tool_json = determine_tool_json_to_use(genparams, messages_string, assistant_message_start, (message['role'] == "tool"))
+                        is_followup = (message['role'] == "tool")
+                        #small hack: if the current turn is assistant, but its short (e.g. a prefilled name), and the previous turn was tool, consider it followup as well
+                        if(not is_followup and message_index>1 and message['role'] == "assistant" and messages_array[message_index-2]['role']=="tool" and message['content'] and len(message['content']) < 100): #100 char limit
+                            is_followup = True
+                        used_tool_json = determine_tool_json_to_use(genparams, messages_string, assistant_message_start, is_followup)
 
                         if used_tool_json:
                             toolparamjson = None
