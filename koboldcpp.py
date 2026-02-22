@@ -450,10 +450,12 @@ class music_load_model_inputs(ctypes.Structure):
                 ("debugmode", ctypes.c_int)]
 
 class music_generation_inputs(ctypes.Structure):
-    _fields_ = [("prompt", ctypes.c_char_p)]
+    _fields_ = [("is_codes", ctypes.c_bool),
+                ("caption", ctypes.c_char_p)]
 
 class music_generation_outputs(ctypes.Structure):
-    _fields_ = [("status", ctypes.c_int)]
+    _fields_ = [("status", ctypes.c_int),
+                ("codes_json", ctypes.c_char_p)]
 
 class StdoutRedirector:
     def __init__(self, writer):
@@ -2372,15 +2374,16 @@ def music_load_model(musicllm,musicembedding,musicdiffusion,musicvae):
     ret = handle.music_load_model(inputs)
     return ret
 
-def music_generate(genparams):
+def music_generate_codes(genparams):
     global args
-    prompt = genparams.get("prompt", "")
+    caption = genparams.get("caption", "interesting music song")
     inputs = music_generation_inputs()
-    inputs.prompt = prompt.encode("UTF-8")
+    inputs.is_codes = True
+    inputs.caption = caption.encode("UTF-8")
     ret = handle.music_generate(inputs)
     outstr = ""
     if ret.status==1:
-        outstr = ret.data.decode("UTF-8","ignore")
+        outstr = ret.codes_json.decode("UTF-8","ignore")
     return outstr
 
 def tokenize_ids(countprompt,tcaddspecial):

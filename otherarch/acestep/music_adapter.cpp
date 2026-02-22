@@ -24,6 +24,8 @@ static bool music_is_quiet = false;
 static bool musicgen_loaded = false;
 static std::string musicvulkandeviceenv;
 
+static std::string codes_json_str = "";
+
 bool musictype_load_model(const music_load_model_inputs inputs)
 {
     music_is_quiet = inputs.quiet;
@@ -72,14 +74,22 @@ music_generation_outputs musictype_generate(const music_generation_inputs inputs
     {
         printf("\nWarning: KCPP music gen not initialized!\n");
         output.status = 0;
+        output.codes_json = "";
         return output;
     }
 
-    if(!music_is_quiet)
-    {
-        printf("\nMusic Gen Generating...");
+    if (inputs.is_codes) {
+        if (!music_is_quiet) {
+            printf("\nMusic Gen Generating Codes...");
+        }
+        codes_json_str = acestep_prepare_request(inputs);
+        output.status = 1;
+        output.codes_json = codes_json_str.c_str();
+        if (!music_is_quiet) {
+            printf("\nMusic Gen Codes Done:\n%s\n",codes_json_str.c_str());
+        }
+    } else {
     }
 
-    output.status = 1;
     return output;
 }

@@ -16,6 +16,7 @@
 #include <chrono>
 #include <map>
 #include <unordered_map>
+#include <iomanip>
 
 // Timer
 struct Timer {
@@ -1120,7 +1121,7 @@ bool load_acestep(std::string model_path)
     return true;
 }
 
-AceRequest acestep_prepare_request()
+std::string acestep_prepare_request(const music_generation_inputs inputs)
 {
     const int batch_size = 1;
     bool use_fsm = true;
@@ -1132,7 +1133,7 @@ AceRequest acestep_prepare_request()
     // Read request and set essentials
     AceRequest req;
     request_init(&req);
-    req.caption = "doom";
+    req.caption = inputs.caption;
     req.lyrics = ""; //can be overridden or left auto
     req.inference_steps = 8;
     req.vocal_language = "en";
@@ -1254,7 +1255,33 @@ AceRequest acestep_prepare_request()
     if (!batch_codes[0].empty()) rr.audio_codes = batch_codes[0];
     rr.seed = seed;
 
-    return rr;
+    //now convert to string
+    std::ostringstream oss;
+    oss << "{\n";
+    oss << "  \"caption\": \"" << json_escape(rr.caption) << "\",\n";
+    oss << "  \"lyrics\": \"" << json_escape(rr.lyrics) << "\",\n";
+    if (rr.instrumental) {
+        oss << "  \"instrumental\": true,\n";
+    }
+    oss << "  \"bpm\": " << rr.bpm << ",\n";
+    oss << "  \"duration\": " << std::fixed << std::setprecision(1) << rr.duration << ",\n";
+    oss << "  \"keyscale\": \"" << json_escape(rr.keyscale) << "\",\n";
+    oss << "  \"timesignature\": \"" << json_escape(rr.timesignature) << "\",\n";
+    oss << "  \"vocal_language\": \"" << json_escape(rr.vocal_language) << "\",\n";
+    oss << "  \"task_type\": \"" << json_escape(rr.task_type) << "\",\n";
+    oss << "  \"seed\": " << rr.seed << ",\n";
+    oss << "  \"thinking\": " << (rr.thinking ? "true" : "false") << ",\n";
+    oss << "  \"lm_temperature\": " << std::fixed << std::setprecision(2) << rr.lm_temperature << ",\n";
+    oss << "  \"lm_cfg_scale\": " << std::fixed << std::setprecision(1) << rr.lm_cfg_scale << ",\n";
+    oss << "  \"lm_top_p\": " << std::fixed << std::setprecision(2) << rr.lm_top_p << ",\n";
+    oss << "  \"lm_negative_prompt\": \"" << json_escape(rr.lm_negative_prompt) << "\",\n";
+    oss << "  \"inference_steps\": " << rr.inference_steps << ",\n";
+    oss << "  \"guidance_scale\": " << std::fixed << std::setprecision(1) << rr.guidance_scale << ",\n";
+    oss << "  \"shift\": " << std::fixed << std::setprecision(1) << rr.shift << ",\n";
+    oss << "  \"audio_codes\": \"" << json_escape(rr.audio_codes) << "\"\n";
+    oss << "}\n";
+    std::string output_json = oss.str();
+    return output_json;
 }
 
 void unload_acestep()

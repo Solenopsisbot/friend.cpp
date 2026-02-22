@@ -341,11 +341,13 @@ struct music_load_model_inputs
 };
 struct music_generation_inputs
 {
-    const char * prompt = nullptr;
+    const bool is_codes = false; //if true, generate codes, else, generate diffusion music
+    const char * caption = nullptr;
 };
 struct music_generation_outputs
 {
     int status = -1;
+    const char * codes_json = "";
 };
 
 extern std::string executable_path;
