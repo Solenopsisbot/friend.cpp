@@ -326,6 +326,28 @@ struct embeddings_generation_outputs
     const char * data = "";
 };
 
+struct music_load_model_inputs
+{
+    const char * musicllm_filename = nullptr;
+    const char * musicembedding_filename = nullptr;
+    const char * musicdiffusion_filename = nullptr;
+    const char * musicvae_filename = nullptr;
+    const char * executable_path = nullptr;
+    const int kcpp_main_gpu = 0;
+    const char * vulkan_info = nullptr;
+    const char * devices_override = nullptr;
+    const bool quiet = false;
+    const int debugmode = 0;
+};
+struct music_generation_inputs
+{
+    const char * prompt = nullptr;
+};
+struct music_generation_outputs
+{
+    int status = -1;
+};
+
 extern std::string executable_path;
 extern std::string lora_filename;
 extern std::string mmproj_filename;

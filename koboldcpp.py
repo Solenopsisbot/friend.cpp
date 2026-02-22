@@ -87,6 +87,7 @@ password = "" #if empty, no auth key required
 fullwhispermodelpath = "" #if empty, it's not initialized
 ttsmodelpath = "" #if empty, not initialized
 embeddingsmodelpath = "" #if empty, not initialized
+musicdiffusionmodelpath = "" #if empty, not initialized
 maxctx = 8192
 maxhordectx = 0 #set to whatever maxctx is if 0
 maxhordelen = 1024
@@ -435,6 +436,24 @@ class embeddings_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
                 ("count", ctypes.c_int),
                 ("data", ctypes.c_char_p)]
+
+class music_load_model_inputs(ctypes.Structure):
+    _fields_ = [("musicllm_filename", ctypes.c_char_p),
+                ("musicembedding_filename", ctypes.c_char_p),
+                ("musicdiffusion_filename", ctypes.c_char_p),
+                ("musicvae_filename", ctypes.c_char_p),
+                ("executable_path", ctypes.c_char_p),
+                ("kcpp_main_gpu", ctypes.c_int),
+                ("vulkan_info", ctypes.c_char_p),
+                ("devices_override", ctypes.c_char_p),
+                ("quiet", ctypes.c_bool),
+                ("debugmode", ctypes.c_int)]
+
+class music_generation_inputs(ctypes.Structure):
+    _fields_ = [("prompt", ctypes.c_char_p)]
+
+class music_generation_outputs(ctypes.Structure):
+    _fields_ = [("status", ctypes.c_int)]
 
 class StdoutRedirector:
     def __init__(self, writer):
@@ -798,6 +817,10 @@ def init_library():
     handle.embeddings_load_model.restype = ctypes.c_bool
     handle.embeddings_generate.argtypes = [embeddings_generation_inputs]
     handle.embeddings_generate.restype = embeddings_generation_outputs
+    handle.music_load_model.argtypes = [music_load_model_inputs]
+    handle.music_load_model.restype = ctypes.c_bool
+    handle.music_generate.argtypes = [music_generation_inputs]
+    handle.music_generate.restype = music_generation_outputs
     handle.last_logprobs.restype = last_logprobs_outputs
     handle.detokenize.argtypes = [token_count_outputs]
     handle.detokenize.restype = ctypes.c_char_p
@@ -1118,7 +1141,7 @@ def convert_json_to_gbnf(json_obj):
         return ""
 
 def get_capabilities():
-    global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, has_audio_support, has_vision_support, mcp_connections
+    global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, has_audio_support, has_vision_support, mcp_connections
     has_llm = not (friendlymodelname=="inactive")
     has_txt2img = not (friendlysdmodelname=="inactive" or fullsdmodelpath=="")
     has_password = (password!="")
@@ -1126,11 +1149,12 @@ def get_capabilities():
     has_search = True if args.websearch else False
     has_tts = (ttsmodelpath!="")
     has_embeddings = (embeddingsmodelpath!="")
+    has_music = (musicdiffusionmodelpath!="")
     has_guidance = True if args.enableguidance else False
     has_jinja = True if args.jinja else False
     has_mcp = True if (args.mcpfile and mcp_connections and len(mcp_connections) > 0) else False
     admin_type = (2 if args.admin and args.admindir and args.adminpassword else (1 if args.admin and args.admindir else 0))
-    return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":has_vision_support,"audio":has_audio_support,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts, "embeddings":has_embeddings, "savedata":(savedata_obj is not None), "admin": admin_type, "guidance": has_guidance, "jinja": has_jinja, "mcp":has_mcp}
+    return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":has_vision_support,"audio":has_audio_support,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts, "embeddings":has_embeddings, "music":has_music, "savedata":(savedata_obj is not None), "admin": admin_type, "guidance": has_guidance, "jinja": has_jinja, "mcp":has_mcp}
 
 def dump_gguf_metadata(file_path): #if you're gonna copy this into your own project at least credit concedo
     chunk_size = 1024*1024*12  # read first 12mb of file
@@ -2336,6 +2360,28 @@ def embeddings_generate(genparams):
         tokarrs.append(tokarr)
         tokcnt += tmpcnt
     return {"count":tokcnt, "data":tokarrs}
+
+def music_load_model(musicllm,musicembedding,musicdiffusion,musicvae):
+    global args
+    inputs = music_load_model_inputs()
+    inputs.musicllm_filename = musicllm.encode("UTF-8")
+    inputs.musicembedding_filename = musicembedding.encode("UTF-8")
+    inputs.musicdiffusion_filename = musicdiffusion.encode("UTF-8")
+    inputs.musicvae_filename = musicvae.encode("UTF-8")
+    inputs = set_backend_props(inputs)
+    ret = handle.music_load_model(inputs)
+    return ret
+
+def music_generate(genparams):
+    global args
+    prompt = genparams.get("prompt", "")
+    inputs = music_generation_inputs()
+    inputs.prompt = prompt.encode("UTF-8")
+    ret = handle.music_generate(inputs)
+    outstr = ""
+    if ret.status==1:
+        outstr = ret.data.decode("UTF-8","ignore")
+    return outstr
 
 def tokenize_ids(countprompt,tcaddspecial):
     rawcountdata = handle.token_count(countprompt.encode("UTF-8"),tcaddspecial)
@@ -5403,7 +5449,7 @@ def show_gui():
             if dlfile:
                 args.model_param = dlfile
             load_config_cli(args.model_param)
-        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.mcpfile and not args.nomodel:
+        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.musicdiffusion and not args.mcpfile and not args.nomodel:
             global exitcounter
             exitcounter = 999
             exit_with_error(2,"No gguf model or kcpps file was selected. Exiting.")
@@ -5673,6 +5719,11 @@ def show_gui():
     tts_threads_var = ctk.StringVar(value=str(default_threads))
     ttsmaxlen_var = ctk.StringVar(value=str(default_ttsmaxlen))
     tts_dir_var = ctk.StringVar()
+
+    musicllm_var = ctk.StringVar()
+    musicembeddings_var = ctk.StringVar()
+    musicdiffusion_var = ctk.StringVar()
+    musicvae_var = ctk.StringVar()
 
     embeddings_model_var = ctk.StringVar()
     embeddings_ctx_var = ctk.StringVar(value=str(""))
@@ -6464,13 +6515,18 @@ def show_gui():
     whisper_model_var.trace_add("write", gui_changed_modelfile)
     makefileentry(audio_tab, "TTS Model (Text-To-Speech):", "Select TTS GGUF Model File", tts_model_var, 3, width=280, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select a TTS GGUF model file on disk to be loaded for Narration.")
     tts_model_var.trace_add("write", gui_changed_modelfile)
-    makelabelentry(audio_tab, "TTS Threads:" , tts_threads_var, 5, 50,padx=290,singleline=True,tooltip="How many threads to use during TTS generation.\nIf left blank, uses same value as threads.")
-    makelabelentry(audio_tab, "TTS Max Tokens:" , ttsmaxlen_var, 7, 50,padx=290,singleline=True,tooltip="Max allowed audiotokens to generate per TTS request.")
-    makecheckbox(audio_tab, "TTS Use GPU", ttsgpu_var, 9, 0,tooltiptxt="Uses the GPU for TTS.")
+    makelabelentry(audio_tab, "TTS Threads:" , tts_threads_var, 5, 50,padx=100,singleline=True,tooltip="How many threads to use during TTS generation.\nIf left blank, uses same value as threads.")
+    makelabelentry(audio_tab, "TTS Max Tokens:" , ttsmaxlen_var, 5, 50,padx=300,singleline=True,tooltip="Max allowed audiotokens to generate per TTS request.", labelpadx=190)
+    makecheckbox(audio_tab, "TTS Use GPU", ttsgpu_var, 9, 0,tooltiptxt="Uses the GPU for TTS. Currently only works on OuteTTS.")
     ttsgpu_var.trace_add("write", gui_changed_modelfile)
     makefileentry(audio_tab, "WavTokenizer Model (Required for some models):", "Select WavTokenizer GGUF Model File", wavtokenizer_var, 11, width=280, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select a WavTokenizer GGUF model file on disk to be loaded for Narration.")
     wavtokenizer_var.trace_add("write", gui_changed_modelfile)
     makefileentry(audio_tab, "TTS Voices Dir:", "Select directory containing voices for voice cloning", tts_dir_var, 20, width=280, singlerow=True, dialog_type=2, tooltiptxt="Select directory containing voices for voice cloning")
+
+    makefileentry(audio_tab, "MusicLLM:", "Select music LLM model (e.g acestep-5Hz-lm-0.6B)", musicllm_var, 30, width=280, singlerow=True, dialog_type=0, tooltiptxt="Select music LLM model (e.g acestep-5Hz-lm)")
+    makefileentry(audio_tab, "MusicEmbeds:", "Select music embedding model (e.g Qwen3-Embedding-0.6B)", musicembeddings_var, 32, width=280, singlerow=True, dialog_type=0, tooltiptxt="Select music embedding model (e.g Qwen3-Embedding-0.6B)")
+    makefileentry(audio_tab, "MusicDiffuser:", "Select music diffusion (DiT) model (e.g acestep-v15-turbo)", musicdiffusion_var, 34, width=280, singlerow=True, dialog_type=0, tooltiptxt="Select music diffusion (DiT) model (e.g acestep-v15-turbo)")
+    makefileentry(audio_tab, "MusicVAE:", "Select music VAE model", musicvae_var, 36, width=280, singlerow=True, dialog_type=0, tooltiptxt="Select music VAE model")
 
 
     admin_tab = tabcontent["Admin"]
@@ -6561,7 +6617,7 @@ def show_gui():
 
     # launch
     def guilaunch():
-        if model_var.get() == "" and sd_model_var.get() == "" and whisper_model_var.get() == "" and tts_model_var.get() == "" and embeddings_model_var.get() == "" and nomodel.get()!=1:
+        if model_var.get() == "" and sd_model_var.get() == "" and whisper_model_var.get() == "" and tts_model_var.get() == "" and embeddings_model_var.get() == "" and musicdiffusion_var.get() == "" and nomodel.get()!=1:
             tmp = zentk_askopenfilename(title="Select ggml model .bin or .gguf file")
             model_var.set(tmp)
         nonlocal nextstate
@@ -6785,6 +6841,11 @@ def show_gui():
             args.ttsgpu = (ttsgpu_var.get()==1)
             args.ttsmaxlen = (default_ttsmaxlen if ttsmaxlen_var.get()=="" else int(ttsmaxlen_var.get()))
             args.ttsdir = tts_dir_var.get()
+
+        args.musicllm = musicllm_var.get()
+        args.musicembeddings = musicembeddings_var.get()
+        args.musicdiffusion = musicdiffusion_var.get()
+        args.musicvae = musicvae_var.get()
 
         args.admin = (admin_var.get()==1 and not args.cli)
         args.admindir = admin_dir_var.get()
@@ -7028,6 +7089,11 @@ def show_gui():
         ttsmaxlen_var.set(str(dict["ttsmaxlen"]) if ("ttsmaxlen" in dict and dict["ttsmaxlen"]) else str(default_ttsmaxlen))
         tts_dir_var.set(dict["ttsdir"] if ("ttsdir" in dict and dict["ttsdir"]) else "")
 
+        musicllm_var.set(dict["musicllm"] if ("musicllm" in dict and dict["musicllm"]) else "")
+        musicembeddings_var.set(dict["musicembeddings"] if ("musicembeddings" in dict and dict["musicembeddings"]) else "")
+        musicdiffusion_var.set(dict["musicdiffusion"] if ("musicdiffusion" in dict and dict["musicdiffusion"]) else "")
+        musicvae_var.set(dict["musicvae"] if ("musicvae" in dict and dict["musicvae"]) else "")
+
         embeddings_model_var.set(dict["embeddingsmodel"] if ("embeddingsmodel" in dict and dict["embeddingsmodel"]) else "")
         embeddings_ctx_var.set(str(dict["embeddingsmaxctx"]) if ("embeddingsmaxctx" in dict and dict["embeddingsmaxctx"]) else "")
         embeddings_gpu_var.set(dict["embeddingsgpu"] if ("embeddingsgpu" in dict) else 0)
@@ -7166,7 +7232,7 @@ def show_gui():
         kcpp_exporting_template = False
         export_vars()
 
-        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.mcpfile and not args.nomodel:
+        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.musicdiffusion and not args.mcpfile and not args.nomodel:
             exitcounter = 999
             print("")
             time.sleep(0.5)
@@ -8023,7 +8089,7 @@ def main(launch_args, default_args):
         load_config_cli(args.model_param)
 
     # show the GUI launcher if a model was not provided
-    if args.showgui or (not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.mcpfile and not args.nomodel):
+    if args.showgui or (not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.musicdiffusion and not args.mcpfile and not args.nomodel):
         #give them a chance to pick a file
         print("For command line arguments, please refer to --help")
         print("***")
@@ -8145,7 +8211,7 @@ def main(launch_args, default_args):
 
 def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, embedded_kailite_gz, embedded_kcpp_docs_gz, embedded_kcpp_sdui_gz, embedded_lcpp_ui_gz, start_time, exitcounter, global_memory, using_gui_launcher
-    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, friendlyembeddingsmodelname, has_audio_support, has_vision_support, cached_chat_template
+    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, friendlyembeddingsmodelname, has_audio_support, has_vision_support, cached_chat_template
 
     start_server = True
 
@@ -8306,6 +8372,23 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         dlfile = download_model_from_url(args.embeddingsmodel,[".gguf"],min_file_size=500000)
         if dlfile:
             args.embeddingsmodel = dlfile
+
+    if args.musicllm and args.musicllm!="":
+        dlfile = download_model_from_url(args.musicllm,[".gguf"],min_file_size=500000)
+        if dlfile:
+            args.musicllm = dlfile
+    if args.musicembeddings and args.musicembeddings!="":
+        dlfile = download_model_from_url(args.musicembeddings,[".gguf"],min_file_size=500000)
+        if dlfile:
+            args.musicembeddings = dlfile
+    if args.musicdiffusion and args.musicdiffusion!="":
+        dlfile = download_model_from_url(args.musicdiffusion,[".gguf"],min_file_size=500000)
+        if dlfile:
+            args.musicdiffusion = dlfile
+    if args.musicvae and args.musicvae!="":
+        dlfile = download_model_from_url(args.musicvae,[".gguf"],min_file_size=500000)
+        if dlfile:
+            args.musicvae = dlfile
 
     # sanitize and replace the default vanity name. remember me....
     if args.model_param and args.model_param!="":
@@ -8675,6 +8758,28 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 exitcounter = 999
                 exit_with_error(3,"Could not load Embeddings model!")
 
+    #handle music model
+    if (args.musicdiffusion and args.musicdiffusion!="") or (args.musicllm and args.musicllm!="") or (args.musicembeddings and args.musicembeddings!="") or (args.musicvae and args.musicvae!=""):
+        if not os.path.exists(args.musicllm) or not os.path.exists(args.musicembeddings) or not os.path.exists(args.musicdiffusion) or not os.path.exists(args.musicvae):
+            if args.ignoremissing:
+                print("Ignoring missing Music model files!")
+                args.musicllm = None
+                args.musicembeddings = None
+                args.musicdiffusion = None
+                args.musicvae = None
+            else:
+                exitcounter = 999
+                exit_with_error(2,"Cannot find music model files or missing a music model. Make sure ALL 4 music models (llm,embed,diffusion and vae) are loaded!")
+        else:
+            musicdiffusionmodelpath = os.path.abspath(args.musicdiffusion)
+            musicembedpath = os.path.abspath(args.musicembeddings)
+            musicllmpath = os.path.abspath(args.musicllm)
+            musicvaepath = os.path.abspath(args.musicvae)
+            loadok = music_load_model(musicllmpath,musicembedpath,musicdiffusionmodelpath,musicvaepath)
+            print("Load Music Model OK: " + str(loadok))
+            if not loadok:
+                exitcounter = 999
+                exit_with_error(3,"Could not load Music model!")
 
     #load embedded lite
     embddir = os.path.join(os.path.abspath(os.path.dirname(os.path.realpath(__file__))),"embd_res")
@@ -9113,6 +9218,12 @@ if __name__ == '__main__':
     ttsparsergroup.add_argument("--ttsmaxlen", help="Limit number of audio tokens generated with TTS.",  type=int, default=default_ttsmaxlen)
     ttsparsergroup.add_argument("--ttsthreads", metavar=('[threads]'), help="Use a different number of threads for TTS if specified. Otherwise, has the same value as --threads.", type=int, default=0)
     ttsparsergroup.add_argument("--ttsdir", metavar=('[directory]'), help="Select directory containing voices for voice cloning.", default="")
+
+    musicparsergroup = parser.add_argument_group('Music Gen Commands')
+    musicparsergroup.add_argument("--musicllm", metavar=('[filename]'), help="Select music LLM model (e.g acestep-5Hz-lm-0.6B)", default="")
+    musicparsergroup.add_argument("--musicembeddings", metavar=('[filename]'), help="Select music embedding model (e.g Qwen3-Embedding-0.6B)", default="")
+    musicparsergroup.add_argument("--musicdiffusion", metavar=('[filename]'), help="Select music diffusion (DiT) model (e.g acestep-v15-turbo)", default="")
+    musicparsergroup.add_argument("--musicvae", metavar=('[filename]'), help="Select music VAE model", default="")
 
     embeddingsparsergroup = parser.add_argument_group('Embeddings Model Commands')
     embeddingsparsergroup.add_argument("--embeddingsmodel", metavar=('[filename]'), help="Specify an embeddings model to be loaded for generating embedding vectors.", default="")

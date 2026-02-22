@@ -1096,70 +1096,51 @@ static void usage(const char * prog) {
         "\n", prog);
 }
 
-int main(int argc, char ** argv) {
-    const char * model_path   = nullptr;
-    const char * request_path = nullptr;
+
+//kcpp stuff
+
+static Qwen3LM acestep_llm;
+static BPETokenizer acestep_bpe;
+static bool acestep_loaded = false;
+
+bool load_acestep(std::string model_path)
+{
+    acestep_loaded = false;
     int max_seq     = 8192;
-    int batch_size  = 1;
-    bool use_fsm    = true;
-    const char * dump_logits  = nullptr;
-    const char * dump_tokens  = nullptr;
+    const int batch_size  = 1; //only bs 1 is allowed
+    if (!load_bpe_from_gguf(&acestep_bpe, model_path.c_str())) {
+        return false;
+    }
+    // Load model
+    int n_kv_sets = 2 * batch_size;
+    if (!qw3lm_load(&acestep_llm, model_path.c_str(), max_seq, n_kv_sets)) {
+        return false;
+    }
+    acestep_loaded = true;
+    return true;
+}
 
-    if (argc < 2) {
-        usage(argv[0]);
-        return 1;
+AceRequest acestep_prepare_request()
+{
+    const int batch_size = 1;
+    bool use_fsm = true;
+    MetadataFSM fsm;
+    if (use_fsm) {
+        fsm.init(acestep_bpe, acestep_llm.cfg.vocab_size);
     }
 
-    for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--model") && i + 1 < argc)
-            model_path = argv[++i];
-        else if (!strcmp(argv[i], "--request") && i + 1 < argc)
-            request_path = argv[++i];
-        else if (!strcmp(argv[i], "--max-seq") && i + 1 < argc)
-            max_seq = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--batch") && i + 1 < argc)
-            batch_size = atoi(argv[++i]);
-        else if (!strcmp(argv[i], "--no-fsm"))
-            use_fsm = false;
-        else if (!strcmp(argv[i], "--dump-logits") && i + 1 < argc)
-            dump_logits = argv[++i];
-        else if (!strcmp(argv[i], "--dump-tokens") && i + 1 < argc)
-            dump_tokens = argv[++i];
-        else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
-            usage(argv[0]);
-            return 0;
-        }
-        else {
-            fprintf(stderr, "Unknown option: %s\n", argv[i]);
-            usage(argv[0]);
-            return 1;
-        }
-    }
-
-    if (!model_path) {
-        fprintf(stderr, "ERROR: --model required\n");
-        usage(argv[0]); return 1;
-    }
-    if (!request_path) {
-        fprintf(stderr, "ERROR: --request required\n");
-        usage(argv[0]); return 1;
-    }
-
-    // Read request JSON
+    // Read request and set essentials
     AceRequest req;
-    if (!request_parse(&req, request_path)) return 1;
-    request_dump(&req, stderr);
+    request_init(&req);
+    req.caption = "doom";
+    req.lyrics = ""; //can be overridden or left auto
+    req.inference_steps = 8;
+    req.vocal_language = "en";
 
-    if (req.caption.empty()) {
-        fprintf(stderr, "ERROR: caption is empty in %s\n", request_path);
-        return 1;
-    }
-
-    // Resolve seed
     int seed = req.seed;
-    if (seed < 0) {
-        std::random_device rd;
-        seed = (int)(rd() & 0x7FFFFFFF);
+    if (seed <= 0 || seed==0xFFFFFFFF)
+    {
+        seed = (((uint32_t)time(NULL)) % 1000000u);
     }
     req.seed = seed;
 
@@ -1168,23 +1149,6 @@ int main(int argc, char ** argv) {
     float top_p            = req.lm_top_p;
     float cfg_scale        = req.lm_cfg_scale;
     const char * neg_prompt = req.lm_negative_prompt.c_str();
-
-    Timer t_total;
-
-    // Load BPE tokenizer from model GGUF
-    BPETokenizer bpe;
-    if (!load_bpe_from_gguf(&bpe, model_path)) return 1;
-
-    // Load model
-    int n_kv_sets = (cfg_scale > 1.0f) ? 2 * batch_size : batch_size;
-    Timer t_load;
-    Qwen3LM model;
-    if (!qw3lm_load(&model, model_path, max_seq, n_kv_sets)) return 1;
-    double load_ms = t_load.ms();
-
-    // FSM
-    MetadataFSM fsm;
-    if (use_fsm) fsm.init(bpe, model.cfg.vocab_size);
 
     // Copy request -> AcePrompt (internal LLM struct)
     AcePrompt ace = {};
@@ -1216,24 +1180,24 @@ int main(int argc, char ** argv) {
             " and specific musical description:\n";
         std::string user_msg = ace.caption + "\n\ninstrumental: "
             + std::string(req.instrumental ? "true" : "false");
-        prompt = build_custom_prompt(bpe, sys, user_msg.c_str());
+        prompt = build_custom_prompt(acestep_bpe, sys, user_msg.c_str());
 
         // FSM: reset then optionally force language (shared for both paths)
         fsm.reset();
         if (use_fsm && ace.vocal_language != "unknown" && !ace.vocal_language.empty())
-            fsm.force_language(bpe, ace.vocal_language);
+            fsm.force_language(acestep_bpe, ace.vocal_language);
 
         // Phase 1: N lyrics + metadata generations (always batched, N=batch_size)
         fprintf(stderr, "[Simple] %zu tokens, N=%d, seeds: %d..%d\n",
                 prompt.size(), batch_size, seed, seed + batch_size - 1);
 
         auto phase1_texts = generate_phase1_batch(
-            &model, &bpe, prompt, 2048, temperature, 1.0f,
+            &acestep_llm, &acestep_bpe, prompt, 2048, temperature, 1.0f,
             seed, batch_size, use_fsm ? &fsm : nullptr, true);
 
         parse_phase1_into_aces(phase1_texts, ace, aces, seed, "Simple", true);
 
-        for (int i = 0; i < batch_size; i++) qw3lm_reset_kv(&model, i);
+        for (int i = 0; i < batch_size; i++) qw3lm_reset_kv(&acestep_llm, i);
     }
 
     // Re-evaluate after possible simple enrichment
@@ -1243,97 +1207,300 @@ int main(int argc, char ** argv) {
 
     if (!has_all_metas) {
         // Partial-metas: Phase 1 with CFG to fill missing fields
-        prompt = build_lm_prompt(bpe, ace);
+        prompt = build_lm_prompt(acestep_bpe, ace);
         std::vector<int> uncond;
         if (cfg_scale > 1.0f)
-            uncond = build_lm_prompt_uncond(bpe, ace, neg_prompt);
+            uncond = build_lm_prompt_uncond(acestep_bpe, ace, neg_prompt);
 
         fprintf(stderr, "[Partial] %zu tokens, CFG: %.2f, N=%d, seeds: %d..%d\n",
                 prompt.size(), cfg_scale, batch_size, seed, seed + batch_size - 1);
 
         fsm.reset();
         auto phase1_texts = generate_phase1_batch(
-            &model, &bpe, prompt, 2048, temperature, top_p,
+            &acestep_llm, &acestep_bpe, prompt, 2048, temperature, top_p,
             seed, batch_size, use_fsm ? &fsm : nullptr, false,
             cfg_scale, uncond.empty() ? nullptr : &uncond, true);
 
         parse_phase1_into_aces(phase1_texts, ace, aces, seed, "Partial", false);
 
-        for (int i = 0; i < 2 * batch_size; i++) qw3lm_reset_kv(&model, i);
+        for (int i = 0; i < 2 * batch_size; i++) qw3lm_reset_kv(&acestep_llm, i);
     }
 
     // Guarantee aces is populated (all-metas: single shared ace for prefill optimization)
-    if (aces.empty()) aces = {ace};
-
-    // Debug: dump tokens/logits
-    if (need_lm_codes && (dump_logits || dump_tokens)) {
-        std::string cot = build_cot_yaml(aces[0]);
-        auto dbg_prompt = build_lm_prompt_with_cot(bpe, aces[0], cot);
-
-        if (dump_tokens) {
-            FILE * f = fopen(dump_tokens, "w");
-            if (f) {
-                for (size_t j = 0; j < dbg_prompt.size(); j++)
-                    fprintf(f, "%s%d", j ? "," : "", dbg_prompt[j]);
-                fprintf(f, "\n");
-                fclose(f);
-                fprintf(stderr, "[Debug] Tokens -> %s (%zu)\n",
-                        dump_tokens, dbg_prompt.size());
-            }
-        }
-        if (dump_logits) {
-            std::vector<float> dbg_logits(model.cfg.vocab_size);
-            qw3lm_forward(&model, dbg_prompt.data(), (int)dbg_prompt.size(), 0, dbg_logits.data());
-            FILE * f = fopen(dump_logits, "wb");
-            if (f) {
-                fwrite(dbg_logits.data(), sizeof(float), model.cfg.vocab_size, f);
-                fclose(f);
-                fprintf(stderr, "[Debug] Logits -> %s (%d floats, argmax=%d)\n",
-                        dump_logits, model.cfg.vocab_size,
-                        (int)(std::max_element(dbg_logits.begin(), dbg_logits.end()) - dbg_logits.begin()));
-            }
-            qw3lm_reset_kv(&model, 0);
-        }
+    if (aces.empty()) {
+        aces = { ace };
     }
 
     // Phase 2: generate audio codes (always batched, N=batch_size)
     std::vector<std::string> batch_codes(batch_size);
     if (need_lm_codes) {
-        batch_codes = run_phase2_batch(&model, bpe, aces,
+        batch_codes = run_phase2_batch(&acestep_llm, acestep_bpe, aces,
             temperature, top_p, seed, batch_size, cfg_scale, neg_prompt);
     } else {
         fprintf(stderr, "[Skip] %s, no code generation\n",
                 user_has_codes ? "user codes present" : "thinking=false");
     }
 
-    // Write N output files: request0.json, request1.json, ...
-    {
-        std::string base(request_path);
-        std::string ext = ".json";
-        size_t dot = base.rfind('.');
-        if (dot != std::string::npos) { ext = base.substr(dot); base = base.substr(0, dot); }
-        for (int b = 0; b < batch_size; b++) {
-            AceRequest rr = req;
-            const AcePrompt & a = aces[b < (int)aces.size() ? b : 0];
-            rr.caption        = a.caption;
-            rr.lyrics         = a.lyrics;
-            rr.bpm            = a.bpm;
-            rr.duration       = a.duration;
-            rr.keyscale       = a.keyscale;
-            rr.timesignature  = a.timesignature;
-            rr.vocal_language = a.vocal_language;
-            if (!batch_codes[b].empty()) rr.audio_codes = batch_codes[b];
-            rr.seed = seed + b;
-            char path[512];
-            snprintf(path, sizeof(path), "%s%d%s", base.c_str(), b, ext.c_str());
-            request_write(&rr, path);
-            fprintf(stderr, "[Output] Wrote %s\n", path);
-        }
-    }
+    // only batch size 1 is allowed
+    AceRequest rr = req;
+    const AcePrompt & a = aces[0];
+    rr.caption        = a.caption;
+    rr.lyrics         = a.lyrics;
+    rr.bpm            = a.bpm;
+    rr.duration       = a.duration;
+    rr.keyscale       = a.keyscale;
+    rr.timesignature  = a.timesignature;
+    rr.vocal_language = a.vocal_language;
+    if (!batch_codes[0].empty()) rr.audio_codes = batch_codes[0];
+    rr.seed = seed;
 
-    fprintf(stderr, "[Ace-Qwen3] Load %.0f | Total %.0fms | seed=%d\n",
-            load_ms, t_total.ms(), seed);
-
-    qw3lm_free(&model);
-    return 0;
+    return rr;
 }
+
+void unload_acestep()
+{
+    qw3lm_free(&acestep_llm);
+}
+
+
+// int main(int argc, char ** argv) {
+//     const char * model_path   = nullptr;
+//     const char * request_path = nullptr;
+//     int max_seq     = 8192;
+//     int batch_size  = 1;
+//     bool use_fsm    = true;
+//     const char * dump_logits  = nullptr;
+//     const char * dump_tokens  = nullptr;
+
+//     if (argc < 2) {
+//         usage(argv[0]);
+//         return 1;
+//     }
+
+//     for (int i = 1; i < argc; i++) {
+//         if (!strcmp(argv[i], "--model") && i + 1 < argc)
+//             model_path = argv[++i];
+//         else if (!strcmp(argv[i], "--request") && i + 1 < argc)
+//             request_path = argv[++i];
+//         else if (!strcmp(argv[i], "--max-seq") && i + 1 < argc)
+//             max_seq = atoi(argv[++i]);
+//         else if (!strcmp(argv[i], "--batch") && i + 1 < argc)
+//             batch_size = atoi(argv[++i]);
+//         else if (!strcmp(argv[i], "--no-fsm"))
+//             use_fsm = false;
+//         else if (!strcmp(argv[i], "--dump-logits") && i + 1 < argc)
+//             dump_logits = argv[++i];
+//         else if (!strcmp(argv[i], "--dump-tokens") && i + 1 < argc)
+//             dump_tokens = argv[++i];
+//         else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
+//             usage(argv[0]);
+//             return 0;
+//         }
+//         else {
+//             fprintf(stderr, "Unknown option: %s\n", argv[i]);
+//             usage(argv[0]);
+//             return 1;
+//         }
+//     }
+
+//     if (!model_path) {
+//         fprintf(stderr, "ERROR: --model required\n");
+//         usage(argv[0]); return 1;
+//     }
+//     if (!request_path) {
+//         fprintf(stderr, "ERROR: --request required\n");
+//         usage(argv[0]); return 1;
+//     }
+
+//     // Read request JSON
+//     AceRequest req;
+//     if (!request_parse(&req, request_path)) return 1;
+//     request_dump(&req, stderr);
+
+//     if (req.caption.empty()) {
+//         fprintf(stderr, "ERROR: caption is empty in %s\n", request_path);
+//         return 1;
+//     }
+
+//     // Resolve seed
+//     int seed = req.seed;
+//     if (seed < 0) {
+//         std::random_device rd;
+//         seed = (int)(rd() & 0x7FFFFFFF);
+//     }
+//     req.seed = seed;
+
+//     // Generation params from request
+//     float temperature      = req.lm_temperature;
+//     float top_p            = req.lm_top_p;
+//     float cfg_scale        = req.lm_cfg_scale;
+//     const char * neg_prompt = req.lm_negative_prompt.c_str();
+
+//     Timer t_total;
+
+//     // Load BPE tokenizer from model GGUF
+//     BPETokenizer bpe;
+//     if (!load_bpe_from_gguf(&bpe, model_path)) return 1;
+
+//     // Load model
+//     int n_kv_sets = (cfg_scale > 1.0f) ? 2 * batch_size : batch_size;
+//     Timer t_load;
+//     Qwen3LM model;
+//     if (!qw3lm_load(&model, model_path, max_seq, n_kv_sets)) return 1;
+//     double load_ms = t_load.ms();
+
+//     // FSM
+//     MetadataFSM fsm;
+//     if (use_fsm) fsm.init(bpe, model.cfg.vocab_size);
+
+//     // Copy request -> AcePrompt (internal LLM struct)
+//     AcePrompt ace = {};
+//     ace.caption        = req.caption;
+//     ace.lyrics         = req.lyrics;
+//     ace.duration       = req.duration;
+//     ace.bpm            = req.bpm;
+//     ace.keyscale       = req.keyscale;
+//     ace.timesignature  = req.timesignature;
+//     ace.vocal_language = req.vocal_language;
+
+//     bool user_has_codes = !req.audio_codes.empty();
+//     bool need_lm_codes  = req.thinking && !user_has_codes;
+
+//     bool is_simple = ace.lyrics.empty() &&
+//                      ace.bpm <= 0 && ace.duration <= 0 &&
+//                      ace.keyscale.empty() && ace.timesignature.empty();
+
+//     std::vector<int> prompt;
+//     std::vector<AcePrompt> aces;  // populated by Phase 1 (simple or partial)
+
+//     // Preprocessor: simple mode generates lyrics + metas from caption
+//     if (is_simple) {
+//         fprintf(stderr, "[Simple] Inspiration\n");
+
+//         const char * sys =
+//             "# Instruction\n"
+//             "Expand the user's input into a more detailed"
+//             " and specific musical description:\n";
+//         std::string user_msg = ace.caption + "\n\ninstrumental: "
+//             + std::string(req.instrumental ? "true" : "false");
+//         prompt = build_custom_prompt(bpe, sys, user_msg.c_str());
+
+//         // FSM: reset then optionally force language (shared for both paths)
+//         fsm.reset();
+//         if (use_fsm && ace.vocal_language != "unknown" && !ace.vocal_language.empty())
+//             fsm.force_language(bpe, ace.vocal_language);
+
+//         // Phase 1: N lyrics + metadata generations (always batched, N=batch_size)
+//         fprintf(stderr, "[Simple] %zu tokens, N=%d, seeds: %d..%d\n",
+//                 prompt.size(), batch_size, seed, seed + batch_size - 1);
+
+//         auto phase1_texts = generate_phase1_batch(
+//             &model, &bpe, prompt, 2048, temperature, 1.0f,
+//             seed, batch_size, use_fsm ? &fsm : nullptr, true);
+
+//         parse_phase1_into_aces(phase1_texts, ace, aces, seed, "Simple", true);
+
+//         for (int i = 0; i < batch_size; i++) qw3lm_reset_kv(&model, i);
+//     }
+
+//     // Re-evaluate after possible simple enrichment
+//     const AcePrompt & ace_ref = aces.empty() ? ace : aces[0];
+//     bool has_all_metas = (ace_ref.bpm > 0 && ace_ref.duration > 0 &&
+//                           !ace_ref.keyscale.empty() && !ace_ref.timesignature.empty());
+
+//     if (!has_all_metas) {
+//         // Partial-metas: Phase 1 with CFG to fill missing fields
+//         prompt = build_lm_prompt(bpe, ace);
+//         std::vector<int> uncond;
+//         if (cfg_scale > 1.0f)
+//             uncond = build_lm_prompt_uncond(bpe, ace, neg_prompt);
+
+//         fprintf(stderr, "[Partial] %zu tokens, CFG: %.2f, N=%d, seeds: %d..%d\n",
+//                 prompt.size(), cfg_scale, batch_size, seed, seed + batch_size - 1);
+
+//         fsm.reset();
+//         auto phase1_texts = generate_phase1_batch(
+//             &model, &bpe, prompt, 2048, temperature, top_p,
+//             seed, batch_size, use_fsm ? &fsm : nullptr, false,
+//             cfg_scale, uncond.empty() ? nullptr : &uncond, true);
+
+//         parse_phase1_into_aces(phase1_texts, ace, aces, seed, "Partial", false);
+
+//         for (int i = 0; i < 2 * batch_size; i++) qw3lm_reset_kv(&model, i);
+//     }
+
+//     // Guarantee aces is populated (all-metas: single shared ace for prefill optimization)
+//     if (aces.empty()) aces = {ace};
+
+//     // Debug: dump tokens/logits
+//     if (need_lm_codes && (dump_logits || dump_tokens)) {
+//         std::string cot = build_cot_yaml(aces[0]);
+//         auto dbg_prompt = build_lm_prompt_with_cot(bpe, aces[0], cot);
+
+//         if (dump_tokens) {
+//             FILE * f = fopen(dump_tokens, "w");
+//             if (f) {
+//                 for (size_t j = 0; j < dbg_prompt.size(); j++)
+//                     fprintf(f, "%s%d", j ? "," : "", dbg_prompt[j]);
+//                 fprintf(f, "\n");
+//                 fclose(f);
+//                 fprintf(stderr, "[Debug] Tokens -> %s (%zu)\n",
+//                         dump_tokens, dbg_prompt.size());
+//             }
+//         }
+//         if (dump_logits) {
+//             std::vector<float> dbg_logits(model.cfg.vocab_size);
+//             qw3lm_forward(&model, dbg_prompt.data(), (int)dbg_prompt.size(), 0, dbg_logits.data());
+//             FILE * f = fopen(dump_logits, "wb");
+//             if (f) {
+//                 fwrite(dbg_logits.data(), sizeof(float), model.cfg.vocab_size, f);
+//                 fclose(f);
+//                 fprintf(stderr, "[Debug] Logits -> %s (%d floats, argmax=%d)\n",
+//                         dump_logits, model.cfg.vocab_size,
+//                         (int)(std::max_element(dbg_logits.begin(), dbg_logits.end()) - dbg_logits.begin()));
+//             }
+//             qw3lm_reset_kv(&model, 0);
+//         }
+//     }
+
+//     // Phase 2: generate audio codes (always batched, N=batch_size)
+//     std::vector<std::string> batch_codes(batch_size);
+//     if (need_lm_codes) {
+//         batch_codes = run_phase2_batch(&model, bpe, aces,
+//             temperature, top_p, seed, batch_size, cfg_scale, neg_prompt);
+//     } else {
+//         fprintf(stderr, "[Skip] %s, no code generation\n",
+//                 user_has_codes ? "user codes present" : "thinking=false");
+//     }
+
+//     // Write N output files: request0.json, request1.json, ...
+//     {
+//         std::string base(request_path);
+//         std::string ext = ".json";
+//         size_t dot = base.rfind('.');
+//         if (dot != std::string::npos) { ext = base.substr(dot); base = base.substr(0, dot); }
+//         for (int b = 0; b < batch_size; b++) {
+//             AceRequest rr = req;
+//             const AcePrompt & a = aces[b < (int)aces.size() ? b : 0];
+//             rr.caption        = a.caption;
+//             rr.lyrics         = a.lyrics;
+//             rr.bpm            = a.bpm;
+//             rr.duration       = a.duration;
+//             rr.keyscale       = a.keyscale;
+//             rr.timesignature  = a.timesignature;
+//             rr.vocal_language = a.vocal_language;
+//             if (!batch_codes[b].empty()) rr.audio_codes = batch_codes[b];
+//             rr.seed = seed + b;
+//             char path[512];
+//             snprintf(path, sizeof(path), "%s%d%s", base.c_str(), b, ext.c_str());
+//             request_write(&rr, path);
+//             fprintf(stderr, "[Output] Wrote %s\n", path);
+//         }
+//     }
+
+//     fprintf(stderr, "[Ace-Qwen3] Load %.0f | Total %.0fms | seed=%d\n",
+//             load_ms, t_total.ms(), seed);
+
+//     qw3lm_free(&model);
+//     return 0;
+// }
