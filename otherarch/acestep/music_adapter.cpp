@@ -83,6 +83,13 @@ music_generation_outputs musictype_generate(const music_generation_inputs inputs
             printf("\nMusic Gen Generating Codes...");
         }
         codes_json_str = acestep_prepare_request(inputs);
+        if(codes_json_str=="")
+        {
+            printf("\nMusic codes generation failed!\n");
+            output.status = 0;
+            output.codes_json = "";
+            return output;
+        }
         output.status = 1;
         output.codes_json = codes_json_str.c_str();
         if (!music_is_quiet) {

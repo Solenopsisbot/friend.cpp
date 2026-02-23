@@ -198,19 +198,22 @@ static std::string read_file(const char * path) {
     return buf;
 }
 
-// Public API
-bool request_parse(AceRequest * r, const char * path) {
-    request_init(r);
-
+bool request_parse(AceRequest * r, const char * path)
+{
     std::string json = read_file(path);
     if (json.empty()) {
         fprintf(stderr, "[Request] ERROR: cannot read %s\n", path);
         return false;
     }
+    return request_parse_from_str(r, json);
+}
 
+// Public API
+bool request_parse_from_str(AceRequest * r, std::string json) {
+    request_init(r);
     std::vector<JsonPair> pairs;
     if (!parse_json_flat(json.c_str(), &pairs)) {
-        fprintf(stderr, "[Request] ERROR: malformed JSON in %s\n", path);
+        fprintf(stderr, "[Request] ERROR: malformed JSON\n");
         return false;
     }
 
@@ -247,7 +250,7 @@ bool request_parse(AceRequest * r, const char * path) {
         // unknown keys: silently ignored (forward compat)
     }
 
-    fprintf(stderr, "[Request] parsed %s (%zu fields)\n", path, pairs.size());
+    fprintf(stderr, "[Request] parsed json (%zu fields)\n", pairs.size());
     return true;
 }
 

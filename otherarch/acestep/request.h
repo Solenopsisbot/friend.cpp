@@ -50,6 +50,8 @@ void request_init(AceRequest * r);
 // Returns false on file error or malformed JSON.
 bool request_parse(AceRequest * r, const char * path);
 
+bool request_parse_from_str(AceRequest * r, std::string json);
+
 // Write struct to JSON file (overwrites). Returns false on file error.
 bool request_write(const AceRequest * r, const char * path);
 

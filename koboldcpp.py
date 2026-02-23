@@ -451,7 +451,7 @@ class music_load_model_inputs(ctypes.Structure):
 
 class music_generation_inputs(ctypes.Structure):
     _fields_ = [("is_codes", ctypes.c_bool),
-                ("caption", ctypes.c_char_p)]
+                ("input_json", ctypes.c_char_p)]
 
 class music_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2376,15 +2376,19 @@ def music_load_model(musicllm,musicembedding,musicdiffusion,musicvae):
 
 def music_generate_codes(genparams):
     global args
-    caption = genparams.get("caption", "interesting music song")
+    input_json = json.dumps(genparams)
     inputs = music_generation_inputs()
     inputs.is_codes = True
-    inputs.caption = caption.encode("UTF-8")
+    inputs.input_json = input_json.encode("UTF-8")
     ret = handle.music_generate(inputs)
     outstr = ""
     if ret.status==1:
         outstr = ret.codes_json.decode("UTF-8","ignore")
+        outstr = json.dumps(json.loads(outstr))
     return outstr
+
+def music_generate_audio(genparams):
+    return ""
 
 def tokenize_ids(countprompt,tcaddspecial):
     rawcountdata = handle.token_count(countprompt.encode("UTF-8"),tcaddspecial)
@@ -4724,6 +4728,8 @@ Change Mode<br>
             is_transcribe = False
             is_tts = False
             is_embeddings = False
+            is_music_codes = False
+            is_music_audio = False
             response_body = None
             use_jinja = args.jinja
 
@@ -4820,13 +4826,17 @@ Change Mode<br>
                 is_tts = True
             elif self.path.endswith('/api/extra/embeddings') or self.path.endswith('/v1/embeddings'):
                 is_embeddings = True
+            elif self.path.endswith('/api/extra/music/prepare'):
+                is_music_codes = True
+            elif self.path.endswith('/api/extra/music/generate'):
+                is_music_audio = True
 
             if response_body is not None:
                 self.send_response(response_code)
                 self.send_header('content-length', str(len(response_body)))
                 self.end_headers(content_type='application/json')
                 self.wfile.write(response_body)
-            elif is_imggen or is_img_upscale or is_transcribe or is_tts or is_embeddings or api_format > 0:
+            elif is_imggen or is_img_upscale or is_transcribe or is_tts or is_embeddings or is_music_codes or is_music_audio or api_format > 0:
                 global last_req_time
                 last_req_time = time.time()
 
@@ -5129,6 +5139,37 @@ Change Mode<br>
                     except Exception as ex:
                         utfprint(ex,1)
                         print("Create Embeddings: The response could not be sent, maybe connection was terminated?")
+                        time.sleep(0.2) #short delay
+                    return
+                elif is_music_codes:
+                    try:
+                        gendat = music_generate_codes(genparams)
+                        genresp = (json.dumps({"error":"music code generation failed"}).encode())
+                        if gendat:
+                            genresp = gendat.encode()
+                        self.send_response(200)
+                        self.send_header('content-length', str(len(genresp)))
+                        self.end_headers(content_type='application/json')
+                        self.wfile.write(genresp)
+                    except Exception as ex:
+                        utfprint(ex,1)
+                        print("Music Gen Codes: The response could not be sent, maybe connection was terminated?")
+                        time.sleep(0.2) #short delay
+                    return
+                elif is_music_audio:
+                    try:
+                        gendat = music_generate_audio(genparams)
+                        wav_data = b''
+                        if gendat:
+                            wav_data = base64.b64decode(gendat) # Decode the Base64 string into binary data
+                        self.send_response(200)
+                        self.send_header('content-length', str(len(wav_data)))  # Set content length
+                        self.send_header('Content-Disposition', 'attachment; filename="output.wav"')
+                        self.end_headers(content_type='audio/wav')
+                        self.wfile.write(wav_data) # Write the binary WAV data to the response
+                    except Exception as ex:
+                        utfprint(ex,1)
+                        print("Music Gen Audio: The response could not be sent, maybe connection was terminated?")
                         time.sleep(0.2) #short delay
                     return
 

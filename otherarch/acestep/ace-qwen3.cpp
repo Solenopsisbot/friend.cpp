@@ -1132,11 +1132,12 @@ std::string acestep_prepare_request(const music_generation_inputs inputs)
 
     // Read request and set essentials
     AceRequest req;
-    request_init(&req);
-    req.caption = inputs.caption;
-    req.lyrics = ""; //can be overridden or left auto
-    req.inference_steps = 8;
-    req.vocal_language = "en";
+    std::string injson =  inputs.input_json;
+    if (!request_parse_from_str(&req, injson))
+    {
+        fprintf(stderr, "\nMusic JSON parse error\n");
+        return "";
+    }
 
     int seed = req.seed;
     if (seed <= 0 || seed==0xFFFFFFFF)
