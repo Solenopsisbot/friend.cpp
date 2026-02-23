@@ -105,20 +105,22 @@ static bool cond_ggml_load(CondGGML * m, const char * gguf_path) {
     m->lyric_embed_w = gf_load_tensor(&m->wctx, gf, "encoder.lyric_encoder.embed_tokens.weight");
     m->lyric_embed_b = gf_load_tensor_f32(&m->wctx, gf, "encoder.lyric_encoder.embed_tokens.bias");
     m->lyric_norm    = gf_load_tensor_f32(&m->wctx, gf, "encoder.lyric_encoder.norm.weight");
+    fprintf(stderr, "[Load] LyricEncoder: %dL\n", m->lyric_cfg.n_layers);
     for (int i = 0; i < m->lyric_cfg.n_layers; i++) {
         char prefix[128];
         snprintf(prefix, sizeof(prefix), "encoder.lyric_encoder.layers.%d", i);
-        qwen3_load_layer(&m->wctx, gf, &m->lyric_layers[i], prefix);
+        qwen3_load_layer(&m->wctx, gf, &m->lyric_layers[i], prefix, i);
     }
 
     // Timbre encoder
     m->timbre_embed_w = gf_load_tensor(&m->wctx, gf, "encoder.timbre_encoder.embed_tokens.weight");
     m->timbre_embed_b = gf_load_tensor_f32(&m->wctx, gf, "encoder.timbre_encoder.embed_tokens.bias");
     m->timbre_norm    = gf_load_tensor_f32(&m->wctx, gf, "encoder.timbre_encoder.norm.weight");
+    fprintf(stderr, "[Load] TimbreEncoder: %dL\n", m->timbre_cfg.n_layers);
     for (int i = 0; i < m->timbre_cfg.n_layers; i++) {
         char prefix[128];
         snprintf(prefix, sizeof(prefix), "encoder.timbre_encoder.layers.%d", i);
-        qwen3_load_layer(&m->wctx, gf, &m->timbre_layers[i], prefix);
+        qwen3_load_layer(&m->wctx, gf, &m->timbre_layers[i], prefix, i);
     }
 
     // Text projector + null condition
@@ -158,7 +160,7 @@ static void cond_ggml_forward(CondGGML * m,
     int H = 2048;
     bool has_timbre = (timbre_feats != NULL && S_ref > 0);
 
-    // Build graph
+    // Graph context (generous fixed allocation)
     size_t ctx_size = 4096 * ggml_tensor_overhead() + ggml_graph_overhead();
     struct ggml_init_params gp = { ctx_size, NULL, true };
     struct ggml_context * ctx = ggml_init(gp);
