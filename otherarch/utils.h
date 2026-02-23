@@ -117,6 +117,7 @@ private:
     );
 };
 
+#pragma pack(push, 1)
 struct wav16_header {
     char riff[4] = {'R', 'I', 'F', 'F'};
     uint32_t chunk_size;
@@ -132,7 +133,9 @@ struct wav16_header {
     char data[4] = {'d', 'a', 't', 'a'};
     uint32_t data_size;
 };
+#pragma pack(pop)
 
+#pragma pack(push, 1)
 struct wav_ulaw_header {
     char     riff[4]        = {'R','I','F','F'};
     uint32_t chunk_size;              // 36 + data_size + 2 (for cbSize)
@@ -149,6 +152,7 @@ struct wav_ulaw_header {
     char     data[4]        = {'d','a','t','a'};
     uint32_t data_size;
 };
+#pragma pack(pop)
 
 std::string save_ulaw_wav8_base64(const std::vector<float> &data, int sample_rate);
 std::string save_wav16_base64(const std::vector<float> &data, int sample_rate);
