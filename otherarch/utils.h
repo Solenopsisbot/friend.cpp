@@ -116,3 +116,39 @@ private:
         int img_ny
     );
 };
+
+struct wav16_header {
+    char riff[4] = {'R', 'I', 'F', 'F'};
+    uint32_t chunk_size;
+    char wave[4] = {'W', 'A', 'V', 'E'};
+    char fmt[4] = {'f', 'm', 't', ' '};
+    uint32_t fmt_chunk_size = 16;
+    uint16_t audio_format = 1; // PCM
+    uint16_t num_channels = 1; // Mono
+    uint32_t sample_rate;
+    uint32_t byte_rate;
+    uint16_t block_align;
+    uint16_t bits_per_sample = 16;
+    char data[4] = {'d', 'a', 't', 'a'};
+    uint32_t data_size;
+};
+
+struct wav_ulaw_header {
+    char     riff[4]        = {'R','I','F','F'};
+    uint32_t chunk_size;              // 36 + data_size + 2 (for cbSize)
+    char     wave[4]        = {'W','A','V','E'};
+    char     fmt[4]         = {'f','m','t',' '};
+    uint32_t fmt_chunk_size = 18;     // 18 for non-PCM
+    uint16_t audio_format   = 7;      // 7 = μ-law
+    uint16_t num_channels   = 1;      // mono
+    uint32_t sample_rate;
+    uint32_t byte_rate;               // sample_rate * channels * 1
+    uint16_t block_align;             // channels * 1
+    uint16_t bits_per_sample = 8;     // 8-bit μ-law
+    uint16_t cbSize = 0;              // required for non-PCM
+    char     data[4]        = {'d','a','t','a'};
+    uint32_t data_size;
+};
+
+std::string save_ulaw_wav8_base64(const std::vector<float> &data, int sample_rate);
+std::string save_wav16_base64(const std::vector<float> &data, int sample_rate);

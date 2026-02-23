@@ -389,6 +389,85 @@ std::vector<float> resample_wav(const std::vector<float>& input, uint32_t input_
     return output;
 }
 
+static uint8_t linear_to_mulaw(int16_t sample)
+{
+    const int16_t BIAS = 0x84;        // 132
+    const int16_t CLIP = 32635;
+
+    int16_t sign = (sample >> 8) & 0x80;
+    if (sign)
+        sample = -sample;
+
+    if (sample > CLIP)
+        sample = CLIP;
+
+    sample += BIAS;
+
+    int16_t exponent = 7;
+    for (int16_t expMask = 0x4000;
+         (sample & expMask) == 0 && exponent > 0;
+         exponent--, expMask >>= 1);
+
+    int16_t mantissa = (sample >> (exponent + 3)) & 0x0F;
+
+    uint8_t ulaw = ~(sign | (exponent << 4) | mantissa);
+    return ulaw;
+}
+
+std::string save_ulaw_wav8_base64(const std::vector<float> &data, int sample_rate)
+{
+    std::ostringstream oss;
+    wav_ulaw_header header;
+
+    header.sample_rate = sample_rate;
+    header.byte_rate   = sample_rate;      // 1 byte per sample (mono)
+    header.block_align = 1;
+    header.data_size   = static_cast<uint32_t>(data.size());
+    header.chunk_size  = 4                       // "WAVE"
+                       + 8 + header.fmt_chunk_size
+                       + 8 + header.data_size;
+
+    // Write header
+    oss.write(reinterpret_cast<const char*>(&header), sizeof(header));
+
+    // Convert and write samples
+    for (float s : data)
+    {
+        float clamped = std::clamp(s, -1.0f, 1.0f);
+        int16_t pcm = static_cast<int16_t>(clamped * 32767.0f);
+        uint8_t mu = linear_to_mulaw(pcm);
+        oss.write(reinterpret_cast<const char*>(&mu), 1);
+    }
+
+    std::string wav_data = oss.str();
+    return kcpp_base64_encode(wav_data);
+}
+
+std::string save_wav16_base64(const std::vector<float> &data, int sample_rate) {
+    std::ostringstream oss;
+    wav16_header header;
+
+    // Fill header fields
+    header.sample_rate = sample_rate;
+    header.byte_rate = header.sample_rate * header.num_channels * (header.bits_per_sample / 8);
+    header.block_align = header.num_channels * (header.bits_per_sample / 8);
+    header.data_size = data.size() * (header.bits_per_sample / 8);
+    header.chunk_size = 36 + header.data_size;
+
+    // Write header
+    oss.write(reinterpret_cast<const char*>(&header), sizeof(header));
+
+    // Write samples
+    for (const auto &sample : data) {
+        int16_t pcm_sample = static_cast<int16_t>(std::clamp(sample * 32767.0, -32768.0, 32767.0));
+        oss.write(reinterpret_cast<const char*>(&pcm_sample), sizeof(pcm_sample));
+    }
+
+    // Get binary WAV data
+    std::string wav_data = oss.str();
+    return kcpp_base64_encode(wav_data); //return as base64 string
+}
+
 //a very rudimentary all in one sampling function which has no dependencies
 int32_t kcpp_quick_sample(float * logits, const int n_logits, const std::vector<int32_t> & last_n_tokens, float rep_pen, float top_p, int top_k, float temp, std::mt19937 & rng)
 {

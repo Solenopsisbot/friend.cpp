@@ -57,48 +57,6 @@ enum TTS_VER
     TTS_VER_3
 };
 
-struct wav_header {
-    char riff[4] = {'R', 'I', 'F', 'F'};
-    uint32_t chunk_size;
-    char wave[4] = {'W', 'A', 'V', 'E'};
-    char fmt[4] = {'f', 'm', 't', ' '};
-    uint32_t fmt_chunk_size = 16;
-    uint16_t audio_format = 1; // PCM
-    uint16_t num_channels = 1; // Mono
-    uint32_t sample_rate;
-    uint32_t byte_rate;
-    uint16_t block_align;
-    uint16_t bits_per_sample = 16;
-    char data[4] = {'d', 'a', 't', 'a'};
-    uint32_t data_size;
-};
-
-
-static std::string save_wav16_base64(const std::vector<float> &data, int sample_rate) {
-    std::ostringstream oss;
-    wav_header header;
-
-    // Fill header fields
-    header.sample_rate = sample_rate;
-    header.byte_rate = header.sample_rate * header.num_channels * (header.bits_per_sample / 8);
-    header.block_align = header.num_channels * (header.bits_per_sample / 8);
-    header.data_size = data.size() * (header.bits_per_sample / 8);
-    header.chunk_size = 36 + header.data_size;
-
-    // Write header
-    oss.write(reinterpret_cast<const char*>(&header), sizeof(header));
-
-    // Write samples
-    for (const auto &sample : data) {
-        int16_t pcm_sample = static_cast<int16_t>(std::clamp(sample * 32767.0, -32768.0, 32767.0));
-        oss.write(reinterpret_cast<const char*>(&pcm_sample), sizeof(pcm_sample));
-    }
-
-    // Get binary WAV data
-    std::string wav_data = oss.str();
-    return kcpp_base64_encode(wav_data); //return as base64 string
-}
-
 static void fill_hann_window(int length, bool periodic, float * output) {
     int offset = -1;
     if (periodic) {

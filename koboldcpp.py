@@ -9074,7 +9074,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 print(f"Flags: {benchflagstr}")
                 print(f"Timestamp: {datetimestamp}")
                 print(f"Backend: {libname}")
-                print(f"Layers: {args.gpulayers}")
+                print(f"Layers: {args.gpulayers if not args.autofit else 'Autofit'}")
                 print(f"Model: {benchmodel}")
                 print(f"MaxCtx: {benchmaxctx}")
                 print(f"GenAmount: {benchlen}\n-----")
