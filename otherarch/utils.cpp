@@ -389,6 +389,18 @@ std::vector<float> resample_wav(const std::vector<float>& input, uint32_t input_
     return output;
 }
 
+std::vector<float> mix_planar_stereo_to_mono(const float* audio, int T_audio)
+{
+    std::vector<float> mono(T_audio);
+    const float* left  = audio;
+    const float* right = audio + T_audio;
+    for (int t = 0; t < T_audio; ++t)
+    {
+        mono[t] = 0.5f * (left[t] + right[t]);
+    }
+    return mono;
+}
+
 static uint8_t linear_to_mulaw(int16_t sample)
 {
     const int16_t BIAS = 0x84;        // 132

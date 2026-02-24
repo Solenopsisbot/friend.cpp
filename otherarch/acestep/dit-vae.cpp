@@ -692,6 +692,7 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
     if (req.caption.empty()) {
         req.caption = "An interesting song";
     }
+    req.thinking = false;
 
     const int FRAMES_PER_SECOND = 25;
     int Oc = music_dit_cfg.out_channels;          // 64
@@ -917,11 +918,21 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
         }
     }
 
-    // output wav
-    std::vector<float> resampled_buf = resample_wav(audio,48000,24000);
-    std::string finalb64 = save_ulaw_wav8_base64(audio, 24000);
+    // std::string opath = "egghenlo.wav";
+    // if (write_wav(opath.c_str(), audio.data(), T_audio, 48000)) {
+    //     fprintf(stderr, "[VAE Batch%d] Wrote %s: %d samples (%.2fs @ 48kHz stereo)\n",
+    //             b, opath.c_str(), T_audio, (float)T_audio / 48000.0f);
+    // } else {
+    //     fprintf(stderr, "[VAE Batch%d] FATAL: failed to write %s\n", b, opath.c_str());
+    // }
 
-    fprintf(stderr, "[Request Done]\n");
+    // output wav
+    float muslen = (float)T_audio / 48000.0f;
+    std::vector<float> mono = mix_planar_stereo_to_mono(audio.data(), T_audio);
+    std::vector<float> resampled_buf = resample_wav(mono,48000,32000);
+    std::string finalb64 = save_wav16_base64(resampled_buf, 32000);
+
+    fprintf(stderr, "[Request Done: Music Length %.2fs]\n",muslen);
     return finalb64;
 }
 

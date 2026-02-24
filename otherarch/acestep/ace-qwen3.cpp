@@ -1484,6 +1484,10 @@ std::string acestep_prepare_request(const music_generation_inputs inputs)
     ace.timesignature  = req.timesignature;
     ace.vocal_language = req.vocal_language;
 
+    //kcpp: codes suck don't use them
+    req.thinking = false;
+    req.audio_codes = "";
+
     bool user_has_codes = !req.audio_codes.empty();
     bool need_lm_codes  = req.thinking && !user_has_codes;
 
@@ -1577,6 +1581,12 @@ std::string acestep_prepare_request(const music_generation_inputs inputs)
     rr.vocal_language = a.vocal_language;
     if (!batch_codes[0].empty()) rr.audio_codes = batch_codes[0];
     rr.seed = seed;
+
+    std::string prefix_erase = "# Lyric";
+    // Check if the string is long enough and starts with the prefix
+    if (rr.lyrics.size() >= prefix_erase.size() && rr.lyrics.compare(0, prefix_erase.size(), prefix_erase) == 0) {
+        rr.lyrics = rr.lyrics.substr(prefix_erase.size()); // Returns a new string starting after the prefix
+    }
 
     //now convert to string
     std::ostringstream oss;
