@@ -26,6 +26,7 @@ static bool musicgen_loaded = false;
 static std::string musicvulkandeviceenv;
 
 static std::string codes_json_str = "";
+static std::string b64_music_output = "";
 
 bool musictype_load_model(const music_load_model_inputs inputs)
 {
@@ -82,6 +83,7 @@ music_generation_outputs musictype_generate(const music_generation_inputs inputs
         printf("\nWarning: KCPP music gen not initialized!\n");
         output.status = 0;
         output.codes_json = "";
+        output.data = "";
         return output;
     }
 
@@ -95,14 +97,34 @@ music_generation_outputs musictype_generate(const music_generation_inputs inputs
             printf("\nMusic codes generation failed!\n");
             output.status = 0;
             output.codes_json = "";
+            output.data = "";
             return output;
         }
         output.status = 1;
+        output.data = "";
         output.codes_json = codes_json_str.c_str();
         if (!music_is_quiet) {
             printf("\nMusic Gen Codes Done:\n%s\n",codes_json_str.c_str());
         }
     } else {
+        if (!music_is_quiet) {
+            printf("\nMusic Gen Generating Audio...");
+        }
+        b64_music_output = acestep_generate_audio(inputs);
+        if(b64_music_output=="")
+        {
+            printf("\nMusic audio generation failed!\n");
+            output.status = 0;
+            output.codes_json = "";
+            output.data = "";
+            return output;
+        }
+        output.status = 1;
+        output.data = b64_music_output.c_str();
+        output.codes_json = "";
+        if (!music_is_quiet) {
+            printf("\nMusic Gen Audio Done\n");
+        }
     }
 
     return output;

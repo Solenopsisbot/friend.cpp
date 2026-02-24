@@ -690,8 +690,7 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
         return "";
     }
     if (req.caption.empty()) {
-        fprintf(stderr, "ERROR: music gen caption is empty!\n");
-        return "";
+        req.caption = "An interesting song";
     }
 
     const int FRAMES_PER_SECOND = 25;

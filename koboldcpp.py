@@ -455,7 +455,8 @@ class music_generation_inputs(ctypes.Structure):
 
 class music_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
-                ("codes_json", ctypes.c_char_p)]
+                ("codes_json", ctypes.c_char_p),
+                ("data", ctypes.c_char_p)]
 
 class StdoutRedirector:
     def __init__(self, writer):
@@ -2388,7 +2389,16 @@ def music_generate_codes(genparams):
     return outstr
 
 def music_generate_audio(genparams):
-    return ""
+    global args
+    input_json = json.dumps(genparams)
+    inputs = music_generation_inputs()
+    inputs.is_codes = False
+    inputs.input_json = input_json.encode("UTF-8")
+    ret = handle.music_generate(inputs)
+    outstr = ""
+    if ret.status==1:
+        outstr = ret.data.decode("UTF-8","ignore")
+    return outstr
 
 def tokenize_ids(countprompt,tcaddspecial):
     rawcountdata = handle.token_count(countprompt.encode("UTF-8"),tcaddspecial)

@@ -348,6 +348,7 @@ struct music_generation_outputs
 {
     int status = -1;
     const char * codes_json = "";
+    const char * data = "";
 };
 
 extern std::string executable_path;
