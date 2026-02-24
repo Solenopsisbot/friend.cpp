@@ -1424,9 +1424,13 @@ int main(int argc, char ** argv) {
 static Qwen3LM acestep_llm;
 static BPETokenizer acestep_bpe;
 static bool acestep_lm_loaded = false;
+static std::string acestep_lm_path = "";
+static bool acestep_lm_lowvram = false;
 
-bool load_acestep_lm(std::string model_path)
+bool load_acestep_lm(std::string model_path, bool lowvram)
 {
+    acestep_lm_lowvram = lowvram;
+    acestep_lm_path = model_path;
     acestep_lm_loaded = false;
     int max_seq     = 8192;
     const int batch_size  = 1; //only bs 1 is allowed
@@ -1442,8 +1446,28 @@ bool load_acestep_lm(std::string model_path)
     return true;
 }
 
+void unload_acestep_lm()
+{
+    if(acestep_lm_loaded)
+    {
+        acestep_lm_loaded = false;
+        qw3lm_free(&acestep_llm);
+    }
+}
+
 std::string acestep_prepare_request(const music_generation_inputs inputs)
 {
+    if(!acestep_lm_loaded && acestep_lm_path!="")
+    {
+        printf("\nRuntime reload Music LM model...\n");
+        bool ok = load_acestep_lm(acestep_lm_path, acestep_lm_lowvram);
+        if(!ok)
+        {
+            printf("\nERROR: Acestep LM load fail\n");
+            return "";
+        }
+    }
+
     const int batch_size = 1;
     bool use_fsm = true;
     MetadataFSM fsm;
@@ -1614,10 +1638,12 @@ std::string acestep_prepare_request(const music_generation_inputs inputs)
     oss << "  \"audio_codes\": \"" << json_escape(rr.audio_codes) << "\"\n";
     oss << "}\n";
     std::string output_json = oss.str();
+
+    if(acestep_lm_lowvram)
+    {
+        unload_acestep_lm();
+    }
+
     return output_json;
 }
 
-void unload_acestep()
-{
-    qw3lm_free(&acestep_llm);
-}

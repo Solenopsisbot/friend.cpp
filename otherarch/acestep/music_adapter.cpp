@@ -52,17 +52,22 @@ bool musictype_load_model(const music_load_model_inputs inputs)
     std::string musicembedding_filename = inputs.musicembedding_filename;
     std::string musicdiffusion_filename = inputs.musicdiffusion_filename;
     std::string musicvae_filename = inputs.musicvae_filename;
+    bool lowvram = inputs.lowvram;
     printf("\nLoading Music Gen LLM Model: %s\nLoading Music Gen Embed Model: %s\nLoading Music Gen Diffusion Model: %s\nLoading Music Gen VAE Model: %s\n",
     musicllm_filename.c_str(),musicembedding_filename.c_str(),musicdiffusion_filename.c_str(),musicvae_filename.c_str());
     musicdebugmode = inputs.debugmode;
 
-    bool ok = load_acestep_lm(musicllm_filename);
+    bool ok = load_acestep_lm(musicllm_filename,lowvram);
     if (!ok) {
         printf("\nFailed to load Music Gen LM Model!\n");
         return false;
     }
+    if(lowvram)
+    {
+        unload_acestep_lm();
+    }
 
-    ok = load_acestep_dit(musicembedding_filename,musicdiffusion_filename,musicvae_filename);
+    ok = load_acestep_dit(musicembedding_filename,musicdiffusion_filename,musicvae_filename,lowvram);
     if (!ok) {
         printf("\nFailed to load Music Gen Diffusion, Embed or VAE Model!\n");
         return false;

@@ -332,6 +332,7 @@ struct music_load_model_inputs
     const char * musicembedding_filename = nullptr;
     const char * musicdiffusion_filename = nullptr;
     const char * musicvae_filename = nullptr;
+    const bool lowvram = false;
     const char * executable_path = nullptr;
     const int kcpp_main_gpu = 0;
     const char * vulkan_info = nullptr;

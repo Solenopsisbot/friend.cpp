@@ -587,7 +587,7 @@ static CondGGML music_cond = {};
 static std::vector<float> silence_full;  // [15000, 64] f32
 static DetokGGML detok = {};
 
-bool load_acestep_dit(std::string music_embd_path, std::string music_dit_path, std::string music_vae_path)
+bool load_acestep_dit(std::string music_embd_path, std::string music_dit_path, std::string music_vae_path, bool lowvram)
 {
     const char * text_enc_gguf = music_embd_path.c_str();
     const char * dit_gguf      = music_dit_path.c_str();

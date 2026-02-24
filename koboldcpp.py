@@ -442,6 +442,7 @@ class music_load_model_inputs(ctypes.Structure):
                 ("musicembedding_filename", ctypes.c_char_p),
                 ("musicdiffusion_filename", ctypes.c_char_p),
                 ("musicvae_filename", ctypes.c_char_p),
+                ("lowvram", ctypes.c_bool),
                 ("executable_path", ctypes.c_char_p),
                 ("kcpp_main_gpu", ctypes.c_int),
                 ("vulkan_info", ctypes.c_char_p),
@@ -2371,6 +2372,7 @@ def music_load_model(musicllm,musicembedding,musicdiffusion,musicvae):
     inputs.musicembedding_filename = musicembedding.encode("UTF-8")
     inputs.musicdiffusion_filename = musicdiffusion.encode("UTF-8")
     inputs.musicvae_filename = musicvae.encode("UTF-8")
+    inputs.lowvram = True if args.musiclowvram else False
     inputs = set_backend_props(inputs)
     ret = handle.music_load_model(inputs)
     return ret
@@ -5778,6 +5780,7 @@ def show_gui():
     musicembeddings_var = ctk.StringVar()
     musicdiffusion_var = ctk.StringVar()
     musicvae_var = ctk.StringVar()
+    musiclowvram_var = ctk.IntVar(value=0)
 
     embeddings_model_var = ctk.StringVar()
     embeddings_ctx_var = ctk.StringVar(value=str(""))
@@ -6581,7 +6584,7 @@ def show_gui():
     makefileentry(audio_tab, "MusicEmbeds:", "Select music embedding model (e.g Qwen3-Embedding-0.6B)", musicembeddings_var, 32, width=280, singlerow=True, dialog_type=0, tooltiptxt="Select music embedding model (e.g Qwen3-Embedding-0.6B)")
     makefileentry(audio_tab, "MusicDiffuser:", "Select music diffusion (DiT) model (e.g acestep-v15-turbo)", musicdiffusion_var, 34, width=280, singlerow=True, dialog_type=0, tooltiptxt="Select music diffusion (DiT) model (e.g acestep-v15-turbo)")
     makefileentry(audio_tab, "MusicVAE:", "Select music VAE model", musicvae_var, 36, width=280, singlerow=True, dialog_type=0, tooltiptxt="Select music VAE model")
-
+    makecheckbox(audio_tab, "Music Low VRAM", musiclowvram_var, 38, 0,tooltiptxt="Unload music models when not in use.")
 
     admin_tab = tabcontent["Admin"]
     def toggleadmin(a,b,c):
@@ -6900,6 +6903,7 @@ def show_gui():
         args.musicembeddings = musicembeddings_var.get()
         args.musicdiffusion = musicdiffusion_var.get()
         args.musicvae = musicvae_var.get()
+        args.musiclowvram = musiclowvram_var.get()==1
 
         args.admin = (admin_var.get()==1 and not args.cli)
         args.admindir = admin_dir_var.get()
@@ -7147,6 +7151,7 @@ def show_gui():
         musicembeddings_var.set(dict["musicembeddings"] if ("musicembeddings" in dict and dict["musicembeddings"]) else "")
         musicdiffusion_var.set(dict["musicdiffusion"] if ("musicdiffusion" in dict and dict["musicdiffusion"]) else "")
         musicvae_var.set(dict["musicvae"] if ("musicvae" in dict and dict["musicvae"]) else "")
+        musiclowvram_var.set(dict["musiclowvram"] if ("musiclowvram" in dict) else 0)
 
         embeddings_model_var.set(dict["embeddingsmodel"] if ("embeddingsmodel" in dict and dict["embeddingsmodel"]) else "")
         embeddings_ctx_var.set(str(dict["embeddingsmaxctx"]) if ("embeddingsmaxctx" in dict and dict["embeddingsmaxctx"]) else "")
@@ -9278,6 +9283,7 @@ if __name__ == '__main__':
     musicparsergroup.add_argument("--musicembeddings", metavar=('[filename]'), help="Select music embedding model (e.g Qwen3-Embedding-0.6B)", default="")
     musicparsergroup.add_argument("--musicdiffusion", metavar=('[filename]'), help="Select music diffusion (DiT) model (e.g acestep-v15-turbo)", default="")
     musicparsergroup.add_argument("--musicvae", metavar=('[filename]'), help="Select music VAE model", default="")
+    musicparsergroup.add_argument("--musiclowvram", help="Unload music models when not in use", action='store_true')
 
     embeddingsparsergroup = parser.add_argument_group('Embeddings Model Commands')
     embeddingsparsergroup.add_argument("--embeddingsmodel", metavar=('[filename]'), help="Specify an embeddings model to be loaded for generating embedding vectors.", default="")
