@@ -14,6 +14,7 @@
 
 #include "./request.cpp"
 #include "./ace-qwen3.cpp"
+#include "./dit-vae.cpp"
 
 #if defined(_MSC_VER)
 #pragma warning(disable: 4244 4267) // possible loss of data
@@ -54,9 +55,15 @@ bool musictype_load_model(const music_load_model_inputs inputs)
     musicllm_filename.c_str(),musicembedding_filename.c_str(),musicdiffusion_filename.c_str(),musicvae_filename.c_str());
     musicdebugmode = inputs.debugmode;
 
-    bool ok = load_acestep(musicllm_filename);
+    bool ok = load_acestep_lm(musicllm_filename);
     if (!ok) {
-        printf("\nFailed to load Music Gen Model!\n");
+        printf("\nFailed to load Music Gen LM Model!\n");
+        return false;
+    }
+
+    ok = load_acestep_dit(musicembedding_filename,musicdiffusion_filename,musicvae_filename);
+    if (!ok) {
+        printf("\nFailed to load Music Gen Diffusion, Embed or VAE Model!\n");
         return false;
     }
 
