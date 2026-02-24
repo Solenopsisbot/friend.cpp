@@ -1427,8 +1427,22 @@ static bool acestep_lm_loaded = false;
 static std::string acestep_lm_path = "";
 static bool acestep_lm_lowvram = false;
 
+void unload_acestep_lm()
+{
+    if(acestep_lm_loaded)
+    {
+        acestep_lm_loaded = false;
+        qw3lm_free(&acestep_llm);
+    }
+}
+
 bool load_acestep_lm(std::string model_path, bool lowvram)
 {
+    if(acestep_lm_loaded)
+    {
+        unload_acestep_lm();
+    }
+
     acestep_lm_lowvram = lowvram;
     acestep_lm_path = model_path;
     acestep_lm_loaded = false;
@@ -1444,15 +1458,6 @@ bool load_acestep_lm(std::string model_path, bool lowvram)
     }
     acestep_lm_loaded = true;
     return true;
-}
-
-void unload_acestep_lm()
-{
-    if(acestep_lm_loaded)
-    {
-        acestep_lm_loaded = false;
-        qw3lm_free(&acestep_llm);
-    }
 }
 
 std::string acestep_prepare_request(const music_generation_inputs inputs)

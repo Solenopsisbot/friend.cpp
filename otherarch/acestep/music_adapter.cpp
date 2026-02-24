@@ -72,6 +72,11 @@ bool musictype_load_model(const music_load_model_inputs inputs)
         printf("\nFailed to load Music Gen Diffusion, Embed or VAE Model!\n");
         return false;
     }
+    if(lowvram)
+    {
+        unload_acestep_dit_core();
+        unload_acestep_dit_others();
+    }
 
     musicgen_loaded = true;
 
