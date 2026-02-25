@@ -58,7 +58,7 @@ savestate_limit = 0 #savestate slots start at 0, only set when load model
 default_vae_tile_threshold = 768
 default_native_ctx = 16384
 default_genlen = 1024
-overridekv_max = 4
+overridekv_max = 16
 default_autofit_padding = 1024
 lora_filenames_max = 4
 
