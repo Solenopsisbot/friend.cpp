@@ -138,6 +138,8 @@ embedded_kcpp_docs_gz = None
 embedded_kcpp_sdui = None
 embedded_kcpp_sdui_gz = None
 embedded_lcpp_ui_gz = None
+embedded_musicui = None
+embedded_musicui_gz = None
 voicebank = {}
 voicelist = ["kobo","cheery","sleepy","shouty","chatty"]
 sslvalid = False
@@ -3926,7 +3928,7 @@ Change Mode<br>
         self.wfile.write(finalhtml)
 
     def do_GET(self):
-        global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, embedded_kailite_gz, embedded_kcpp_docs_gz, embedded_kcpp_sdui_gz, embedded_lcpp_ui_gz
+        global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, embedded_kailite_gz, embedded_kcpp_docs_gz, embedded_kcpp_sdui_gz, embedded_lcpp_ui_gz, embedded_musicui, embedded_musicui_gz
         global last_req_time, start_time, cached_chat_template, has_vision_support, has_audio_support, has_whisper, friendlymodelname
         global savedata_obj, has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastuploadedcomfyimg, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, password, friendlyembeddingsmodelname, voicelist
 
@@ -4229,6 +4231,16 @@ Change Mode<br>
                 response_body = embedded_kcpp_sdui
             else:
                 response_body = ("KoboldCpp API is running, but KCPP SDUI is not loaded").encode()
+
+        elif clean_path.startswith(("/musicui")):
+            content_type = 'text/html'
+            if supports_gzip and embedded_musicui_gz is not None:
+                response_body = embedded_musicui_gz
+                content_encoding = 'gzip'
+            elif embedded_musicui is not None:
+                response_body = embedded_musicui
+            else:
+                response_body = ("KoboldCpp API is running, but KCPP MusicUI is not loaded").encode()
 
         elif clean_path=="/v1":
             content_type = 'text/html'
@@ -8269,7 +8281,7 @@ def main(launch_args, default_args):
                 input()
 
 def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
-    global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, embedded_kailite_gz, embedded_kcpp_docs_gz, embedded_kcpp_sdui_gz, embedded_lcpp_ui_gz, start_time, exitcounter, global_memory, using_gui_launcher
+    global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, embedded_kailite_gz, embedded_kcpp_docs_gz, embedded_kcpp_sdui_gz, embedded_lcpp_ui_gz, embedded_musicui, embedded_musicui_gz, start_time, exitcounter, global_memory, using_gui_launcher
     global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, friendlyembeddingsmodelname, has_audio_support, has_vision_support, cached_chat_template
 
     start_server = True
@@ -8882,6 +8894,15 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     except Exception:
         print("Could not find Embedded llama.cpp UI.")
 
+    try:
+        with open(os.path.join(embddir, "kcpp_musicui.embd"), mode='rb') as f:
+            embedded_musicui = f.read()
+            embedded_musicui_gz = gzip.compress(embedded_musicui)
+            if args.musicllm or args.musicdiffusion:
+                print("Embedded MusicUI loaded.")
+    except Exception:
+        print("Could not find Embedded MusicUI.")
+
     # load all TTS audio files
     if args.ttsdir and args.ttsmodel and os.path.isdir(args.ttsdir):
         try:
@@ -8946,6 +8967,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     enabledmlist.append("VectorEmbeddings") if "embeddings" in caps and caps["embeddings"] else disabledmlist.append("VectorEmbeddings")
     enabledmlist.append("AdminControl") if "admin" in caps and caps["admin"]!=0 else disabledmlist.append("AdminControl")
     enabledmlist.append("MCPBridge") if "mcp" in caps and caps["mcp"] else disabledmlist.append("MCPBridge")
+    enabledmlist.append("MusicGen") if "music" in caps and caps["music"] else disabledmlist.append("MusicGen")
 
     print(f"======\nActive Modules: {' '.join(enabledmlist)}")
     print(f"Inactive Modules: {' '.join(disabledmlist)}")
@@ -8974,6 +8996,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             print(f"Starting llama.cpp secondary WebUI at {endpoint_url}/lcpp/")
             if args.sdmodel:
                 print(f"StableUI is available at {endpoint_url}/sdui/")
+            if args.musicdiffusion or args.musicllm:
+                print(f"MusicUI is available at {endpoint_url}/musicui/")
         elif global_memory:
             val = global_memory["tunnel_url"]
             if val:
@@ -8984,6 +9008,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 print(f"Starting llama.cpp secondary WebUI at {endpoint_url}/lcpp/")
                 if args.sdmodel:
                     print(f"StableUI is available at {endpoint_url}/sdui/")
+                if args.musicdiffusion or args.musicllm:
+                    print(f"MusicUI is available at {endpoint_url}/musicui/")
             global_memory["load_complete"] = True
         if args.launch:
             def launch_browser_thread():

@@ -1520,23 +1520,30 @@ std::string acestep_prepare_request(const music_generation_inputs inputs)
     bool user_has_codes = !req.audio_codes.empty();
     bool need_lm_codes  = req.thinking && !user_has_codes;
 
-    bool is_simple = ace.lyrics.empty() &&
-                     ace.bpm <= 0 && ace.duration <= 0 &&
-                     ace.keyscale.empty() && ace.timesignature.empty();
+    bool is_simple = ace.lyrics.empty();
 
     std::vector<int> prompt;
     std::vector<AcePrompt> aces;  // populated by Phase 1 (simple or partial)
 
     // Preprocessor: simple mode generates lyrics + metas from caption
     if (is_simple) {
-        fprintf(stderr, "[Simple] Inspiration\n");
+        fprintf(stderr, "[Simple] Inspiration, Language: %s\n",ace.vocal_language.c_str());
+
 
         const char * sys =
             "# Instruction\n"
-            "Expand the user's input into a more detailed"
-            " and specific musical description:\n";
-        std::string user_msg = ace.caption + "\n\ninstrumental: "
-            + std::string(req.instrumental ? "true" : "false");
+            "Expand the user's input into a more detailed and specific musical description:\n";
+        bool forcelang = (ace.vocal_language != "unknown" && !ace.vocal_language.empty());
+        std::string langstr = forcelang?("language: "+ace.vocal_language+"\n"):"";
+        std::string cap = "";
+        std::string instru = "instrumental: false\n";
+        if(ace.caption!="")
+        {
+            cap = "Music Caption: " + ace.caption;
+        }
+        std::string user_msg = cap + "\n\n"+instru+langstr;
+
+        printf("\n[Prompt: %s]\n",user_msg.c_str());
         prompt = build_custom_prompt(acestep_bpe, sys, user_msg.c_str());
 
         // FSM: reset then optionally force language (shared for both paths)
@@ -1549,7 +1556,7 @@ std::string acestep_prepare_request(const music_generation_inputs inputs)
                 prompt.size(), batch_size, seed, seed + batch_size - 1);
 
         auto phase1_texts = generate_phase1_batch(
-            &acestep_llm, &acestep_bpe, prompt, 2048, temperature, 1.0f, 0,
+            &acestep_llm, &acestep_bpe, prompt, 2048, temperature, 0.95f, 0,
             seed, batch_size, use_fsm ? &fsm : nullptr, true);
 
         parse_phase1_into_aces(phase1_texts, ace, aces, seed, "Simple", true);

@@ -19,7 +19,7 @@ void request_init(AceRequest * r) {
     r->duration           = -1.0f;
     r->keyscale           = "";
     r->timesignature      = "";
-    r->vocal_language     = "unknown";
+    r->vocal_language     = "en";
     r->task_type          = "text2music";
     r->seed               = -1;
     r->thinking           = false;
