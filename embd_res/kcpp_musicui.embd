@@ -177,13 +177,13 @@ audio{width:100%;margin-top:6px;}
     <div><label>Key</label><input id="keyscale"></div>
     <div><label>Time Sig</label><input id="timesignature"></div>
     <div><label>Language</label><input id="vocal_language"></div>
+    <div><label>Seed</label><input id="seed" type="number"></div>
   </div>
 
   <div class="advanced-toggle" onclick="toggleAdvanced()">⚙ Advanced Settings</div>
 
   <div id="advanced" class="hidden">
     <div class="compact-row" style="margin-top:10px">
-      <div><label>Seed</label><input id="seed" type="number"></div>
       <div><label>Temp</label><input id="lm_temperature" type="number" step="0.01"></div>
       <div><label>CFG</label><input id="lm_cfg_scale" type="number" step="0.1"></div>
       <div><label>Top P</label><input id="lm_top_p" type="number" step="0.01"></div>

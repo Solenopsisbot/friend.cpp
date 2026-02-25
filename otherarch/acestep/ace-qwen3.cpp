@@ -1527,23 +1527,14 @@ std::string acestep_prepare_request(const music_generation_inputs inputs)
 
     // Preprocessor: simple mode generates lyrics + metas from caption
     if (is_simple) {
-        fprintf(stderr, "[Simple] Inspiration, Language: %s\n",ace.vocal_language.c_str());
-
+        fprintf(stderr, "[Simple] Inspiration\n");
 
         const char * sys =
             "# Instruction\n"
-            "Expand the user's input into a more detailed and specific musical description:\n";
-        bool forcelang = (ace.vocal_language != "unknown" && !ace.vocal_language.empty());
-        std::string langstr = forcelang?("language: "+ace.vocal_language+"\n"):"";
-        std::string cap = "";
-        std::string instru = "instrumental: false\n";
-        if(ace.caption!="")
-        {
-            cap = "Music Caption: " + ace.caption;
-        }
-        std::string user_msg = cap + "\n\n"+instru+langstr;
-
-        printf("\n[Prompt: %s]\n",user_msg.c_str());
+            "Expand the user's input into a more detailed"
+            " and specific musical description:\n";
+        std::string user_msg = ace.caption + "\n\ninstrumental: "
+            + std::string(req.instrumental ? "true" : "false");
         prompt = build_custom_prompt(acestep_bpe, sys, user_msg.c_str());
 
         // FSM: reset then optionally force language (shared for both paths)
@@ -1556,7 +1547,7 @@ std::string acestep_prepare_request(const music_generation_inputs inputs)
                 prompt.size(), batch_size, seed, seed + batch_size - 1);
 
         auto phase1_texts = generate_phase1_batch(
-            &acestep_llm, &acestep_bpe, prompt, 2048, temperature, 0.95f, 0,
+            &acestep_llm, &acestep_bpe, prompt, 2048, temperature, 0.95f, 40,
             seed, batch_size, use_fsm ? &fsm : nullptr, true);
 
         parse_phase1_into_aces(phase1_texts, ace, aces, seed, "Simple", true);
