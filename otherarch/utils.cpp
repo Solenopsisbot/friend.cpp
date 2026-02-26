@@ -366,26 +366,33 @@ std::vector<std::vector<int>> split_big_vector(const std::vector<int>& big_arr, 
     return small_arrs;
 }
 
-std::vector<float> resample_wav(const std::vector<float>& input, uint32_t input_rate, uint32_t output_rate) {
+std::vector<float> resample_wav(const std::vector<float> & input, uint32_t input_rate, uint32_t output_rate) {
+    if (input.empty() || input_rate == 0 || output_rate == 0)
+        return {};
 
-    size_t input_size = input.size();
-
-    double ratio = static_cast<double>(output_rate) / input_rate;
-    size_t newLength = static_cast<size_t>(input.size() * ratio);
-    std::vector<float> output(newLength);
-
-    // Perform simple linear interpolation resampling
-    for (size_t i = 0; i < newLength; ++i) {
-        double srcIndex = i / ratio;
-        size_t srcIndexInt = static_cast<size_t>(srcIndex);
-        double frac = srcIndex - srcIndexInt;
-        if (srcIndexInt + 1 < input_size) {
-            output[i] = static_cast<float>(input[srcIndexInt] * (1 - frac) + input[srcIndexInt + 1] * frac);
-        } else {
-            output[i] = input[srcIndexInt];
+    const size_t input_size = input.size();
+    const double ratio = static_cast<double>(output_rate) / input_rate; // Compute resampling ratio
+    // Use rounding to avoid systematic truncation error
+    const size_t output_size = static_cast<size_t>(std::llround(input_size * ratio));
+    std::vector<float> output(output_size);
+    const double step = static_cast<double>(input_rate) / output_rate;  // Precompute step in source domain
+    double src_pos = 0.0;
+    for (size_t i = 0; i < output_size; ++i)
+    {
+        size_t idx = static_cast<size_t>(src_pos);
+        if (idx >= input_size - 1)    // Clamp to valid range (prevents out-of-bounds)
+        {
+            output[i] = input[input_size - 1];
         }
+        else
+        {
+            const double frac = src_pos - idx;
+            const float s0 = input[idx];
+            const float s1 = input[idx + 1];
+            output[i] = static_cast<float>(s0 + (s1 - s0) * frac);
+        }
+        src_pos += step;
     }
-
     return output;
 }
 

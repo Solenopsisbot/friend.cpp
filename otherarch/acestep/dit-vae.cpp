@@ -764,7 +764,7 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
     const char * language = req.vocal_language.empty() ? "en" : req.vocal_language.c_str();
     float duration        = req.duration > 0 ? req.duration : 60.0f;
     long long seed        = req.seed;
-    int num_steps         = req.inference_steps > 0 ? req.inference_steps : 8;
+    int num_steps         = req.inference_steps > 0 ? req.inference_steps : 10;
     float guidance_scale  = req.guidance_scale > 0 ? req.guidance_scale : 7.0f;
     float shift           = req.shift > 0 ? req.shift : 1.0f;
 
