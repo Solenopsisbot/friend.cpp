@@ -53,6 +53,10 @@ bool musictype_load_model(const music_load_model_inputs inputs)
     std::string musicdiffusion_filename = inputs.musicdiffusion_filename;
     std::string musicvae_filename = inputs.musicvae_filename;
     bool lowvram = inputs.lowvram;
+    if(lowvram)
+    {
+        printf("\nMusicGen LowVRAM mode, will swap models at runtime");
+    }
     printf("\nLoading Music Gen LLM Model: %s\nLoading Music Gen Embed Model: %s\nLoading Music Gen Diffusion Model: %s\nLoading Music Gen VAE Model: %s\n",
     musicllm_filename.c_str(),musicembedding_filename.c_str(),musicdiffusion_filename.c_str(),musicvae_filename.c_str());
     musicdebugmode = inputs.debugmode;
