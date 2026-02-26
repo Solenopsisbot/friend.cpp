@@ -762,7 +762,7 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
     const char * keyscale = req.keyscale.empty() ? "N/A" : req.keyscale.c_str();
     const char * timesig  = req.timesignature.empty() ? "N/A" : req.timesignature.c_str();
     const char * language = req.vocal_language.empty() ? "en" : req.vocal_language.c_str();
-    float duration        = req.duration > 0 ? req.duration : 60.0f;
+    float duration        = req.duration > 0 ? req.duration : 120.0f;
     long long seed        = req.seed;
     int num_steps         = req.inference_steps > 0 ? req.inference_steps : 10;
     float guidance_scale  = req.guidance_scale > 0 ? req.guidance_scale : 7.0f;
@@ -868,8 +868,8 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
 
     // Context building
     // Silence latent for this T
-    // std::vector<float> silence(Oc * T);
-    // memcpy(silence.data(), silence_full.data(), (size_t)(Oc * T) * sizeof(float));
+    std::vector<float> silence(Oc * T);
+    memcpy(silence.data(), silence_full.data(), (size_t)(Oc * T) * sizeof(float));
 
     // Decode audio codes if provided
     int decoded_T = 0;
@@ -895,7 +895,7 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
     for (int t = 0; t < T; t++) {
         const float * src = (t < decoded_T)
             ? decoded_latents.data() + t * Oc
-            : silence_full.data() + (t - decoded_T) * Oc;
+            : silence.data() + t * Oc;
         for (int c = 0; c < Oc; c++)
             context_single[t * ctx_ch + c] = src[c];
         for (int c = 0; c < Oc; c++)
