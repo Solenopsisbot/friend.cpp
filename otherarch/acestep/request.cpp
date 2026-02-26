@@ -29,7 +29,7 @@ void request_init(AceRequest * r) {
     r->lm_top_k           = 0;
     r->lm_negative_prompt = "";
     r->audio_codes        = "";
-    r->inference_steps    = 10;
+    r->inference_steps    = 8;
     r->guidance_scale     = 1.0f;
     r->shift              = 3.0f;
 }
