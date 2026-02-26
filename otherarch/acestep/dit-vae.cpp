@@ -774,10 +774,9 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
         guidance_scale = 1.0f;
     }
 
-    if (seed < 0) {
-        std::random_device rd;
-        seed = (long long)rd() << 32 | rd();
-        if (seed < 0) seed = -seed;
+    if (seed <= 0 || seed==0xFFFFFFFF)
+    {
+        seed = (((uint32_t)time(NULL)) % 1000000u);
     }
     fprintf(stderr, "[Pipeline] seed=%lld, steps=%d, guidance=%.1f, shift=%.1f, duration=%.1fs\n",
             seed, num_steps, guidance_scale, shift, duration);

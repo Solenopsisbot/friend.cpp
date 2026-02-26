@@ -57,7 +57,7 @@ bool musictype_load_model(const music_load_model_inputs inputs)
     musicllm_filename.c_str(),musicembedding_filename.c_str(),musicdiffusion_filename.c_str(),musicvae_filename.c_str());
     musicdebugmode = inputs.debugmode;
 
-    bool ok = load_acestep_lm(musicllm_filename,lowvram);
+    bool ok = load_acestep_lm(musicllm_filename,lowvram,musicdebugmode);
     if (!ok) {
         printf("\nFailed to load Music Gen LM Model!\n");
         return false;
