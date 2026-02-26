@@ -836,7 +836,7 @@ static std::vector<std::string> generate_phase1_batch(
         if (fsm_template && fsm_template->enabled)
             seqs[i].fsm.apply_mask(lg.data());
 
-        int tok = kcpp_quick_sample(lg.data(),V,std::vector<int32_t>(),1.03f,top_p,25,temperature,acestep_lm_rng);
+        int tok = kcpp_quick_sample(lg.data(),V,std::vector<int32_t>(),1.04f,top_p,30,temperature,acestep_lm_rng);
 
         if (tok == TOKEN_IM_END) {
             seqs[i].done = true;
@@ -906,7 +906,7 @@ static std::vector<std::string> generate_phase1_batch(
             for (int v = AUDIO_CODE_BASE; v < AUDIO_CODE_COUNT+AUDIO_CODE_BASE; v++)
                 if (v != TOKEN_IM_END) lc[v] = -1e9f;
 
-            int tok = kcpp_quick_sample(lc,V,quicklastntoks,1.03f,top_p,25,temperature,acestep_lm_rng);
+            int tok = kcpp_quick_sample(lc,V,quicklastntoks,1.04f,top_p,30,temperature,acestep_lm_rng);
             quicklastntoks.push_back(tok);
              if (quicklastntoks.size()>32) {
                 quicklastntoks.erase(quicklastntoks.begin());
