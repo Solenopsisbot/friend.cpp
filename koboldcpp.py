@@ -5441,6 +5441,18 @@ def zentk_asksaveasfilename(**options):
     return result
 ### End of MIT license
 
+def save_config_dict(filename, savdict, template):
+    filenamestr = str(filename).strip()
+    if not filenamestr.endswith(".kcpps") and not template:
+        filenamestr += ".kcpps"
+    if not filenamestr.endswith(".kcppt") and template:
+        filenamestr += ".kcppt"
+    do_not_save = {'analyze', 'config', 'exportconfig', 'exporttemplate', 'testmemory', 'unpack', 'version'}
+    filtered = {k: v for k, v in savdict.items() if k not in do_not_save}
+    with open(filenamestr, 'w') as file:
+        file.write(json.dumps(filtered,indent=2))
+    return filenamestr
+
 # note: customtkinter-5.2.0
 def show_gui():
     global using_gui_launcher
@@ -7189,12 +7201,7 @@ def show_gui():
         filename = zentk_asksaveasfilename(filetypes=file_type, defaultextension=".kcpps",title="Save kcpps settings config file")
         if not filename:
             return
-        filenamestr = str(filename).strip()
-        if not filenamestr.lower().endswith(".kcpps"):
-            filenamestr += ".kcpps"
-        file = open(filenamestr, 'w')
-        file.write(json.dumps(savdict,indent=2))
-        file.close()
+        save_config_dict(filename, savdict, False)
         pass
 
     def load_config_gui(): #this is used to populate the GUI with a config file, whereas load_config_cli simply overwrites cli args
@@ -7763,14 +7770,7 @@ def save_config_cli(filename, template):
         savdict["istemplate"] = False
     if filename is None:
         return
-    filenamestr = str(filename).strip()
-    if not filenamestr.endswith(".kcpps") and not template:
-        filenamestr += ".kcpps"
-    if not filenamestr.endswith(".kcppt") and template:
-        filenamestr += ".kcppt"
-    file = open(filenamestr, 'w')
-    file.write(json.dumps(savdict))
-    file.close()
+    filenamestr = save_config_dict(filename, savdict, template)
     print(f"\nSaved configuration file as {filenamestr}\nIt can be loaded with --config [filename] in future.")
     pass
 
@@ -8130,13 +8130,6 @@ def main(launch_args, default_args):
         analyze_gguf_model_wrapper(args.analyze)
         return
 
-    if args.exportconfig and args.exportconfig!="":
-        save_config_cli(args.exportconfig,False)
-        return
-    if args.exporttemplate and args.exporttemplate!="":
-        save_config_cli(args.exporttemplate,True)
-        return
-
     if args.config and len(args.config)==1: #handle initial config loading for launch
         cfgname = args.config[0]
         if isinstance(cfgname, str):
@@ -8158,6 +8151,13 @@ def main(launch_args, default_args):
         if dlfile:
             args.model_param = dlfile
         load_config_cli(args.model_param)
+
+    if args.exportconfig:
+        save_config_cli(args.exportconfig,False)
+        return
+    if args.exporttemplate:
+        save_config_cli(args.exporttemplate,True)
+        return
 
     # show the GUI launcher if a model was not provided
     if args.showgui or (not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.musicdiffusion and not args.mcpfile and not args.nomodel):
