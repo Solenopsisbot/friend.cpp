@@ -303,21 +303,16 @@ function toggleAdvanced(){
 function getFormData(){
   const ids=["caption","lyrics","bpm","duration","keyscale","timesignature",
   "vocal_language","seed","lm_temperature","lm_cfg_scale","lm_top_p","inference_steps",
-  "guidance_scale","shift","stereo","gen_codes","audio_codes"];
+  "guidance_scale","shift","audio_codes"];
   const data={};
   ids.forEach(id=>{
     const el=document.getElementById(id);
     if(!el) return;
     const v=el.value;
-    if(v=="on")
-    {
-      data[id]=true;
-    }else if(v=="off")
-    {
-      data[id]=false;
-    }
-    else if(v!=="") {data[id]=isNaN(v)?v:Number(v);}
+    if(v!=="") {data[id]=isNaN(v)?v:Number(v);}
   });
+  data["stereo"] = (document.getElementById("stereo").checked ? true : false);
+  data["gen_codes"] = (document.getElementById("gen_codes").checked ? true : false);
   return data;
 }
 
@@ -490,6 +485,7 @@ function clearFields()
     });
     document.getElementById("caption").value = "";
     document.getElementById("lyrics").value = "";
+    document.getElementById("audio_codes").value = "";
 }
 function exportPlan(){
   const data=getFormData();
