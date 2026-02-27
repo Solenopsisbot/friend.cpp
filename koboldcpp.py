@@ -453,12 +453,14 @@ class music_load_model_inputs(ctypes.Structure):
                 ("debugmode", ctypes.c_int)]
 
 class music_generation_inputs(ctypes.Structure):
-    _fields_ = [("is_codes", ctypes.c_bool),
+    _fields_ = [("is_planner_mode", ctypes.c_bool),
+                ("stereo", ctypes.c_bool),
+                ("gen_codes", ctypes.c_bool),
                 ("input_json", ctypes.c_char_p)]
 
 class music_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
-                ("codes_json", ctypes.c_char_p),
+                ("music_output_json", ctypes.c_char_p),
                 ("data", ctypes.c_char_p)]
 
 class StdoutRedirector:
@@ -2383,12 +2385,14 @@ def music_generate_codes(genparams):
     global args
     input_json = json.dumps(genparams)
     inputs = music_generation_inputs()
-    inputs.is_codes = True
+    inputs.is_planner_mode = True
+    inputs.stereo = genparams.get('stereo', False)
+    inputs.gen_codes =  genparams.get('gen_codes', False)
     inputs.input_json = input_json.encode("UTF-8")
     ret = handle.music_generate(inputs)
     outstr = ""
     if ret.status==1:
-        outstr = ret.codes_json.decode("UTF-8","ignore")
+        outstr = ret.music_output_json.decode("UTF-8","ignore")
         outstr = json.dumps(json.loads(outstr))
     return outstr
 
@@ -2396,7 +2400,9 @@ def music_generate_audio(genparams):
     global args
     input_json = json.dumps(genparams)
     inputs = music_generation_inputs()
-    inputs.is_codes = False
+    inputs.is_planner_mode = False
+    inputs.stereo = genparams.get('stereo', False)
+    inputs.gen_codes =  genparams.get('gen_codes', False)
     inputs.input_json = input_json.encode("UTF-8")
     ret = handle.music_generate(inputs)
     outstr = ""

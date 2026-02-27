@@ -25,7 +25,7 @@ static bool music_is_quiet = false;
 static bool musicgen_loaded = false;
 static std::string musicvulkandeviceenv;
 
-static std::string codes_json_str = "";
+static std::string music_output_json_str = "";
 static std::string b64_music_output = "";
 
 bool musictype_load_model(const music_load_model_inputs inputs)
@@ -96,29 +96,29 @@ music_generation_outputs musictype_generate(const music_generation_inputs inputs
     {
         printf("\nWarning: KCPP music gen not initialized!\n");
         output.status = 0;
-        output.codes_json = "";
+        output.music_output_json = "";
         output.data = "";
         return output;
     }
 
-    if (inputs.is_codes) {
+    if (inputs.is_planner_mode) {
         if (!music_is_quiet) {
             printf("\nMusic Gen Generating Codes...");
         }
-        codes_json_str = acestep_prepare_request(inputs);
-        if(codes_json_str=="")
+        music_output_json_str = acestep_prepare_request(inputs);
+        if(music_output_json_str=="")
         {
             printf("\nMusic codes generation failed!\n");
             output.status = 0;
-            output.codes_json = "";
+            output.music_output_json = "";
             output.data = "";
             return output;
         }
         output.status = 1;
         output.data = "";
-        output.codes_json = codes_json_str.c_str();
+        output.music_output_json = music_output_json_str.c_str();
         if (!music_is_quiet) {
-            printf("\nMusic Gen Codes Done:\n%s\n",codes_json_str.c_str());
+            printf("\nMusic Gen Codes Done:\n%s\n",music_output_json_str.c_str());
         }
     } else {
         if (!music_is_quiet) {
@@ -129,13 +129,13 @@ music_generation_outputs musictype_generate(const music_generation_inputs inputs
         {
             printf("\nMusic audio generation failed!\n");
             output.status = 0;
-            output.codes_json = "";
+            output.music_output_json = "";
             output.data = "";
             return output;
         }
         output.status = 1;
         output.data = b64_music_output.c_str();
-        output.codes_json = "";
+        output.music_output_json = "";
         if (!music_is_quiet) {
             printf("\nMusic Gen Audio Done\n");
         }
