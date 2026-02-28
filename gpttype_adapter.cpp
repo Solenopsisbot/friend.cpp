@@ -5197,10 +5197,12 @@ size_t gpttype_save_state_kv(int slot)
             savestates[slot].savestate_context_tokens = current_context_tokens;
             savestates[slot].media_signature = media_composite_image_signature;
             int maxedpos = llama_memory_seq_pos_max(llama_get_memory(llama_ctx_v4),0);
-            if(maxedpos > 0 && savestates[slot].savestate_context_tokens.size() > maxedpos && savestates[slot].savestate_context_tokens.size()-maxedpos<=2)
+            //kcpp: so maxedpos appears to always be equal to ctx tokens - 2, if savestate_ctx_tokens > maxedpos + 2 then trim excess
+            if(maxedpos > 0 && savestates[slot].savestate_context_tokens.size() > maxedpos + 2)
             {
-                //dirty hack for the memory actually being off by 1 or 2, correct the state
-                while(savestates[slot].savestate_context_tokens.size() > maxedpos)
+                //dirty hack for the memory actually being off, correct the state
+                printf("\nSaveState inconsistency fix, trimming from %d to %d\n",savestates[slot].savestate_context_tokens.size(),maxedpos+2);
+                while(savestates[slot].savestate_context_tokens.size() > maxedpos+2)
                 {
                     savestates[slot].savestate_context_tokens.pop_back();
                 }
@@ -5244,6 +5246,7 @@ bool gpttype_load_state_kv(int slot)
         if (savestates[slot].current_savestate_buffer.empty()) {
             return false;
         }
+        llama_memory_clear(llama_get_memory(llama_ctx_v4),true);
         auto res = llama_state_set_data(llama_ctx_v4, savestates[slot].current_savestate_buffer.data(), savestates[slot].current_savestate_size);
         if(res > 0)
         {
