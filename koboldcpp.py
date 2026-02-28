@@ -8946,7 +8946,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         print("Could not find Embedded MusicUI.")
 
     # load all TTS audio files
-    if args.ttsdir and args.ttsmodel and os.path.isdir(args.ttsdir):
+    if args.ttsmodel:
         try:
             global voicebank, voicelist
             voicebank = {}
@@ -8965,14 +8965,15 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             voicelist.append("random")
             voicebank["random"] = ""
 
-            for filename in os.listdir(args.ttsdir):
-                if filename.lower().endswith((".mp3", ".wav")):
-                    full_path = os.path.join(args.ttsdir, filename)
-                    with open(full_path, "rb") as f:
-                        encoded = base64.b64encode(f.read()).decode("utf-8")
-                        voicebank[filename] = encoded
-                        voicecount += 1
-                        voicelist.append(os.path.basename(filename))
+            if args.ttsdir and os.path.isdir(args.ttsdir):
+                for filename in os.listdir(args.ttsdir):
+                    if filename.lower().endswith((".mp3", ".wav")):
+                        full_path = os.path.join(args.ttsdir, filename)
+                        with open(full_path, "rb") as f:
+                            encoded = base64.b64encode(f.read()).decode("utf-8")
+                            voicebank[filename] = encoded
+                            voicecount += 1
+                            voicelist.append(os.path.basename(filename))
             print(f"Loaded {voicecount} TTS voices.")
         except Exception:
             print("Could not load TTS voices.")
