@@ -1086,7 +1086,7 @@ static std::vector<std::string> run_phase2_batch(
         for (int v = 0; v < AUDIO_CODE_BASE; v++)
             if (v != TOKEN_IM_END) lg[v] = -1e9f;
 
-        int tok = kcpp_quick_sample(lg.data(),V,std::vector<int32_t>(),1.00f,top_p,25,temperature,acestep_lm_rng);
+        int tok = kcpp_quick_sample(lg.data(),V,std::vector<int32_t>(),1.02f,top_p,30,temperature,acestep_lm_rng);
         seqs[i].last_token = tok;
 
         if (tok == TOKEN_IM_END) {
@@ -1157,7 +1157,7 @@ static std::vector<std::string> run_phase2_batch(
             for (int v = 0; v < AUDIO_CODE_BASE; v++)
                 if (v != TOKEN_IM_END) lc[v] = -1e9f;
 
-            int tok = kcpp_quick_sample(lc,V,std::vector<int32_t>(),1.00f,top_p,25,temperature,acestep_lm_rng);
+            int tok = kcpp_quick_sample(lc,V,std::vector<int32_t>(),1.02f,top_p,30,temperature,acestep_lm_rng);
             seqs[i].last_token = tok;
 
             if (tok == TOKEN_IM_END) {
