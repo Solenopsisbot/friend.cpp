@@ -941,9 +941,10 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                 {
                     //kcpp fix: qwen image can stack overflow and crash when ref images exceed
                     // a total res of 512x512 = 262144, so we downscale if that's the case
+                    // kcpp edit 2mar2026: this seems to be better now, so limit to 1024x1024 instead
                     int tgtx = nx2;
                     int tgty = ny2;
-                    int res_lim_crash = 512 * 512;
+                    int res_lim_crash = 1024 * 1024;
                     if (nx2 * ny2 > res_lim_crash)
                     {
                         float factor = sqrtf((float)res_lim_crash / ((float)nx2 * (float)ny2));
