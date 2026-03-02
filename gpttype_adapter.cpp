@@ -551,7 +551,7 @@ void ContextRewind(std::vector<int> &embd, std::vector<int> &current_context_tok
     }
     if(file_format == FileFormat::RWKV_1 || file_format==FileFormat::RWKV_2 || is_recurrent)
     {
-        if(!showed_rnn_warning)
+        if(!showed_rnn_warning && debugmode==1 && !is_quiet)
         {
             showed_rnn_warning = true;
             printf("\nWARNING: RNN models do not support context rewind!\n");
