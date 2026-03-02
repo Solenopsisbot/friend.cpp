@@ -1292,6 +1292,11 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     output.animated = (wasanim?1:0);
     output.status = 1;
     total_img_gens += 1;
+    if(!sd_is_quiet)
+    {
+        std::string ts = get_timestamp_str();
+        printf("[%s] Generating Media Complete\n",ts.c_str());
+    }
     return output;
 }
 
