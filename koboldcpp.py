@@ -8629,7 +8629,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                     print(f"Auto Recommended GPU Layers: {layeramt}")
                     args.gpulayers = layeramt
                     # enable autofit also if permissible
-                    if not args.autofit and not args.tensor_split and not args.overridetensors:
+                    if not args.autofit and not args.tensor_split and not args.overridetensors and not args.moecpu:
                         args.autofit = True
                         args.autofitpadding = default_autofit_padding
                         print("GPU layers is default: Will enable AutoFit for increased estimation accuracy.")
