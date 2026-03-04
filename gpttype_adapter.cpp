@@ -127,6 +127,7 @@ static int debugmode = 0; //-1 = hide all, 0 = normal, 1 = showall
 static bool is_quiet = false;
 static std::vector<gpt_vocab::id> last_n_tokens;
 static std::vector<gpt_vocab::id> current_context_tokens;
+static std::vector<float> loaded_latest_logits; //do not use normally, this is only required when loading state happens and we need to override logits
 static size_t mem_per_token = 0;
 static std::vector<float> logits;
 static std::vector<int> smartcontext;
@@ -4668,12 +4669,6 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             }
             while(logits_sampled<logits_to_sample && remaining_tokens>0 && !abort_draft && !early_abort)
             {
-                if(!firstdecodedone && current_context_tokens.size()>0)
-                {
-                    embd.clear();
-                    embd.push_back(current_context_tokens[current_context_tokens.size()-1]);
-                    break;
-                }
                 if(logits_sampled>0)
                 {
                     //this is not the first loop, so we need to increment some things
@@ -4706,6 +4701,28 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 {
                     logitsPtr = logits.data(); //legacy rwkv, neox, gptj etc
                     lowestLogit = LowestLogit(logits);
+                }
+
+                if(!firstdecodedone && current_context_tokens.size()>0)
+                {
+                    if(loaded_latest_logits.size()>0)
+                    {
+                        if(debugmode==1 && !is_quiet)
+                        {
+                            printf("\nLoading %d saved logits...\n",loaded_latest_logits.size());
+                        }
+                        //first decode was not done. this can happen when reloading from a perfectly matched state.
+                        //to prevent a catastrophic failure, we must prepare emergency logits for usage
+                        logitsPtr = loaded_latest_logits.data();
+                        lowestLogit = LowestLogit(logitsPtr,n_vocab);
+                    }
+                    else
+                    {
+                        printf("\nNo cached logits and we need them, emergency fallback with degraded quality...\n");
+                        embd.clear();
+                        embd.push_back(current_context_tokens[current_context_tokens.size()-1]);
+                        break;
+                    }
                 }
 
                 //if adaptive p sampling is used, we need to cache the original probabilities
@@ -5237,6 +5254,7 @@ size_t gpttype_save_state_kv(int slot)
             savestates[slot].current_savestate_buffer.clear();
             savestates[slot].current_draft_savestate_buffer.clear();
             savestates[slot].savestate_context_tokens.clear();
+            savestates[slot].latest_logits.clear();
             savestates[slot].current_savestate_size = 0;
             savestates[slot].current_draft_savestate_size = 0;
             savestates[slot].media_signature = "";
@@ -5258,6 +5276,8 @@ size_t gpttype_save_state_kv(int slot)
             savestates[slot].current_savestate_size   = newsize;
             savestates[slot].savestate_context_tokens = current_context_tokens;
             savestates[slot].media_signature = media_composite_image_signature;
+            float * lgptr = llama_get_logits(llama_ctx_v4);
+            savestates[slot].latest_logits.assign(lgptr,lgptr+n_vocab);
             int maxedpos = llama_memory_seq_pos_max(llama_get_memory(llama_ctx_v4),0);
             //kcpp: so maxedpos appears to always be equal to ctx tokens - 2, if savestate_ctx_tokens > maxedpos + 2 then trim excess
             if(maxedpos > 0 && savestates[slot].savestate_context_tokens.size() > maxedpos + 2)
@@ -5316,6 +5336,7 @@ bool gpttype_load_state_kv(int slot)
         if(res > 0)
         {
             current_context_tokens = savestates[slot].savestate_context_tokens;
+            loaded_latest_logits = savestates[slot].latest_logits;
             printf("\nKV Load SaveState %d: Restored KV with %zu tokens.\n", slot,current_context_tokens.size());
             if(draft_ctx && savestates[slot].current_draft_savestate_size>0)
             {
