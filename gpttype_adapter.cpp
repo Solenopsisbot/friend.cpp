@@ -4452,11 +4452,11 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
                     //if running rnn model in smartcache mode, save progress a little bit before the final PP is done
                     //this helps solve token boundary mutation issues
-                    if(draft_ctx==nullptr && embd.size()>1 && !startedsampling && input_consumed==embd_inp.size() && input_consumed>128)
+                    if(draft_ctx==nullptr && embd.size()>1 && !startedsampling && input_consumed==embd_inp.size() && input_consumed>64)
                     {
                         if(kcpp_data->smartcache && is_recurrent && file_format==FileFormat::GGUF_GENERIC && current_context_tokens.size() > 32)
                         {
-                            if(embd.size()<=64)
+                            if(embd.size()<=48)
                             {
                                 //directly snapshot for a small batch
                                 smartcache_quick_snapshot();
@@ -4464,8 +4464,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                             else
                             {
                                 skipdecodelater = true;
-                                //decode until nearly done, then snapshot and decode the last 64
-                                std::vector<std::vector<gpt_vocab::id>> parts = split_big_vector_in_two(embd,64);
+                                //decode until nearly done, then snapshot and decode the last 32
+                                std::vector<std::vector<gpt_vocab::id>> parts = split_big_vector_in_two(embd,32);
                                 int temp_past = n_past;
                                 evalres = true;
                                 for(int p=0;p<parts.size();++p)
