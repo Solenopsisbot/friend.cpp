@@ -501,6 +501,7 @@ static std::string detectedarch = "";
 //qwen3tts specific
 static bool is_qwen3tts_file = false;
 static qwen3_tts::Qwen3TTS qwen3tts_runner;
+bool qwen3tts_allowgpu = false;
 
 int total_tts_gens = 0;
 static std::string tts_executable_path = "";
@@ -576,6 +577,7 @@ bool ttstype_load_model(const tts_load_model_inputs inputs)
     }
     else if(is_qwen3tts_file)
     {
+        qwen3tts_allowgpu = (inputs.gpulayers>0?true:false);
         if (!qwen3tts_runner.load_models(modelfile_ttc,modelfile_cts)) {
             printf("\nQwen3TTS Load Error: %s\n", qwen3tts_runner.get_error().c_str());
             return false;

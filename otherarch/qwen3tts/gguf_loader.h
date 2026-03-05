@@ -9,6 +9,8 @@
 #include <vector>
 #include <memory>
 
+extern bool qwen3tts_allowgpu;
+
 namespace qwen3_tts {
 
 // Generic GGUF model loader class

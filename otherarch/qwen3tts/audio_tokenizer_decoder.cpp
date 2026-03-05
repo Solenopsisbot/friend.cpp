@@ -339,7 +339,7 @@ bool AudioTokenizerDecoder::load_model(const std::string & model_path) {
         upload_if_present(model_.vq_rest_codebook[i]);
     }
 
-    state_.backend = init_preferred_backend("AudioTokenizerDecoder", &error_msg_, true);
+    state_.backend = init_preferred_backend("AudioTokenizerDecoder", &error_msg_, qwen3tts_allowgpu);
     if (!state_.backend) {
         return false;
     }
