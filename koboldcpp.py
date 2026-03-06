@@ -3483,6 +3483,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
     async def generate_text(self, genparams, api_format, stream_flag):
         global friendlymodelname, chatcompl_adapter, currfinishreason
         currfinishreason = None
+        req_id_suffix = genparams.get('oai_uniqueid',1)
+        chatcmpl_id = f"chatcmpl-A{req_id_suffix}"
+        cmpl_id = f"cmpl-A{req_id_suffix}"
 
         def run_blocking():  # api format 1=basic,2=kai,3=oai,4=oai-chat
             # flag instance as non-idle for a while
@@ -3502,8 +3505,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             genout = run_blocking()
 
         recvtxt = genout['text']
-        prompttokens = genout['prompt_tokens']
-        comptokens = genout['completion_tokens']
+        prompttokens = genout['prompt_tokens'] if genout['prompt_tokens'] > 0 else 0
+        comptokens = genout['completion_tokens'] if genout['completion_tokens'] > 0 else 0
         currfinishreason = "error" if (genout['stopreason'] == -2) else ("length" if (genout['stopreason'] != 1) else "stop")
 
         # grab logprobs if not streaming
@@ -3539,11 +3542,11 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         if api_format == 1:
             res = {"data": {"seqs": [recvtxt]}}
         elif api_format == 3:
-            res = {"id": "cmpl-A1", "object": "text_completion", "created": int(time.time()), "model": friendlymodelname,
+            res = {"id": cmpl_id, "object": "text_completion", "created": int(time.time()), "model": friendlymodelname,
                    "usage": {"prompt_tokens": prompttokens, "completion_tokens": comptokens, "total_tokens": (prompttokens+comptokens)},
                    "choices": [{"text": recvtxt, "index": 0, "finish_reason": currfinishreason, "logprobs":logprobsdict}]}
         elif api_format == 4:
-            res = {"id": "chatcmpl-A1", "object": "chat.completion", "created": int(time.time()), "model": friendlymodelname,
+            res = {"id": chatcmpl_id, "object": "chat.completion", "created": int(time.time()), "model": friendlymodelname,
                    "usage": {"prompt_tokens": prompttokens, "completion_tokens": comptokens, "total_tokens": (prompttokens+comptokens)},
                    "choices": [{"index": 0, "message": {"role": "assistant", "content": recvtxt, "tool_calls": tool_calls}, "finish_reason": currfinishreason, "logprobs":logprobsdict}]}
         elif api_format == 5:
@@ -3577,6 +3580,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
     async def handle_sse_stream(self, genparams, api_format):
         global friendlymodelname, currfinishreason
         using_openai_tools = genparams.get('using_openai_tools', False)
+        req_id_suffix = genparams.get('oai_uniqueid',1)
+        chatcmpl_id = f"chatcmpl-A{req_id_suffix}"
+        cmpl_id = f"cmpl-A{req_id_suffix}"
         self.send_response(200)
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("cache-control", "no-cache")
@@ -3590,6 +3596,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         thinkpairs = [{"start":"<|channel|>analysis<|message|>","end":"<|start|>assistant<|channel|>final<|message|>"},
                       {"start":"<think>","end":"</think>"}]
         current_token = 0
+        prompttokens = 0
         incomplete_token_buffer = bytearray()
         async_sleep_short = 0.02
         await asyncio.sleep(0.35) #anti race condition, prevent check from overtaking generate
@@ -3601,6 +3608,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 if streamDone:
                     sr = handle.get_last_stop_reason()
                     currfinishreason = "error" if sr==-2 else ("length" if (sr!=1) else "stop")
+                    prompttokens = handle.get_last_input_count()
                 tokenStr = ""
                 streamcount = handle.get_stream_count()
                 while current_token < streamcount:
@@ -3669,10 +3677,10 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
                             if need_split_final_msg: #we need to send one message without the finish reason, then send a finish reason with no msg to follow standards
                                 if api_format == 4:  # if oai chat, set format to expected openai streaming response
-                                    event_str = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"delta":delta}]})
+                                    event_str = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"delta":delta}]})
                                     await self.send_oai_sse_event(event_str)
                                 elif api_format == 3:  # non chat completions
-                                    event_str = json.dumps({"id":"koboldcpp","object":"text_completion","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"text":tokenStr}]})
+                                    event_str = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"text":tokenStr}]})
                                     await self.send_oai_sse_event(event_str)
                                 else:
                                     event_str = json.dumps({"token": tokenStr, "finish_reason":None})
@@ -3684,17 +3692,17 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                 if streamDone and ("logprobs" in genparams and genparams["logprobs"]): # this is a hack that sends an extra message containing ALL the logprobs
                                     lastlogprobs = handle.last_logprobs()
                                     logprobsdict = parse_last_logprobs(lastlogprobs)
-                                    addonstr = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"delta":{'role':'assistant','content':''},"logprobs":logprobsdict}]})
+                                    addonstr = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"delta":{'role':'assistant','content':''},"logprobs":logprobsdict}]})
                                     await self.send_oai_sse_event(addonstr)
-                                event_str = json.dumps({"id":"koboldcpp","object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":currfinishreason,"delta":delta}]})
+                                event_str = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":currfinishreason,"delta":delta}]})
                                 await self.send_oai_sse_event(event_str)
                             elif api_format == 3:  # non chat completions
                                 if streamDone and ("logprobs" in genparams and genparams["logprobs"]): # this is a hack that sends an extra message containing ALL the logprobs
                                     lastlogprobs = handle.last_logprobs()
                                     logprobsdict = parse_last_logprobs(lastlogprobs)
-                                    addonstr = json.dumps({"id":"koboldcpp","object":"text_completion","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"text":"","logprobs":logprobsdict}]})
+                                    addonstr = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":None,"text":"","logprobs":logprobsdict}]})
                                     await self.send_oai_sse_event(addonstr)
-                                event_str = json.dumps({"id":"koboldcpp","object":"text_completion","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":currfinishreason,"text":tokenStr}]})
+                                event_str = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":currfinishreason,"text":tokenStr}]})
                                 await self.send_oai_sse_event(event_str)
                             else:
                                 event_str = json.dumps({"token": tokenStr, "finish_reason":currfinishreason})
@@ -3707,6 +3715,14 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
                 if streamDone:
                     if api_format == 4 or api_format == 3:  # if oai chat, send last [DONE] message consistent with openai format
+                        strop = genparams.get("stream_options",None)
+                        if (strop and strop.get("include_usage",False)):  # Send a final chunk with usage info, only if requested
+                            usage_obj = {"prompt_tokens": prompttokens, "completion_tokens": current_token, "total_tokens": (prompttokens + current_token)}
+                            if api_format == 4:
+                                usage_str = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":friendlymodelname,"choices":[],"usage":usage_obj})
+                            else:
+                                usage_str = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":friendlymodelname,"choices":[],"usage":usage_obj})
+                            await self.send_oai_sse_event(usage_str)
                         await self.send_oai_sse_event('[DONE]')
                         await asyncio.sleep(async_sleep_short)
                     break
@@ -3725,7 +3741,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     async def handle_request(self, genparams, api_format, stream_flag):
         tasks = []
-
+        genparams["oai_uniqueid"] = random.randint(100000, 999999)
         try:
             if stream_flag:
                 tasks.append(self.handle_sse_stream(genparams, api_format))
