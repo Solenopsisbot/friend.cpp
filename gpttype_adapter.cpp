@@ -3535,7 +3535,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             {
                 continue;
             }
-            if(tokcount==1 && word.length()<2) //only use banned tokens for single characters
+            if(tokcount==1 && word.length()<12) //only use banned tokens for single characters, we can assume that means less than 12 chars usually
             {
                 banned_tokens.push_back(word);
             }
