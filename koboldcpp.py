@@ -6571,7 +6571,7 @@ def show_gui():
     embeddings_gpu_var.trace_add("write", gui_changed_modelfile)
     makefileentry(model_tab, "Preload Story:", "Select Preloaded Story File", preloadstory_var, 17,width=280,singlerow=True,tooltiptxt="Select an optional KoboldAI JSON savefile \nto be served on launch to any client.")
     makefileentry(model_tab, "SaveData File:", "Select or Create New SaveData Database File", savedatafile_var, 19,width=280,filetypes=[("KoboldCpp SaveDB", "*.jsondb")],singlerow=True,dialog_type=1,tooltiptxt="Selecting a file will allow data to be loaded and saved persistently to this KoboldCpp server remotely. File is created if it does not exist.")
-    makefileentry(model_tab, "MCP JSON:", "Select a mcp.json configuration file", mcpfile_var, 21,width=280,filetypes=[("MCP JSON", "*.json")],singlerow=True,tooltiptxt="Specify path to mcp.json which contains the Cladue Desktop compatible MCP server config.")
+    makefileentry(model_tab, "MCP JSON:", "Select a mcp.json configuration file", mcpfile_var, 21,width=280,filetypes=[("MCP JSON", "*.json")],singlerow=True,tooltiptxt="Specify path to mcp.json which contains the Claude Desktop compatible MCP server config.")
     makefileentry(model_tab, "Chat Adapter:", "Select ChatCompletions Adapter File", chatcompletionsadapter_var, 24, width=184, filetypes=[("JSON Adapter", "*.json")], singlerow=True, tooltiptxt="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.")
     def pickpremadetemplate():
         initialDir = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'kcpp_adapters')
