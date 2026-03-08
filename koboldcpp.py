@@ -2637,6 +2637,18 @@ def is_ipv6_supported():
     except Exception:
         return False
 
+def detect_toolcall_tags(text: str): #for use with jinja tool responses, detect the tool call tag if present, we'll use that to split.
+    if text is None:
+        return None
+    text = text.strip()
+    m = re.match(r'<\s*([A-Za-z_][\w\-]*)\b[^>]*>', text, re.DOTALL)   # match first opening tag
+    if not m:
+        return None
+    tag = m.group(1)
+    if re.search(rf'</\s*{re.escape(tag)}\s*>\s*$', text, re.DOTALL): # ensure the string ends with the matching closing tag
+        return tag
+    return None
+
 def format_jinja(messages, tools):
     try:
         def strftime_now(format='%Y-%m-%d %H:%M:%S'):
@@ -2646,6 +2658,10 @@ def format_jinja(messages, tools):
         global cached_chat_template
         from jinja2.sandbox import ImmutableSandboxedEnvironment
         jinja_env = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True)
+        # sanitize messages to remove none types
+        for m in messages:
+            if m.get("content") is None:
+                del m["content"]
         jinja_env.globals['strftime_now'] = strftime_now
         jinja_env.filters["tojson"] = tojson
         jinja_compiled_template = jinja_env.from_string(cached_chat_template)
@@ -3528,7 +3544,17 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         if api_format == 4 or api_format == 2:
             using_openai_tools = genparams.get('using_openai_tools', False)
             if using_openai_tools:
-                tool_calls = extract_json_from_string(recvtxt)
+                # first, check and potentially segment multiple tags for multi-tool calls
+                toolcalltagfound = detect_toolcall_tags(recvtxt)
+                if not toolcalltagfound:
+                    tool_calls = extract_json_from_string(recvtxt)
+                else: # we found tool call tags, split to extract all internal stuff
+                    splitting_str = recvtxt.replace(f"<{toolcalltagfound}>", "<TO_SPLIT>").replace(f"</{toolcalltagfound}>", "<TO_SPLIT>")
+                    chunks = [x.strip() for x in splitting_str.split("<TO_SPLIT>") if x]
+                    chunks = [x for x in chunks if x]
+                    for chunk in chunks: #for each potential toolcall, add it to the pile
+                        sub_tool_calls = extract_json_from_string(chunk)
+                        tool_calls.extend(sub_tool_calls)
                 if tool_calls and len(tool_calls)>0:
                     tool_calls = [normalize_tool_call(obj) for obj in tool_calls]
                     for tc in tool_calls:
