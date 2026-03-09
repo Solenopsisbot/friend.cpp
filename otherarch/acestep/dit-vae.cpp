@@ -992,8 +992,8 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
         finalb64 = save_stereo_wav16_base64(audio,T_audio,48000);
     } else {
         std::vector<float> mono = mix_planar_stereo_to_mono(audio.data(), T_audio);
-        std::vector<float> resampled_buf = resample_wav(mono,48000,32000);
-        finalb64 = save_wav16_base64(resampled_buf, 32000);
+        // std::vector<float> resampled_buf = resample_wav(mono,48000,32000);
+        finalb64 = save_wav16_base64(mono, 48000);
     }
 
     if(acestep_dit_lowvram)
