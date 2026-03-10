@@ -1571,7 +1571,7 @@ def fetch_gpu_properties(testCU,testVK,testmemory=False):
 
     # Check VRAM detection after all backends have been tested
     if MaxMemory[0] < (1024*1024*256):
-        print("Unable to detect VRAM, please set layers manually.")
+        print("Unable to detect VRAM.")
 
     return
 
@@ -8671,18 +8671,22 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 fetch_gpu_properties(True,True)
                 pass
             if args.gpulayers==-1:
-                if MaxMemory[0] > 0 and (not args.usecpu) and ((args.usecuda is not None) or (args.usevulkan is not None) or sys.platform=="darwin"):
-                    extract_modelfile_params(args.model_param,args.sdmodel,args.whispermodel,args.mmproj,args.draftmodel,args.ttsmodel if args.ttsgpu else "",args.embeddingsmodel if args.embeddingsgpu else "")
-                    layeramt = autoset_gpu_layers(args.contextsize,args.sdquant,args.batchsize,(0 if args.noflashattention else args.quantkv))
-                    print(f"Auto Recommended GPU Layers: {layeramt}")
-                    args.gpulayers = layeramt
-                    # enable autofit also if permissible
+                if (not args.usecpu) and ((args.usecuda is not None) or (args.usevulkan is not None) or sys.platform=="darwin"):
+                    if MaxMemory[0] > 0:
+                        extract_modelfile_params(args.model_param,args.sdmodel,args.whispermodel,args.mmproj,args.draftmodel,args.ttsmodel if args.ttsgpu else "",args.embeddingsmodel if args.embeddingsgpu else "")
+                        layeramt = autoset_gpu_layers(args.contextsize,args.sdquant,args.batchsize,(0 if args.noflashattention else args.quantkv))
+                        print(f"Auto Recommended GPU Layers: {layeramt}")
+                        args.gpulayers = layeramt
+                    else:
+                        print("Unable to detect VRAM, but autofit may still be used if applicable.")
+                        args.gpulayers = 0
+                    # also enable autofit also if permissible
                     if not args.autofit and not args.tensor_split and not args.overridetensors and not args.moecpu:
                         args.autofit = True
                         args.autofitpadding = default_autofit_padding
                         print("GPU layers is default: Will enable AutoFit for increased estimation accuracy.")
                 else:
-                    print("No GPU backend found, or could not automatically determine GPU layers. Please set it manually.")
+                    print("No GPU backend found, or could not automatically determine GPU layers. You may prefer to set layers manually.")
                     args.gpulayers = 0
 
     if args.threads <= 0:
