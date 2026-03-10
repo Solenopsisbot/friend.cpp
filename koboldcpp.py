@@ -1329,7 +1329,7 @@ def read_gguf_metadata(file_path):
     except Exception:
         return None
 
-def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,draftmodelpath,ttsmodelpath,embdmodelpath):
+def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,draftmodelpath,ttsmodelpath,embdmodelpath,musicllmpath,musicditpath):
     global modelfile_extracted_meta
     modelfile_extracted_meta = None
     sdfsize = 0
@@ -1338,6 +1338,8 @@ def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,
     draftmodelsize = 0
     ttsmodelsize = 0
     embdmodelsize = 0
+    musicllmsize = 0
+    musicditsize = 0
     if sdfilepath and os.path.exists(sdfilepath):
         sdfsize = os.path.getsize(sdfilepath)
     if whisperfilepath and os.path.exists(whisperfilepath):
@@ -1350,16 +1352,20 @@ def extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,
         ttsmodelsize = os.path.getsize(ttsmodelpath)
     if embdmodelpath and os.path.exists(embdmodelpath):
         embdmodelsize = os.path.getsize(embdmodelpath)
+    if musicllmpath and os.path.exists(musicllmpath):
+        musicllmsize = os.path.getsize(musicllmpath)
+    if musicditpath and os.path.exists(musicditpath):
+        musicditsize = os.path.getsize(musicditpath)
     if filepath and os.path.exists(filepath):
         try:
             fsize = os.path.getsize(filepath)
             if fsize>10000000: #dont bother with models < 10mb as they are probably bad
                 ggufmeta = read_gguf_metadata(filepath)
-                modelfile_extracted_meta = [filepath,ggufmeta,fsize,sdfsize,whisperfsize,mmprojsize,draftmodelsize,ttsmodelsize,embdmodelsize] #extract done. note that meta may be null
+                modelfile_extracted_meta = [filepath,ggufmeta,fsize,sdfsize,whisperfsize,mmprojsize,draftmodelsize,ttsmodelsize,embdmodelsize,musicllmsize,musicditsize] #extract done. note that meta may be null
         except Exception:
             modelfile_extracted_meta = None
 
-def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to determine how many layers to use
+def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level, musiclowvram): #shitty algo to determine how many layers to use
     global showusedmemwarning, showmultigpuwarning, modelfile_extracted_meta, calulated_gpu_overhead # reference cached values instead
     gpumem = MaxMemory[0]
     usedmem = 0
@@ -1389,6 +1395,8 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to dete
                         fsize *= total_parts
 
             calulated_gpu_overhead = 0
+            musicoh1 = 0
+            musicoh2 = 0
             if modelfile_extracted_meta[3] > 1024*1024*1024*5: #sdxl tax
                 calulated_gpu_overhead += 1024*1024*1024*(9 - sdquanted * 1.5) # 9, 7.5, 6
             elif modelfile_extracted_meta[3] > 1024*1024*512: #normal sd tax
@@ -1403,6 +1411,14 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to dete
                 calulated_gpu_overhead += max(600*1024*1024, modelfile_extracted_meta[7] * 3)
             if modelfile_extracted_meta[8] > 1024*1024*10: #embeddings model tax
                 calulated_gpu_overhead += max(350*1024*1024, modelfile_extracted_meta[8] * 1.5)
+            if modelfile_extracted_meta[9] > 1024*1024*10: #music llm tax
+                musicoh1 = modelfile_extracted_meta[9] * 1.05
+            if modelfile_extracted_meta[10] > 1024*1024*10: #music dit tax
+                musicoh2 = modelfile_extracted_meta[10] * 1.05 + (600*1024*1024)
+            if musiclowvram:
+                calulated_gpu_overhead += max(musicoh1,musicoh2)
+            else:
+                calulated_gpu_overhead += musicoh1 + musicoh2
 
             mem -= calulated_gpu_overhead
             mem = 0 if mem < 0 else mem
@@ -6302,7 +6318,9 @@ def show_gui():
             draftmodelpath = draftmodel_var.get()
             ttsmodelpath = tts_model_var.get() if ttsgpu_var.get()==1 else ""
             embdmodelpath = embeddings_model_var.get() if embeddings_gpu_var.get()==1 else ""
-            extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,draftmodelpath,ttsmodelpath,embdmodelpath)
+            musicllmpath = musicllm_var.get()
+            musicditpath = musicdiffusion_var.get()
+            extract_modelfile_params(filepath,sdfilepath,whisperfilepath,mmprojfilepath,draftmodelpath,ttsmodelpath,embdmodelpath,musicllmpath,musicditpath)
             changed_gpulayers_estimate()
         pass
 
@@ -6314,7 +6332,7 @@ def show_gui():
         changed_gpulayers_estimate()
 
     def changed_gpulayers_estimate(*args):
-        autoset_gpu_layers(int(contextsize_text[context_var.get()]),sd_quant_option(sd_quant_var.get()),int(batchsize_values[int(blas_size_var.get())]),(quantkv_var.get() if flashattention_var.get()==1 else 0))
+        autoset_gpu_layers(int(contextsize_text[context_var.get()]),sd_quant_option(sd_quant_var.get()),int(batchsize_values[int(blas_size_var.get())]),(quantkv_var.get() if flashattention_var.get()==1 else 0),musiclowvram_var.get()==1)
         max_gpu_layers = (f"{modelfile_extracted_meta[1][0]+1}" if (modelfile_extracted_meta and modelfile_extracted_meta[1] and modelfile_extracted_meta[1][0]!=0) else "")
         index = runopts_var.get()
         gpu_be = (index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use Vulkan (Older CPU)" or index == "Use CUDA" or index == "Use hipBLAS (ROCm)")
@@ -8789,8 +8807,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             if args.gpulayers==-1:
                 if (not args.usecpu) and ((args.usecuda is not None) or (args.usevulkan is not None) or sys.platform=="darwin"):
                     if MaxMemory[0] > 0:
-                        extract_modelfile_params(args.model_param,args.sdmodel,args.whispermodel,args.mmproj,args.draftmodel,args.ttsmodel if args.ttsgpu else "",args.embeddingsmodel if args.embeddingsgpu else "")
-                        layeramt = autoset_gpu_layers(args.contextsize,args.sdquant,args.batchsize,(0 if args.noflashattention else args.quantkv))
+                        extract_modelfile_params(args.model_param,args.sdmodel,args.whispermodel,args.mmproj,args.draftmodel,args.ttsmodel if args.ttsgpu else "",args.embeddingsmodel if args.embeddingsgpu else "", args.musicllm, args.musicdiffusion)
+                        layeramt = autoset_gpu_layers(args.contextsize,args.sdquant,args.batchsize,(0 if args.noflashattention else args.quantkv),args.musiclowvram)
                         print(f"Auto Recommended GPU Layers: {layeramt}")
                         args.gpulayers = layeramt
                     else:
