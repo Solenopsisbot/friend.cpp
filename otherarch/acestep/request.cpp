@@ -24,7 +24,7 @@ void request_init(AceRequest * r) {
     r->seed               = -1;
     r->thinking           = false;
     r->lm_temperature     = 1.0f;
-    r->lm_cfg_scale       = 2.0f;
+    r->lm_cfg_scale       = 3.0f;
     r->lm_top_p           = 0.95f;
     r->lm_top_k           = 0;
     r->lm_negative_prompt = "";
