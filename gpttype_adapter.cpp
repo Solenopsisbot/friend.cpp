@@ -2597,9 +2597,12 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         //if RNN model AND shifting and fastforward is on, enable smartcache
         if((llama_model_is_recurrent(llamamodel) || llama_model_is_hybrid(llamamodel)) && kcpp_data->use_fastforward && kcpp_data->use_contextshift)
         {
-            printf("RNN or Hyrbid model with FF and shifting flags enabled - SmartCache will be enabled with extra slots. Disable CtxShift if you do not want this.\n",savestate_limit);
-            kcpp_data->smartcache = true;
-            savestate_limit += 3;
+            if(savestate_limit>0)
+            {
+                printf("RNN or Hyrbid model with FF and shifting flags enabled - SmartCache will be enabled with extra slots. Disable CtxShift if you do not want this.\n",savestate_limit);
+                kcpp_data->smartcache = true;
+                savestate_limit += 3;
+            }
         }
         savestates.resize(savestate_limit);
         if(kcpp_data->smartcache)
