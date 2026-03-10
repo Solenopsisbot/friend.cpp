@@ -91,7 +91,7 @@
 	<title>llama.cpp UI (KoboldCpp Backend)</title>
 </svelte:head>
 
-<ChatScreen showCenteredEmpty={true} />
+<ChatScreen showCenteredEmpty />
 
 <DialogModelNotAvailable
 	bind:open={showModelNotAvailable}
