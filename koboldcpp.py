@@ -89,6 +89,7 @@ ttsmodelpath = "" #if empty, not initialized
 embeddingsmodelpath = "" #if empty, not initialized
 musicllmmodelpath = "" #if empty, not initialized
 musicdiffusionmodelpath = "" #if empty, not initialized
+imglorainfo = []
 maxctx = 8192
 maxhordectx = 0 #set to whatever maxctx is if 0
 maxhordelen = 1024
@@ -320,8 +321,9 @@ class sd_load_model_inputs(ctypes.Structure):
                 ("clip1_filename", ctypes.c_char_p),
                 ("clip2_filename", ctypes.c_char_p),
                 ("vae_filename", ctypes.c_char_p),
-                ("lora_filenames", ctypes.c_char_p * lora_filenames_max),
-                ("lora_multiplier", ctypes.c_float),
+                ("lora_len", ctypes.c_int),
+                ("lora_filenames", ctypes.POINTER(ctypes.c_char_p)),
+                ("lora_multipliers", ctypes.POINTER(ctypes.c_float)),
                 ("lora_apply_mode", ctypes.c_int),
                 ("photomaker_filename", ctypes.c_char_p),
                 ("upscaler_filename", ctypes.c_char_p),
@@ -356,7 +358,9 @@ class sd_generation_inputs(ctypes.Structure):
                 ("remove_limits", ctypes.c_bool),
                 ("circular_x", ctypes.c_bool),
                 ("circular_y", ctypes.c_bool),
-                ("upscale", ctypes.c_bool)]
+                ("upscale", ctypes.c_bool),
+                ("lora_len", ctypes.c_int),
+                ("lora_multipliers", ctypes.POINTER(ctypes.c_float))]
 
 class sd_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -1994,30 +1998,38 @@ def sd_load_model(model_filename,vae_filename,lora_filenames,t5xxl_filename,clip
     inputs.taesd = True if args.sdvaeauto else False
     inputs.tiled_vae_threshold = args.sdtiledvae
     inputs.vae_filename = vae_filename.encode("UTF-8")
-    for n in range(lora_filenames_max):
-        if n >= len(lora_filenames):
-            inputs.lora_filenames[n] = "".encode("UTF-8")
-        else:
-            inputs.lora_filenames[n] = lora_filenames[n].encode("UTF-8")
-
-    inputs.lora_multiplier = args.sdloramult
     inputs.t5xxl_filename = t5xxl_filename.encode("UTF-8")
     inputs.clip1_filename = clip1_filename.encode("UTF-8")
     inputs.clip2_filename = clip2_filename.encode("UTF-8")
     inputs.photomaker_filename = photomaker_filename.encode("UTF-8")
     inputs.upscaler_filename = upscaler_filename.encode("UTF-8")
+
+    lora_filenames = [l.encode("UTF-8") for l in lora_filenames[:lora_filenames_max] if l]
+    lora_len = len(lora_filenames)
+    lora_multipliers = args.sdloramult[:lora_len]
+    if len(lora_multipliers) < lora_len:
+        missing = lora_len - len(lora_multipliers)
+        if len(lora_multipliers) == 1:
+            # previous behavior: all get the same weight
+            lora_multipliers.extend(lora_multipliers * missing)
+        else:
+            lora_multipliers.extend([0.] * missing)
+    inputs.lora_len = lora_len
+    inputs.lora_filenames = (ctypes.c_char_p * lora_len)(*lora_filenames)
+    inputs.lora_multipliers = (ctypes.c_float * lora_len)(*lora_multipliers)
+    # auto if no zero-weight lora, dynamic otherwise
+    inputs.lora_apply_mode = 3 if 0. in inputs.lora_multipliers else 0
+
     inputs.img_hard_limit = args.sdclamped
     inputs.img_soft_limit = args.sdclampedsoft
-    inputs.lora_apply_mode = 0 #auto for now
     inputs = set_backend_props(inputs)
     ret = handle.sd_load_model(inputs)
     return ret
 
-def sd_oai_tranform_params(genparams):
-    size = genparams.get('size', "512x512")
-    if size and size!="":
-        pattern = r'^\D*(\d+)x(\d+)$'
-        match = re.fullmatch(pattern, size)
+def sd_oai_transform_params(genparams):
+    size = genparams.get('size') or ''
+    pattern = r'^\D*(\d+)x(\d+)$'
+    match = re.fullmatch(pattern, size)
     if match:
         width = int(match.group(1))
         height = int(match.group(2))
@@ -2110,6 +2122,69 @@ def sd_upscale(genparams):
     if ret.status==1:
         data_main = ret.data.decode("UTF-8","ignore")
     return data_main
+
+def sanitize_lora_multipliers(sdloramult):
+    if sdloramult is None:
+        sdloramult = [1.0]
+    elif not isinstance(sdloramult, list):
+        sdloramult = [sdloramult]
+    sdloramult = [tryparsefloat(m, 0.) for m in sdloramult]
+    return sdloramult
+
+def prepare_lora_multipliers(request_list):
+    orig_multipliers = [lora[3] for lora in imglorainfo]
+    req_by_path = {}
+    for r in request_list:
+        if not isinstance(r, dict):
+            continue
+        multiplier = tryparsefloat(r.get('multiplier'), 0.)
+        path = r.get('path')
+        if path and isinstance(path, str):
+            req_by_path[path] = req_by_path.get(path, 0.) + multiplier
+    result = []
+    for i, (fullpath, name, path, origmul) in enumerate(imglorainfo):
+        multiplier = orig_multipliers[i]
+        if multiplier == 0. and path in req_by_path:
+            multiplier = req_by_path[path]
+        result.append(multiplier)
+    return result
+
+def extract_loras_from_prompt(prompt):
+    pattern = r'<lora:([^:>]+):([^>]+)>'
+    lora_data = []
+    matches = list(re.finditer(pattern, prompt))
+    for match in matches:
+        raw_path = match.group(1)
+        raw_mul = match.group(2)
+        try:
+            mul = float(raw_mul)
+        except ValueError:
+            continue
+        is_high_noise = False
+        prefix = "|high_noise|"
+        if raw_path.startswith(prefix):
+            raw_path = raw_path[len(prefix):]
+            is_high_noise = True
+        item = {'name': raw_path, 'multiplier': mul}
+        if is_high_noise:
+            item["is_high_noise"] = is_high_noise
+        lora_data.append(item)
+        prompt = prompt.replace(match.group(0), "", 1)
+    return prompt, lora_data
+
+def lora_map_name_to_path(request_list):
+    name2path = {}
+    for _, name, path, _ in imglorainfo:
+        name2path[name] = path
+    result = []
+    for req in request_list:
+        out = dict(req)
+        name = out.pop('name')
+        path = name2path.get(name)
+        if path:
+            out['path'] = path
+            result.append(out)
+    return result
 
 def sd_generate(genparams):
     global maxctx, args, currentusergenkey, totalgens, pendingabortkey, chatcompl_adapter
@@ -2209,6 +2284,11 @@ def sd_generate(genparams):
     inputs.circular_x = tryparseint(adapter_obj.get("circular_x", genparams.get("circular_x",0)),0)
     inputs.circular_y = tryparseint(adapter_obj.get("circular_y", genparams.get("circular_y",0)),0)
     inputs.upscale = (True if tryparseint(genparams.get("enable_hr", 0),0) else False)
+
+    lora_multipliers = prepare_lora_multipliers(genparams.get("lora", []))
+    inputs.lora_len = len(lora_multipliers)
+    inputs.lora_multipliers = (ctypes.c_float * inputs.lora_len)(*lora_multipliers)
+
     ret = handle.sd_generate(inputs)
     data_main = ""
     data_extra = ""
@@ -4144,6 +4224,9 @@ Change Mode<br>
         elif clean_path.endswith('/v1/models') or clean_path=='/models':
             response_body = (json.dumps({"object":"list","data":[{"id":friendlymodelname,"object":"model","created":int(time.time()),"owned_by":"koboldcpp","permission":[],"root":"koboldcpp"}]}).encode())
 
+        elif clean_path.endswith('/sdapi/v1/loras'):
+            response_body = (json.dumps([{'name': name, 'path': path} for _, name, path, multiplier in imglorainfo if multiplier == 0.])).encode()
+
         elif clean_path.endswith('/sdapi/v1/upscalers'):
             if args.sdupscaler:
                 response_body = (json.dumps([{"name":"ESRGAN_4x","model_name":"ESRGAN_4x","model_path":"upscaler_model.gguf","model_url":None,"scale":4}]).encode())
@@ -5152,7 +5235,13 @@ Change Mode<br>
                             lastgeneratedcomfyimg = b''
                             genparams = sd_comfyui_tranform_params(genparams)
                         elif is_oai_imggen:
-                            genparams = sd_oai_tranform_params(genparams)
+                            genparams = sd_oai_transform_params(genparams)
+                        if not genparams.get('lora'):
+                            # process <lora:name:multiplier> syntax
+                            prompt, loras = extract_loras_from_prompt(genparams['prompt'])
+                            if loras:
+                                genparams['prompt'] = prompt
+                                genparams['lora'] = lora_map_name_to_path(loras)
                         gen = sd_generate(genparams)
                         gendat = gen["data"]
                         genanim = gen["animated"]
@@ -6982,9 +7071,10 @@ def show_gui():
         args.sdquant = sd_quant_option(sd_quant_var.get())
         if sd_lora_var.get() != "":
             args.sdlora = [item.strip() for item in sd_lora_var.get().split("|") if item]
-            args.sdloramult = float(sd_loramult_var.get())
         else:
             args.sdlora = None
+        # XXX the user may have used '|' since it's used for the LoRAs
+        args.sdloramult = sanitize_lora_multipliers(re.split(r"[ |]+", sd_loramult_var.get()))
 
         if gen_defaults_var.get() != "":
             args.gendefaults = gen_defaults_var.get()
@@ -7243,7 +7333,7 @@ def show_gui():
                 sd_lora_var.set(dict["sdlora"] if ("sdlora" in dict and dict["sdlora"]) else "")
         else:
             sd_lora_var.set("")
-        sd_loramult_var.set(str(dict["sdloramult"]) if ("sdloramult" in dict and dict["sdloramult"]) else "1.0")
+        sd_loramult_var.set(" ".join(f"{n:.3f}".rstrip('0').rstrip('.') for n in dict.get("sdloramult", [])))
         gen_defaults_var.set(dict["gendefaults"] if ("gendefaults" in dict and dict["gendefaults"]) else "")
         gen_defaults_overwrite_var.set(1 if "gendefaultsoverwrite" in dict and dict["gendefaultsoverwrite"] else 0)
 
@@ -7687,6 +7777,8 @@ def convert_invalid_args(args):
         dict["noflashattention"] = not dict["flashattention"]
     if "sdlora" in dict and isinstance(dict["sdlora"], str):
         dict["sdlora"] = ([dict["sdlora"]] if dict["sdlora"] else None)
+    if "sdloramult" in dict:
+        dict["sdloramult"] = sanitize_lora_multipliers(dict["sdloramult"])
     return args
 
 def setuptunnel(global_memory, has_sd):
@@ -8371,6 +8463,30 @@ def main(launch_args, default_args):
                 print("Press ENTER key to exit.", flush=True)
                 input()
 
+
+def mk_lora_info(imgloras, multipliers):
+    # (full path, name, name+extension, can change multiplier)
+    # XXX for each LoRA, sdapi needs a name and a path; we could use
+    # the full filename as a path, but we don't know if we can expose it
+    used_lora_names = set()
+    result = []
+    for i, lora_path in enumerate(imgloras):
+        multiplier = 0. if i >= len(multipliers) else multipliers[i]
+        lora_file = os.path.basename(lora_path)
+        lora_name, lora_ext = os.path.splitext(lora_file)
+        # ensure unique names
+        i = 1
+        mapped_name = lora_name
+        while True:
+            if mapped_name not in used_lora_names:
+                result.append((lora_path, mapped_name, mapped_name + lora_ext, multiplier))
+                used_lora_names.add(mapped_name)
+                break
+            i += 1
+            mapped_name = lora_name + '_' + str(i)
+    return result
+
+
 def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, embedded_kailite_gz, embedded_kcpp_docs_gz, embedded_kcpp_sdui_gz, embedded_lcpp_ui_gz, embedded_musicui, embedded_musicui_gz, start_time, exitcounter, global_memory, using_gui_launcher
     global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, musicllmmodelpath, friendlyembeddingsmodelname, has_audio_support, has_vision_support, cached_chat_template
@@ -8820,6 +8936,9 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                         imgloras.append(os.path.abspath(curr))
                     else:
                         print(f"Missing SD LORA model file {curr}...")
+            global imglorainfo
+            args.sdloramult = sanitize_lora_multipliers(args.sdloramult)
+            imglorainfo = mk_lora_info(imgloras, args.sdloramult)
             if args.sdvae:
                 if os.path.exists(args.sdvae):
                     imgvae = os.path.abspath(args.sdvae)
@@ -9415,7 +9534,7 @@ if __name__ == '__main__':
     sdparsergrouplora = sdparsergroup.add_mutually_exclusive_group()
     sdparsergrouplora.add_argument("--sdquant",  metavar=('[quantization level 0/1/2]'), help="If specified, loads the model quantized to save memory. 0=off, 1=q8, 2=q4", type=int, choices=[0,1,2], nargs="?", const=2, default=0)
     sdparsergrouplora.add_argument("--sdlora", metavar=('[filename]'), help="Specify image generation LoRAs safetensors models to be applied. Multiple LoRAs are accepted.", nargs='+')
-    sdparsergroup.add_argument("--sdloramult", metavar=('[amount]'), help="Multiplier for the image LoRA model to be applied.", type=float, default=1.0)
+    sdparsergroup.add_argument("--sdloramult", metavar=('[amounts]'), help="Multipliers for the image LoRA model to be applied.", type=float, nargs='+', default=[1.0])
     sdparsergroup.add_argument("--sdtiledvae", metavar=('[maxres]'), help="Adjust the automatic VAE tiling trigger for images above this size. 0 disables vae tiling.", type=int, default=default_vae_tile_threshold)
     whisperparsergroup = parser.add_argument_group('Whisper Transcription Commands')
     whisperparsergroup.add_argument("--whispermodel", metavar=('[filename]'), help="Specify a Whisper .bin model to enable Speech-To-Text transcription.", default="")
