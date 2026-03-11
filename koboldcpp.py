@@ -462,6 +462,7 @@ class music_generation_inputs(ctypes.Structure):
     _fields_ = [("is_planner_mode", ctypes.c_bool),
                 ("stereo", ctypes.c_bool),
                 ("gen_codes", ctypes.c_bool),
+                ("rewrite_caption", ctypes.c_bool),
                 ("input_json", ctypes.c_char_p)]
 
 class music_generation_outputs(ctypes.Structure):
@@ -2492,6 +2493,7 @@ def music_generate_codes(genparams):
     inputs.is_planner_mode = True
     inputs.stereo = genparams.get('stereo', False)
     inputs.gen_codes =  genparams.get('gen_codes', False)
+    inputs.rewrite_caption =  genparams.get('rewrite_caption', True)
     inputs.input_json = input_json.encode("UTF-8")
     ret = handle.music_generate(inputs)
     outstr = ""
@@ -2507,6 +2509,7 @@ def music_generate_audio(genparams):
     inputs.is_planner_mode = False
     inputs.stereo = genparams.get('stereo', False)
     inputs.gen_codes =  genparams.get('gen_codes', False)
+    inputs.rewrite_caption =  genparams.get('rewrite_caption', True)
     inputs.input_json = input_json.encode("UTF-8")
     ret = handle.music_generate(inputs)
     outstr = ""

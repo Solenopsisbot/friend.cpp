@@ -348,6 +348,7 @@ struct music_generation_inputs
     const bool is_planner_mode = false; //if true, generate codes, else, generate diffusion music
     const bool stereo = false;
     const bool gen_codes = false;
+    const bool rewrite_caption = true;
     const char * input_json = nullptr;
 };
 struct music_generation_outputs

@@ -32,7 +32,12 @@ struct AceRequest {
     float       lm_cfg_scale;       // 2.0
     float       lm_top_p;           // 0.9
     int         lm_top_k;           // 0 = disabled (matches Python None)
+    float       lm_rep_pen;         // 1.03
     std::string lm_negative_prompt; // "NO USER INPUT"
+
+    int         codes_top_k;
+    float       codes_top_p;
+    float       codes_temperature;
 
     // codes (Python-compatible string: "3101,11837,27514,...")
     // empty = text2music (silence context), non-empty = cover mode
