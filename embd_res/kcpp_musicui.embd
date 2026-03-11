@@ -206,7 +206,7 @@ input[type="checkbox"] {
       <div><label>Steps</label><input id="inference_steps" type="number"></div>
       <div><label>Guidance</label><input id="guidance_scale" type="number"></div>
       <div><label>Shift</label><input id="shift" type="number"></div>
-      <div><label>HD Stereo</label><input id="stereo" type="checkbox"></div>
+      <div><label>HD Stereo</label><input id="stereo" type="checkbox" checked></div>
       <div><label>Gen Codes</label><input id="gen_codes" type="checkbox"></div>
     </div>
     <div>

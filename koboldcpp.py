@@ -2507,7 +2507,7 @@ def music_generate_audio(genparams):
     input_json = json.dumps(genparams)
     inputs = music_generation_inputs()
     inputs.is_planner_mode = False
-    inputs.stereo = genparams.get('stereo', False)
+    inputs.stereo = genparams.get('stereo', True)
     inputs.gen_codes =  genparams.get('gen_codes', False)
     inputs.rewrite_caption =  genparams.get('rewrite_caption', True)
     inputs.input_json = input_json.encode("UTF-8")
