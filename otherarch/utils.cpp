@@ -383,33 +383,91 @@ std::vector<std::vector<int>> split_big_vector_in_two(const std::vector<int>& bi
     return result;
 }
 
-std::vector<float> resample_wav(const std::vector<float> & input, uint32_t input_rate, uint32_t output_rate) {
-    if (input.empty() || input_rate == 0 || output_rate == 0)
+static double audio_resample_bessel_i0(double x) {
+    double sum  = 1.0;
+    double term = 1.0;
+    double y    = x * x * 0.25;
+    for (int k = 1; k < 30; k++) {
+        term *= y / ((double) k * (double) k);
+        sum += term;
+        if (term < sum * 1e-15) {
+            break;
+        }
+    }
+    return sum;
+}
+
+std::vector<float> resample_wav(int num_channels,const std::vector<float>& input,uint32_t input_rate,uint32_t output_rate)
+{
+    if (input.empty() || num_channels <= 0 || input_rate == 0 || output_rate == 0)
         return {};
 
-    const size_t input_size = input.size();
-    const double ratio = static_cast<double>(output_rate) / input_rate; // Compute resampling ratio
-    // Use rounding to avoid systematic truncation error
-    const size_t output_size = static_cast<size_t>(std::llround(input_size * ratio));
-    std::vector<float> output(output_size);
-    const double step = static_cast<double>(input_rate) / output_rate;  // Precompute step in source domain
-    double src_pos = 0.0;
-    for (size_t i = 0; i < output_size; ++i)
+    if (input.size() % num_channels != 0)
+        return {};
+
+    const int n_in = input.size() / num_channels;
+
+    if (input_rate == output_rate)
+        return input;
+
+    const double ratio = (double)output_rate / (double)input_rate;
+    const int n_out = (int)std::lround(n_in * ratio);
+
+    std::vector<float> output((size_t)n_out * num_channels);
+
+    const int half_len = 32;
+    const double beta = 9.0;
+
+    const double inv_i0b = 1.0 / audio_resample_bessel_i0(beta);
+    const double fc = 0.5 * ((ratio < 1.0) ? ratio : 1.0);
+
+    for (int ch = 0; ch < num_channels; ch++)
     {
-        size_t idx = static_cast<size_t>(src_pos);
-        if (idx >= input_size - 1)    // Clamp to valid range (prevents out-of-bounds)
+        const float* src = input.data() + ch * n_in;
+        float* dst = output.data() + ch * n_out;
+
+        for (int i = 0; i < n_out; i++)
         {
-            output[i] = input[input_size - 1];
+            double center = (double)i / ratio;
+
+            int start = (int)std::floor(center) - half_len + 1;
+            int end   = (int)std::floor(center) + half_len;
+
+            double sum = 0.0;
+            double wgt = 0.0;
+
+            for (int j = start; j <= end; j++)
+            {
+                double d = center - (double)j;
+
+                double sinc_val;
+                if (std::fabs(d) < 1e-9)
+                    sinc_val = 2.0 * fc;
+                else
+                    sinc_val = std::sin(2.0 * M_PI * fc * d) / (M_PI * d);
+
+                double t = d / (double)half_len;
+
+                double win;
+                if (t < -1.0 || t > 1.0)
+                    win = 0.0;
+                else
+                    win = audio_resample_bessel_i0(beta * std::sqrt(1.0 - t * t)) * inv_i0b;
+
+                double h = sinc_val * win;
+
+                int idx = j;
+                if (idx < 0) idx = 0;
+                if (idx >= n_in) idx = n_in - 1;
+
+                sum += src[idx] * h;
+                wgt += h;
+            }
+
+            dst[i] = (wgt > 1e-12) ? (float)(sum / wgt) : 0.0f;
         }
-        else
-        {
-            const double frac = src_pos - idx;
-            const float s0 = input[idx];
-            const float s1 = input[idx + 1];
-            output[i] = static_cast<float>(s0 + (s1 - s0) * frac);
-        }
-        src_pos += step;
     }
+
     return output;
 }
 
