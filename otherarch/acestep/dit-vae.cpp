@@ -980,7 +980,7 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
     float muslen = (float)T_audio / 48000.0f;
     std::string finalb64;
     if (inputs.use_mp3) {
-        fprintf(stderr, "[Save Audio] Converting to Mp3...\n",muslen);
+        fprintf(stderr, "[Save Audio] Converting to Mp3 (CPU based, may be slow, use .wav if too slow)...\n",muslen);
         finalb64 = save_stereo_mp3_base64(audio, T_audio, 48000);
     } else if (inputs.stereo) {
          fprintf(stderr, "[Save Audio] Save as Stereo WAV...\n",muslen);

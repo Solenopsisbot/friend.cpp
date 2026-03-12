@@ -206,7 +206,7 @@ input[type="checkbox"] {
       <div><label>Steps</label><input id="inference_steps" type="number" value="8"></div>
       <div><label>Guidance</label><input id="guidance_scale" type="number" value="1"></div>
       <div><label>Shift</label><input id="shift" type="number" value="3"></div>
-      <div><label>Save as MP3</label><input id="use_mp3" type="checkbox" checked></div>
+      <div><label>Save as MP3</label><input id="use_mp3" type="checkbox"></div>
       <div><label>Stereo</label><input id="stereo" type="checkbox" checked></div>
       <div><label>Gen Codes</label><input id="gen_codes" type="checkbox"></div>
     </div>
@@ -460,12 +460,14 @@ function loadLibrary(){
         const div=document.createElement("div");
         div.className="library-item";
         const url=URL.createObjectURL(item.audio);
+        let ismp3 = (item.params?(item.params.use_mp3?true:false):false);
+        let savfmt = (ismp3?".mp3":".wav");
         div.innerHTML=`
           <h4>${item.title}</h4>
           <div class="meta">${new Date(item.date).toLocaleString()}</div>
           <audio controls src="${url}"></audio>
           <div style="margin-top:6px;display:flex;gap:6px;">
-            <a href="${url}" download="${item.title}.wav">
+            <a href="${url}" download="${item.title}${savfmt}">
                 <button class="secondary">Download</button>
             </a>
             <button class="secondary" onclick="loadTrackJSON(${item.id})">
