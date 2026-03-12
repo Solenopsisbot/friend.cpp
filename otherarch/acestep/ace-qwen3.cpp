@@ -534,10 +534,10 @@ struct MetadataFSM {
             for (int v = 30; v <= 300; v++) vals.push_back(std::to_string(v));
             build_value_tree(bpe, bpm_tree, "bpm:", vals);
         }
-        // Duration 50-450
+        // Duration 40-450
         {
             std::vector<std::string> vals;
-            for (int v = 50; v <= 450; v++) vals.push_back(std::to_string(v));
+            for (int v = 40; v <= 450; v++) vals.push_back(std::to_string(v));
             build_value_tree(bpe, duration_tree, "duration:", vals);
         }
         // Keyscale
