@@ -351,6 +351,7 @@ struct music_generation_inputs
     const bool gen_codes = false;
     const bool rewrite_caption = true;
     const char * input_json = nullptr;
+    const char * music_reference_audio_data = nullptr;
 };
 struct music_generation_outputs
 {

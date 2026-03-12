@@ -464,7 +464,8 @@ class music_generation_inputs(ctypes.Structure):
                 ("use_mp3", ctypes.c_bool),
                 ("gen_codes", ctypes.c_bool),
                 ("rewrite_caption", ctypes.c_bool),
-                ("input_json", ctypes.c_char_p)]
+                ("input_json", ctypes.c_char_p),
+                ("music_reference_audio_data", ctypes.c_char_p)]
 
 class music_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2490,6 +2491,7 @@ def music_generate_codes(genparams):
     inputs.gen_codes =  genparams.get('gen_codes', False)
     inputs.rewrite_caption =  genparams.get('rewrite_caption', True)
     inputs.input_json = input_json.encode("UTF-8")
+    inputs.music_reference_audio_data = "".encode("UTF-8")
     ret = handle.music_generate(inputs)
     outstr = ""
     if ret.status==1:
@@ -2507,6 +2509,8 @@ def music_generate_audio(genparams):
     inputs.gen_codes =  genparams.get('gen_codes', False)
     inputs.rewrite_caption =  genparams.get('rewrite_caption', True)
     inputs.input_json = input_json.encode("UTF-8")
+    refaudio = genparams.get('music_reference_audio_data', None)
+    inputs.music_reference_audio_data = (refaudio.encode("UTF-8") if (refaudio and refaudio!="") else "".encode("UTF-8"))
     ret = handle.music_generate(inputs)
     outstr = ""
     if ret.status==1:

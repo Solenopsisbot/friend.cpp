@@ -36,6 +36,7 @@ void request_init(AceRequest * r) {
     r->inference_steps    = 8;
     r->guidance_scale     = 1.0f;
     r->shift              = 3.0f;
+    r->audio_cover_strength = 0.5f;
 }
 
 // JSON string escape / unescape
@@ -250,6 +251,7 @@ bool request_parse_from_str(AceRequest * r, std::string json) {
         else if (k == "inference_steps")    r->inference_steps    = atoi(v.c_str());
         else if (k == "guidance_scale")     r->guidance_scale     = (float)atof(v.c_str());
         else if (k == "shift")              r->shift              = (float)atof(v.c_str());
+        else if (k == "audio_cover_strength") r->audio_cover_strength = (float)atof(v.c_str());
 
         else if (k == "codes_temperature")     r->codes_temperature     = (float)atof(v.c_str());
         else if (k == "codes_top_p")           r->codes_top_p           = (float)atof(v.c_str());
@@ -297,6 +299,7 @@ bool request_write(const AceRequest * r, const char * path) {
     fprintf(f, "  \"inference_steps\": %d,\n",        r->inference_steps);
     fprintf(f, "  \"guidance_scale\": %.1f,\n",       r->guidance_scale);
     fprintf(f, "  \"shift\": %.1f,\n",                r->shift);
+    fprintf(f, "  \"audio_cover_strength\": %.2f,\n", r->audio_cover_strength);
     // audio_codes last (no trailing comma)
     fprintf(f, "  \"audio_codes\": \"%s\"\n",         json_escape(r->audio_codes).c_str());
     fprintf(f, "}\n");
@@ -321,6 +324,8 @@ void request_dump(const AceRequest * r, FILE * f) {
             r->lm_temperature, r->lm_top_p, r->lm_top_k);
     fprintf(f, "  dit: steps=%d guidance=%.1f shift=%.1f\n",
             r->inference_steps, r->guidance_scale, r->shift);
+    if (r->audio_cover_strength != 0.5f)
+        fprintf(f, "  cover: strength=%.2f\n", r->audio_cover_strength);
     fprintf(f, "  audio_codes: %s\n",
             r->audio_codes.empty() ? "(none)" : "(present)");
 }

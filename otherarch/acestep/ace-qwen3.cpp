@@ -528,10 +528,10 @@ struct MetadataFSM {
         language_name = bpe_encode(&bpe, "language:", false);
         timesig_name  = bpe_encode(&bpe, "timesignature:", false);
 
-        // BPM 30-300
+        // BPM 30-195
         {
             std::vector<std::string> vals;
-            for (int v = 30; v <= 300; v++) vals.push_back(std::to_string(v));
+            for (int v = 30; v <= 195; v++) vals.push_back(std::to_string(v));
             build_value_tree(bpe, bpm_tree, "bpm:", vals);
         }
         // Duration 40-450
