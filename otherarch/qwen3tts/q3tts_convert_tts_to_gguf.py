@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Convert HuggingFace Qwen3-TTS-12Hz-0.6B-Base model to GGUF format.
+Convert HuggingFace Qwen3-TTS model to GGUF format.
 
 Usage:
     python scripts/convert_tts_to_gguf.py \
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 class Qwen3TTSConverter:
-    """Converter for Qwen3-TTS-12Hz-0.6B-Base model to GGUF format."""
+    """Converter for Qwen3-TTS models to GGUF format."""
 
     # Direct tensor name mapping from HuggingFace to GGML conventions
     TENSOR_MAP = {
@@ -55,6 +55,9 @@ class Qwen3TTSConverter:
         "talker.text_projection.linear_fc2.bias": "talker.text_proj.fc2.bias",
         # Code Predictor - Output norm
         "talker.code_predictor.model.norm.weight": "code_pred.output_norm.weight",
+        # Code Predictor - MTP projection (talker_hidden -> code_pred_hidden)
+        "talker.code_predictor.small_to_mtp_projection.weight": "code_pred.mtp_proj.weight",
+        "talker.code_predictor.small_to_mtp_projection.bias": "code_pred.mtp_proj.bias",
         # Speaker Encoder - Initial conv
         "speaker_encoder.blocks.0.conv.weight": "spk_enc.conv0.weight",
         "speaker_encoder.blocks.0.conv.bias": "spk_enc.conv0.bias",
@@ -177,6 +180,11 @@ class Qwen3TTSConverter:
         # Code Predictor parameters
         self.code_predictor_num_layers = code_predictor_config.get("num_hidden_layers", 5)
         self.code_predictor_vocab_size = code_predictor_config.get("vocab_size", 2048)
+        self.code_pred_hidden_size = code_predictor_config.get("hidden_size", 1024)
+        self.code_pred_n_attention_heads = code_predictor_config.get("num_attention_heads", 16)
+        self.code_pred_n_key_value_heads = code_predictor_config.get("num_key_value_heads", 8)
+        self.code_pred_intermediate_size = code_predictor_config.get("intermediate_size", 3072)
+        self.code_pred_head_dim = code_predictor_config.get("head_dim", 128)
 
         # Speaker Encoder parameters
         self.speaker_enc_dim = speaker_encoder_config.get("enc_dim", 1024)
@@ -187,8 +195,10 @@ class Qwen3TTSConverter:
         self.codec_bos_id = talker_config.get("codec_bos_id", 2149)
         self.codec_eos_id = talker_config.get("codec_eos_token_id", 2150)
 
-        # Model name
-        self.model_name = "Qwen3-TTS-12Hz-0.6B"
+        # Model name — derive from config or input directory name
+        self.model_name = self.config.get("general_name",
+                          self.input_dir.name.replace("-Base", "").replace("-", " ").strip()
+                          or "Qwen3-TTS")
 
     def _map_tensor_name(self, hf_name: str) -> str | None:
         """Map HuggingFace tensor name to GGML convention."""
@@ -241,31 +251,41 @@ class Qwen3TTSConverter:
                 for name in f.keys():
                     yield name, f.get_tensor(name)
 
-    def _should_quantize(self, tensor_name: str) -> bool:
+    def _should_quantize(self, tensor_name: str, n_dims: int) -> bool:
         """Determine if a tensor should be quantized (Q8_0) or kept in F16.
-        
-        Tensors to keep in F16 for quality:
+
+        Tensors to keep in F16:
+        - 3D tensors (conv1d weights — Q8_0 doesn't support 3D)
+        - Speaker encoder tensors (tiny, not worth quantizing)
         - Embeddings (codec_embd, text_embd, codebook)
         - Layer norms (attn_norm, ffn_norm, output_norm)
         - Biases
         - LM heads
         """
+        # 3D tensors (conv1d) can't be quantized
+        if n_dims >= 3:
+            return False
+
+        # Speaker encoder is tiny, keep in F16
+        if "spk_enc" in tensor_name:
+            return False
+
         # Keep embeddings in F16
         if any(x in tensor_name for x in ["_embd", "codebook"]):
             return False
-        
+
         # Keep layer norms in F16
         if "_norm" in tensor_name:
             return False
-        
+
         # Keep biases in F16
         if ".bias" in tensor_name:
             return False
-        
+
         # Keep LM heads in F16
         if "lm_head" in tensor_name or "codec_head" in tensor_name:
             return False
-        
+
         # Quantize weight matrices
         return True
 
@@ -292,28 +312,16 @@ class Qwen3TTSConverter:
         elif self.output_type == "f16":
             return data.astype(np.float16), gguf.GGMLQuantizationType.F16
         elif self.output_type == "q8_0":
-            if not self._should_quantize(tensor_name):
+            if not self._should_quantize(tensor_name, n_dims):
                 logger.debug(f"Keeping {tensor_name} in F16 (not quantizing)")
                 return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-            
+
             data = data.astype(np.float32)
             try:
                 quantized = gguf.quants.quantize(data, gguf.GGMLQuantizationType.Q8_0)
                 return quantized, gguf.GGMLQuantizationType.Q8_0
             except Exception as e:
                 logger.warning(f"Q8_0 quantization failed for {tensor_name}: {e}, falling back to F16")
-                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-        elif self.output_type == "q4_k":
-            if not self._should_quantize(tensor_name):
-                logger.debug(f"Keeping {tensor_name} in F16 (not quantizing)")
-                return data.astype(np.float16), gguf.GGMLQuantizationType.F16
-            
-            data = data.astype(np.float32)
-            try:
-                quantized = gguf.quants.quantize(data, gguf.GGMLQuantizationType.Q4_K)
-                return quantized, gguf.GGMLQuantizationType.Q4_K
-            except Exception as e:
-                logger.warning(f"Q4_K quantization failed for {tensor_name}: {e}, falling back to F16")
                 return data.astype(np.float16), gguf.GGMLQuantizationType.F16
         else:
             return data.astype(np.float16), gguf.GGMLQuantizationType.F16
@@ -416,7 +424,7 @@ class Qwen3TTSConverter:
     def _add_metadata(self, writer: gguf.GGUFWriter) -> None:
         """Add model metadata to GGUF writer."""
         arch = "qwen3-tts"
-        
+
         # General metadata
         writer.add_name(self.model_name)
         writer.add_type(gguf.GGUFType.MODEL)
@@ -428,8 +436,6 @@ class Qwen3TTSConverter:
             ftype = gguf.LlamaFileType.MOSTLY_F16
         elif self.output_type == "q8_0":
             ftype = gguf.LlamaFileType.MOSTLY_Q8_0
-        elif self.output_type == "q4_k":
-            ftype = gguf.LlamaFileType.MOSTLY_Q4_K_M
         else:
             ftype = gguf.LlamaFileType.MOSTLY_F16
         writer.add_file_type(ftype)
@@ -460,6 +466,11 @@ class Qwen3TTSConverter:
         # Code Predictor parameters
         writer.add_uint32(f"{arch}.code_predictor.layer_count", self.code_predictor_num_layers)
         writer.add_uint32(f"{arch}.code_predictor.vocab_size", self.code_predictor_vocab_size)
+        writer.add_uint32(f"{arch}.code_pred.embedding_length", self.code_pred_hidden_size)
+        writer.add_uint32(f"{arch}.code_pred.attention.head_count", self.code_pred_n_attention_heads)
+        writer.add_uint32(f"{arch}.code_pred.attention.head_count_kv", self.code_pred_n_key_value_heads)
+        writer.add_uint32(f"{arch}.code_pred.feed_forward_length", self.code_pred_intermediate_size)
+        writer.add_uint32(f"{arch}.code_pred.attention.key_length", self.code_pred_head_dim)
 
         # Speaker Encoder parameters
         writer.add_uint32(f"{arch}.speaker_encoder.embedding_length", self.speaker_enc_dim)
@@ -526,7 +537,7 @@ class Qwen3TTSConverter:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert Qwen3-TTS-12Hz-0.6B-Base model to GGUF format"
+        description="Convert Qwen3-TTS model to GGUF format"
     )
     parser.add_argument(
         "--input", "-i",
@@ -542,9 +553,9 @@ def main():
     )
     parser.add_argument(
         "--type", "-t",
-        choices=["f16", "f32", "q8_0", "q4_k"],
+        choices=["f16", "f32", "q8_0"],
         default="f16",
-        help="Output data type (default: f16). q8_0 provides ~50%% size reduction, q4_k provides ~70%% size reduction."
+        help="Output data type (default: f16). q8_0 provides ~50%% size reduction."
     )
     parser.add_argument(
         "--verbose", "-v",
