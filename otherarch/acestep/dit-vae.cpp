@@ -785,12 +785,27 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
     int vae_chunk              = 256;
     int vae_overlap            = 64;
 
+    // Parse request JSON
+    AceRequest req;
+    std::string injson =  inputs.input_json;
+    request_init(&req);
+    if (!request_parse_from_str(&req, injson)) {
+        fprintf(stderr, "ERROR: failed to parse music gen request\n");
+        return "";
+    }
+    if (req.caption.empty()) {
+        req.caption = "An interesting song";
+    }
+    req.thinking = false;
+    req.inference_steps = (req.inference_steps>100?100:req.inference_steps); //clamp to 100
+    req.duration = (req.duration>420?420:req.duration); //clamp to 7 min
+
     // Cover mode: load VAE encoder and encode source audio
     bool have_cover = false;
     std::vector<float> cover_latents;  // [T_cover, 64] time-major
     int T_cover = 0;
     std::string custom_reference_audio_str = inputs.music_reference_audio_data;
-    if (custom_reference_audio_str!="")
+    if (custom_reference_audio_str!="" && req.audio_cover_strength>0)
     {
         if(!acestep_vae_enc_loaded)
         {
@@ -799,21 +814,19 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
         }
 
         music_dit_timer.reset();
-        int T_audio = 0, wav_sr = 0;
+        int T_audio = 0;
+        int wav_sr = 48000;
 
         std::vector<uint8_t> media_data_buffer = kcpp_base64_decode(custom_reference_audio_str);
-        std::vector<float> custom_reference_audio_pcmf32;
-        bool ok = kcpp_decode_audio_from_buf(media_data_buffer.data(), media_data_buffer.size(), 48000, custom_reference_audio_pcmf32);
+        std::vector<float> pcm;
+        bool ok = kcpp_decode_audio_to_f32_stereo_48k(media_data_buffer.data(), media_data_buffer.size(), pcm, T_audio);
         if (!ok) {
-            printf("\nError: Cannot read input audio file.\n");
+            printf("\nError: Cannot decode audio\n");
             return "";
         }
+        float *wav_data = pcm.data();
 
-        wav_sr = 48000;
-        T_audio = custom_reference_audio_pcmf32.size();
-        float * wav_data = custom_reference_audio_pcmf32.data();
-
-        fprintf(stderr, "[Cover] Source audio: %.2fs\n", (float)T_audio / (float)(wav_sr > 0 ? wav_sr : 48000));
+        fprintf(stderr, "[Cover] Source audio: %.2fs, SR:%d, WavDataSize:%zu\n", (float)T_audio / (float)(wav_sr > 0 ? wav_sr : 48000),wav_sr,T_audio);
         int max_T_lat = (T_audio / 1920) + 64;
         cover_latents.resize(max_T_lat * 64);
         T_cover = vae_enc_encode_tiled(&vae_enc, wav_data, T_audio,
@@ -845,21 +858,6 @@ std::string acestep_generate_audio(const music_generation_inputs inputs)
             return "";
         }
     }
-
-    // Parse request JSON
-    AceRequest req;
-    std::string injson =  inputs.input_json;
-    request_init(&req);
-    if (!request_parse_from_str(&req, injson)) {
-        fprintf(stderr, "ERROR: failed to parse music gen request\n");
-        return "";
-    }
-    if (req.caption.empty()) {
-        req.caption = "An interesting song";
-    }
-    req.thinking = false;
-    req.inference_steps = (req.inference_steps>100?100:req.inference_steps); //clamp to 100
-    req.duration = (req.duration>420?420:req.duration); //clamp to 7 min
 
     // Extract params
     const char * caption  = req.caption.c_str();
