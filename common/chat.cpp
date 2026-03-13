@@ -8,11 +8,17 @@
 #include "log.h"
 #include "json-partial.cpp"
 #include "regex-partial.cpp"
-#include "chat-parser-xml-toolcall.cpp"
+#include "chat-auto-parser-generator.cpp"
+#include "chat-auto-parser-helpers.cpp"
+#include "chat-diff-analyzer.cpp"
 
-#include "jinja/value.h"
-#include "jinja/runtime.h"
-#include "jinja/caps.h"
+#include "jinja/lexer.cpp"
+#include "jinja/parser.cpp"
+#include "jinja/runtime.cpp"
+#include "jinja/value.cpp"
+#include "jinja/string.cpp"
+#include "jinja/caps.cpp"
+
 #include "peg-parser.h"
 
 #include <algorithm>
@@ -133,7 +139,7 @@ json common_chat_msg::to_json_oaicompat(bool concat_typed_text) const {
                 {"type", "function"},
                 {"function", {
                     {"name", tool_call.name},
-                    {"arguments", json::parse(tool_call.arguments)},
+                    {"arguments", json(tool_call.arguments)},
                 }},
             };
             if (!tool_call.id.empty()) {
@@ -482,7 +488,6 @@ json common_chat_msg_diff_to_json_oaicompat(const common_chat_msg_diff & diff) {
     return delta;
 }
 
-#include "chat-parser.cpp"
 #include "common/unicode.h"
 #include "peg-parser.cpp"
 #include "chat-peg-parser.cpp"
@@ -737,15 +742,15 @@ common_reasoning_format common_reasoning_format_from_name(const std::string & fo
     throw std::runtime_error("Unknown reasoning format: " + format);
 }
 
-static void foreach_function(const json & tools, const std::function<void(const json &)> & fn) {
-    for (const auto & tool : tools) {
-        if (!tool.contains("type") || tool.at("type") != "function" || !tool.contains("function")) {
-            LOG_INF("Skipping tool without function: %s", tool.dump(2).c_str());
-            continue;
-        }
-        fn(tool);
-    }
-}
+// static void foreach_function(const json & tools, const std::function<void(const json &)> & fn) {
+//     for (const auto & tool : tools) {
+//         if (!tool.contains("type") || tool.at("type") != "function" || !tool.contains("function")) {
+//             LOG_INF("Skipping tool without function: %s", tool.dump(2).c_str());
+//             continue;
+//         }
+//         fn(tool);
+//     }
+// }
 
 static void foreach_parameter(const json &                                                         function,
                               const std::function<void(const std::string &, const json &, bool)> & fn) {
@@ -1362,6 +1367,8 @@ static common_chat_params common_chat_templates_apply_jinja(const struct common_
     params.add_bos = tmpls->add_bos;
     params.add_eos = tmpls->add_eos;
 
+    workaround::func_args_not_string(params.messages);
+
     if (!tmpl.original_caps().supports_system_role) {
         workaround::system_message_not_supported(params.messages);
     }
@@ -1534,8 +1541,12 @@ common_chat_msg common_chat_peg_parse(const common_peg_arena &          src_pars
 
     LOG_DBG("Parsing PEG input with format %s: %s\n", common_chat_format_name(params.format), input.c_str());
 
-    common_peg_parse_context ctx(input, is_partial);
-    ctx.debug   = params.debug;
+    common_peg_parse_flags flags = COMMON_PEG_PARSE_FLAG_LENIENT;
+    if (params.debug) {
+        flags |= COMMON_PEG_PARSE_FLAG_DEBUG;
+    }
+
+    common_peg_parse_context ctx(input, flags);
     auto result = parser.parse(ctx);
 
     if (result.fail()) {
@@ -1548,7 +1559,7 @@ common_chat_msg common_chat_peg_parse(const common_peg_arena &          src_pars
             auto mapper = common_chat_peg_mapper(msg);
             mapper.from_ast(ctx.ast, result);
 
-            if (ctx.debug) {
+            if (ctx.is_debug()) {
                 fprintf(stderr, "\nAST for partial parse (fail):\n%s\n", ctx.ast.dump().c_str());
                 fflush(stderr);
             }
@@ -1564,7 +1575,7 @@ common_chat_msg common_chat_peg_parse(const common_peg_arena &          src_pars
     auto mapper = common_chat_peg_mapper(msg);
     mapper.from_ast(ctx.ast, result);
 
-    if (ctx.debug) {
+    if (ctx.is_debug()) {
         fprintf(stderr, "\nAST for %s parse:\n%s\n", is_partial ? "partial" : "full", ctx.ast.dump().c_str());
         fflush(stderr);
     }
