@@ -1173,6 +1173,24 @@ def get_capabilities():
     admin_type = (2 if args.admin and args.admindir and args.adminpassword else (1 if args.admin and args.admindir else 0))
     return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":has_vision_support,"audio":has_audio_support,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts, "embeddings":has_embeddings, "music":has_music, "savedata":(savedata_obj is not None), "admin": admin_type, "guidance": has_guidance, "jinja": has_jinja, "mcp":has_mcp}
 
+def get_current_admindir_list():
+    opts = []
+    if args.admin and args.admindir:
+        dirpath = os.path.abspath(args.admindir)
+        valid_exts = (".kcpps", ".kcppt", ".gguf")
+        for entry in sorted(os.listdir(dirpath)): # Scan top-level directory
+            full_path = os.path.join(dirpath, entry)
+            if os.path.isfile(full_path) and entry.endswith(valid_exts): # If toplevel file
+                opts.append(entry)
+            elif os.path.isdir(full_path): #if dir, scan up to 1 level deep
+                for subentry in sorted(os.listdir(full_path)):
+                    sub_full_path = os.path.join(full_path, subentry)
+                    if os.path.isfile(sub_full_path) and subentry.endswith(valid_exts):
+                        rel_path = os.path.join(entry, subentry)
+                        opts.append(rel_path)
+        opts.append("unload_model")
+    return opts
+
 def dump_gguf_metadata(file_path): #if you're gonna copy this into your own project at least credit concedo
     chunk_size = 1024*1024*12  # read first 12mb of file
     try:
@@ -4253,19 +4271,7 @@ Change Mode<br>
         elif clean_path.endswith(('/api/admin/list_options')):  # used by admin to get info about a kcpp instance
             opts = []
             if args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
-                dirpath = os.path.abspath(args.admindir)
-                valid_exts = (".kcpps", ".kcppt", ".gguf")
-                for entry in sorted(os.listdir(dirpath)): # Scan top-level directory
-                    full_path = os.path.join(dirpath, entry)
-                    if os.path.isfile(full_path) and entry.endswith(valid_exts): # If toplevel file
-                        opts.append(entry)
-                    elif os.path.isdir(full_path): #if dir, scan up to 1 level deep
-                        for subentry in sorted(os.listdir(full_path)):
-                            sub_full_path = os.path.join(full_path, subentry)
-                            if os.path.isfile(sub_full_path) and subentry.endswith(valid_exts):
-                                rel_path = os.path.join(entry, subentry)
-                                opts.append(rel_path)
-                opts.append("unload_model")
+                opts = get_current_admindir_list()
             response_body = (json.dumps(opts).encode())
 
         elif clean_path.endswith(('/api/extra/perf')):
@@ -4334,7 +4340,12 @@ Change Mode<br>
             response_body = (json.dumps({"logprobs":logprobsdict}).encode())
 
         elif clean_path.endswith('/v1/models') or clean_path=='/models':
-            response_body = (json.dumps({"object":"list","data":[{"id":friendlymodelname,"object":"model","created":int(time.time()),"owned_by":"koboldcpp","permission":[],"root":"koboldcpp"}]}).encode())
+            mlist = [{"id":friendlymodelname,"object":"model","created":int(time.time()),"owned_by":"koboldcpp","permission":[],"root":"koboldcpp"}]
+            if args.routermode:
+                alist = get_current_admindir_list()
+                for itm in alist:
+                    mlist.append({"id":itm,"object":"model","created":int(time.time()),"owned_by":"koboldcpp","permission":[],"root":"koboldcpp"})
+            response_body = (json.dumps({"object":"list","data":mlist}).encode())
 
         elif clean_path.endswith('/sdapi/v1/loras'):
             response_body = (json.dumps([{'name': name, 'path': path} for _, name, path, multiplier in imglorainfo if multiplier == 0.])).encode()
