@@ -573,26 +573,37 @@ void llama_model::load_hparams(llama_model_loader & ml) {
         // gpt-neox n_rot = rotary_pct * (n_embd / n_head)
         // gpt-j n_rot = rotary_dim
 
-        hparams.n_embd_head_k = hparams.n_embd / hparams.n_head();
-        ml.get_key(LLM_KV_ATTENTION_KEY_LENGTH, hparams.n_embd_head_k, false);
+        hparams.n_embd_head_k_full = hparams.n_embd / hparams.n_head();
+        ml.get_key(LLM_KV_ATTENTION_KEY_LENGTH, hparams.n_embd_head_k_full, false);
 
-        hparams.n_embd_head_v = hparams.n_embd / hparams.n_head();
-        ml.get_key(LLM_KV_ATTENTION_VALUE_LENGTH, hparams.n_embd_head_v, false);
+        hparams.n_embd_head_v_full = hparams.n_embd / hparams.n_head();
+        ml.get_key(LLM_KV_ATTENTION_VALUE_LENGTH, hparams.n_embd_head_v_full, false);
 
         // sanity check for n_rot (optional)
-        hparams.n_rot = hparams.n_embd_head_k;
+        hparams.n_rot_full = hparams.n_embd_head_k_full;
 
-        ml.get_key(LLM_KV_ROPE_DIMENSION_COUNT, hparams.n_rot, false);
+        ml.get_key(LLM_KV_ROPE_DIMENSION_COUNT, hparams.n_rot_full, false);
 
         if (arch == LLM_ARCH_LLAMA || arch == LLM_ARCH_DECI || arch == LLM_ARCH_FALCON || arch == LLM_ARCH_LLAMA_EMBED) {
-            if (hparams.n_rot != hparams.n_embd_head_k) {
-                throw std::runtime_error(format("invalid n_rot: %u, expected %u", hparams.n_rot, hparams.n_embd_head_k));
+            if (hparams.n_rot_full != hparams.n_embd_head_k_full) {
+                throw std::runtime_error(format("invalid n_rot: %u, expected %u", hparams.n_rot_full, hparams.n_embd_head_k_full));
             }
         }
     } else {
-        hparams.n_rot = 0;
-        hparams.n_embd_head_k = 0;
-        hparams.n_embd_head_v = 0;
+        hparams.n_rot_full = 0;
+        hparams.n_embd_head_k_full = 0;
+        hparams.n_embd_head_v_full = 0;
+    }
+
+    // head size and n_rot for SWA layers
+    {
+        hparams.n_embd_head_k_swa = hparams.n_embd_head_k_full;
+        hparams.n_embd_head_v_swa = hparams.n_embd_head_v_full;
+        ml.get_key(LLM_KV_ATTENTION_KEY_LENGTH_SWA, hparams.n_embd_head_k_swa, false);
+        ml.get_key(LLM_KV_ATTENTION_VALUE_LENGTH_SWA, hparams.n_embd_head_v_swa, false);
+
+        hparams.n_rot_swa = hparams.n_rot_full;
+        ml.get_key(LLM_KV_ROPE_DIMENSION_COUNT_SWA, hparams.n_rot_swa, false);
     }
 
     // for differentiating model types
@@ -1228,10 +1239,6 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                         break;
                     default: type = LLM_TYPE_UNKNOWN;
                 }
-
-                // Load attention parameters
-                ml.get_key(LLM_KV_ATTENTION_KEY_LENGTH,   hparams.n_embd_head_k, false);
-                ml.get_key(LLM_KV_ATTENTION_VALUE_LENGTH, hparams.n_embd_head_v, false);
             } break;
         case LLM_ARCH_PLAMO3:
             {
@@ -1326,7 +1333,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 // ref: https://github.com/google/gemma_pytorch/blob/014acb7ac4563a5f77c76d7ff98f31b568c16508/gemma/config.py#L173
                 hparams.f_attention_scale = type == LLM_TYPE_27B
                     ? 1.0f / std::sqrt(float(hparams.n_embd / hparams.n_head(0)))
-                    : 1.0f / std::sqrt(float(hparams.n_embd_head_k));
+                    : 1.0f / std::sqrt(float(hparams.n_embd_head_k()));
             } break;
         case LLM_ARCH_GEMMA3:
             {
@@ -1359,7 +1366,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 // ref: https://github.com/google/gemma_pytorch/blob/014acb7ac4563a5f77c76d7ff98f31b568c16508/gemma/config.py#L289
                 hparams.f_attention_scale = type == LLM_TYPE_27B
                     ? 1.0f / std::sqrt(float(hparams.n_embd / hparams.n_head(0)))
-                    : 1.0f / std::sqrt(float(hparams.n_embd_head_k));
+                    : 1.0f / std::sqrt(float(hparams.n_embd_head_k()));
             } break;
         case LLM_ARCH_GEMMA3N:
             {
@@ -1408,7 +1415,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                     case 24: type = LLM_TYPE_0_3B; break;
                     default: type = LLM_TYPE_UNKNOWN;
                 }
-                hparams.f_attention_scale = 1.0f / std::sqrt(float(hparams.n_embd_head_k));
+                hparams.f_attention_scale = 1.0f / std::sqrt(float(hparams.n_embd_head_k()));
 
             } break;
         case LLM_ARCH_STARCODER2:
@@ -1684,6 +1691,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 ml.get_key(LLM_KV_LEADING_DENSE_BLOCK_COUNT,   hparams.n_layer_dense_lead, false);
                 ml.get_key(LLM_KV_EXPERT_FEED_FORWARD_LENGTH,  hparams.n_ff_exp);
                 ml.get_key(LLM_KV_EXPERT_SHARED_COUNT,         hparams.n_expert_shared);
+                ml.get_key(LLM_KV_EXPERT_WEIGHTS_SCALE,        hparams.expert_weights_scale, false);
 
                 switch (hparams.n_ff_exp) {
                     case 1408: type = LLM_TYPE_16B; break;
@@ -2190,6 +2198,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 ml.get_key(LLM_KV_LEADING_DENSE_BLOCK_COUNT,   hparams.n_layer_dense_lead, false);
                 ml.get_key(LLM_KV_EXPERT_FEED_FORWARD_LENGTH,  hparams.n_ff_exp);
                 ml.get_key(LLM_KV_EXPERT_SHARED_COUNT,         hparams.n_expert_shared);
+                ml.get_key(LLM_KV_EXPERT_WEIGHTS_SCALE,        hparams.expert_weights_scale, false);
                 ml.get_key(LLM_KV_EXPERT_WEIGHTS_NORM,         hparams.expert_weights_norm, false);
 
                 switch (hparams.n_layer) {
@@ -2599,7 +2608,6 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 ml.get_key(LLM_KV_ATTENTION_KEY_LENGTH_MLA,    hparams.n_embd_head_k_mla_impl);
                 ml.get_key(LLM_KV_ATTENTION_VALUE_LENGTH_MLA,  hparams.n_embd_head_v_mla_impl);
                 ml.get_key(LLM_KV_ATTENTION_KV_LORA_RANK,      hparams.n_lora_kv);
-                ml.get_key(LLM_KV_ROPE_DIMENSION_COUNT,        hparams.n_rot);
                 ml.get_key(LLM_KV_SSM_CONV_KERNEL,             hparams.ssm_d_conv);
                 ml.get_key(LLM_KV_KDA_HEAD_DIM,                hparams.n_embd_head_kda);
 
@@ -2629,6 +2637,9 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
 
                 hparams.swa_type = LLAMA_SWA_TYPE_STANDARD;
+
+                // full_attention layer only use half of the RoPE dimensions
+                hparams.n_rot_full = hparams.n_rot_full / 2;
 
                 // MoE + SWA parameters
                 ml.get_key(LLM_KV_EXPERT_FEED_FORWARD_LENGTH,        hparams.n_ff_exp);
@@ -2777,13 +2788,13 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         const int64_t n_embd        = hparams.n_embd;
         const int64_t n_embd_k_gqa  = hparams.n_embd_k_gqa();
         const int64_t n_embd_v_gqa  = hparams.n_embd_v_gqa();
-        const int64_t n_embd_head_k = hparams.n_embd_head_k;
-        const int64_t n_embd_head_v = hparams.n_embd_head_v;
+        const int64_t n_embd_head_k = hparams.n_embd_head_k();
+        const int64_t n_embd_head_v = hparams.n_embd_head_v();
         const int64_t n_ff          = hparams.n_ff();
         const int64_t n_embd_gqa    = n_embd_v_gqa;
         const int64_t n_vocab       = vocab.n_tokens();
         const int64_t n_token_types = vocab.n_token_types();
-        const int64_t n_rot         = hparams.n_rot;
+        const int64_t n_rot         = hparams.n_rot();
         const int64_t n_expert      = hparams.n_expert;
         const int64_t n_expert_used = hparams.n_expert_used;
         const int64_t n_ctx_train   = hparams.n_ctx_train;
@@ -3123,8 +3134,8 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 } break;
             case LLM_ARCH_MINICPM3:
                 {
-                    const int64_t n_embd_head_qk_rope = hparams.n_rot;
-                    const int64_t n_embd_head_qk_nope = hparams.n_embd_head_k - hparams.n_rot;
+                    const int64_t n_embd_head_qk_rope = hparams.n_rot();
+                    const int64_t n_embd_head_qk_nope = hparams.n_embd_head_k() - hparams.n_rot();
 
                     const int64_t q_lora_rank  = hparams.n_lora_q;
                     const int64_t kv_lora_rank = hparams.n_lora_kv;
@@ -3996,8 +4007,8 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     const int64_t dt_dim              = std::max(64, int(hparams.n_embd / 16));
 
                     // attention parameters
-                    const uint32_t qk_dim = hparams.n_embd_head_k;
-                    const uint32_t v_dim  = hparams.n_embd_head_v;
+                    const uint32_t qk_dim = hparams.n_embd_head_k();
+                    const uint32_t v_dim  = hparams.n_embd_head_v();
 
                     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
 
@@ -4057,8 +4068,8 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 } break;
             case LLM_ARCH_PLAMO3:
                 {
-                    const int64_t head_dim_q = hparams.n_embd_head_k;
-                    const int64_t head_dim_v = hparams.n_embd_head_v;
+                    const int64_t head_dim_q = hparams.n_embd_head_k();
+                    const int64_t head_dim_v = hparams.n_embd_head_v();
 
                     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
 
@@ -4805,7 +4816,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 } break;
             case LLM_ARCH_SEED_OSS:
                 {
-                    const uint32_t head_dim             = hparams.n_embd_head_k;
+                    const uint32_t head_dim             = hparams.n_embd_head_k();
                     const int64_t n_qo_dim              = n_head * head_dim;
                     const int64_t n_kv_dim              = n_head_kv * head_dim;
 
@@ -5034,7 +5045,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     const int64_t n_embd_head_k_mla = hparams.n_embd_head_k_mla();
                     const int64_t n_embd_head_v_mla = hparams.n_embd_head_v_mla();
 
-                    const int64_t n_embd_head_qk_rope = hparams.n_rot;
+                    const int64_t n_embd_head_qk_rope = hparams.n_rot();
                     const int64_t n_embd_head_qk_nope = n_embd_head_k_mla - n_embd_head_qk_rope;
                     GGML_ASSERT(n_embd_head_qk_nope >= 1);
 
@@ -5113,8 +5124,8 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 } break;
             case LLM_ARCH_PLM:
                 {
-                    const int64_t n_embd_head_qk_rope = hparams.n_rot;
-                    const int64_t n_embd_head_qk_nope = hparams.n_embd_head_k - hparams.n_rot;
+                    const int64_t n_embd_head_qk_rope = hparams.n_rot();
+                    const int64_t n_embd_head_qk_nope = hparams.n_embd_head_k() - hparams.n_rot();
                     const int64_t kv_lora_rank = hparams.n_lora_kv;
 
                     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
@@ -5552,7 +5563,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     const int64_t n_embd_head_k_mla = hparams.n_embd_head_k_mla();
                     const int64_t n_embd_head_v_mla = hparams.n_embd_head_v_mla();
 
-                    const int64_t n_embd_head_qk_rope = hparams.n_rot;
+                    const int64_t n_embd_head_qk_rope = hparams.n_rot();
                     const int64_t n_embd_head_qk_nope = n_embd_head_k_mla - n_embd_head_qk_rope;
 
                     const int64_t q_lora_rank  = hparams.n_lora_q;
@@ -5836,7 +5847,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     const int64_t n_expert       = hparams.n_expert;
                     const int64_t n_expert_used  = hparams.n_expert_used;
                     const int64_t n_ff_shexp     = hparams.n_ff_shexp > 0 ? hparams.n_ff_shexp : n_ff_exp;
-                    const int64_t head_dim       = hparams.n_embd_head_k;
+                    const int64_t head_dim       = hparams.n_embd_head_k();
                     const int64_t n_qo_dim       = n_head * head_dim;
                     const int64_t n_kv_dim       = n_head_kv * head_dim;
 
@@ -7124,7 +7135,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
 
                              // Kimi: qk_rope_head_dim = 64 (actual RoPE dimension for MLA)
                              // Note: hparams.n_rot may be 72 (from conversion) but actual is 64
-                             const int64_t qk_rope_head_dim = hparams.n_rot;  // From config: qk_rope_head_dim
+                             const int64_t qk_rope_head_dim = hparams.n_rot();  // From config: qk_rope_head_dim
                              layer.wkv_a_mqa = create_tensor(tn(LLM_TENSOR_ATTN_KV_A_MQA, "weight", i), {n_embd, kv_lora_rank + qk_rope_head_dim}, 0);
                              // Support Legacy GGUFs that don't split wkv_b (MLA KV cache disabled)
                              layer.wkv_b = create_tensor(tn(LLM_TENSOR_ATTN_KV_B, "weight", i),
@@ -7495,7 +7506,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     // ("rope_freqs.weight") and ggml uses only the first (n_rot_l/2) entries per layer.
                     uint32_t n_rot_max = 0;
                     for (int i = 0; i < n_layer; ++i) {
-                        n_rot_max = std::max(n_rot_max, hparams.n_rot);
+                        n_rot_max = std::max(n_rot_max, hparams.n_rot(i));
                     }
                     if (n_rot_max == 0) {
                         n_rot_max = n_rot;
@@ -7830,11 +7841,11 @@ void llama_model::print_info() const {
         LLAMA_LOG_INFO("%s: n_layer               = %u\n",     __func__, hparams.n_layer);
         LLAMA_LOG_INFO("%s: n_head                = %s\n",     __func__, print_f([&](uint32_t il) { return hparams.n_head(il);    }, hparams.n_layer).c_str());
         LLAMA_LOG_INFO("%s: n_head_kv             = %s\n",     __func__, print_f([&](uint32_t il) { return hparams.n_head_kv(il); }, hparams.n_layer).c_str());
-        LLAMA_LOG_INFO("%s: n_rot                 = %u\n",     __func__, hparams.n_rot);
+        LLAMA_LOG_INFO("%s: n_rot                 = %u\n",     __func__, hparams.n_rot_full);
         LLAMA_LOG_INFO("%s: n_swa                 = %u\n",     __func__, hparams.n_swa);
         LLAMA_LOG_INFO("%s: is_swa_any            = %u\n",     __func__, hparams.is_swa_any());
-        LLAMA_LOG_INFO("%s: n_embd_head_k         = %u\n",     __func__, hparams.n_embd_head_k);
-        LLAMA_LOG_INFO("%s: n_embd_head_v         = %u\n",     __func__, hparams.n_embd_head_v);
+        LLAMA_LOG_INFO("%s: n_embd_head_k         = %u\n",     __func__, hparams.n_embd_head_k_full);
+        LLAMA_LOG_INFO("%s: n_embd_head_v         = %u\n",     __func__, hparams.n_embd_head_v_full);
         LLAMA_LOG_INFO("%s: n_gqa                 = %s\n",     __func__, print_f([&](uint32_t il) { return hparams.n_gqa(il);        }, hparams.n_layer).c_str());
         LLAMA_LOG_INFO("%s: n_embd_k_gqa          = %s\n",     __func__, print_f([&](uint32_t il) { return hparams.n_embd_k_gqa(il); }, hparams.n_layer).c_str());
         LLAMA_LOG_INFO("%s: n_embd_v_gqa          = %s\n",     __func__, print_f([&](uint32_t il) { return hparams.n_embd_v_gqa(il); }, hparams.n_layer).c_str());
@@ -7858,6 +7869,9 @@ void llama_model::print_info() const {
         if (hparams.swa_type != LLAMA_SWA_TYPE_NONE) {
             LLAMA_LOG_INFO("%s: freq_base_swa         = %.1f\n",   __func__, hparams.rope_freq_base_train_swa);
             LLAMA_LOG_INFO("%s: freq_scale_swa        = %g\n",     __func__, hparams.rope_freq_scale_train_swa);
+            LLAMA_LOG_INFO("%s: n_embd_head_k_swa     = %u\n",     __func__, hparams.n_embd_head_k_swa);
+            LLAMA_LOG_INFO("%s: n_embd_head_v_swa     = %u\n",     __func__, hparams.n_embd_head_v_swa);
+            LLAMA_LOG_INFO("%s: n_rot_swa             = %u\n",     __func__, hparams.n_rot_swa);
         }
         LLAMA_LOG_INFO("%s: n_ctx_orig_yarn       = %u\n",     __func__, hparams.n_ctx_orig_yarn);
         LLAMA_LOG_INFO("%s: rope_yarn_log_mul     = %.4f\n",   __func__, hparams.rope_yarn_log_mul);

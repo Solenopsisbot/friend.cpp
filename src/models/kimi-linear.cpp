@@ -1,5 +1,4 @@
 #include "models.h"
-#include "ggml.h"
 
 #include "llama-memory-recurrent.h"
 
@@ -103,7 +102,7 @@ llm_build_kimi_linear::llm_build_kimi_linear(const llama_model & model, const ll
     const int64_t kv_lora_rank = hparams.n_lora_kv;
     // qk_rope_head_dim = 64 (from Kimi config) which is hparams.n_rot
     // Confirmed from tensor shape: wkv_a_mqa [2304, 576] = [n_embd, kv_lora_rank + qk_rope_head_dim]
-    const int64_t n_embd_head_qk_rope = hparams.n_rot;  // config.qk_rope_head_dim
+    const int64_t n_embd_head_qk_rope = hparams.n_rot();  // config.qk_rope_head_dim
     const int64_t n_embd_head_qk_nope = n_embd_head_k_mla - n_embd_head_qk_rope;  // 192 - 64 = 128
     // Attention scale for MLA
     const float kq_scale_mla = 1.0f / sqrtf((float)n_embd_head_k_mla);
@@ -341,7 +340,7 @@ llm_build_kimi_linear::llm_build_kimi_linear(const llama_model & model, const ll
                 hparams.n_expert,
                 hparams.n_expert_used,
                 LLM_FFN_SILU, true,
-                hparams.expert_weights_scale, hparams.expert_weights_scale,
+                hparams.expert_weights_scale,
                 (llama_expert_gating_func_type) hparams.expert_gating_func,
                 il);
             cb(moe_out, "ffn_moe_out", il);
