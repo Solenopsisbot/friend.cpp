@@ -626,7 +626,7 @@ const char * llama_grammar_parser::parse_sequence(
                 throw std::runtime_error(std::string("expecting an int at ") + pos);
             }
             const char * int_end = parse_int(pos);
-            uint64_t min_times = std::stoul(std::string(pos, int_end - pos));
+            uint64_t min_times = std::stoull(std::string(pos, int_end - pos));
             pos = parse_space(int_end, is_nested);
 
             uint64_t max_times = UINT64_MAX; // default: no max limit
@@ -639,7 +639,7 @@ const char * llama_grammar_parser::parse_sequence(
 
                 if (is_digit_char(*pos)) {
                     const char * int_end = parse_int(pos);
-                    max_times = std::stoul(std::string(pos, int_end - pos));
+                    max_times = std::stoull(std::string(pos, int_end - pos));
                     pos = parse_space(int_end, is_nested);
                 }
 
