@@ -1190,6 +1190,7 @@ def get_current_admindir_list():
                     if os.path.isfile(sub_full_path) and subentry.endswith(valid_exts):
                         rel_path = os.path.join(entry, subentry)
                         opts.append(rel_path)
+        opts.append("initial_model")
         opts.append("unload_model")
     return opts
 
@@ -4894,9 +4895,9 @@ Change Mode<br>
                 except Exception:
                     targetfile = ""
                 if targetfile and targetfile!="":
-                    if targetfile=="unload_model": #special request to simply unload model
+                    if targetfile=="unload_model" or targetfile=="initial_model": #special request to simply unload model or swap back top intial model
                         print("Admin: Received request to unload model")
-                        global_memory["restart_target"] = "unload_model"
+                        global_memory["restart_target"] = targetfile
                         global_memory["restart_override_config_target"] = ""
                         resp = {"success": True}
                     else:
@@ -8638,7 +8639,7 @@ def main(launch_args, default_args):
                                 print("Security: Invalid override config path.")
                                 continue
                             defaultargs = vars(default_args)
-                            if (os.path.exists(targetfilepath) or restart_target=="unload_model") and (restart_override_config_target=="" or os.path.exists(targetfilepath2)):
+                            if (os.path.exists(targetfilepath) or restart_target=="unload_model" or restart_target=="initial_model") and (restart_override_config_target=="" or os.path.exists(targetfilepath2)):
                                 print("Terminating old process...")
                                 global_memory["load_complete"] = False
                                 kcpp_instance.terminate()
@@ -8651,6 +8652,8 @@ def main(launch_args, default_args):
                                     args.model_param = None
                                     args.model = None
                                     args.nomodel = True
+                                elif restart_target=="initial_model":
+                                    reload_from_new_args(vars(original_args))
                                 elif targetfilepath.endswith(".gguf") and restart_override_config_target=="":
                                     reload_from_new_args(defaultargs)
                                     args.model_param = targetfilepath
