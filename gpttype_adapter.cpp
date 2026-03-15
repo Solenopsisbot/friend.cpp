@@ -5173,11 +5173,12 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     time2 = timer_check();
     float pt1 = (time1*1000.0/(embd_inp.size()==0?1:embd_inp.size()));
-    float ts1 = (1000.0/pt1);
+    float ts1 = (pt1>0?(1000.0/pt1):0);
     int realnpredict = kcpp_data->n_predict-remaining_tokens;
     float pt2 = (time2*1000.0/(realnpredict<=0?1:realnpredict));
-    float ts2 = (1000.0/pt2);
-    float tokens_per_second = (realnpredict <= 0 ? 0 : realnpredict / (time1 + time2));
+    float ts2 = (pt2>0?(1000.0/pt2):0);
+    float tottime = (time1 + time2);
+    float tokens_per_second = tottime>0?(realnpredict <= 0 ? 0 : realnpredict / tottime):0;
     if(debugmode==1)
     {
         printf("\n[%s] CtxLimit:%d/%d, Amt:%d/%d, Init:%.2fs, Process:%.2fs (%.1fms/T = %.2fT/s), Generate:%.2fs (%.1fms/T = %.2fT/s), Total:%.2fs (%.2fT/s)",get_timestamp_str().c_str(),(int)current_context_tokens.size(),(int)nctx, realnpredict, kcpp_data->n_predict, time0, time1, pt1, ts1, time2, pt2, ts2, (time1 + time2), tokens_per_second);
