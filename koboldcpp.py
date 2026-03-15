@@ -5254,7 +5254,35 @@ Change Mode<br>
 
                     try:
                         # Headers are already sent when streaming
-                        if not sse_stream_flag:
+                        if (api_format == 6 or api_format == 7) and genparams.get('stream', True):
+                            #ollama fake streaming
+                            self.send_response(200)
+                            self.send_header("X-Accel-Buffering", "no")
+                            self.send_header("cache-control", "no-cache")
+                            self.send_header("connection", "keep-alive")
+                            self.end_headers(content_type='text/event-stream')
+                            if api_format == 6:
+                                bodytxt = gendat.get("response","") # extract and erase the AI response from the sync payload.
+                                gendat["response"] = ""
+                                pl = {"model":friendlymodelname,"created_at":str(datetime.now(timezone.utc).isoformat()),"response":bodytxt,"done":False}
+                                self.wfile.write(f'{json.dumps(pl)}\n'.encode())
+                                self.wfile.flush()
+                                time.sleep(0.05) #short delay
+                                self.wfile.write(f'{json.dumps(gendat)}\n'.encode()) # note: gendat already contains done=true and empty response
+                                self.wfile.flush()
+                                time.sleep(0.05) #short delay
+                            else:
+                                bodytxt = gendat.get("message",{}).get("content","") # extract and erase the AI response from the sync payload.
+                                gendat["message"] = {"role":"assistant","content":""}
+                                pl = {"model":friendlymodelname,"created_at":str(datetime.now(timezone.utc).isoformat()),"message":{"role":"assistant","content":bodytxt},"done":False}
+                                self.wfile.write(f'{json.dumps(pl)}\n'.encode())
+                                self.wfile.flush()
+                                time.sleep(0.05) #short delay
+                                self.wfile.write(f'{json.dumps(gendat)}\n'.encode()) # note: gendat already contains done=true and empty response
+                                self.wfile.flush()
+                                time.sleep(0.05) #short delay
+                            self.close_connection = True
+                        elif not sse_stream_flag:
                             self.send_response(200)
                             genresp = (json.dumps(gendat).encode())
                             self.send_header('content-length', str(len(genresp)))
