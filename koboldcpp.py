@@ -3570,6 +3570,7 @@ def get_my_epurl():
         epurl = f"{httpsaffix}://{args.host}:{displayedport}"
     return epurl
 
+proxy_reload_lock = threading.Lock()
 ###########################################################
 ###   A simple reverse proxy used in Kcpp Router mode   ###
 ###########################################################
@@ -3579,12 +3580,37 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     HOP_BY_HOP = { "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade" }
     STREAM_CHUNK = 512
+    current_model = "initial_model"
 
     def log_message(self, fmt, *args):
         global showdebug
         if showdebug:
             print(f"[proxy] {self.address_string()} {fmt % args}", flush=True)
         pass
+
+    def wait_for_upstream_ready(self, port, timeout, interval):
+        start = time.time()
+        while time.time() - start < timeout:
+            try:
+                conn = http.client.HTTPConnection("localhost", port, timeout=5)
+                conn.request("GET", "/api/v1/info/version")
+                resp = conn.getresponse()
+                if resp.status == 200:
+                    data = resp.read()
+                    try:
+                        json.loads(data.decode("utf-8"))
+                        return True
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            time.sleep(interval)
+        return False  # timeout
 
     def _handle(self):
         upstream_port = self.server.upstream_port
@@ -3599,6 +3625,41 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
         headers["Connection"] = "close"
 
         # maybe_stall_for_model_swap(self.path, request_body)
+        #specifically look for generation requests from completions or chat completions
+        is_post = self.command.upper() == "POST"
+        is_completions_path = (self.path.endswith('/v1/completions') or self.path.endswith('/v1/completion') or self.path=='/completions')
+        is_chat_completions_path = (self.path.endswith('/v1/chat/completions') or self.path=='/chat/completions')
+        if is_post and (is_completions_path or is_chat_completions_path):
+            model_name = ""
+            if body:
+                try:
+                    request_json = json.loads(body.decode("utf-8"))
+                    model_name = request_json.get("model")
+                except Exception:
+                    pass
+
+            if model_name and model_name != type(self).current_model:
+                with proxy_reload_lock:
+                    if model_name != type(self).current_model:
+                        whitelist = get_current_admindir_list() # see if its an allowed swap
+                        if model_name in whitelist:
+                            reqbody = json.dumps({"filename":model_name})
+                            reqheaders = {
+                                'Content-Type': 'application/json',
+                                'Content-Length': str(len(reqbody)),
+                            }
+                            if args.adminpassword:
+                                reqheaders["Authorization"] = f"Bearer {args.adminpassword}"
+                            conn = http.client.HTTPConnection('localhost', upstream_port, timeout=600)
+                            conn.request("POST", "/api/admin/reload_config", body=reqbody, headers=reqheaders)
+                            resp = conn.getresponse()
+                            time.sleep(3)
+                            if not self.wait_for_upstream_ready(upstream_port,120,0.5):
+                                self.send_error(504, "KoboldCpp model swap reload timed out")
+                                return
+                            time.sleep(0.1)
+                            type(self).current_model = model_name
+                            time.sleep(0.1)
 
         try:  # connect upstream
             conn = http.client.HTTPConnection('localhost', upstream_port, timeout=600)
