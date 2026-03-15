@@ -2591,7 +2591,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
 
         llama_model * llamamodel = llama_model_load_from_file(kcpp_data->model_filename.c_str(), model_params);
 
-              //prepare savestate slots
+        //prepare savestate slots
         savestate_limit = inputs.smartcacheslots;
 
         //if RNN model AND shifting and fastforward is on, enable smartcache
@@ -2601,7 +2601,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             {
                 printf("RNN or Hyrbid model with FF and shifting flags enabled - SmartCache will be enabled with extra slots. Disable CtxShift if you do not want this.\n",savestate_limit);
                 kcpp_data->smartcache = true;
-                savestate_limit += 3;
+                savestate_limit += 2;
             }
         }
         savestates.resize(savestate_limit);
@@ -5160,10 +5160,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     }
 
     //if running rnn model in smartcache mode, save progress after each gen
-    if(kcpp_data->smartcache && is_recurrent && file_format==FileFormat::GGUF_GENERIC && current_context_tokens.size() > 32)
-    {
-        smartcache_quick_snapshot();
-    }
+    // if(kcpp_data->smartcache && is_recurrent && file_format==FileFormat::GGUF_GENERIC && current_context_tokens.size() > 32)
+    // {
+    //     smartcache_quick_snapshot();
+    // }
 
     if(debugmode==1 && !is_quiet && file_format == FileFormat::GGUF_GENERIC)
     {
