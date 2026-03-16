@@ -1190,7 +1190,7 @@ def scan_directory(dirpath, valid_exts, depth):
         elif depth > 0 and os.path.isdir(full_path): #if dir, scan up to 1 level deep
             for subentry in sorted(os.listdir(full_path)):
                 sub_full_path = os.path.join(full_path, subentry)
-                if os.path.isfile(sub_full_path) and subentry.endswith(valid_exts):
+                if os.path.isfile(sub_full_path) and subentry.lower().endswith(valid_exts):
                     rel_path = os.path.join(entry, subentry)
                     files.append(rel_path)
     return files
@@ -2064,10 +2064,6 @@ def sd_load_model(model_filename,vae_filename,t5xxl_filename,clip1_filename,clip
     inputs.lora_len = len(lora_filenames)
     inputs.lora_filenames = (ctypes.c_char_p * inputs.lora_len)(*lora_filenames)
     inputs.lora_multipliers = (ctypes.c_float * inputs.lora_len)(*lora_multipliers)
-    if 0 and inputs.lora_len:
-        print("Preloading LoRAs:")
-        for i in range(inputs.lora_len):
-            print(f"  {inputs.lora_filenames[i]} @ {inputs.lora_multipliers[i]}")
     # auto if no zero-weight lora, dynamic otherwise
     lora_apply_mode = 0 # auto
     if imglora_bypath:
@@ -9312,7 +9308,6 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 exitcounter = 999
                 exit_with_error(2,f"Cannot find image model file: {imgmodel}")
         else:
-            imgloras = []
             imgvae = ""
             imgt5xxl = ""
             imgclip1 = ""
