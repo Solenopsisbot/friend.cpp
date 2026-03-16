@@ -4269,6 +4269,7 @@ Current version indicated by LITEVER below.
 	var koboldcpp_has_embeddings = false;
 	var koboldcpp_has_txt2img = false;
 	var koboldcpp_admin_type = 0; //0 = no admin, 1=has admin, 2=protected admin
+	var koboldcpp_force_allow_endpoint_selector = false; //if we were sent from kcpp mode, provide a way back
 	var lastSearchQuery = "";
 	var lastSearchResults = [];
 	var recentSearchQueries = [];
@@ -4303,6 +4304,7 @@ Current version indicated by LITEVER below.
 	var koboldcpp_has_jinja = false;
 	var koboldcpp_has_mcp = false;
 	var koboldcpp_has_musicgen = false;
+	var koboldcpp_has_routermode = false;
 	var no_escape_html = false;
 	var timetaken_timestamp = performance.now();
 	var bg_silence = null;
@@ -6752,6 +6754,7 @@ Current version indicated by LITEVER below.
 						},null);
 					}
 				});
+				on_error_feedback();
 			}
 		})
 		.catch((error) =>
@@ -6770,6 +6773,7 @@ Current version indicated by LITEVER below.
 				}else{
 					msgbox("Error while submitting prompt: " + error);
 				}
+				on_error_feedback();
 			}
 			clear_poll_flags();
 			render_gametext();
@@ -6862,6 +6866,7 @@ Current version indicated by LITEVER below.
 					{
 						finish_actions();
 						msgbox("Error while submitting prompt: Server appears to be busy.");
+						on_error_feedback();
 					}
 					else
 					{
@@ -6905,6 +6910,7 @@ Current version indicated by LITEVER below.
 					{
 						flush_streaming_text();
 						msgbox("Error while submitting prompt: " + error);
+						on_error_feedback();
 					}
 					clear_poll_flags();
 					render_gametext();
@@ -6917,6 +6923,7 @@ Current version indicated by LITEVER below.
 			{
 				flush_streaming_text();
 				msgbox("Error while submitting prompt: " + error);
+				on_error_feedback();
 			}
 			clear_poll_flags();
 			render_gametext();
@@ -6969,6 +6976,7 @@ Current version indicated by LITEVER below.
 				clear_poll_flags();
 				render_gametext();
 				msgbox("Error occurred during text generation: " + format_json_error(data));
+				on_error_feedback();
 			}
 		})
 		.catch((error) => {
@@ -6976,6 +6984,7 @@ Current version indicated by LITEVER below.
 			clear_poll_flags();
 			render_gametext();
 			msgbox("Error while submitting prompt: " + error);
+			on_error_feedback();
 		});
 	}
 	function oai_api_sync_req(targetep,oai_payload,oaiheaders)
@@ -7051,6 +7060,7 @@ Current version indicated by LITEVER below.
 				clear_poll_flags();
 				render_gametext();
 				msgbox("Error occurred during text generation: " + format_json_error(data));
+				on_error_feedback();
 			}
 		})
 		.catch((error) => {
@@ -7058,6 +7068,7 @@ Current version indicated by LITEVER below.
 			clear_poll_flags();
 			render_gametext();
 			msgbox("Error while submitting prompt: " + error);
+			on_error_feedback();
 		});
 	}
 	function oai_api_stream_sse(sub_endpt,submit_payload,submit_headers)
@@ -7371,6 +7382,7 @@ Current version indicated by LITEVER below.
 					if(resp.status==503)
 					{
 						msgbox("Error while submitting prompt: Server appears to be busy.");
+						on_error_feedback();
 					}
 				},
 				abort(error) {
@@ -7379,6 +7391,7 @@ Current version indicated by LITEVER below.
 					{
 						flush_streaming_text();
 						msgbox("Error while submitting prompt: " + error);
+						on_error_feedback();
 					}
 					clear_poll_flags();
 					render_gametext();
@@ -7391,6 +7404,7 @@ Current version indicated by LITEVER below.
 			{
 				flush_streaming_text();
 				msgbox("Error while submitting prompt: " + error);
+				on_error_feedback();
 			}
 			clear_poll_flags();
 			render_gametext();
@@ -7399,6 +7413,11 @@ Current version indicated by LITEVER below.
 
 	function playbeep() {
 		var sound = new Audio("data:audio/wav;base64,UklGRkwBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YScBAAB8gIN8fICAgIB8gHmAjXVkhptyXYqbcmiKjXKAim5ymIpWcqmKU3Klhl18kXl5jXlkjZ5oVpelZFaUm2trioN1ioZkeaKDU3msgFN8nnxog4Nyg5FrZJubXWGem2FnlIpufIZyfJR8XYOleVaDonlhg5F1eYZ5dZGNYXWbimhrm4Nrg3KDjWt/hm6UkUmDvV1TrINdkXxol4Boinx1nmtWr5RChqVheZdkeZtucop1io1WgLNhWql/XZd/YZSNZH+GeY1yZKKNUIaeZHmYZ3WbeWuGg4B/a4Oba2uXgGuNf2iKjWt5ioB/eXWNg2t/jXJ8inJ5kXxug4N8fHl/hnl1hnx5hn91g4Z1fIN8fHx8f4B5gIB8gH98fIN8fH+AfHx8fH98fIB/AA==");
+		sound.play();
+		console.log("beep sound");
+	}
+	function playlowbeep() {
+		var sound = new Audio("data:audio/wav;base64,UklGRkwBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YScBAAB/gIB/fn+BgoB7e3+FhH13eoKHgnt5foF/e32DhnxzdoaPhnFsepCSgW1ufoyHe3V8gn12eoeMfmtrgpiSdV9ripyLb2N2iox8dXyDf3Z2hpGGbGh+lZJ+aWh/lop0cn56doKKfW55hH9ygZaNYl2Lr45ZVYegg2dzjIJvdI6MdWp9hXp2ipJyWnWpoW1Oc5mTbGqGknZpfpOFbnGBgneAjoRkZ46phlpejpp6ZHqRgmtykZJ5aXeEgXuEhXJnfp6TbF19l4lnbomPdGt/lIhybHyFgoCAeW52jZd8aHGMjXpufol+bnWJjHtudoOGgH59eHaAioR0cX6JgXR4hIN1dIKOhHRxfYOBfHx6eXyChHx2eYOBenmBg313e4SFfHZ7gX98e3x7AA==");
 		sound.play();
 		console.log("beep sound");
 	}
@@ -7422,13 +7441,13 @@ Current version indicated by LITEVER below.
 			}
 		}
 	}
-	function shownotify()
+	function shownotify(success)
 	{
 		if ("Notification" in window) {
 			// Request permission to show notifications
 			if (Notification.permission === "granted" || notify_allowed) {
 				var notification = new Notification("KoboldAI Lite", {
-					body: "Text Generation Completed!"
+					body: (success?"Text Generation Completed!":"Error Encountered!")
 				});
 			} else {
 				Notification.requestPermission().then(function (permission) {
@@ -9401,6 +9420,10 @@ Current version indicated by LITEVER below.
     {
         return (custom_kobold_endpoint!="" && koboldcpp_version && koboldcpp_version!="" && compare_version_str(koboldcpp_version, "1.108") >= 0 && koboldcpp_has_musicgen);
     }
+	function is_using_kcpp_with_routermode()
+	{
+		return (custom_kobold_endpoint!="" && koboldcpp_version && koboldcpp_version!="" && compare_version_str(koboldcpp_version, "1.110") >= 0 && koboldcpp_has_routermode);
+	}
 	function is_using_web_lite()
 	{
 		return (window.location.hostname.includes("koboldai.net") || window.location.hostname.includes("lostruins.github.io"));
@@ -13826,6 +13849,7 @@ Current version indicated by LITEVER below.
                                     koboldcpp_has_jinja = (data.jinja ? true : false);
 									koboldcpp_has_mcp = (data.mcp ? true : false);
 									koboldcpp_has_musicgen = (data.music ? true : false);
+									koboldcpp_has_routermode = (data.router ? true:false);
 									let has_password = (data.protected?true:false);
 									koboldcpp_has_txt2img = (data.txt2img?true:false);
 									let no_txt_model = (mdlname=="inactive");
@@ -13962,6 +13986,18 @@ Current version indicated by LITEVER below.
 											document.getElementById("customapidropdown").value = "1";
 											render_gametext(false);
 											display_endpoint_container();
+											koboldcpp_force_allow_endpoint_selector = true;
+										},()=>{},true);
+									}
+									else if(localflag && is_using_kcpp_with_admin() && is_using_kcpp_with_routermode())
+									{
+										msgboxYesNo("This KoboldCpp instance appears to be running in router mode.<br><br>Would you like to connect in OpenAI Chat Completions mode to allow for model hotswap?<br><br>You can switch back in the 'AI' menu later.","Router Mode Detected",
+										()=>{
+											document.getElementById("customapidropdown").value = "2";
+											render_gametext(false);
+											display_endpoint_container();
+											oai_fetch_models();
+											koboldcpp_force_allow_endpoint_selector = true;
 										},()=>{},true);
 									}
 
@@ -17573,6 +17609,17 @@ Current version indicated by LITEVER below.
 		horde_poll_nearly_completed = false;
 		oaiemulatecompletionscontent = "";
 	}
+	function on_error_feedback()
+	{
+		if(localsettings.beep_notify_mode==1 || localsettings.beep_notify_mode==3)
+		{
+			playlowbeep();
+		}
+		if(localsettings.beep_notify_mode==2 || localsettings.beep_notify_mode==3)
+		{
+			shownotify(false);
+		}
+	}
 
 	function restart_new_game(save = true, keep_memory = false) {
 		tts_is_playing = false;
@@ -21052,6 +21099,7 @@ Current version indicated by LITEVER below.
 							clear_poll_flags();
 							render_gametext();
 							msgbox("Error occurred during text generation: " + format_json_error(data));
+							on_error_feedback();
 						}
 					})
 					.catch((error) => {
@@ -21059,6 +21107,7 @@ Current version indicated by LITEVER below.
 						clear_poll_flags();
 						render_gametext();
 						msgbox("Error while submitting prompt: " + error);
+						on_error_feedback();
 					});
 			}
 			else if (custom_gemini_key != "")//handle for Gemini
@@ -21281,6 +21330,7 @@ Current version indicated by LITEVER below.
 								clear_poll_flags();
 								render_gametext();
 								msgbox("Error, unknown Cohere response");
+								on_error_feedback();
 							}
 						}
 						else {
@@ -21289,6 +21339,7 @@ Current version indicated by LITEVER below.
 							clear_poll_flags();
 							render_gametext();
 							msgbox("Error occurred during text generation: " + format_json_error(data));
+							on_error_feedback();
 						}
 					})
 					.catch((error) => {
@@ -21296,6 +21347,7 @@ Current version indicated by LITEVER below.
 						clear_poll_flags();
 						render_gametext();
 						msgbox("Error while submitting prompt: " + error);
+						on_error_feedback();
 					});
 			}
 			else {
@@ -21354,6 +21406,7 @@ Current version indicated by LITEVER below.
 						clear_poll_flags();
 						render_gametext();
 						msgbox("Error Submitting Prompt: " + JSON.stringify(data));
+						on_error_feedback();
 					}
 				})
 				.catch((error) => {
@@ -21361,6 +21414,7 @@ Current version indicated by LITEVER below.
 					clear_poll_flags();
 					render_gametext();
 					msgbox("Error while submitting prompt: " + error);
+					on_error_feedback();
 				});
 		}
 
@@ -22586,7 +22640,7 @@ Current version indicated by LITEVER below.
 		}
 		if(localsettings.beep_notify_mode==2 || localsettings.beep_notify_mode==3)
 		{
-			shownotify();
+			shownotify(true);
 		}
 
 		let genworkertxt = (genworker=="Custom Endpoint")?`<a href="#" onclick="get_and_show_workers()">${genworker}</a>`:`${genworker}`;
@@ -23709,6 +23763,7 @@ Current version indicated by LITEVER below.
 								errmsg += "No workers were able to generate text with your request.";
 							}
 							msgbox(errmsg);
+							on_error_feedback();
 						}
 						else
 						{
@@ -23752,6 +23807,7 @@ Current version indicated by LITEVER below.
 											render_gametext();
 											show_abort_button(false);
 											msgbox("Error encountered during text generation!\n"+error);
+											on_error_feedback();
 										});
 								}, 500);
 							}
@@ -23789,6 +23845,7 @@ Current version indicated by LITEVER below.
 						render_gametext();
 						show_abort_button(false);
 						msgbox("Error encountered during text generation!\n"+error);
+						on_error_feedback();
 					});
 				}
 			}
@@ -24438,7 +24495,7 @@ Current version indicated by LITEVER below.
 			}else{
 				document.getElementById("topbtn_customendpt").classList.remove("hidden");
 			}
-			if(localsettings.show_endpoint_selector)
+			if(localsettings.show_endpoint_selector || koboldcpp_force_allow_endpoint_selector)
 			{
 				document.getElementById("topbtn_ai").classList.remove("hidden");
 			}
@@ -24455,7 +24512,7 @@ Current version indicated by LITEVER below.
 			document.getElementById("topbtn_reconnect").classList.add("hidden");
 			document.getElementById("topbtn_customendpt").classList.add("hidden");
 
-			if(localflag && !localsettings.show_endpoint_selector)
+			if(localflag && !localsettings.show_endpoint_selector && !koboldcpp_force_allow_endpoint_selector)
 			{
 				document.getElementById("topbtn_ai").classList.add("hidden");
 			}else{
