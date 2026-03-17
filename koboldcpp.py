@@ -3725,8 +3725,8 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
             conn = http.client.HTTPConnection('localhost', upstream_port, timeout=600)
             conn.request( self.command, self.path, body=body, headers=headers)
             resp = conn.getresponse()
-        except OSError as e:
-            502_page = """
+        except OSError:
+            html_502 = """
             <!DOCTYPE html>
             <html lang="en">
             <head>
@@ -3734,77 +3734,12 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
                 <title>502 - KoboldCpp</title>
                 <style>
-                    * {
-                        margin: 0;
-                        padding: 0;
-                        box-sizing: border-box;
-                    }
-
-                    body {
-                        background-color: #0a0e14;
-                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-                        min-height: 100vh;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                    }
-
-                    dialog {
-                        background-color: #1a222e;
-                        border: 1px solid #3a4a5a;
-                        border-radius: 4px;
-                        padding: 0;
-                        width: 90%;
-                        max-width: 550px;
-                        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-                        position: absolute;
-                        top: 50%;
-                        left: 50%;
-                        transform: translate(-50%, -50%);
-                        margin: 0;
-                    }
-
-                    dialog::backdrop {
-                        background-color: rgba(0, 0, 0, 0.7);
-                    }
-
-                    .dialog-header {
-                        background-color: #3a506b;
-                        padding: 14px 18px;
-                        border-bottom: 1px solid #2a3a4a;
-                    }
-
-                    .dialog-header h2 {
-                        color: #e8e8e8;
-                        font-size: 15px;
-                        font-weight: 600;
-                        margin: 0;
-                    }
-
-                    .dialog-content {
-                        padding: 24px 20px;
-                        text-align: center;
-                    }
-
-                    .dialog-content p {
-                        color: #d0d0d0;
-                        font-size: 15px;
-                        line-height: 1.7;
-                        margin: 0 0 16px 0;
-                    }
-
-                    .dialog-content p:last-child {
-                        margin-bottom: 0;
-                        font-style: italic;
-                        color: #a0a0a0;
-                    }
+                *,dialog{padding:0;margin:0}*{box-sizing:border-box}body{background-color:#0a0e14;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,sans-serif;min-height:100vh;display:flex;justify-content:center;align-items:center}dialog{background-color:#1a222e;border:1px solid #3a4a5a;border-radius:4px;width:90%;max-width:550px;box-shadow:0 8px 32px rgba(0,0,0,.6);position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)}dialog::backdrop{background-color:rgba(0,0,0,.7)}.dialog-header{background-color:#3a506b;padding:14px 18px;border-bottom:1px solid #2a3a4a}.dialog-header h2{color:#e8e8e8;font-size:15px;font-weight:600;margin:0}.dialog-content{padding:24px 20px;text-align:center}.dialog-content p{color:#d0d0d0;font-size:15px;line-height:1.7;margin:0 0 16px}.dialog-content p:last-child{margin-bottom:0;font-style:italic;color:#a0a0a0}
                 </style>
             </head>
             <body>
                 <dialog open>
-                    <div class="dialog-header">
-                        <h2>KoboldCpp is not available.</h2>
-                    </div>
+                    <div class="dialog-header"><h2>KoboldCpp is not available.</h2></div>
                     <div class="dialog-content">
                         <p>It may take some time during a model (re)load before it is ready to use.</p>
                         <p>Taking a long time for this message to go away?<br>It may have crashed, check the logs.</p>
@@ -3822,15 +3757,15 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
                     } catch (err) {
                         // Ignore network errors and try again on next interval
                     }
-                }, 1000);
+                }, 2000);
             </script>
             </html>
             """
             self.send_response(502)
             self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(502_page.encode("utf-8"))))
+            self.send_header("Content-Length", str(len(html_502.encode("utf-8"))))
             self.end_headers()
-            self.wfile.write(502_page.encode("utf-8"))
+            self.wfile.write(html_502.encode("utf-8"))
             return
 
         self.send_response(resp.status, resp.reason) # forward response headers
