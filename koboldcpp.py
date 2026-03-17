@@ -562,22 +562,30 @@ class MCPStdioClient:
             for line in self.process.stdout:
                 if not line:
                     break
-                msg = json.loads(line)
+                try:
+                    msg = json.loads(line)
+                except Exception:
+                    continue
                 msg_id = msg.get("id")
                 if msg_id is not None:
                     with self._pending_lock:
                         q = self._pending.get(msg_id)
                     if q:
                         q.put(msg)
+                    else:
+                        print(f"[MCP] Unexpected response id: {msg_id}")
         finally:
             self.alive = False
             with self._pending_lock:
                 for q in self._pending.values():
-                    q.put(None)  # unblock any waiting send()
+                    q.put(None)
 
     def send(self, message: dict, await_response=True) -> dict: # Send JSON-RPC request and wait for response.
         line = json.dumps(message)
         msg_id = message.get("id")
+
+        if await_response and msg_id is None:
+            raise ValueError("Cannot await response for a message without an 'id' field")
 
         response_q = queue.Queue()
         if await_response and msg_id is not None:
@@ -593,7 +601,9 @@ class MCPStdioClient:
         if not await_response:
             return None
         try:
-            response = response_q.get(timeout=30)
+            response = response_q.get(timeout=120)
+        except queue.Empty:
+            raise RuntimeError("MCP server timed out (no response in 120s)")
         finally:
             with self._pending_lock:
                 self._pending.pop(msg_id, None)
