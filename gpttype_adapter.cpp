@@ -2149,16 +2149,20 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     kcpp_data->n_threads = inputs.threads;
     kcpp_data->n_blasthreads = inputs.blasthreads;
     bool isGguf = (file_format == FileFormat::GGUF_GENERIC);
+    kcpp_pipeline_parallelism = inputs.pipelineparallel;
     kcpp_data->n_batch = GetBatchSize(inputs.batchsize, in_file_format);
     kcpp_data->n_ubatch = kcpp_data->n_batch;
+    if(isGguf && kcpp_pipeline_parallelism)
+    {
+        //double the logical batch, while keeping the physical batch the same, pipeline parallel set GGML_SCHED_MAX_COPIES to 2
+        kcpp_data->n_batch *= 2;
+    }
     kcpp_data->flash_attn = inputs.flash_attention;
     kcpp_data->model_filename = inputs.model_filename;
     kcpp_data->use_smartcontext = inputs.use_smartcontext;
     kcpp_data->use_contextshift = inputs.use_contextshift;
     kcpp_data->use_fastforward = inputs.use_fastforward;
     kcpp_data->smartcache = inputs.smartcache;
-
-    kcpp_pipeline_parallelism = inputs.pipelineparallel;
     kcpp_data->swa_full = !inputs.swa_support;
     if (!kcpp_data->swa_full) {
         if (inputs.use_contextshift) {
