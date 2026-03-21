@@ -4814,7 +4814,7 @@ static vk_device ggml_vk_get_device(size_t idx) {
         vk::PhysicalDeviceProperties tmpprops = device->physical_device.getProperties();
         if(tmpprops.vendorID == VK_VENDOR_ID_NVIDIA)
         {
-            printf("Apply NVIDIA Anti-BSOD Fix for KCPP\n");
+            printf("\nApply NVIDIA Anti-BSOD Fix for KCPP\n");
             device->disable_host_visible_vidmem = true; //kcpp requested fix for vulkan BSOD on Nvidia
         }
 

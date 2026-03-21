@@ -159,6 +159,7 @@ static std::vector<uint8_t *> input_extraimage_buffers;
 const int max_extra_images = 4;
 
 static std::string sdvulkandeviceenv;
+static std::string sdmaingpuenv;
 static int cfg_tiled_vae_threshold = 0;
 static int cfg_square_limit = 0;
 static int cfg_side_limit = 0;
@@ -283,6 +284,18 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     cfg_side_limit = inputs.img_hard_limit;
     cfg_square_limit = inputs.img_soft_limit;
     printf("\nImageGen Init - Load Model: %s\n",inputs.model_filename);
+
+    {
+        //kcpp allow gpu id override
+        std::string sdmaingpu = std::to_string(inputs.kcpp_main_gpu);
+        const char* existingenv = getenv("SD_VK_DEVICE");
+        int kcpp_parseinfo_maindevice = inputs.kcpp_main_gpu<=0?0:inputs.kcpp_main_gpu;
+        if(kcpp_parseinfo_maindevice>0 && !existingenv && sdmaingpu!="")
+        {
+            sdmaingpuenv = "SD_VK_DEVICE="+sdmaingpu;
+            putenv((char*)sdmaingpuenv.c_str());
+        }
+    }
 
     int lora_apply_mode = LORA_APPLY_AT_RUNTIME;
     bool lora_dynamic = false;
