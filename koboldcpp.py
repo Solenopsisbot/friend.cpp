@@ -7875,7 +7875,8 @@ def show_gui():
                 templatedchoice_var.set(noobmodels[0])
         def load_easy_template():
             nonlocal templatechoicebox, templatecatbox, newbdesc1, newbdesc2
-            repo = (POPULAR_TEMPLATE_REPO if templatedchoice_var.get()==POPULAR_TEMPLATE_LBL else NEWB_TEMPLATE_REPO)
+            cat = templatecatbox.get()
+            repo = (POPULAR_TEMPLATE_REPO if cat==POPULAR_TEMPLATE_LBL else NEWB_TEMPLATE_REPO)
             fname = f"https://huggingface.co/koboldcpp/{repo}/resolve/main/{templatedchoice_var.get()}.kcppt"
             data = make_url_request(fname,data=None,method="GET")
             if data is not None:
