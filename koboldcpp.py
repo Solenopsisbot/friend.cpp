@@ -1044,6 +1044,8 @@ def old_cpu_check(): #return -1 for pass, 0 if has avx2, 1 if has avx, 2 if has 
     except Exception:
         return -1 #cannot determine
 
+def has_valid_model():
+    return args.model_param or args.sdmodel or args.whispermodel or args.ttsmodel or args.embeddingsmodel or args.musicdiffusion or args.musicllm or args.mcpfile or args.nomodel
 
 def unpack_to_dir(destpath = ""):
     srcpath = os.path.abspath(os.path.dirname(__file__))
@@ -6098,7 +6100,7 @@ def show_gui():
             if dlfile:
                 args.model_param = dlfile
             load_config_cli(args.model_param)
-        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.musicdiffusion and not args.musicllm and not args.mcpfile and not args.nomodel:
+        if not has_valid_model():
             global exitcounter
             exitcounter = 999
             exit_with_error(2,"No gguf model or kcpps file was selected. Exiting.")
@@ -7288,8 +7290,11 @@ def show_gui():
     # launch
     def guilaunch():
         if model_var.get() == "" and sd_model_var.get() == "" and whisper_model_var.get() == "" and tts_model_var.get() == "" and embeddings_model_var.get() == "" and musicdiffusion_var.get() == "" and musicllm_var.get() == "" and nomodel.get()!=1:
-            tmp = zentk_askopenfilename(title="Select ggml model .bin or .gguf file")
-            model_var.set(tmp)
+            # prevent launch without at least one valid model
+            givehelp = show_gui_yesnobox("No Models Selected","Error: You need to load at least one AI model to continue.\n\nDo you want help finding a model?")
+            if givehelp == 'yes':
+                display_help()
+            return
         nonlocal nextstate
         nextstate = 1
         root.withdraw()
@@ -7813,32 +7818,54 @@ def show_gui():
     def display_help():
         popup = ctk.CTkToplevel(root)
         popup.title("Help Menu")
-        popup.geometry("380x380")
-        noobbox_var = ctk.StringVar(value="")
+        popup.geometry("380x440")
+        templatedchoice_var = ctk.StringVar(value="")
+        templatecatbox_var = ctk.StringVar(value="Newbie Templates")
+        POPULAR_TEMPLATE_LBL = "Popular Templates"
+        NEWB_TEMPLATE_LBL = "Newbie Templates"
+        POPULAR_TEMPLATE_REPO = "popular-templates"
+        NEWB_TEMPLATE_REPO = "newbie-templates"
+        newbdesc1 = newbdesc2 = None
         def display_hf():
             popup.destroy()
             model_searcher()
-        def fetch_noob_templates():
-            nonlocal noobbox
+        def fetch_easy_templates(a,b,c):
+            nonlocal templatechoicebox, templatecatbox, newbdesc1, newbdesc2
             noobmodels = []
-            resp = make_url_request("https://huggingface.co/api/models/koboldcpp/newbie-templates",None,'GET',{},10)
-            for m in resp["siblings"]:
-                entry = m["rfilename"]
-                if entry.endswith(".kcppt") and "LowSpec" in entry:
-                    noobmodels.append(entry[:-6])
-            for m in resp["siblings"]:
-                entry = m["rfilename"]
-                if entry.endswith(".kcppt") and "MidSpec" in entry:
-                    noobmodels.append(entry[:-6])
-            for m in resp["siblings"]:
-                entry = m["rfilename"]
-                if entry.endswith(".kcppt") and "HighSpec" in entry:
-                    noobmodels.append(entry[:-6])
-            noobbox.configure(values=noobmodels)
+            resp = None
+            if templatecatbox_var.get() == POPULAR_TEMPLATE_LBL:
+                resp = make_url_request(f"https://huggingface.co/api/models/koboldcpp/{POPULAR_TEMPLATE_REPO}", None, 'GET', {}, 10)
+                newbdesc1.pack_forget()
+                newbdesc2.pack_forget()
+                commdesc.pack(pady=(10, 0))
+                for m in resp["siblings"]:
+                    entry = m["rfilename"]
+                    if entry.endswith(".kcppt"):
+                        noobmodels.append(entry[:-6])
+            else:
+                resp = make_url_request(f"https://huggingface.co/api/models/koboldcpp/{NEWB_TEMPLATE_REPO}", None, 'GET', {}, 10)
+                newbdesc1.pack(pady=(10, 0))
+                newbdesc2.pack(pady=(10, 0))
+                commdesc.pack_forget()
+                for m in resp["siblings"]:
+                    entry = m["rfilename"]
+                    if entry.endswith(".kcppt") and "LowSpec" in entry:
+                        noobmodels.append(entry[:-6])
+                for m in resp["siblings"]:
+                    entry = m["rfilename"]
+                    if entry.endswith(".kcppt") and "MidSpec" in entry:
+                        noobmodels.append(entry[:-6])
+                for m in resp["siblings"]:
+                    entry = m["rfilename"]
+                    if entry.endswith(".kcppt") and "HighSpec" in entry:
+                        noobmodels.append(entry[:-6])
+            templatechoicebox.configure(values=noobmodels)
             if len(noobmodels)>0:
-                noobbox_var.set(noobmodels[0])
-        def load_noob_template():
-            fname = f"https://huggingface.co/koboldcpp/newbie-templates/resolve/main/{noobbox_var.get()}.kcppt"
+                templatedchoice_var.set(noobmodels[0])
+        def load_easy_template():
+            nonlocal templatechoicebox, templatecatbox, newbdesc1, newbdesc2
+            repo = (POPULAR_TEMPLATE_REPO if templatedchoice_var.get()==POPULAR_TEMPLATE_LBL else NEWB_TEMPLATE_REPO)
+            fname = f"https://huggingface.co/koboldcpp/{repo}/resolve/main/{templatedchoice_var.get()}.kcppt"
             data = make_url_request(fname,data=None,method="GET")
             if data is not None:
                 import_vars(data)
@@ -7848,12 +7875,19 @@ def show_gui():
         ctk.CTkButton(popup, text="Read Starter Guides", command=display_starter_guides).pack(pady=5)
         ctk.CTkButton(popup, text="Search Model on Hugginface", command=display_hf).pack(pady=5)
         ctk.CTkLabel(popup, text="Or, Pick an Easy Template for Newbies").pack(pady=(12, 0))
-        noobbox = ctk.CTkComboBox(popup, values=[], width=280, variable=noobbox_var, state="readonly")
-        noobbox.pack(pady=5)
-        ctk.CTkButton(popup, text="Load Template", command=load_noob_template).pack(pady=5)
-        ctk.CTkLabel(popup, text="LowSpec = Recommend 6GB VRAM\nMidSpec = Recommend 12GB VRAM\nHighSpec = Recommend 24GB VRAM").pack(pady=(10, 0))
-        ctk.CTkLabel(popup, text="Everything = All Features         Text = Text Generation\nImages = Image Generation         Vision = Image Recognition\nVoice = Speech Generation         Audio = Speech Recognition").pack(pady=(10, 0))
-        fetch_noob_templates()
+        templatecatbox = ctk.CTkComboBox(popup, values=[NEWB_TEMPLATE_LBL,POPULAR_TEMPLATE_LBL], width=280, variable=templatecatbox_var, state="readonly")
+        templatecatbox.pack(pady=5)
+        templatechoicebox = ctk.CTkComboBox(popup, values=[], width=280, variable=templatedchoice_var, state="readonly")
+        templatechoicebox.pack(pady=5)
+        ctk.CTkButton(popup, text="Load Template", command=load_easy_template).pack(pady=5)
+        newbdesc1 = ctk.CTkLabel(popup, text="LowSpec = Recommend 6GB VRAM\nMidSpec = Recommend 12GB VRAM\nHighSpec = Recommend 24GB VRAM")
+        newbdesc1.pack(pady=(10, 0))
+        newbdesc2 = ctk.CTkLabel(popup, text="Everything = All Features         Text = Text Generation\nImages = Image Generation         Vision = Image Recognition\nVoice = Speech Generation         Audio = Speech Recognition")
+        newbdesc2.pack(pady=(10, 0))
+        commdesc = ctk.CTkLabel(popup, text="Templates here are subject to change from time to time.\n\nFound a broken template? Want to contribute one?\nVisit https://huggingface.co/koboldcpp/popular-templates/")
+        commdesc.pack_forget()
+        templatecatbox_var.trace_add("write", fetch_easy_templates)
+        fetch_easy_templates(1,1,1)
         popup.transient(root)
 
     def display_help_models():
@@ -7870,7 +7904,7 @@ def show_gui():
     ctk.CTkButton(tabs , text = "Update", fg_color="#9900cc", hover_color="#aa11dd", command = display_updates, width=90, height = 35 ).grid(row=1,column=0, stick="sw", padx= 5, pady=5)
     ctk.CTkButton(tabs , text = "Save Config", fg_color="#084a66", hover_color="#085a88", command = save_config_gui, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= 5, pady=5)
     ctk.CTkButton(tabs , text = "Load Config", fg_color="#084a66", hover_color="#085a88", command = load_config_gui, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= (92), pady=5)
-    ctk.CTkButton(tabs , text = "Get Help", fg_color="#992222", hover_color="#bb3333", command = display_help, width=60, height = 35 ).grid(row=1,column=1, stick="sw", padx= (180), pady=5)
+    ctk.CTkButton(tabs , text = "Get Help", fg_color="#992222", hover_color="#bb3333", command = display_help, width=70, height = 35 ).grid(row=1,column=1, stick="sw", padx= (180), pady=5)
 
     # start a thread that tries to get actual gpu names and layer counts
     gpuinfo_thread = threading.Thread(target=auto_set_backend_gui)
@@ -7899,16 +7933,11 @@ def show_gui():
         kcpp_exporting_template = False
         export_vars()
 
-        if not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.musicdiffusion and not args.musicllm and not args.mcpfile and not args.nomodel:
+        if not has_valid_model():
             exitcounter = 999
             print("")
             time.sleep(0.5)
-            if using_gui_launcher:
-                givehelp = show_gui_yesnobox("No Model Loaded","No text or image model file was selected. Need a model to continue.\n\nDo you want help finding a GGUF model?")
-                if givehelp == 'yes':
-                    display_help_models()
-            else:
-                print("No text or image model file was selected. Cannot continue.", flush=True)
+            print("Error: No valid model files were selected. Cannot continue.", flush=True)
             time.sleep(2)
             sys.exit(2)
 
@@ -8754,7 +8783,7 @@ def main(launch_args, default_args):
         return
 
     # show the GUI launcher if a model was not provided
-    if args.showgui or (not args.model_param and not args.sdmodel and not args.whispermodel and not args.ttsmodel and not args.embeddingsmodel and not args.musicdiffusion and not args.musicllm and not args.mcpfile and not args.nomodel):
+    if args.showgui or not has_valid_model():
         #give them a chance to pick a file
         print("For command line arguments, please refer to --help")
         print("***")
