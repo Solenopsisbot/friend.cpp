@@ -2390,11 +2390,12 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             }
         }
 
-        #if defined(GGML_USE_CUDA)
         if(kcpp_parseinfo_maindevice>0)
         {
-            printf("CUDA: Set main device to %d\n",kcpp_parseinfo_maindevice);
+            printf("Main GPU device: Try set to %d\n",kcpp_parseinfo_maindevice);
         }
+
+        #if defined(GGML_USE_CUDA)
         printf("CUDA MMQ: %s\n",(inputs.use_mmq?"True":"False"));
         printf("---\nInitializing CUDA/HIP, please wait, the following step may take a few minutes (only for first launch)...\n---\n");
         ggml_cuda_set_mul_mat_q(inputs.use_mmq);
