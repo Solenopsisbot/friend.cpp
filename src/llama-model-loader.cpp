@@ -1228,7 +1228,7 @@ struct ggml_tensor * llama_model_loader::create_tensor(
     }
     last_used_ctx = ctx; //this caches the last ctx which should match the buft we want for this layer. kobo forgive me.
 
-    LLAMA_LOG_DEBUG("%s: loading tensor %s\n", __func__, tn.str().c_str());
+    // LLAMA_LOG_DEBUG("%s: loading tensor %s\n", __func__, tn.str().c_str());
     const struct ggml_tensor * cur = check_tensor_dims(tn.str(), ne, !(flags & TENSOR_NOT_REQUIRED));
 
     if (cur == NULL) {
