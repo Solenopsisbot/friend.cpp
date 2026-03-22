@@ -1186,11 +1186,17 @@ static tts_generation_outputs ttstype_generate_qwen3tts(const tts_generation_inp
         std::vector<float> custom_reference_audio_pcmf32;
         std::string speakerstr = inputs.custom_speaker_voice;
 
+        int audio_seed = inputs.audio_seed;
+        if (audio_seed <= 0 || audio_seed==0xFFFFFFFF)
+        {
+            audio_seed = (((uint32_t)time(NULL)) % 1000000u);
+        }
+
         if(ttsdebugmode==1 && !tts_is_quiet)
         {
-            printf("\nUsing Audio Seed: %d, Speaker: %s", inputs.audio_seed,speakerstr.c_str());
+            printf("\nUsing Audio Seed: %d, Speaker: %s", audio_seed, speakerstr.c_str());
         }
-        qwen3tts_runner.set_seed(inputs.audio_seed);
+        qwen3tts_runner.set_seed(audio_seed);
 
         if(custom_reference_audio_str!="")
         {
