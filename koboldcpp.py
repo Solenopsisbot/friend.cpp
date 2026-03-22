@@ -2928,10 +2928,19 @@ def format_jinja(messages, tools):
         jinja_env.filters["tojson"] = tojson
         jinja_compiled_template = jinja_env.from_string(cached_chat_template)
         text = None
+        last_assist_msg = messages[-1]["content"]
+        assist_should_prefill = (messages and messages[-1]["role"] == "assistant" and last_assist_msg and isinstance(last_assist_msg, str) and len(last_assist_msg.strip())>0) #avoid single character newline or space content
         if tools and len(tools)>0:
             text = jinja_compiled_template.render(messages=messages, tools=tools, add_generation_prompt=True, bos_token="", eos_token="")
         else:
             text = jinja_compiled_template.render(messages=messages, add_generation_prompt=True, bos_token="", eos_token="")
+
+        if assist_should_prefill and text: # handle prefill continuations
+            lastindex = text.rfind(last_assist_msg)
+            if lastindex != -1:
+                text = text[:lastindex + len(last_assist_msg)]
+            else:
+                text = text
         return text if text else None
     except Exception as e:
         print(f"Jinja formatting failed: {e}")
