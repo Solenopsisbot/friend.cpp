@@ -1184,7 +1184,7 @@ static tts_generation_outputs ttstype_generate_qwen3tts(const tts_generation_inp
         qwen3_tts::tts_params qwen3tts_params;
         std::string custom_reference_audio_str = inputs.reference_audio;
         std::vector<float> custom_reference_audio_pcmf32;
-        std::string speakerstr = inputs.custom_speaker_voice;
+        std::string speaker_instruction = inputs.speaker_instruction;
 
         int audio_seed = inputs.audio_seed;
         if (audio_seed <= 0 || audio_seed==0xFFFFFFFF)
@@ -1194,7 +1194,7 @@ static tts_generation_outputs ttstype_generate_qwen3tts(const tts_generation_inp
 
         if(ttsdebugmode==1 && !tts_is_quiet)
         {
-            printf("\nUsing Audio Seed: %d, Speaker: %s", audio_seed, speakerstr.c_str());
+            printf("\nUsing Audio Seed: %d", audio_seed);
         }
         qwen3tts_runner.set_seed(audio_seed);
 
@@ -1221,8 +1221,11 @@ static tts_generation_outputs ttstype_generate_qwen3tts(const tts_generation_inp
             qwen3tts_params.print_progress = true;
         }
 
-        if (custom_reference_audio_pcmf32.empty()) {
-            result = qwen3tts_runner.synthesize(prompt, qwen3tts_params);
+        if (speaker_instruction!="" || custom_reference_audio_pcmf32.empty()) {
+            if (speaker_instruction != "" && !tts_is_quiet) {
+                printf("\nApply VoiceDesign Instruction: %s", speaker_instruction.c_str());
+            }
+            result = qwen3tts_runner.synthesize(prompt, speaker_instruction, qwen3tts_params);
         } else {
             std::size_t reuse_hash_value = std::hash<std::string>{}(custom_reference_audio_str);
 

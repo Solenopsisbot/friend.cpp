@@ -424,7 +424,8 @@ class tts_generation_inputs(ctypes.Structure):
                 ("custom_speaker_voice", ctypes.c_char_p),
                 ("custom_speaker_text", ctypes.c_char_p),
                 ("custom_speaker_data", ctypes.c_char_p),
-                ("reference_audio", ctypes.c_char_p)]
+                ("reference_audio", ctypes.c_char_p),
+                ("speaker_instruction", ctypes.c_char_p)]
 
 class tts_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2538,6 +2539,14 @@ def tts_prepare_voice_json(jsonstr):
     except Exception:
         return None
 
+def tts_extract_instruction(x):
+    match = re.match(r'^\[([^\]]+)\]\s*(.+)$', x)
+    if match:
+        instruction = match.group(1)
+        x1 = match.group(2)
+        return x1, instruction
+    return x, ""
+
 def tts_generate(genparams):
     global args, voicebank, voicelist
     prompt = genparams.get("input", genparams.get("text", ""))
@@ -2558,6 +2567,11 @@ def tts_generate(genparams):
         voice = simple_lcg_hash(voicestr.strip()) if voicestr else 1
     inputs = tts_generation_inputs()
     inputs.custom_speaker_voice = normalized_voice.encode("UTF-8")
+    ttsinstruction = genparams.get("instruction", "")
+    # if no instruction provided, extract from text
+    if not genparams.get("instruction", ""):
+        prompt, ttsinstruction = tts_extract_instruction(prompt)
+    inputs.speaker_instruction = ttsinstruction.encode("UTF-8")
     inputs.prompt = prompt.encode("UTF-8")
     inputs.speaker_seed = voice
     aseed = -1
@@ -9738,6 +9752,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
 
             voicelist.append("random")
             voicebank["random"] = ""
+            voicelist.append("instruct")
+            voicebank["instruct"] = ""
 
             if args.ttsdir and os.path.isdir(args.ttsdir):
                 for filename in os.listdir(args.ttsdir):

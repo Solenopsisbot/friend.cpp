@@ -298,6 +298,7 @@ struct tts_generation_inputs
     const char * custom_speaker_text = "";
     const char * custom_speaker_data = "";
     const char * reference_audio = "";
+    const char * speaker_instruction = "";
 };
 struct tts_generation_outputs
 {

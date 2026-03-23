@@ -91,7 +91,7 @@ public:
     // Generate speech from text
     // text: input text to synthesize
     // params: generation parameters
-    tts_result synthesize(const std::string & text,
+    tts_result synthesize(const std::string & text, const std::string & instruction,
                           const tts_params & params = tts_params());
 
     // Generate speech with voice cloning
@@ -121,7 +121,7 @@ public:
     bool is_loaded() const { return models_loaded_; }
 
 private:
-    tts_result synthesize_internal(const std::string & text,
+    tts_result synthesize_internal(const std::string & text, const std::string & instruction,
                                    const float * speaker_embedding,
                                    const tts_params & params,
                                    tts_result & result);
