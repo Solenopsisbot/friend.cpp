@@ -789,6 +789,10 @@ static speculative_draft_result speculative_decoding_eval_chunk(llama_context * 
 
 // KCPP SAMPLING FUNCTIONS
 void sample_softmax(llama_token_data_array * cur_p, bool do_sort=true) {
+    if(!(cur_p->size > 0))
+    {
+        throw std::runtime_error("No valid candidates during sampling. Current request aborted!");
+    }
     GGML_ASSERT(cur_p->size > 0);
     // Sort the logits in descending order
     if (!cur_p->sorted && do_sort) {

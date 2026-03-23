@@ -1282,7 +1282,7 @@ void llama_model_loader::done_getting_tensors() const {
         throw std::runtime_error(format("%s: wrong number of tensors; expected %d, got %d", __func__, n_tensors, n_created));
     }
     if (n_tensors_moved > 0) {
-        LLAMA_LOG_DEBUG("%s: tensor '%s' (%s) (and %zu others) cannot be used with preferred buffer type %s, using %s instead\n",
+        LLAMA_LOG_DEBUG("%s: tensor '%s' (%s) (and %zu others) moved from %s, using %s instead\n",
             __func__, first_tensor_moved_name.c_str(), first_tensor_moved_type_name.c_str(), n_tensors_moved - 1,
             ggml_backend_buft_name(first_moved_from_buft), ggml_backend_buft_name(first_moved_to_buft));
     }
