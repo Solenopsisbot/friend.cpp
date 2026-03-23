@@ -943,6 +943,18 @@ static void parse_cache_options(sd_cache_params_t & params, const std::string& c
     }
 }
 
+static std::string raw_image_to_png_base64(const sd_image_t& img, std::string parameters = "") {
+    std::string result;
+    int out_data_len = 0;
+    unsigned char * png = stbi_write_png_to_mem(img.data, 0, img.width, img.height, img.channel, &out_data_len, parameters != "" ? parameters.c_str() : nullptr);
+    if (png != NULL) {
+        result = kcpp_base64_encode(png,out_data_len);
+        free(png);
+    }
+    return result;
+}
+
+
 sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 {
     recent_data = "";
@@ -1420,28 +1432,21 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         return output;
     }
 
-    bool wasanim = false;
+    bool isanim = (vid_req_frames>1 && generated_num_results>1 && is_vid_model);
     sd_image_t upscaled_image;
     upscaled_image.data = nullptr;
 
     if (is_passthrough)
     {
         //either return original image or upscale if needed
-        int out_data_len;
-        unsigned char * png = nullptr;
+        sd_image_t *result_image = &input_image;
         if(inputs.upscale && upscaler_ctx != nullptr)
         {
             printf("Upscaling original image (passthrough)...\n");
             upscaled_image = upscale(upscaler_ctx, input_image, 2);
-            png = stbi_write_png_to_mem(upscaled_image.data, 0, upscaled_image.width, upscaled_image.height, upscaled_image.channel, &out_data_len, get_image_params(params, lora_meta).c_str());
-        } else {
-            png = stbi_write_png_to_mem(input_image.data, 0, input_image.width, input_image.height, input_image.channel, &out_data_len, get_image_params(params, lora_meta).c_str());
+            result_image = &upscaled_image;
         }
-        if (png != NULL)
-        {
-            recent_data = kcpp_base64_encode(png,out_data_len);
-            free(png);
-        }
+        recent_data = raw_image_to_png_base64(*result_image);
     }
     else
     {
@@ -1452,7 +1457,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             }
 
             //if multiframe, make a video
-            if(vid_req_frames>1 && generated_num_results>1 && is_vid_model)
+            if(isanim)
             {
                 if(!sd_is_quiet && sddebugmode==1)
                 {
@@ -1464,7 +1469,6 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                 size_t out_len2 = 0;
                 int status = 0;
                 int status2 = 0;
-                wasanim = true;
 
                 if(video_output_type==0 || video_output_type==2)
                 {
@@ -1501,22 +1505,15 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             }
             else
             {
-                int out_data_len;
-                unsigned char * png = nullptr;
+                sd_image_t *result_image = &results[i];
                 if(inputs.upscale && upscaler_ctx != nullptr)
                 {
                     printf("Upscaling output image...\n");
                     upscaled_image = upscale(upscaler_ctx, results[i], 2);
-                    png = stbi_write_png_to_mem(upscaled_image.data, 0, upscaled_image.width, upscaled_image.height, upscaled_image.channel, &out_data_len, nullptr);
-                } else {
-                    png = stbi_write_png_to_mem(results[i].data, 0, results[i].width, results[i].height, results[i].channel, &out_data_len, nullptr);
+                    result_image = &upscaled_image;
                 }
-
-                if (png != NULL)
-                {
-                    recent_data = kcpp_base64_encode(png,out_data_len);
-                    free(png);
-                }
+                std::string meta_image_info = get_image_params(params, lora_meta);
+                recent_data = raw_image_to_png_base64(*result_image, meta_image_info);
             }
 
             free(results[i].data);
@@ -1533,7 +1530,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     free(results);
     output.data = recent_data.c_str();
     output.data_extra = recent_data2.c_str();
-    output.animated = (wasanim?1:0);
+    output.animated = (isanim?1:0);
     output.status = 1;
     total_img_gens += 1;
     if(!sd_is_quiet)
@@ -1584,13 +1581,7 @@ sd_generation_outputs sdtype_upscale(const sd_upscale_inputs inputs)
         source_img.data = upscale_src_buffer;
 
         upscaled_image = upscale(upscaler_ctx, source_img, inputs.upscaling_resize);
-        int out_data_len;
-        unsigned char * png = stbi_write_png_to_mem(upscaled_image.data, 0, upscaled_image.width, upscaled_image.height, upscaled_image.channel, &out_data_len, nullptr);
-        if (png != NULL)
-        {
-            recent_data = kcpp_base64_encode(png,out_data_len);
-            free(png);
-        }
+        recent_data = raw_image_to_png_base64(upscaled_image);
         free(upscaled_image.data);
         output.data = recent_data.c_str();
         output.data_extra = recent_data2.c_str();
