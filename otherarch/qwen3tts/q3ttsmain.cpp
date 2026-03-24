@@ -139,7 +139,7 @@ int main(int argc, char ** argv) {
 
     if (reference_audio.empty()) {
         fprintf(stderr, "Synthesizing: \"%s\"\n", text.c_str());
-        result = tts.synthesize(text,"", params);
+        result = tts.synthesize(text,"", -1, params);
     } else {
         fprintf(stderr, "Synthesizing with voice cloning: \"%s\"\n", text.c_str());
         fprintf(stderr, "Reference audio: %s\n", reference_audio.c_str());

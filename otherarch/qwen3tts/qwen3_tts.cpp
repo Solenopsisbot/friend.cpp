@@ -163,7 +163,26 @@ bool Qwen3TTS::load_models(const std::string & tts_model_path, const std::string
     return true;
 }
 
-tts_result Qwen3TTS::synthesize(const std::string & text, const std::string & instruction,
+bool Qwen3TTS::load_speaker_enc()
+{
+    if (!encoder_loaded_) {
+        if (tts_model_path_.empty()) {
+            fprintf(stderr, "Failed to load speaker encoder, file not found");
+            return false;
+        }
+        int64_t t_encoder_load_start = get_time_ms();
+        if (!audio_encoder_.load_model(tts_model_path_)) {
+            return false; //no encoder
+        }
+        encoder_loaded_ = true;
+        fprintf(stderr, "  Speaker encoder lazy-loaded in %lld ms\n",
+                (long long)(get_time_ms() - t_encoder_load_start));
+        return true;
+    }
+    return true;
+}
+
+tts_result Qwen3TTS::synthesize(const std::string & text, const std::string & instruction, const int speaker_id,
                                  const tts_params & params) {
     tts_result result;
 
@@ -176,7 +195,7 @@ tts_result Qwen3TTS::synthesize(const std::string & text, const std::string & in
     // This will use the model's default voice characteristics
     std::vector<float> zero_embedding(transformer_.get_config().hidden_size, 0.0f);
 
-    return synthesize_internal(text, instruction, zero_embedding.data(), params, result);
+    return synthesize_internal(text, instruction, speaker_id, zero_embedding.data(), params, result);
 }
 
 tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
@@ -260,10 +279,10 @@ tts_result Qwen3TTS::synthesize_with_voice(const std::string & text,
         fprintf(stderr, "Speaker embedding extracted: %zu floats\n", speaker_embedding.size());
     }
 
-    return synthesize_internal(text, "", speaker_embedding.data(), params, result);
+    return synthesize_internal(text, "", -1, speaker_embedding.data(), params, result);
 }
 
-tts_result Qwen3TTS::synthesize_internal(const std::string & text, const std::string & instruction,
+tts_result Qwen3TTS::synthesize_internal(const std::string & text, const std::string & instruction, const int speakerid,
                                           const float * speaker_embedding,
                                           const tts_params & params,
                                           tts_result & result) {
@@ -325,7 +344,7 @@ tts_result Qwen3TTS::synthesize_internal(const std::string & text, const std::st
     if (!transformer_.generate(text_tokens.data(), (int32_t)text_tokens.size(),
                                speaker_embedding, params.max_audio_tokens, speech_codes,
                                2050, params.repetition_penalty,
-                               params.temperature, params.top_k, -1, instruct_tok_data, instruct_tok_count)) {
+                               params.temperature, params.top_k, speakerid, instruct_tok_data, instruct_tok_count)) {
         result.error_msg = "Failed to generate speech codes: " + transformer_.get_error();
         return result;
     }
