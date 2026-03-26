@@ -2925,7 +2925,7 @@ def detect_toolcall_tags(text: str): #for use with jinja tool responses, detect 
         return tag
     return None
 
-def format_jinja(messages, tools):
+def format_jinja(messages, tools, chat_template_kwargs=None):
     try:
         def strftime_now(format='%Y-%m-%d %H:%M:%S'):
             return datetime.now().strftime(format)
@@ -2947,18 +2947,17 @@ def format_jinja(messages, tools):
         jinja_compiled_template = jinja_env.from_string(cached_chat_template)
         text = None
         last_assist_msg = messages[-1]["content"]
+        chat_template_kwargs = chat_template_kwargs or {}
         assist_should_prefill = (messages and messages[-1]["role"] == "assistant" and last_assist_msg and isinstance(last_assist_msg, str) and len(last_assist_msg.strip())>0) #avoid single character newline or space content
         if tools and len(tools)>0:
-            text = jinja_compiled_template.render(messages=messages, tools=tools, add_generation_prompt=True, bos_token="", eos_token="")
+            text = jinja_compiled_template.render(messages=messages, tools=tools, add_generation_prompt=True, bos_token="", eos_token="", **chat_template_kwargs)
         else:
-            text = jinja_compiled_template.render(messages=messages, add_generation_prompt=True, bos_token="", eos_token="")
+            text = jinja_compiled_template.render(messages=messages, add_generation_prompt=True, bos_token="", eos_token="", **chat_template_kwargs)
 
         if assist_should_prefill and text: # handle prefill continuations
             lastindex = text.rfind(last_assist_msg)
             if lastindex != -1:
                 text = text[:lastindex + len(last_assist_msg)]
-            else:
-                text = text
         return text if text else None
     except Exception as e:
         print(f"Jinja formatting failed: {e}")
@@ -3446,10 +3445,20 @@ ws ::= | " " | "\n" [ \t]{0,20}
             attachedaudid = 0
             jinja_output = None
             jinjatools = genparams.get('tools', [])
+            jinjakwargs = None
+            try:
+                jinjakwargsstr = args.jinja_kwargs if args.jinja_kwargs else None
+                if jinjakwargsstr and isinstance(jinjakwargsstr, str):
+                    jinjakwargs = json.loads(jinjakwargsstr)
+            except Exception:
+                print("Jinja Kwargs not valid JSON dict!")
+                pass
             if use_jinja and cached_chat_template:
-                jinja_output = format_jinja(messages_array,jinjatools)
+                jinja_output = format_jinja(messages_array,jinjatools,jinjakwargs)
             if jinja_output:
                 messages_string = jinja_output
+                if jinja_output.rstrip().endswith("<think>"): #the prompt template already forced a start think.
+                    genparams["jinja_already_started_thinking"] = True
                 if jinjatools and len(jinjatools)>0:
                     genparams["using_openai_tools"] = True
                 # handle media
@@ -4121,6 +4130,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         encap_in_thinking = False
+        if genparams.get('jinja_already_started_thinking', False):
+            encap_in_thinking = True
         encap_first_loop = True
         thinkpairs = [{"start":"<|channel|>analysis<|message|>","end":"<|start|>assistant<|channel|>final<|message|>"},
                       {"start":"<think>","end":"</think>"}]
@@ -6337,6 +6348,7 @@ def show_gui():
     chatcompletionsadapter_var = ctk.StringVar(value="AutoGuess")
     jinja_var = ctk.IntVar(value=0)
     jinja_tools_var = ctk.IntVar(value=0)
+    jinja_kwargs_var = ctk.StringVar()
     moeexperts_var = ctk.StringVar(value=str(-1))
     moecpu_var = ctk.StringVar(value=str(0))
     defaultgenamt_var = ctk.StringVar(value=str(default_genlen))
@@ -6508,7 +6520,7 @@ def show_gui():
     def makelabelentry(parent, text, var, row=0, width=50, padx=8, singleline=False, tooltip="", labelpadx=8):
         label = makelabel(parent, text, row, 0, tooltip, padx=labelpadx)
         entry = ctk.CTkEntry(parent, width=width, textvariable=var)
-        entry.grid(row=row, column=(0 if singleline else 1), padx=padx, sticky="nw")
+        entry.grid(row=row, column=(0 if singleline else 1), padx=padx, pady=1, sticky="nw")
         return entry, label
 
     #file dialog types: 0=openfile,1=savefile,2=opendir
@@ -7078,12 +7090,17 @@ def show_gui():
     def togglejinja(a,b,c):
         if jinja_var.get()==1:
             jinjatoolsbox.grid()
+            jinjakwargsbox.grid()
+            jinjakwargsboxlbl.grid()
         else:
             jinja_tools_var.set(0)
             jinjatoolsbox.grid_remove()
+            jinjakwargsbox.grid_remove()
+            jinjakwargsboxlbl.grid_remove()
         changed_gpulayers_estimate()
     makecheckbox(context_tab, "Use Jinja", jinja_var, row=45, command=togglejinja, tooltiptxt="Enables using jinja chat template formatting for chat completions endpoint. Other endpoints are unaffected.")
     jinjatoolsbox = makecheckbox(context_tab, "Jinja for Tools", jinja_tools_var, row=45 ,padx=(140), tooltiptxt="Allows jinja even with tool calls. If unchecked, jinja will be disabled when tools are used.")
+    jinjakwargsbox,jinjakwargsboxlbl = makelabelentry(context_tab, "J.Kwargs:", jinja_kwargs_var, row=45, width=80, padx=(350), singleline=True, tooltip='Set additiona fields for Jinja JSON template parser, must be a valid json object.\nSpecified as JSON fields: {"KEY1":"VALUE1", "KEY2":"VALUE2"...}', labelpadx=290)
     jinja_var.trace_add("write", togglejinja)
     makelabelentry(context_tab, "MoE Experts:", moeexperts_var, row=55, padx=(120), singleline=True, tooltip="Override number of MoE experts.")
     moecpu_box,moecpu_box_lbl = makelabelentry(context_tab, "MoE CPU Layers:", moecpu_var, row=55, padx=(320), singleline=True, tooltip="Force Mixture of Experts (MoE) weights of the first N layers to the CPU.\nSetting it higher than GPU layers has no effect.", labelpadx=(210))
@@ -7445,6 +7462,8 @@ def show_gui():
         args.nobostoken = (nobostoken_var.get()==1)
         args.jinja = (jinja_var.get()==1)
         args.jinja_tools = (jinja_tools_var.get()==1)
+        if jinja_kwargs_var.get() != "":
+            args.jinja_kwargs = jinja_kwargs_var.get()
         args.enableguidance = (enableguidance_var.get()==1)
         args.overridekv = None if override_kv_var.get() == "" else override_kv_var.get()
         args.overridetensors = None if override_tensors_var.get() == "" else override_tensors_var.get()
@@ -7707,6 +7726,11 @@ def show_gui():
         nobostoken_var.set(dict["nobostoken"] if ("nobostoken" in dict) else 0)
         jinja_var.set(dict["jinja"] if ("jinja" in dict) else 0)
         jinja_tools_var.set(dict["jinja_tools"] if ("jinja_tools" in dict) else 0)
+        jinja_kwargs = (dict["jinja_kwargs"] if ("jinja_kwargs" in dict and dict["jinja_kwargs"]) else "")
+        if isinstance(jinja_kwargs, type({})):
+            jinja_kwargs = json.dumps(jinja_kwargs)
+        jinja_kwargs_var.set(jinja_kwargs)
+
         enableguidance_var.set(dict["enableguidance"] if ("enableguidance" in dict) else 0)
         if "overridekv" in dict and dict["overridekv"]:
             override_kv_var.set(dict["overridekv"])
@@ -10090,6 +10114,7 @@ if __name__ == '__main__':
     advparser.add_argument("--chatcompletionsadapter", metavar=('[filename]'), help="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.", default="AutoGuess")
     advparser.add_argument("--jinja", help="Enables using jinja chat template formatting for chat completions endpoint. Other endpoints are unaffected. Tool calls are done without jinja.", action='store_true')
     advparser.add_argument("--jinja_tools","--jinja-tools","--jinjatools", help="Enables using jinja chat template formatting for chat completions endpoint. Other endpoints are unaffected. Tool calls are done with jinja.", action='store_true')
+    advparser.add_argument("--jinja_kwargs","--jinja-kwargs","--jinjakwargs","--chat-template-kwargs", metavar=('{"parameter":"value",...}'), help="Set additiona fields for Jinja JSON template parser, must be a valid JSON object.", default="")
     advparser.add_argument("--noflashattention","--no-flash-attn","-nofa", help="Disables flash attention.", action='store_true')
     advparser.add_argument("--lowvram","-nkvo","--no-kv-offload", help="If supported by the backend, do not offload KV to GPU (lowvram mode). Not recommended, will be slow.", action='store_true')
     advparser.add_argument("--quantkv", help="Sets the KV cache data type quantization, 0=f16, 1=q8, 2=q4. Requires Flash Attention for full effect, otherwise only K cache is quantized.",metavar=('[quantization level 0/1/2]'), type=int, choices=[0,1,2], default=0)
