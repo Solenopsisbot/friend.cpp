@@ -45,8 +45,8 @@ import queue
 # constants
 sampler_order_max = 7
 tensor_split_max = 16
-images_max = 8
-audio_max = 4
+images_max = 16
+audio_max = 16
 bias_min_value = -100.0
 bias_max_value = 100.0
 logprobs_max = 10
@@ -251,8 +251,10 @@ class generation_inputs(ctypes.Structure):
                 ("memory", ctypes.c_char_p),
                 ("negative_prompt", ctypes.c_char_p),
                 ("guidance_scale", ctypes.c_float),
-                ("images", ctypes.c_char_p * images_max),
-                ("audio", ctypes.c_char_p * audio_max),
+                ("images_len", ctypes.c_int),
+                ("images", ctypes.POINTER(ctypes.c_char_p)),
+                ("audio_len", ctypes.c_int),
+                ("audio", ctypes.POINTER(ctypes.c_char_p)),
                 ("max_context_length", ctypes.c_int),
                 ("max_length", ctypes.c_int),
                 ("temperature", ctypes.c_float),
@@ -1898,16 +1900,18 @@ def generate(genparams, stream_flag=False):
     inputs.memory = memory.encode("UTF-8")
     inputs.negative_prompt = negative_prompt.encode("UTF-8")
     inputs.guidance_scale = guidance_scale
-    for n in range(images_max):
-        if not images or n >= len(images):
-            inputs.images[n] = "".encode("UTF-8")
-        else:
-            inputs.images[n] = images[n].encode("UTF-8")
-    for n in range(audio_max):
-        if not audio or n >= len(audio):
-            inputs.audio[n] = "".encode("UTF-8")
-        else:
-            inputs.audio[n] = audio[n].encode("UTF-8")
+
+    images = images[-images_max:]
+    inputs.images_len = len(images)
+    inputs.images = (ctypes.c_char_p * inputs.images_len)()
+    for n, item in enumerate(images):
+        inputs.images[n] = item.encode("UTF-8")
+    audio = audio[-audio_max:]
+    inputs.audio_len = len(audio)
+    inputs.audio = (ctypes.c_char_p * inputs.audio_len)()
+    for n, item in enumerate(audio):
+        inputs.audio[n] = item.encode("UTF-8")
+
     global showmaxctxwarning
     if max_context_length > maxctx:
         if showmaxctxwarning:

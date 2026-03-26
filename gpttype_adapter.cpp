@@ -3648,7 +3648,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     }
     media_objects.clear();
     std::string new_media_composite = "";
-    for(int x=0;x<images_max;++x)
+
+    for(int x=0;x<inputs.images_len;++x)
     {
         std::string item = inputs.images[x];
         if(item!="")
@@ -3678,7 +3679,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             new_media_composite += item;
         }
     }
-    for(int x=0;x<audio_max;++x)
+    for(int x=0;x<inputs.audio_len;++x)
     {
         std::string item = inputs.audio[x];
         if(item!="")
