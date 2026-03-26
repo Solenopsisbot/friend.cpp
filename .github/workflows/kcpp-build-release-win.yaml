@@ -58,7 +58,7 @@ jobs:
           echo VS2019 Setup completed
           exit /b 0
 
-      - uses: Jimver/cuda-toolkit@v0.2.24
+      - uses: LostRuins/cuda-toolkit@v1.0
         id: cuda-toolkit
         with:
           cuda: '12.1.0'
