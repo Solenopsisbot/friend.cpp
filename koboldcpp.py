@@ -3636,6 +3636,20 @@ ws ::= | " " | "\n" [ \t]{0,20}
         genparams["ollamasysprompt"] = ollamasysprompt
         genparams["ollamabodyprompt"] = ollamabodyprompt
         genparams["prompt"] = ollamasysprompt + ollamabodyprompt
+    elif api_format==8: # OpenAI Responses API, oai-responses
+        raw_input = genparams.get('input', '')
+        raw_instructions = genparams.get('instructions', '')
+        if isinstance(raw_input, str):
+            genparams['messages'] = [{"role": "user", "content": raw_input}]
+        elif isinstance(raw_input, list):
+            genparams['messages'] = raw_input
+        else:
+            genparams['messages'] = []
+        if raw_instructions and isinstance(raw_instructions, str) and raw_instructions!="":
+            genparams['messages'].insert(0, {"role": "system", "content": raw_instructions})
+        genparams['stream'] = False
+        transform_genparams(genparams, 4, use_jinja) # Delegate to the chat-completions transform by re-running as format 4
+        return genparams
 
     #final transformations (universal template replace)
     replace_instruct_placeholders = genparams.get('replace_instruct_placeholders', True)
@@ -3788,7 +3802,7 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
         is_chat_completions_path = (self.path.endswith('/v1/chat/completions') or self.path=='/chat/completions')
 
         #any requests to the following endpoints is capable of waking the server
-        wake_requests = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions","/api/extra/transcribe","/v1/audio/transcriptions","/api/extra/tts","/v1/audio/speech","/api/extra/embeddings","/v1/embeddings","/api/extra/music/prepare","/api/extra/music/generate","/sdapi/v1/txt2img","/sdapi/v1/img2img","/sdapi/v1/upscale"]
+        wake_requests = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions","/v1/responses","/api/extra/transcribe","/v1/audio/transcriptions","/api/extra/tts","/v1/audio/speech","/api/extra/embeddings","/v1/embeddings","/api/extra/music/prepare","/api/extra/music/generate","/sdapi/v1/txt2img","/sdapi/v1/img2img","/sdapi/v1/upscale"]
         is_wake_request = self.path in wake_requests
 
         if is_post and (is_completions_path or is_chat_completions_path or is_wake_request):
@@ -4096,6 +4110,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             res = {"model": friendlymodelname,"created_at": str(datetime.now(timezone.utc).isoformat()),"response":recvtxt,"done": True,"done_reason":currfinishreason,"context": tokarr,"total_duration": 1,"load_duration": 1,"prompt_eval_count": prompttokens,"prompt_eval_duration": 1,"eval_count": comptokens,"eval_duration": 1}
         elif api_format == 7:
             res = {"model": friendlymodelname,"created_at": str(datetime.now(timezone.utc).isoformat()),"message":{"role":"assistant","content":recvtxt},"done": True,"done_reason":currfinishreason,"total_duration": 1,"load_duration": 1,"prompt_eval_count": prompttokens,"prompt_eval_duration": 1,"eval_count": comptokens,"eval_duration": 1}
+        elif api_format == 8:
+            resp_id = f"resp-A{genparams.get('oai_uniqueid', 1)}"
+            res = {"id": resp_id, "object": "response", "created_at": int(time.time()), "model": friendlymodelname, "output": [ { "type": "message", "role": "assistant", "content": [ {"type": "output_text", "text": recvtxt} ] } ], "usage": { "input_tokens": prompttokens, "output_tokens": comptokens, "total_tokens": prompttokens + comptokens } }
         else: #kcpp format
             res = {"results": [{"text": recvtxt, "tool_calls": tool_calls, "finish_reason": currfinishreason, "logprobs":logprobsdict, "prompt_tokens": prompttokens, "completion_tokens": comptokens}]}
 
@@ -5325,7 +5342,7 @@ Change Mode<br>
         # handle endpoints that require mutex locking and handle actual gens
         try:
             sse_stream_flag = False
-            api_format = 0 #1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat
+            api_format = 0 #1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat,8=oai-responses
             is_imggen = False
             is_comfyui_imggen = False
             is_oai_imggen = False
@@ -5418,6 +5435,8 @@ Change Mode<br>
                 api_format = 6
             elif self.path.endswith('/api/chat'): #ollama
                 api_format = 7
+            elif self.path.endswith('/v1/responses') or self.path=='/responses': #oai-responses
+                api_format = 8
             elif self.path.endswith('/sdapi/v1/extra-single-image') or self.path.endswith('/sdapi/v1/upscale'):
                 is_img_upscale = True
             elif self.path=="/prompt" or self.path=="/images/generations" or self.path.endswith('/v1/images/generations') or self.path.endswith('/sdapi/v1/txt2img') or self.path.endswith('/sdapi/v1/img2img'):
