@@ -1764,7 +1764,7 @@ def load_model(model_filename):
     if args.quantkv>0:
         if args.noflashattention:
             inputs.quant_k = args.quantkv
-            inputs.quant_v = 0
+            inputs.quant_v = 0 if args.quantkv!=3 else args.quantkv
             print("\nWarning: Quantized KV was used without flash attention! This is NOT RECOMMENDED!\nOnly K cache can be quantized, and performance can suffer.\nIn some cases, it might even use more VRAM when doing a full offload.\nYou are strongly encouraged to use flash attention if you want to use quantkv.")
         else:
             inputs.quant_k = inputs.quant_v = args.quantkv
@@ -6316,7 +6316,7 @@ def show_gui():
     batchsize_values = ["-1","16","32","64","128","256","512","1024","2048","4096"]
     batchsize_text = ["Don't Batch","16","32","64","128","256","512","1024","2048","4096"]
     contextsize_text = ["256", "512", "1024", "2048", "3072", "4096", "6144", "8192", "10240", "12288", "14336", "16384", "20480", "24576", "28672", "32768", "40960", "49152", "57344", "65536", "81920", "98304", "114688", "131072"]
-    quantkv_text = ["F16 (Off)","8-Bit","4-Bit"]
+    quantkv_text = ["F16 (Off)","8-Bit","4-Bit","BF16"]
 
     if not any(runopts):
         exitcounter = 999
@@ -6856,7 +6856,7 @@ def show_gui():
             smartcontextbox.grid_remove()
         qkvslider.grid()
         qkvlabel.grid()
-        if flashattention_var.get()==0 and quantkv_var.get()>0:
+        if flashattention_var.get()==0 and (quantkv_var.get()>0 and quantkv_var.get()!=3):
             noqkvlabel.grid()
         else:
             noqkvlabel.grid_remove()
@@ -6865,7 +6865,7 @@ def show_gui():
     def toggleflashattn(a,b,c):
         qkvslider.grid()
         qkvlabel.grid()
-        if flashattention_var.get()==0 and quantkv_var.get()>0:
+        if flashattention_var.get()==0 and (quantkv_var.get()>0 and quantkv_var.get()!=3):
             noqkvlabel.grid()
         else:
             noqkvlabel.grid_remove()
@@ -7103,7 +7103,7 @@ def show_gui():
     makecheckbox(context_tab, "Custom RoPE Config", variable=customrope_var, row=22, command=togglerope,tooltiptxt="Override the default RoPE configuration with custom RoPE scaling.")
     noqkvlabel = makelabel(context_tab,"(Note: QuantKV works best with flash attention)",30,0,"Only K cache can be quantized, and performance can suffer.\nIn some cases, it might even use more VRAM when doing a full offload.",padx=160)
     noqkvlabel.configure(text_color="#ff5555")
-    qkvslider,qkvlabel,qkvtitle = makeslider(context_tab, "Quantize KV Cache:", quantkv_text, quantkv_var, 0, 2, 30, set=0,tooltip="Enable quantization of KV cache.\nRequires Flash Attention for full effect, otherwise only K cache is quantized.")
+    qkvslider,qkvlabel,qkvtitle = makeslider(context_tab, "Quantize KV Cache:", quantkv_text, quantkv_var, 0, 3, 30, set=0,tooltip="Enable quantization of KV cache.\nRequires Flash Attention for full effect, otherwise only K cache is quantized.")
     quantkv_var.trace_add("write", toggleflashattn)
     makecheckbox(context_tab, "No BOS Token", nobostoken_var, 43, tooltiptxt="Prevents BOS token from being added at the start of any prompt. Usually NOT recommended for most models.")
     makecheckbox(context_tab, "Enable Guidance", enableguidance_var, 43,padx=(140), tooltiptxt="Enables the use of Classifier-Free-Guidance, which allows the use of negative prompts. Has performance and memory impact.")
@@ -10137,7 +10137,7 @@ if __name__ == '__main__':
     advparser.add_argument("--jinja_kwargs","--jinja-kwargs","--jinjakwargs","--chat-template-kwargs", metavar=('{"parameter":"value",...}'), help="Set additiona fields for Jinja JSON template parser, must be a valid JSON object.", default="")
     advparser.add_argument("--noflashattention","--no-flash-attn","-nofa", help="Disables flash attention.", action='store_true')
     advparser.add_argument("--lowvram","-nkvo","--no-kv-offload", help="If supported by the backend, do not offload KV to GPU (lowvram mode). Not recommended, will be slow.", action='store_true')
-    advparser.add_argument("--quantkv", help="Sets the KV cache data type quantization, 0=f16, 1=q8, 2=q4. Requires Flash Attention for full effect, otherwise only K cache is quantized.",metavar=('[quantization level 0/1/2]'), type=int, choices=[0,1,2], default=0)
+    advparser.add_argument("--quantkv", help="Sets the KV cache data type quantization, 0=f16, 1=q8, 2=q4, 3=bf16. Requires Flash Attention for full effect, otherwise only K cache is quantized.",metavar=('[quantization level 0/1/2]'), type=int, choices=[0,1,2,3], default=0)
     advparser.add_argument("--smartcontext", help="Reserving a portion of context to try processing less frequently. Outdated. Not recommended.", action='store_true')
     advparser.add_argument("--unpack", help="Extracts the file contents of the KoboldCpp binary into a target directory.", metavar=('destination'), type=str, default="")
     advparser.add_argument("--exportconfig", help="Exports the current selected arguments as a .kcpps settings file", metavar=('[filename]'), type=str, default="")
