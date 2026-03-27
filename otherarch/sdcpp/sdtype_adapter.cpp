@@ -551,7 +551,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
 }
 
 static std::string friendly_model_name(std::filesystem::path model_path) {
-    return model_path.filename().stem().string();
+    return model_path.filename().string();
 }
 
 std::string clean_input_prompt(const std::string& input) {
