@@ -3249,7 +3249,9 @@ def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_
 def compress_tools_array(tools_array):
     tools_array_filtered = []
     for tool_dict in tools_array:
-        tool_data = tool_dict['function']
+        tool_data = tool_dict
+        if 'function' in tool_dict:
+            tool_data = tool_dict['function']
         tool_props = {}
         params = tool_data.get("parameters", {})
         props = params.get("properties", {})
@@ -3644,13 +3646,30 @@ ws ::= | " " | "\n" [ \t]{0,20}
         raw_instructions = genparams.get('instructions', '')
         if isinstance(raw_input, str):
             genparams['messages'] = [{"role": "user", "content": raw_input}]
-        elif isinstance(raw_input, list):
-            genparams['messages'] = raw_input
+        elif isinstance(raw_input, list): # Convert Responses API input items to chat messages format
+            converted = []
+            for item in raw_input:
+                if isinstance(item, dict):
+                    role = item.get("role", "user")
+                    content = item.get("content", "")
+                    # content can itself be a list of typed parts
+                    if isinstance(content, list):
+                        parts = []
+                        for part in content:
+                            if part.get("type") == "input_text":
+                                parts.append({"type": "text", "text": part.get("text", "")})
+                            elif part.get("type") == "input_image":
+                                img = part.get("image_url", part.get("source", {}))
+                                parts.append({"type": "image_url", "image_url": {"url": img}})
+                        content = parts
+                    converted.append({"role": role, "content": content})
+                elif isinstance(item, str):
+                    converted.append({"role": "user", "content": item})
+            genparams['messages'] = converted
         else:
             genparams['messages'] = []
-        if raw_instructions and isinstance(raw_instructions, str) and raw_instructions!="":
+        if raw_instructions and isinstance(raw_instructions, str):
             genparams['messages'].insert(0, {"role": "system", "content": raw_instructions})
-        genparams['stream'] = False
         transform_genparams(genparams, 4, use_jinja) # Delegate to the chat-completions transform by re-running as format 4
         return genparams
 
@@ -4069,7 +4088,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         #tool calls resolution
         tool_calls = []
-        if api_format == 4 or api_format == 2:
+        if api_format == 4 or api_format == 2 or api_format == 8:
             using_openai_tools = genparams.get('using_openai_tools', False)
             if using_openai_tools:
                 # first, check and potentially segment multiple tags for multi-tool calls
@@ -4115,7 +4134,52 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             res = {"model": friendlymodelname,"created_at": str(datetime.now(timezone.utc).isoformat()),"message":{"role":"assistant","content":recvtxt},"done": True,"done_reason":currfinishreason,"total_duration": 1,"load_duration": 1,"prompt_eval_count": prompttokens,"prompt_eval_duration": 1,"eval_count": comptokens,"eval_duration": 1}
         elif api_format == 8:
             resp_id = f"resp-A{genparams.get('oai_uniqueid', 1)}"
-            res = {"id": resp_id, "object": "response", "created_at": int(time.time()), "model": friendlymodelname, "output": [ { "type": "message", "role": "assistant", "content": [ {"type": "output_text", "text": recvtxt} ] } ], "usage": { "input_tokens": prompttokens, "output_tokens": comptokens, "total_tokens": prompttokens + comptokens } }
+            output_item_id = f"msg_0{genparams.get('oai_uniqueid', 1)}"
+            output_items = []
+            if recvtxt is not None:    # Add text message if there's content
+                output_items.append({
+                    "type": "message",
+                    "id": output_item_id,
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": recvtxt, "annotations": [], "logprobs": []}]
+                })
+            if tool_calls and len(tool_calls) > 0:  # Add function call items if tool calls exist
+                for tc in tool_calls:
+                    output_items.append({"type": "function_call", "id": tc.get("id", ""), "call_id": tc.get("id", ""), "name": tc.get("function", {}).get("name", ""), "arguments": tc.get("function", {}).get("arguments", "{}"), "status": "completed"})
+            res = {
+                "id": resp_id,
+                "object": "response",
+                "created_at": int(time.time()),
+                "completed_at": int(time.time()),
+                "incomplete_details": None,
+                "previous_response_id": None,
+                "truncation": "disabled",
+                "parallel_tool_calls": False,
+                "text": {"format": {"type": "text"},"verbosity": "medium"},
+                "instructions": genparams.get('instructions', None),
+                "model": friendlymodelname,
+                "status": "completed" if currfinishreason != "error" else "failed",
+                "error": None,
+                "metadata": {},
+                "tools": genparams.get('tools', []),
+                "tool_choice": "auto",
+                "background": False,
+                "service_tier": "default",
+                "safety_identifier": None,
+                "prompt_cache_key": None,
+                "max_tool_calls": None,
+                "store": False,
+                "output": output_items,
+                "top_p": genparams.get("top_p", 0.92),
+                "max_output_tokens":genparams.get("max_length", None),
+                "presence_penalty": genparams.get("presence_penalty", 0),
+                "frequency_penalty": genparams.get("frequency_penalty", 0),
+                "top_logprobs": 0,
+                "temperature": genparams.get("temperature", 1),
+                "reasoning": {"effort": None, "summary": None},
+                "usage": {"input_tokens": prompttokens, "output_tokens": comptokens, "total_tokens": prompttokens + comptokens, "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0}}
+            }
         else: #kcpp format
             res = {"results": [{"text": recvtxt, "tool_calls": tool_calls, "finish_reason": currfinishreason, "logprobs":logprobsdict, "prompt_tokens": prompttokens, "completion_tokens": comptokens}]}
 
