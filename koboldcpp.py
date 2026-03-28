@@ -10013,6 +10013,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     if "llm" in caps and caps["llm"]:
         apimlist.append("OpenAiApi")
         apimlist.append("OllamaApi")
+        apimlist.append("AnthropicApi")
     if "txt2img" in caps and caps["txt2img"]:
         apimlist.append("A1111ForgeApi")
         apimlist.append("ComfyUiApi")
