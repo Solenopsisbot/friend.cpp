@@ -3339,7 +3339,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
 """
 
     used_tool_json = None
-    #api format 1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat
+    #api format 1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat,8=oai-responses,9=anthropic-messages
     #alias all nonstandard alternative names for rep pen.
     rp1 = float(genparams.get('repeat_penalty', 1.0))
     rp2 = float(genparams.get('repetition_penalty', 1.0))
@@ -3671,6 +3671,17 @@ ws ::= | " " | "\n" [ \t]{0,20}
         if raw_instructions and isinstance(raw_instructions, str):
             genparams['messages'].insert(0, {"role": "system", "content": raw_instructions})
         transform_genparams(genparams, 4, use_jinja) # Delegate to the chat-completions transform by re-running as format 4
+        return genparams
+    elif api_format==9: # Anthropic Messages API
+        genparams["max_length"] = genparams.get("max_tokens", args.defaultgenamt)
+        sys_prompt = genparams.get("system", "")
+        messages = genparams.get("messages", [])
+        if sys_prompt:
+            if isinstance(sys_prompt, list): # Handle array-style system prompts
+                sys_prompt = "".join([s.get("text","") for s in sys_prompt if s.get("type") == "text"])
+            messages.insert(0, {"role": "system", "content": sys_prompt})
+        genparams["messages"] = messages
+        transform_genparams(genparams, 4, use_jinja) # Delegate to oai chat completions
         return genparams
 
     #final transformations (universal template replace)
@@ -4187,6 +4198,18 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             res["status"] = "completed" if currfinishreason != "error" else "failed"
             res["output"] = output_items
             res["usage"] = {"input_tokens": prompttokens, "output_tokens": comptokens, "total_tokens": prompttokens + comptokens, "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0}}
+        elif api_format == 9: # Anthropic Format
+            anthropic_reason = "end_turn" if currfinishreason == "stop" else ("max_tokens" if currfinishreason == "length" else "stop_sequence")
+            res = {
+                "id": f"msg_A{req_id_suffix}",
+                "type": "message",
+                "role": "assistant",
+                "model": friendlymodelname,
+                "content": [{"type": "text", "text": recvtxt}],
+                "stop_reason": anthropic_reason,
+                "stop_sequence": None,
+                "usage": {"input_tokens": prompttokens, "output_tokens": comptokens}
+            }
         else: #kcpp format
             res = {"results": [{"text": recvtxt, "tool_calls": tool_calls, "finish_reason": currfinishreason, "logprobs":logprobsdict, "prompt_tokens": prompttokens, "completion_tokens": comptokens}]}
 
@@ -4203,6 +4226,10 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.flush()
 
     async def send_oai_responses_sse_event(self, eventname, data):
+        self.wfile.write(f'event: {eventname}\ndata: {data}\n\n'.encode())
+        self.wfile.flush()
+
+    async def send_anthropic_sse_event(self, eventname, data):
         self.wfile.write(f'event: {eventname}\ndata: {data}\n\n'.encode())
         self.wfile.flush()
 
@@ -4232,6 +4259,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         thinkpairs = [{"start":"<|channel|>analysis<|message|>","end":"<|start|>assistant<|channel|>final<|message|>"},
                       {"start":"<think>","end":"</think>"}]
         responses_first_loop = True
+        anthropic_first_loop = True
         rseq_num = 0
         current_token = 0
         prompttokens = 0
@@ -4389,6 +4417,19 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                         completed_event = json.dumps({"type": "response.completed", "response": res, "sequence_number":rseq_num})
                                         rseq_num += 1
                                         await self.send_oai_responses_sse_event("response.completed",completed_event)
+                            elif api_format == 9: # Anthropic Streaming Format
+                                if anthropic_first_loop:
+                                    start_msg = json.dumps({"type":"message","id":f"msg_A{req_id_suffix}","role":"assistant","model":friendlymodelname,"usage":{"input_tokens":prompttokens,"output_tokens":0}})
+                                    await self.send_anthropic_sse_event("message_start", json.dumps({"type": "message_start", "message": json.loads(start_msg)}))
+                                    await self.send_anthropic_sse_event("content_block_start", json.dumps({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}))
+                                    anthropic_first_loop = False
+                                if tokenStr != "":
+                                    await self.send_anthropic_sse_event("content_block_delta", json.dumps({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":tokenStr}}))
+                                if streamDone:
+                                    anthropic_reason = "end_turn" if currfinishreason == "stop" else ("max_tokens" if currfinishreason == "length" else "stop_sequence")
+                                    await self.send_anthropic_sse_event("content_block_stop", json.dumps({"type":"content_block_stop","index":0}))
+                                    await self.send_anthropic_sse_event("message_delta", json.dumps({"type":"message_delta","delta":{"stop_reason":anthropic_reason,"stop_sequence":None},"usage":{"output_tokens":current_token}}))
+                                    await self.send_anthropic_sse_event("message_stop", json.dumps({"type":"message_stop"}))
                             else:
                                 event_str = json.dumps({"token": tokenStr, "finish_reason":currfinishreason})
                                 await self.send_kai_sse_event(event_str)
@@ -5469,7 +5510,7 @@ Change Mode<br>
         # handle endpoints that require mutex locking and handle actual gens
         try:
             sse_stream_flag = False
-            api_format = 0 #1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat,8=oai-responses
+            api_format = 0 #1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat,8=oai-responses,9=anthropic-messages
             is_imggen = False
             is_comfyui_imggen = False
             is_oai_imggen = False
@@ -5564,6 +5605,8 @@ Change Mode<br>
                 api_format = 7
             elif self.path.endswith('/v1/responses') or self.path=='/responses': #oai-responses
                 api_format = 8
+            elif self.path.endswith('/v1/messages') or self.path=='/messages': #anthropic
+                api_format = 9
             elif self.path.endswith('/sdapi/v1/extra-single-image') or self.path.endswith('/sdapi/v1/upscale'):
                 is_img_upscale = True
             elif self.path=="/prompt" or self.path=="/images/generations" or self.path.endswith('/v1/images/generations') or self.path.endswith('/sdapi/v1/txt2img') or self.path.endswith('/sdapi/v1/img2img'):
@@ -5668,7 +5711,7 @@ Change Mode<br>
 
                 if api_format > 0: #text gen
                     # Check if streaming chat completions, if so, set stream mode to true
-                    if (api_format == 4 or api_format == 3 or api_format == 8) and "stream" in genparams and genparams["stream"]:
+                    if (api_format == 4 or api_format == 3 or api_format == 8 or api_format == 9) and "stream" in genparams and genparams["stream"]:
                         sse_stream_flag = True
 
                     gendat = asyncio.run(self.handle_request(genparams, api_format, sse_stream_flag))
