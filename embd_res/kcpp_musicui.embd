@@ -784,6 +784,20 @@ function clearFields()
     document.getElementById("caption").value = "";
     document.getElementById("lyrics").value = "";
     document.getElementById("audio_codes").value = "";
+
+    const container = document.getElementById('advanced');
+    const inputs = container.querySelectorAll('input');
+
+    inputs.forEach(input => {
+      if (input.type === 'checkbox') {
+        // For checkboxes, do nothing
+        //input.checked = input.defaultChecked;
+      } else {
+        // For text/number inputs, restore the original 'value'
+        input.value = input.defaultValue;
+      }
+    });
+
     clearReferenceAudio();
 }
 function exportPlan(){
