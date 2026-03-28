@@ -4043,6 +4043,41 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             print(f"File Upload Process Error: {e}")
             return result
 
+    def prepare_basic_responses_body(self,resp_id,genparams):
+        global friendlymodelname
+        ret = {
+            "id": resp_id,
+            "object": "response",
+            "created_at": int(time.time()),
+            "completed_at": None,
+            "incomplete_details": None,
+            "previous_response_id": None,
+            "truncation": "disabled",
+            "parallel_tool_calls": False,
+            "text": {"format": {"type": "text"},"verbosity": "medium"},
+            "instructions": genparams.get('instructions', None),
+            "model": friendlymodelname,
+            "error": None,
+            "metadata": {},
+            "tools": genparams.get('tools', []),
+            "tool_choice": "auto",
+            "background": False,
+            "service_tier": "default",
+            "safety_identifier": None,
+            "prompt_cache_key": None,
+            "max_tool_calls": None,
+            "store": False,
+            "top_p": genparams.get("top_p", 0.92),
+            "max_output_tokens":genparams.get("max_length", None),
+            "presence_penalty": genparams.get("presence_penalty", 0),
+            "frequency_penalty": genparams.get("frequency_penalty", 0),
+            "top_logprobs": 0,
+            "temperature": genparams.get("temperature", 1),
+            "reasoning": {"effort": None, "summary": None},
+            "usage": None
+        }
+        return ret
+
     async def generate_text(self, genparams, api_format, stream_flag):
         global friendlymodelname, chatcompl_adapter, currfinishreason
         currfinishreason = None
@@ -4147,39 +4182,11 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             if tool_calls and len(tool_calls) > 0:  # Add function call items if tool calls exist
                 for tc in tool_calls:
                     output_items.append({"type": "function_call", "id": tc.get("id", ""), "call_id": tc.get("id", ""), "name": tc.get("function", {}).get("name", ""), "arguments": tc.get("function", {}).get("arguments", "{}"), "status": "completed"})
-            res = {
-                "id": resp_id,
-                "object": "response",
-                "created_at": int(time.time()),
-                "completed_at": int(time.time()),
-                "incomplete_details": None,
-                "previous_response_id": None,
-                "truncation": "disabled",
-                "parallel_tool_calls": False,
-                "text": {"format": {"type": "text"},"verbosity": "medium"},
-                "instructions": genparams.get('instructions', None),
-                "model": friendlymodelname,
-                "status": "completed" if currfinishreason != "error" else "failed",
-                "error": None,
-                "metadata": {},
-                "tools": genparams.get('tools', []),
-                "tool_choice": "auto",
-                "background": False,
-                "service_tier": "default",
-                "safety_identifier": None,
-                "prompt_cache_key": None,
-                "max_tool_calls": None,
-                "store": False,
-                "output": output_items,
-                "top_p": genparams.get("top_p", 0.92),
-                "max_output_tokens":genparams.get("max_length", None),
-                "presence_penalty": genparams.get("presence_penalty", 0),
-                "frequency_penalty": genparams.get("frequency_penalty", 0),
-                "top_logprobs": 0,
-                "temperature": genparams.get("temperature", 1),
-                "reasoning": {"effort": None, "summary": None},
-                "usage": {"input_tokens": prompttokens, "output_tokens": comptokens, "total_tokens": prompttokens + comptokens, "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0}}
-            }
+            res = self.prepare_basic_responses_body(resp_id,genparams)
+            res["completed_at"] = int(time.time())
+            res["status"] = "completed" if currfinishreason != "error" else "failed"
+            res["output"] = output_items
+            res["usage"] = {"input_tokens": prompttokens, "output_tokens": comptokens, "total_tokens": prompttokens + comptokens, "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0}}
         else: #kcpp format
             res = {"results": [{"text": recvtxt, "tool_calls": tool_calls, "finish_reason": currfinishreason, "logprobs":logprobsdict, "prompt_tokens": prompttokens, "completion_tokens": comptokens}]}
 
@@ -4193,6 +4200,10 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(f'data: {data.strip()}\n\n'.encode())
         else:
             self.wfile.write(f'data: {data}\n\n'.encode())
+        self.wfile.flush()
+
+    async def send_oai_responses_sse_event(self, eventname, data):
+        self.wfile.write(f'event: {eventname}\ndata: {data}\n\n'.encode())
         self.wfile.flush()
 
     async def send_kai_sse_event(self, data):
@@ -4220,6 +4231,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         encap_first_loop = True
         thinkpairs = [{"start":"<|channel|>analysis<|message|>","end":"<|start|>assistant<|channel|>final<|message|>"},
                       {"start":"<think>","end":"</think>"}]
+        responses_first_loop = True
+        rseq_num = 0
         current_token = 0
         prompttokens = 0
         incomplete_token_buffer = bytearray()
@@ -4329,6 +4342,53 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                     await self.send_oai_sse_event(addonstr)
                                 event_str = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":friendlymodelname,"choices":[{"index":0,"finish_reason":currfinishreason,"text":tokenStr}]})
                                 await self.send_oai_sse_event(event_str)
+                            elif api_format == 8: #oai-responses
+                                resp_id = f"resp-A{genparams.get('oai_uniqueid', 1)}"
+                                item_id = f"msg_0{genparams.get('oai_uniqueid', 1)}"
+                                # Send response.created once at the start (only on first iteration)
+                                if responses_first_loop:
+                                    res = self.prepare_basic_responses_body(resp_id, genparams)
+                                    res["status"] = "in_progress"
+                                    res["output"] = []
+                                    created_event = json.dumps({"type": "response.created", "response": res, "sequence_number":rseq_num})
+                                    rseq_num += 1
+                                    await self.send_oai_responses_sse_event("response.created",created_event)
+                                    # response.output_item.added
+                                    item_added = json.dumps({"type": "response.output_item.added", "output_index": 0, "sequence_number":rseq_num, "item": { "type": "message", "id": item_id, "status": "in_progress", "role": "assistant", "content": []}})
+                                    rseq_num += 1
+                                    await self.send_oai_responses_sse_event("response.output_item.added",item_added)
+                                    # content_part.added
+                                    part_added = json.dumps({"type": "response.content_part.added", "item_id": item_id, "output_index": 0, "sequence_number":rseq_num, "content_index": 0, "part": {"type": "output_text", "text": "", "annotations": []}})
+                                    rseq_num += 1
+                                    await self.send_oai_responses_sse_event("response.content_part.added",part_added)
+                                    responses_first_loop = False
+                                if tokenStr != "" or streamDone:
+                                    if tokenStr != "":
+                                        delta_event = json.dumps({"type": "response.output_text.delta", "item_id": item_id, "output_index": 0, "sequence_number":rseq_num, "logprobs":[], "content_index": 0, "delta": tokenStr})
+                                        rseq_num += 1
+                                        await self.send_oai_responses_sse_event("response.output_text.delta",delta_event)
+                                    if streamDone:
+                                        # content_part.done, reply full text
+                                        await asyncio.sleep(async_sleep_short)
+                                        finaltxt = handle.get_pending_output().decode("UTF-8", "ignore")
+                                        await asyncio.sleep(async_sleep_short)
+                                        done_event = json.dumps({"type": "response.output_text.done", "item_id": item_id, "output_index": 0, "sequence_number":rseq_num, "content_index": 0, "text": finaltxt})
+                                        rseq_num += 1
+                                        await self.send_oai_responses_sse_event("response.output_text.done",done_event)
+                                        # response.output_item.done
+                                        item_done = json.dumps({"type": "response.output_item.done", "output_index": 0, "sequence_number":rseq_num, "item": { "type": "message", "id": item_id, "status": "completed", "role": "assistant", "content": [{"type": "output_text", "text": finaltxt, "annotations": [], "logprobs": []}]}})
+                                        rseq_num += 1
+                                        await self.send_oai_responses_sse_event("response.output_item.done",item_done)
+                                        usage_pp = handle.get_last_input_count()
+                                        usage_gen = current_token
+                                        res = self.prepare_basic_responses_body(resp_id,genparams)
+                                        res["completed_at"] = int(time.time())
+                                        res["status"] = "completed" if currfinishreason != "error" else "failed"
+                                        res["output"] = [{"type": "message", "id": item_id, "status": "completed", "role": "assistant", "content": [{"type": "output_text", "text": finaltxt, "annotations": [], "logprobs": []}]}]
+                                        res["usage"] = {"input_tokens": usage_pp,"input_tokens_details":{"cached_tokens":0}, "output_tokens": usage_gen, "output_tokens_details":{"reasoning_tokens":0}, "total_tokens": usage_pp + usage_gen}
+                                        completed_event = json.dumps({"type": "response.completed", "response": res, "sequence_number":rseq_num})
+                                        rseq_num += 1
+                                        await self.send_oai_responses_sse_event("response.completed",completed_event)
                             else:
                                 event_str = json.dumps({"token": tokenStr, "finish_reason":currfinishreason})
                                 await self.send_kai_sse_event(event_str)
@@ -5608,7 +5668,7 @@ Change Mode<br>
 
                 if api_format > 0: #text gen
                     # Check if streaming chat completions, if so, set stream mode to true
-                    if (api_format == 4 or api_format == 3) and "stream" in genparams and genparams["stream"]:
+                    if (api_format == 4 or api_format == 3 or api_format == 8) and "stream" in genparams and genparams["stream"]:
                         sse_stream_flag = True
 
                     gendat = asyncio.run(self.handle_request(genparams, api_format, sse_stream_flag))
@@ -8377,6 +8437,8 @@ def convert_invalid_args(args):
     if "sdclipg" in dict and "sdclip2" not in dict:
         dict["sdclip2"] = dict["sdclipg"]
     if "jinja_tools" in dict and dict["jinja_tools"]:
+        dict["jinja"] = True
+    if "jinja_kwargs" in dict and dict["jinja_kwargs"]:
         dict["jinja"] = True
     if "sdgendefaults" in dict and "gendefaults" not in dict:
         dict["gendefaults"] = dict["sdgendefaults"]
