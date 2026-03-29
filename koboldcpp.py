@@ -3464,7 +3464,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
             if jinja_output:
                 messages_string = jinja_output
                 if jinja_output.rstrip().endswith("<think>"): #the prompt template already forced a start think.
-                    genparams["jinja_already_started_thinking"] = True
+                    genparams["already_started_thinking"] = True
                 if jinjatools and len(jinjatools)>0:
                     genparams["using_openai_tools"] = True
                 # handle media
@@ -3581,6 +3581,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 if (latest_turn_was_assistant and continue_assistant_turn): #allow continue a prefill, chop off end
                     messages_string = messages_string[:-(len(assistant_message_gen)+len(assistant_message_end))]
             genparams["prompt"] = messages_string
+            if messages_string.rstrip().endswith("<think>"): #the prompt template already forced a start think.
+                genparams["already_started_thinking"] = True
             if len(images_added)>0:
                 genparams["images"] = images_added
             if len(audio_added)>0:
@@ -4253,7 +4255,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         encap_in_thinking = False
-        if genparams.get('jinja_already_started_thinking', False):
+        if genparams.get('already_started_thinking', False):
             encap_in_thinking = True
         encap_first_loop = True
         thinkpairs = [{"start":"<|channel|>analysis<|message|>","end":"<|start|>assistant<|channel|>final<|message|>"},
@@ -4314,32 +4316,60 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                         if tokenStr!="" or streamDone:
                             need_split_final_msg = True if (currfinishreason is not None and streamDone and tokenStr!="") else False
 
-                            # hack for lcppui reasoning_content for thinking models
-                            delta = {'role':'assistant','content':tokenStr}
+                            # Hack for lcppui reasoning_content for thinking models
+                            delta = {'role': 'assistant'}
                             if genparams.get('encapsulate_thinking', True):
-                                for pair in thinkpairs:
-                                    if encap_first_loop and not encap_in_thinking and genparams.get("prompt","").endswith(pair["start"]):
-                                        encap_in_thinking = True
-                                        delta = {'role':'assistant','reasoning_content':tokenStr}
-                                        thinkpairs = [pair] #remove all others
-                                        break
-                                    elif not encap_in_thinking and (pair["start"] in tokenStr):
-                                        encap_in_thinking = True
-                                        out1, out2 = tokenStr.split(pair["start"], 1)
-                                        delta = {'role':'assistant','reasoning_content':out2}
-                                        thinkpairs = [pair] #remove all others
-                                        break
-                                    elif encap_in_thinking and pair["end"] in tokenStr:
+                                if encap_in_thinking:
+                                    # We are already inside a thinking block. thinkpairs has already been reduced to [pair], so we just check the active one.
+                                    active_pair = thinkpairs[0]
+                                    if active_pair["end"] in tokenStr:
                                         encap_in_thinking = False
-                                        out1, out2 = tokenStr.split(pair["end"], 1)
-                                        delta = {'role':'assistant','reasoning_content':out1,'content':out2}
-                                        thinkpairs = [pair] #remove all others
-                                        break
-                                    elif encap_in_thinking:
-                                        delta = {'role':'assistant','reasoning_content':tokenStr}
+                                        out1, out2 = tokenStr.split(active_pair["end"], 1)
+                                        if out1:
+                                            delta['reasoning_content'] = out1
+                                        if out2:
+                                            delta['content'] = out2
                                     else:
-                                        delta = {'role':'assistant','content':tokenStr}
+                                        # Still thinking
+                                        delta['reasoning_content'] = tokenStr
+                                else:
+                                    # Not thinking. Let's see if a start tag appears in this chunk.
+                                    matched_start = False
+                                    for pair in thinkpairs:
+                                        # Condition A: The prompt ended exactly with the start tag
+                                        if encap_first_loop and genparams.get("prompt", "").endswith(pair["start"]):
+                                            encap_in_thinking = True
+                                            thinkpairs = [pair] # lock in this pair
+                                            delta['reasoning_content'] = tokenStr
+                                            matched_start = True
+                                            break
+                                        # Condition B: The start tag is inside this chunk
+                                        elif pair["start"] in tokenStr:
+                                            encap_in_thinking = True
+                                            thinkpairs = [pair] # lock in this pair
+                                            out1, out2 = tokenStr.split(pair["start"], 1)
+                                            # Preserve text that came BEFORE the start tag
+                                            if out1:
+                                                delta['content'] = out1
+                                            if out2:
+                                                delta['reasoning_content'] = out2
+                                            # Edge Case: The end tag is ALSO in this exact same chunk (in out2)
+                                            if pair["end"] in out2:
+                                                encap_in_thinking = False
+                                                out2_think, out2_content = out2.split(pair["end"], 1)
+                                                # Overwrite reasoning with the exact thinking part
+                                                delta['reasoning_content'] = out2_think
+                                                # Append anything after the end tag to the content part
+                                                if out2_content:
+                                                    delta['content'] = delta.get('content', '') + out2_content
+                                            matched_start = True
+                                            break
+                                    # Condition C: No start tag found, just normal text
+                                    if not matched_start:
+                                        delta['content'] = tokenStr
                                 encap_first_loop = False
+                            else:
+                                delta['content'] = tokenStr
 
                             if need_split_final_msg: #we need to send one message without the finish reason, then send a finish reason with no msg to follow standards
                                 if api_format == 4:  # if oai chat, set format to expected openai streaming response
