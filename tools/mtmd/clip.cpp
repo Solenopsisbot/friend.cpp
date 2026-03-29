@@ -5008,6 +5008,7 @@ bool clip_is_mrope(const struct clip_ctx * ctx) { //kcpp: this was removed in ht
         case PROJECTOR_TYPE_QWEN25VL:
         case PROJECTOR_TYPE_QWEN3VL:
         case PROJECTOR_TYPE_GLM4V:
+        case PROJECTOR_TYPE_PADDLEOCR:
             return true;
         default:
             return false;
@@ -5016,14 +5017,6 @@ bool clip_is_mrope(const struct clip_ctx * ctx) { //kcpp: this was removed in ht
 
 bool clip_is_llava(const struct clip_ctx * ctx) {
     return ctx->model.hparams.has_llava_projector;
-}
-
-bool clip_is_gemma3(const struct clip_ctx * ctx) {
-    return ctx->proj_type() == PROJECTOR_TYPE_GEMMA3;
-}
-
-bool clip_is_pixtral(const struct clip_ctx * ctx) {
-    return ctx->proj_type() == PROJECTOR_TYPE_PIXTRAL;
 }
 
 bool clip_has_vision_encoder(const struct clip_ctx * ctx) {
