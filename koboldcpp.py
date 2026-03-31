@@ -1246,8 +1246,8 @@ def get_capabilities():
     has_tts = (ttsmodelpath!="") or (autoswapmode and ttsName is not None)
     has_embeddings = (embeddingsmodelpath!="") or (autoswapmode and embedName is not None)
     has_music = (musicdiffusionmodelpath!="" or musicllmmodelpath!="") or (autoswapmode and musicName is not None)
-    visionSupport = (has_vision_support) or (autoswapmode and mmprojName is not None)
-    audioSupport = (has_audio_support) # or (autoswapmode and mmprojName is not None)
+    visionSupport = (has_vision_support) or (autoswapmode and mmprojName is not None) #todo: not always correct
+    audioSupport = (has_audio_support) #todo: not always correct
     has_guidance = True if args.enableguidance else False
     has_jinja = True if args.jinja else False
     has_mcp = True if (args.mcpfile and mcp_connections and len(mcp_connections) > 0) else False
@@ -3887,7 +3887,7 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
                             self.send_error(504, "KoboldCpp model swap reload timed out")
                             return
                         time.sleep(0.1)
-        elif autoswapEnabled:                            
+        elif autoswapEnabled:
             textReqs = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions"]
             sttReqs = ["/api/extra/transcribe","/v1/audio/transcriptions"]
             ttsReqs = ["/api/extra/tts", "/v1/audio/speech"]
@@ -4310,7 +4310,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         modelNameToReturn = friendlymodelname
         if autoswapmode and textName is not None:
             modelNameToReturn = textName
-        
+
         using_openai_tools = genparams.get('using_openai_tools', False)
         req_id_suffix = genparams.get('oai_uniqueid',1)
         chatcmpl_id = f"chatcmpl-A{req_id_suffix}"
@@ -4789,7 +4789,7 @@ Change Mode<br>
         global last_req_time, start_time, cached_chat_template, has_vision_support, has_audio_support, has_whisper, friendlymodelname
         global savedata_obj, has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastuploadedcomfyimg, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, password, friendlyembeddingsmodelname, voicelist
         global autoswapmode, textName, sttName, ttsName, embedName, musicName, imageName, mmprojName
-        
+
         clean_path = self.path.split("?")[0] #for cases where we do not want query params
         if clean_path=="/lcpp": #fix for svelte redirect issues, browser path needs to end with slash
             clean_path = "/lcpp/"
@@ -7596,12 +7596,14 @@ def show_gui():
             router_mode_box.grid()
         else:
             router_mode_box.grid_remove()
+        togglerouter(1,1,1)
+
     def togglerouter(a,b,c):
-        if router_mode_var.get()==1:
+        if router_mode_var.get()==1 and admin_var.get()==1:
             autoswap_mode_box.grid()
         else:
             autoswap_mode_box.grid_remove()
-            
+
     makecheckbox(admin_tab, "Enable Model Administration", admin_var, 1, 0, command=toggleadmin,tooltiptxt="Enable a admin server, allowing you to remotely relaunch and swap models and configs.")
     makelabelentry(admin_tab, "Admin Password:" , admin_password_var, 3, 150,padx=(120),singleline=True,tooltip="Require a password to access admin functions. You are strongly advised to use one for publically accessible instances!")
     makefileentry(admin_tab, "Config Directory (Required):", "Select directory containing .gguf or .kcpps files to relaunch from", admin_dir_var, 5, width=280, dialog_type=2, tooltiptxt="Specify a directory to look for .kcpps configs in, which can be used to swap models.")
@@ -7927,8 +7929,8 @@ def show_gui():
         args.admindir = admin_dir_var.get()
         args.adminpassword = admin_password_var.get()
         args.singleinstance = (singleinstance_var.get()==1)
-        args.routermode = router_mode_var.get()==1
-        args.autoswapmode = autoswap_mode_var.get()==1
+        args.routermode = (router_mode_var.get()==1 and admin_var.get()==1)
+        args.autoswapmode = (autoswap_mode_var.get()==1 and router_mode_var.get()==1 and admin_var.get()==1)
         args.adminunloadtimeout = (0 if admin_unload_timeout_var.get()=="" else int(admin_unload_timeout_var.get()))
         args.showgui = False #prevent showgui from leaking into configs, its cli only
 
@@ -9492,7 +9494,7 @@ def disableSwappedFieldsInConfig(args, swapReqType):
     if swapReqType != "image":
         for e in ["sdmodel", "sdt5xxl", "sdclip1", "sdclip2", "sdphotomaker", "sdupscaler", "sdvae", "sdlora"]:
             setattr(args, e, "")
-        
+
 
 def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, embedded_kailite_gz, embedded_kcpp_docs_gz, embedded_kcpp_sdui_gz, embedded_lcpp_ui_gz, embedded_musicui, embedded_musicui_gz, start_time, exitcounter, global_memory, using_gui_launcher
@@ -9557,7 +9559,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             disableSwappedFieldsInConfig(args, "nomodel")
     else:
         global_memory["autoswapmode"] = False
-    
+
     if args.model_param and (args.benchmark or args.prompt or args.cli):
         start_server = False
 
