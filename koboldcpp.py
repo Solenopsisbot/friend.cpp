@@ -2928,17 +2928,78 @@ def is_ipv6_supported():
     except Exception:
         return False
 
-def detect_toolcall_tags(text: str): #for use with jinja tool responses, detect the tool call tag if present, we'll use that to split.
-    if text is None:
-        return None
+def toolcall_to_normalized_json(text): #convert weird formats into standard tool call json
     text = text.strip()
-    m = re.match(r'<\s*([A-Za-z_][\w\-]*)\b[^>]*>', text, re.DOTALL)   # match first opening tag
-    if not m:
-        return None
-    tag = m.group(1)
-    if re.search(rf'</\s*{re.escape(tag)}\s*>\s*$', text, re.DOTALL): # ensure the string ends with the matching closing tag
-        return tag
-    return None
+    def parse_qwen35(text: str) -> str:
+        fn_match = re.search(r"<function=(.*?)>", text)
+        if not fn_match:
+            return text
+        fn_name = fn_match.group(1).strip()
+        params = {}
+        param_blocks = re.findall(r"<parameter=(.*?)>(.*?)</parameter>", text, re.DOTALL)
+        for key, value in param_blocks:
+            params[key.strip()] = value.strip()
+        return json.dumps({"name": fn_name, "arguments": params})
+    def parse_glm(text: str) -> str:
+        text = text.strip()
+        # Extract function name: it's the first thing before any <arg_key>
+        fn_match = re.match(r"^\s*([^\<\s]+)", text)
+        if not fn_match:
+            return text
+        fn_name = fn_match.group(1).strip()
+        # Extract all key/value pairs
+        keys = re.findall(r"<arg_key>(.*?)</arg_key>", text)
+        values = re.findall(r"<arg_value>(.*?)</arg_value>", text)
+        params = {}
+        for i in range(min(len(keys), len(values))):
+            params[keys[i].strip()] = values[i].strip()
+        return json.dumps({"name": fn_name, "arguments": params})
+
+    #if we are already valid JSON, return
+    check_ok = extract_json_from_string(text)
+    if check_ok and len(check_ok)>0:
+        return text #is valid JSON or parsable
+
+    # handle glm with args
+    if "<arg_key>" in text and "<arg_value>" in text:
+        return parse_glm(text)
+
+    # handle qwen3.5
+    if "<function=" in text:
+        return parse_qwen35(text)
+
+    # handle glm without args
+    if ' ' not in text and '\n' not in text:
+        return parse_glm(text)
+
+    return text #fallback
+
+def repack_toolcall_tags(text: str):
+    tool_calls = []
+    if not text:
+        return tool_calls
+    text = text.strip()
+    tcpairs = [
+        ("<tool_call>", "</tool_call>"),
+        ("<seed:tool_call>", "</seed:tool_call>"),
+        ("<|tool_call_begin|>", "<|tool_call_end|>"),
+        ("<｜tool▁call▁begin｜>", "<｜tool▁call▁end｜>")
+    ]
+    found = False
+    for start, end in tcpairs:
+        pattern = re.escape(start) + r"(.*?)" + re.escape(end)
+        matches = re.findall(pattern, text, flags=re.DOTALL)
+        if matches:
+            found = True
+            for match in matches:
+                normalizedtc = toolcall_to_normalized_json(match.strip())
+                sub_tool_calls = extract_json_from_string(normalizedtc)
+                tool_calls.extend(sub_tool_calls)
+            break
+    # fallback ONLY if no tags were found at all
+    if not found:
+        tool_calls = extract_json_from_string(text)
+    return tool_calls
 
 def format_jinja(messages, tools, chat_template_kwargs=None):
     try:
@@ -4222,16 +4283,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             using_openai_tools = genparams.get('using_openai_tools', False)
             if using_openai_tools:
                 # first, check and potentially segment multiple tags for multi-tool calls
-                toolcalltagfound = detect_toolcall_tags(recvtxt)
-                if not toolcalltagfound:
-                    tool_calls = extract_json_from_string(recvtxt)
-                else: # we found tool call tags, split to extract all internal stuff
-                    splitting_str = recvtxt.replace(f"<{toolcalltagfound}>", "<TO_SPLIT>").replace(f"</{toolcalltagfound}>", "<TO_SPLIT>")
-                    chunks = [x.strip() for x in splitting_str.split("<TO_SPLIT>") if x]
-                    chunks = [x for x in chunks if x]
-                    for chunk in chunks: #for each potential toolcall, add it to the pile
-                        sub_tool_calls = extract_json_from_string(chunk)
-                        tool_calls.extend(sub_tool_calls)
+                tool_calls = repack_toolcall_tags(recvtxt)
                 if tool_calls and len(tool_calls)>0:
                     tool_calls = [normalize_tool_call(obj) for obj in tool_calls]
                     for tc in tool_calls:
