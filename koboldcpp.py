@@ -5638,10 +5638,10 @@ Change Mode<br>
 
                         if (targetfile in allowed_files and os.path.commonpath([dirpath, targetfilepath]) == dirpath and os.path.exists(targetfilepath)):
                             global_memory["restart_override_config_target"] = "" # Jail enforcement
-                            if targetfile.lower().endswith(".gguf") and overrideconfig:
+                            if targetfile and overrideconfig:
                                 overrideconfigfilepath = os.path.abspath(os.path.join(dirpath, overrideconfig))
                                 if (overrideconfig in allowed_files and os.path.commonpath([dirpath, overrideconfigfilepath]) == dirpath and os.path.exists(overrideconfigfilepath)):
-                                    print(f"Admin: Override config set to {overrideconfig}")
+                                    print(f"Admin: Override base config set to {overrideconfig}")
                                     global_memory["restart_override_config_target"] = overrideconfig
                             print(f"Admin: Received request to reload config to {targetfile}")
                             global_memory["restart_target"] = targetfile
@@ -8880,12 +8880,14 @@ def reload_from_new_args(newargs):
     except Exception as e:
         print(f"Reload New Config Failed: {e}")
 
-def reload_new_config(filename,defaultargs): #for changing config after launch
+def reload_new_config(filename,defaultargs,overwrite_blank=False): #for changing config after launch
     with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
         try:
             config = json.load(f)
             for key, value in defaultargs.items():   # Fill missing defaults directly into config
                 if key not in config:
+                    config[key] = value
+                elif overwrite_blank and key in config and not config[key]:
                     config[key] = value
             reload_from_new_args(config)
         except Exception as e:
@@ -9496,6 +9498,9 @@ def main(launch_args, default_args):
                                 elif targetfilepath.endswith(".gguf") and restart_override_config_target!="":
                                     reload_new_config(targetfilepath2,defaultargs)
                                     args.model_param = targetfilepath
+                                elif targetfilepath and targetfilepath2 and restart_override_config_target!="":
+                                    reload_new_config(targetfilepath2,defaultargs)
+                                    reload_new_config(targetfilepath,vars(args),True)
                                 else:
                                     reload_new_config(targetfilepath,defaultargs)
                                 global_memory["autoswapmode"] = args.autoswapmode
