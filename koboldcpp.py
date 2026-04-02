@@ -7703,7 +7703,7 @@ def show_gui():
     tts_model_var.trace_add("write", gui_changed_modelfile)
     makelabelentry(audio_tab, "TTS Threads:" , tts_threads_var, 5, 50,padx=100,singleline=True,tooltip="How many threads to use during TTS generation.\nIf left blank, uses same value as threads.")
     makelabelentry(audio_tab, "TTS Max Tokens:" , ttsmaxlen_var, 5, 50,padx=300,singleline=True,tooltip="Max allowed audiotokens to generate per TTS request.", labelpadx=190)
-    makecheckbox(audio_tab, "TTS Use GPU", ttsgpu_var, 9, 0,tooltiptxt="Uses the GPU for TTS. Currently only works on OuteTTS.")
+    makecheckbox(audio_tab, "TTS Use GPU", ttsgpu_var, 9, 0,tooltiptxt="Uses the GPU for TTS. Currently only works on certain models (OuteTTS/Q3TTS).")
     ttsgpu_var.trace_add("write", gui_changed_modelfile)
     makefileentry(audio_tab, "WavTokenizer Model (Required for some models):", "Select WavTokenizer GGUF Model File", wavtokenizer_var, 11, width=280, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select a WavTokenizer GGUF model file on disk to be loaded for Narration.")
     wavtokenizer_var.trace_add("write", gui_changed_modelfile)
