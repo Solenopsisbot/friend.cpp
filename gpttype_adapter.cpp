@@ -3923,7 +3923,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     int32_t nctx = kcpp_data->n_ctx;
 
     TokenizeString(kcpp_data->prompt, embd_inp, file_format, add_bos_token);
-    TokenizeString("\nAttached Media:\n", media_intro, file_format, false);
+    TokenizeString("\nAttached Media:\n", media_intro, file_format, true);
 
     if(media_composite_image_signature=="")
     {
