@@ -24,6 +24,8 @@
 #include "peg-parser.h"
 
 #include <algorithm>
+#include "nlohmann/json.hpp"
+
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -777,12 +779,12 @@ static void foreach_parameter(const json &                                      
     }
 }
 
-std::string common_chat_template_direct_apply(
+static std::string common_chat_template_direct_apply_impl(
     const common_chat_template & tmpl,
     const autoparser::generation_params & inputs,
-    const std::optional<json> & messages_override,
-    const std::optional<json> & tools_override,
-    const std::optional<json> & additional_context) {
+    const std::optional<json> & messages_override = std::nullopt,
+    const std::optional<json> & tools_override = std::nullopt,
+    const std::optional<json> & additional_context = std::nullopt) {
     jinja::context ctx(tmpl.source());
 
     nlohmann::ordered_json inp = nlohmann::ordered_json{
@@ -827,6 +829,12 @@ std::string common_chat_template_direct_apply(
         result = result.substr(0, result.size() - tmpl.eos_token().size());
     }
     return result;
+}
+
+std::string common_chat_template_direct_apply(
+    const common_chat_template & tmpl,
+    const autoparser::generation_params & inputs) {
+    return common_chat_template_direct_apply_impl(tmpl, inputs, std::nullopt, std::nullopt, std::nullopt);
 }
 
 static common_chat_params common_chat_params_init_ministral_3(const common_chat_template &    tmpl,
@@ -879,7 +887,7 @@ static common_chat_params common_chat_params_init_ministral_3(const common_chat_
     data.supports_thinking  = true;
     data.thinking_start_tag = "[THINK]";
     data.thinking_end_tag   = "[/THINK]";
-    data.prompt            = common_chat_template_direct_apply(tmpl, inputs, /* messages_override = */ adjusted_messages);
+    data.prompt            = common_chat_template_direct_apply_impl(tmpl, inputs, /* messages_override = */ adjusted_messages);
     data.format            = COMMON_CHAT_FORMAT_PEG_NATIVE;
     data.preserved_tokens  = {
         "[THINK]",
@@ -962,7 +970,7 @@ static common_chat_params common_chat_params_init_gpt_oss(const common_chat_temp
         adjusted_messages.push_back(msg);
     }
 
-    auto prompt = common_chat_template_direct_apply(tmpl, inputs, /* messages_override= */ adjusted_messages);
+    auto prompt = common_chat_template_direct_apply_impl(tmpl, inputs, /* messages_override= */ adjusted_messages);
 
     // Check if we need to replace the return token with end token during
     // inference and without generation prompt. For more details see:
@@ -1089,7 +1097,7 @@ static common_chat_params common_chat_params_init_functionary_v3_2(const common_
                                                                    const autoparser::generation_params & inputs) {
     common_chat_params data;
 
-    data.prompt           = common_chat_template_direct_apply(tmpl, inputs);
+    data.prompt           = common_chat_template_direct_apply_impl(tmpl, inputs);
     data.format           = COMMON_CHAT_FORMAT_PEG_NATIVE;
     data.preserved_tokens = {
         ">>>all",
@@ -1183,7 +1191,7 @@ static common_chat_params common_chat_params_init_kimi_k2(const common_chat_temp
                                                           const autoparser::generation_params & inputs) {
     common_chat_params data;
 
-    data.prompt             = common_chat_template_direct_apply(tmpl, inputs);
+    data.prompt             = common_chat_template_direct_apply_impl(tmpl, inputs);
     data.format             = COMMON_CHAT_FORMAT_PEG_NATIVE;
     data.supports_thinking  = true;
     data.preserved_tokens  = {
@@ -1306,7 +1314,7 @@ static common_chat_params common_chat_params_init_lfm2(const common_chat_templat
                                                        const autoparser::generation_params & inputs) {
     common_chat_params data;
 
-    data.prompt            = common_chat_template_direct_apply(tmpl, inputs);
+    data.prompt            = common_chat_template_direct_apply_impl(tmpl, inputs);
     data.format            = COMMON_CHAT_FORMAT_PEG_NATIVE;
     data.supports_thinking = true;
     data.preserved_tokens  = {
@@ -1385,7 +1393,7 @@ static common_chat_params common_chat_params_init_lfm2_5(const common_chat_templ
                                                          const autoparser::generation_params & inputs) {
     common_chat_params data;
 
-    data.prompt            = common_chat_template_direct_apply(tmpl, inputs);
+    data.prompt            = common_chat_template_direct_apply_impl(tmpl, inputs);
     data.format            = COMMON_CHAT_FORMAT_PEG_NATIVE;
     data.supports_thinking = true;
     data.preserved_tokens  = {
@@ -1456,7 +1464,7 @@ static common_chat_params common_chat_params_init_gigachat_v3(
 
     common_chat_params data;
 
-    data.prompt            = common_chat_template_direct_apply(tmpl, inputs);
+    data.prompt            = common_chat_template_direct_apply_impl(tmpl, inputs);
     data.format            = COMMON_CHAT_FORMAT_PEG_NATIVE;
     data.supports_thinking = false;
     data.preserved_tokens  = {
@@ -1739,9 +1747,9 @@ static common_chat_params common_chat_templates_apply_jinja(const struct common_
     }
 
     params.add_generation_prompt = false;
-    std::string no_gen_prompt    = common_chat_template_direct_apply(tmpl, params);
+    std::string no_gen_prompt    = common_chat_template_direct_apply_impl(tmpl, params);
     params.add_generation_prompt = true;
-    std::string gen_prompt       = common_chat_template_direct_apply(tmpl, params);
+    std::string gen_prompt       = common_chat_template_direct_apply_impl(tmpl, params);
     auto        diff             = calculate_diff_split(no_gen_prompt, gen_prompt);
     params.generation_prompt     = diff.right;
 
@@ -1775,7 +1783,7 @@ static common_chat_params common_chat_templates_apply_jinja(const struct common_
         common_chat_params data;
         auto params_copy               = params;
         params_copy.reasoning_format   = COMMON_REASONING_FORMAT_NONE;
-        data.prompt                    = common_chat_template_direct_apply(tmpl, params_copy);
+        data.prompt                    = common_chat_template_direct_apply_impl(tmpl, params_copy);
         data.format                    = COMMON_CHAT_FORMAT_PEG_NATIVE;
         data.generation_prompt         = params.generation_prompt;
         auto parser                    = build_chat_peg_parser([&params](common_chat_peg_builder &p) {
