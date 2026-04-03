@@ -2928,7 +2928,7 @@ def is_ipv6_supported():
     except Exception:
         return False
 
-def toolcall_to_normalized_json(text): #convert weird formats into standard tool call json
+def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats into standard tool call json
     text = text.strip()
     def parse_qwen35(text: str) -> str:
         fn_match = re.search(r"<function=(.*?)>", text)
@@ -2996,7 +2996,31 @@ def toolcall_to_normalized_json(text): #convert weird formats into standard tool
         if not results:
             return text
         return json.dumps(results) if len(results) > 1 else json.dumps(results[0])
+    def parse_gemma4(text: str) -> str:
+        text = text.replace('<|"|>', '"')
+        fn_match = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*)\{(.*)\}$', text.strip(), re.DOTALL)
+        if not fn_match:
+            return text
+        fn_name = fn_match.group(1)
+        body = fn_match.group(2).strip()
+        if not body:
+            return json.dumps({"name": fn_name, "arguments": {}})
+        try:   # Try to parse body as JSON object by wrapping it
+            args = json.loads('{' + body + '}')
+            return json.dumps({"name": fn_name, "arguments": args})
+        except Exception:
+            pass
+        normalized = re.sub(r'([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'"\1":', body)
+        try:
+            args = json.loads('{' + normalized + '}')
+            return json.dumps({"name": fn_name, "arguments": args})
+        except Exception:
+            pass
+        return text
 
+    # gemma4 takes precedence, since it can contain valid json fragments
+    if end_tag=="<tool_call|>":
+        return parse_gemma4(text)
 
     #if we are already valid JSON, return
     check_ok = extract_json_from_string(text)
@@ -3034,6 +3058,7 @@ def repack_toolcall_tags(text: str):
         ("<|tool_call_begin|>", "<|tool_call_end|>"),
         ("<｜tool▁call▁begin｜>", "<｜tool▁call▁end｜>"),
         ("<minimax:tool_call>", "</minimax:tool_call>"),
+        ("<|tool_call>call:", "<tool_call|>"),
     ]
     found = False
     for start, end in tcpairs:
@@ -3042,7 +3067,7 @@ def repack_toolcall_tags(text: str):
         if matches:
             found = True
             for match in matches:
-                normalizedtc = toolcall_to_normalized_json(match.strip())
+                normalizedtc = toolcall_to_normalized_json(match.strip(),start,end)
                 sub_tool_calls = extract_json_from_string(normalizedtc)
                 tool_calls.extend(sub_tool_calls)
             break
