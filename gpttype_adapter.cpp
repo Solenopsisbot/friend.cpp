@@ -3672,6 +3672,11 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                     img_start = "<|begin_of_image|>";
                     img_end = "<|end_of_image|>\n\n";
                 }
+                else if(ptype==PROJECTOR_TYPE_GEMMA4V)
+                {
+                    img_start = "<|image>";
+                    img_end = "<image|>\n\n";
+                }
             }
             TokenizeString(img_start, lv.chunk_start_seq, file_format, false);
             TokenizeString(img_end, lv.chunk_end_seq, file_format, false);
