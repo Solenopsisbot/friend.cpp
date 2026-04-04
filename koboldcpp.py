@@ -6076,6 +6076,26 @@ Change Mode<br>
 
                             # Send content if present
                             if content_text:
+                                reasoning_txt = ""
+                                thinkstrips = ["<think>"]
+                                thinksplitters = ["</think>"]
+                                for tsp in thinksplitters:
+                                    if tsp in content_text:
+                                        parts = content_text.split(tsp, 1)
+                                        reasoning_txt = parts[0]
+                                        content_text = parts[1]
+                                        for ts in thinkstrips:
+                                            reasoning_txt = reasoning_txt.replace(ts, "")
+                                if reasoning_txt:
+                                    chunk_content = json.dumps({
+                                        "id": "koboldcpp",
+                                        "object": "chat.completion.chunk",
+                                        "created": int(time.time()),
+                                        "model": modelNameToReturn,
+                                        "choices": [{"index": 0, "finish_reason": None, "delta": {"reasoning_content": reasoning_txt}}]
+                                    })
+                                    self.wfile.write(f"data: {chunk_content}\n\n".encode())
+                                    self.wfile.flush()
                                 chunk_content = json.dumps({
                                     "id": "koboldcpp",
                                     "object": "chat.completion.chunk",
