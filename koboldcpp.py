@@ -71,7 +71,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.111"
+KcppVersion = "1.111.1"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "swapReqType": None, "autoswapmode": False}
@@ -3885,6 +3885,10 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 memory = memory.replace("{{[OUTPUT_END]}}", assistant_message_end)
                 memory = memory.replace("{{[SYSTEM_END]}}", system_message_end)
             else:
+                if "{{[INPUT]}}" in memory:
+                    memory = memory.replace("{{[INPUT]}}", user_message_start, 1)
+                else:
+                    prompt = prompt.replace("{{[INPUT]}}", user_message_start, 1)
                 prompt = prompt.replace("{{[INPUT]}}", assistant_message_end + user_message_start)
                 prompt = prompt.replace("{{[OUTPUT]}}", user_message_end + assistant_message_start)
                 prompt = prompt.replace("{{[SYSTEM]}}", system_message_start)
