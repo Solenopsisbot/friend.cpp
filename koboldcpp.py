@@ -1283,7 +1283,7 @@ def get_current_admindir_list():
 
 
 def dump_gguf_metadata(file_path): #if you're gonna copy this into your own project at least credit concedo
-    chunk_size = 1024*1024*12  # read first 12mb of file
+    chunk_size = 1024*1024*20  # read first 20mb of file
     try:
         data = None
         fptr = 0
