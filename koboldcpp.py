@@ -3023,7 +3023,7 @@ def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats 
         return parse_gemma4(text)
 
     #if we are already valid JSON, return
-    check_ok = extract_json_from_string(text)
+    check_ok = extract_json_from_string(text, True)
     if check_ok and len(check_ok)>0:
         return text #is valid JSON or parsable
 
@@ -3170,7 +3170,7 @@ def normalize_tool_call(obj): # Normalize various tool call formats to OpenAI fo
     return obj
 
 # Used to parse json for openai tool calls
-def extract_json_from_string(input_string):
+def extract_json_from_string(input_string, check_strict=False):
     parsed_json = None
     input_string = remove_outer_tags(input_string) #if we detected wrapper tags, remove them
 
@@ -3187,17 +3187,18 @@ def extract_json_from_string(input_string):
     except Exception:
         pass
     try:
-        # Now use regular expression to match JSON objects or arrays in case part is valid json and part is not
-        json_pattern = r'(\{.*?\}|\[.*?\])'  # was json_pattern = r'(\{.*\}|\[.*\])'
-        potential_jsons = re.findall(json_pattern, input_string, re.DOTALL)
-        for potential_json in potential_jsons:
-            try:
-                parsed_json = json.loads(potential_json)
-                if not isinstance(parsed_json, list):
-                    parsed_json = [parsed_json]
-                return parsed_json
-            except Exception:
-                continue
+        if not check_strict: #only allow when not strict mode
+            # Now use regular expression to match JSON objects or arrays in case part is valid json and part is not
+            json_pattern = r'(\{.*?\}|\[.*?\])'  # was json_pattern = r'(\{.*\}|\[.*\])'
+            potential_jsons = re.findall(json_pattern, input_string, re.DOTALL)
+            for potential_json in potential_jsons:
+                try:
+                    parsed_json = json.loads(potential_json)
+                    if not isinstance(parsed_json, list):
+                        parsed_json = [parsed_json]
+                    return parsed_json
+                except Exception:
+                    continue
     except Exception:
         pass
     return []
