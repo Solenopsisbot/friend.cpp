@@ -3051,6 +3051,7 @@ def repack_toolcall_tags(text: str):
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
     text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL)
     text = re.sub(r'<reasoning>.*?</reasoning>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<\|channel>thought.*?<channel|>', '', text, flags=re.DOTALL)
     text = text.strip()
     tcpairs = [
         ("<tool_call>", "</tool_call>"),
@@ -3628,7 +3629,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 jinja_output = format_jinja(messages_array,jinjatools,jinjakwargs)
             if jinja_output:
                 messages_string = jinja_output
-                if jinja_output.rstrip().endswith("<think>"): #the prompt template already forced a start think.
+                if jinja_output.rstrip().endswith("<think>") or jinja_output.rstrip().endswith("<|channel>thought") : #the prompt template already forced a start think.
                     genparams["already_started_thinking"] = True
                 if jinjatools and len(jinjatools)>0:
                     genparams["using_openai_tools"] = True
@@ -3746,7 +3747,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 if (latest_turn_was_assistant and continue_assistant_turn): #allow continue a prefill, chop off end
                     messages_string = messages_string[:-(len(assistant_message_gen)+len(assistant_message_end))]
             genparams["prompt"] = messages_string
-            if messages_string.rstrip().endswith("<think>"): #the prompt template already forced a start think.
+            if messages_string.rstrip().endswith("<think>") or messages_string.rstrip().endswith("<|channel>thought") : #the prompt template already forced a start think.
                 genparams["already_started_thinking"] = True
             if len(images_added)>0:
                 genparams["images"] = images_added
@@ -4486,12 +4487,14 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         if api_format == 4 and using_openai_tools: # if tools, do not send anything else - OAI tool calls will be handled with fakestreaming!
             return
 
+        think_tag_buf = ""
         encap_in_thinking = False
         if genparams.get('already_started_thinking', False):
             encap_in_thinking = True
         encap_first_loop = True
         thinkpairs = [{"start":"<|channel|>analysis<|message|>","end":"<|start|>assistant<|channel|>final<|message|>"},
-                      {"start":"<think>","end":"</think>"}]
+                      {"start":"<think>","end":"</think>"},
+                      {"start":"<|channel>thought","end":"<channel|>"}]
         responses_first_loop = True
         anthropic_first_loop = True
         rseq_num = 0
@@ -4528,6 +4531,21 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                         tokenStr += tokenSeg
 
                 if tokenStr!="" or streamDone:
+                    # split think tag handling
+                    tokenStr = think_tag_buf + tokenStr
+                    think_tag_buf = ""
+                    if not streamDone and genparams.get('encapsulate_thinking', True):
+                        tail = ""
+                        for pair in thinkpairs:
+                            for tag in (pair["start"], pair["end"]):
+                                for n in range(1, len(tag)):
+                                    if tokenStr.endswith(tag[:n]) and len(tag[:n]) > len(tail):
+                                        tail = tag[:n]
+                        if tail:
+                            think_tag_buf = tail
+                            tokenStr = tokenStr[:-len(tail)]
+                    # end split think tag handling
+
                     sseq = genparams.get('stop_sequence', [])
                     trimstop = genparams.get('trim_stop', True)
                     if trimstop and not streamDone and string_contains_or_overlaps_sequence_substring(tokenStr,sseq):
@@ -6079,8 +6097,8 @@ Change Mode<br>
                             # Send content if present
                             if content_text:
                                 reasoning_txt = ""
-                                thinkstrips = ["<think>"]
-                                thinksplitters = ["</think>"]
+                                thinkstrips = ["<think>","<|channel>thought"]
+                                thinksplitters = ["</think>","<channel|>"]
                                 for tsp in thinksplitters:
                                     if tsp in content_text:
                                         parts = content_text.split(tsp, 1)
