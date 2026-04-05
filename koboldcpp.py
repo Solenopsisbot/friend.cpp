@@ -3092,7 +3092,7 @@ def format_jinja(messages_orig, tools, chat_template_kwargs=None):
         messages = json.loads(json.dumps(messages_orig))
         for m in messages:
             if m.get("content") is None:
-                del m["content"]
+                m["content"] = ""
         for m in messages: # Fix tool_calls arguments and content if parsable
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
@@ -3868,8 +3868,10 @@ ws ::= | " " | "\n" [ \t]{0,20}
         assistant_message_gen = adapter_obj.get("assistant_gen", assistant_message_start)
         if isinstance(prompt, str): #needed because comfy SD uses same field name
             if assistant_message_gen and assistant_message_gen!=assistant_message_start: #replace final output tag with unspaced (gen) version if exists
-                if prompt.rstrip().endswith("{{[OUTPUT]}}"):
+                if "{{[OUTPUT]}}" in prompt:
                     prompt = replace_last_in_string(prompt,"{{[OUTPUT]}}",assistant_message_gen)
+                elif "{{[OUTPUT]}}" in memory:
+                    memory = replace_last_in_string(memory,"{{[OUTPUT]}}",assistant_message_gen)
                 elif assistant_message_start and prompt.rstrip().endswith(assistant_message_start):
                     prompt = replace_last_in_string(prompt, assistant_message_start, assistant_message_gen)
             if "{{[INPUT_END]}}" in prompt or "{{[OUTPUT_END]}}" in prompt:
