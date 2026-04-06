@@ -5993,9 +5993,9 @@ Change Mode<br>
                 genparams.update(gendefaults if args.gendefaultsoverwrite else gen_new_keys)
                 genparams.update(special_fields_overwrite)
 
-                trunc_len = 10000
+                trunc_len = 8000
                 if args.debugmode >= 1:
-                    trunc_len = 100000
+                    trunc_len = 32000
 
                 if use_jinja and not args.jinja_tools:
                     tmptools = genparams.get('tools', [])
