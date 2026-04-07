@@ -3865,7 +3865,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             const bool has_close = fullbody.find(channel_close) != std::string::npos;
 
             // If neither opening nor closing tag is present anywhere, prepend both
-            if (!has_close) { //edit: even if we have open, lacking a close can break some cases. Add it.
+            if (!has_open && !has_close) {
                 addedmemory = channel_prefix + addedmemory;
             }
         }
