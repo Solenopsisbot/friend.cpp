@@ -803,7 +803,7 @@ bool AudioTokenizerDecoder::decode(const int32_t * codes, int32_t n_frames,
         return true;
     }
 
-    const int32_t max_frames = 32;
+    const int32_t max_frames = 1024; //this does not actually speed up currently. we just do it to bound the graph size. but it degrades quality!
 
     if (max_frames > 0 && n_frames > max_frames) {
         samples.clear();
