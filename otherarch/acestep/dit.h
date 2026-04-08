@@ -98,9 +98,9 @@ struct DiTGGML {
     struct ggml_tensor * proj_in_w;          // [in_ch*P, H] pre-permuted F32
     struct ggml_tensor * proj_in_b;          // [hidden]
 
-    // condition_embedder: Linear(hidden, hidden)
-    struct ggml_tensor * cond_emb_w;         // [hidden, hidden]
-    struct ggml_tensor * cond_emb_b;         // [hidden]
+    // condition_embedder: Linear(encoder_H, decoder_H)
+    struct ggml_tensor * cond_emb_w;  // [encoder_H, decoder_H] projects encoder to decoder space
+    struct ggml_tensor * cond_emb_b;  // [decoder_H]
 
     // Layers
     DiTGGMLLayer layers[DIT_GGML_MAX_LAYERS];
@@ -851,8 +851,11 @@ static struct ggml_cgraph * dit_ggml_build_graph(
     ggml_set_input(input);
     *p_input = input;
 
-    // Encoder hidden states: [H, enc_S, N]
-    struct ggml_tensor * enc_hidden = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, H, enc_S, N);
+    // Encoder hidden states: [H_enc, enc_S, N]
+    // H_enc comes from the condition_embedder input dimension (2048 for both 2B and XL).
+    // The condition_embedder projects H_enc -> H (decoder) via cond_emb_w.
+    int                  H_enc      = (int) m->cond_emb_w->ne[0];
+    struct ggml_tensor * enc_hidden = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, H_enc, enc_S, N);
     ggml_set_name(enc_hidden, "enc_hidden");
     ggml_set_input(enc_hidden);
 
@@ -1069,7 +1072,7 @@ static void apg_forward(
 //
 // noise:            [N * T * Oc]  N contiguous [T, Oc] noise blocks
 // context_latents:  [N * T * ctx_ch]  N contiguous context blocks
-// enc_hidden:       [enc_S * H]  SINGLE encoder output (shared, will be broadcast to N)
+// enc_hidden:       [enc_S * H_enc * N]  per-batch encoder outputs (caller-stacked)
 // schedule:         array of num_steps timestep values
 // output:           [N * T * Oc]  generated latents (caller-allocated)
 static void dit_ggml_generate(
@@ -1095,7 +1098,6 @@ static void dit_ggml_generate(
     int S     = T / c.patch_size;
     int n_per = T * Oc;              // elements per sample
     int n_total = N * n_per;         // total output elements
-    int H     = c.hidden_size;
 
     fprintf(stderr, "[DiT] Batch N=%d, T=%d, S=%d, enc_S=%d\n", N, T, S, enc_S);
 
@@ -1118,6 +1120,7 @@ static void dit_ggml_generate(
     fprintf(stderr, "[DiT] Graph: %d nodes\n", ggml_graph_n_nodes(gf));
 
     struct ggml_tensor * t_enc = ggml_graph_get_tensor(gf, "enc_hidden");
+    int                  H_enc = (int) t_enc->ne[0];  // encoder hidden size (from condition_embedder)
 
     // Allocate compute buffers.
     // Critical: reset FIRST (clears old state), THEN force inputs to GPU, THEN alloc.
@@ -1196,17 +1199,19 @@ static void dit_ggml_generate(
                 ggml_backend_tensor_get(model->null_condition_emb, null_emb.data(), 0, emb_n * sizeof(float));
             }
 
-            // Broadcast [H] to [enc_S, H] then to N copies [H, enc_S, N]
-            std::vector<float> null_enc_single(H * enc_S);
-            for (int s = 0; s < enc_S; s++)
-                memcpy(&null_enc_single[s * H], null_emb.data(), H * sizeof(float));
-            null_enc_buf.resize(H * enc_S * N);
-            for (int b = 0; b < N; b++)
-                memcpy(null_enc_buf.data() + b * enc_S * H, null_enc_single.data(), enc_S * H * sizeof(float));
+            // Broadcast [H_enc] to [enc_S, H_enc] then to N copies [H_enc, enc_S, N]
+            std::vector<float> null_enc_single(H_enc * enc_S);
+            for (int s = 0; s < enc_S; s++) {
+                memcpy(&null_enc_single[s * H_enc], null_emb.data(), H_enc * sizeof(float));
+            }
+            null_enc_buf.resize(H_enc * enc_S * N);
+            for (int b = 0; b < N; b++) {
+                memcpy(null_enc_buf.data() + b * enc_S * H_enc, null_enc_single.data(), enc_S * H_enc * sizeof(float));
+            }
 
             if (dbg && dbg->enabled) {
                 debug_dump_1d(dbg, "null_condition_emb", null_emb.data(), emb_n);
-                debug_dump_2d(dbg, "null_enc_hidden", null_enc_single.data(), enc_S, H);
+                debug_dump_2d(dbg, "null_enc_hidden", null_enc_single.data(), enc_S, H_enc);
             }
 
             apg_mbufs.resize(N);
@@ -1235,9 +1240,9 @@ static void dit_ggml_generate(
                    ctx_ch * sizeof(float));
 
     // Pre-allocate enc_buf once (avoids heap alloc per step)
-    std::vector<float> enc_buf(H * enc_S * N);
+    std::vector<float> enc_buf(H_enc * enc_S * N);
     for (int b = 0; b < N; b++)
-        memcpy(enc_buf.data() + b * enc_S * H, enc_hidden_data, enc_S * H * sizeof(float));
+        memcpy(enc_buf.data() + b * enc_S * H_enc, enc_hidden_data, enc_S * H_enc * sizeof(float));
     ggml_backend_tensor_set(t_enc, enc_buf.data(), 0, enc_buf.size() * sizeof(float));
 
     struct ggml_tensor * t_t = ggml_graph_get_tensor(gf, "t");
@@ -1340,7 +1345,7 @@ static void dit_ggml_generate(
             }
 
             // Unconditional pass: re-upload all inputs (scheduler clobbers input buffers during compute)
-            ggml_backend_tensor_set(t_enc, null_enc_buf.data(), 0, H * enc_S * N * sizeof(float));
+            ggml_backend_tensor_set(t_enc, null_enc_buf.data(), 0, H_enc * enc_S * N * sizeof(float));
             ggml_backend_tensor_set(t_input, input_buf.data(), 0, in_ch * T * N * sizeof(float));
             if (t_t) ggml_backend_tensor_set(t_t, &t_curr, 0, sizeof(float));
             if (t_tr) ggml_backend_tensor_set(t_tr, &t_curr, 0, sizeof(float));
