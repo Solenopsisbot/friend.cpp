@@ -72,7 +72,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.111.2"
+KcppVersion = "1.112"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "current_override":"", "swapReqType": None, "autoswapmode": False}
@@ -1144,9 +1144,9 @@ def utfprint(str, importance = 2): #0 = only debugmode, 1 = except quiet, 2 = al
             return
         if importance==0:
             return
-    maxlen = 32000
+    maxlen = 40000
     if args.debugmode >= 1:
-        maxlen = 192000
+        maxlen = 240000
     try:
         strlength = len(str)
         if strlength > maxlen: #limit max output len
@@ -6059,9 +6059,9 @@ Change Mode<br>
                 genparams.update(gendefaults if args.gendefaultsoverwrite else gen_new_keys)
                 genparams.update(special_fields_overwrite)
 
-                trunc_len = 8000
+                trunc_len = 10000
                 if args.debugmode >= 1:
-                    trunc_len = 32000
+                    trunc_len = 40000
 
                 if use_jinja and not args.jinja_tools:
                     tmptools = genparams.get('tools', [])

@@ -1164,18 +1164,6 @@ struct ggml_tensor_extra_gpu {
 #define USE_CUDA_GRAPH
 #endif
 
-struct ggml_cuda_graph_node_properties {
-    void * node_data;
-    ggml_op node_op;
-    enum ggml_type node_type;
-    int32_t flags;
-    int64_t ne[GGML_MAX_DIMS];
-    size_t nb[GGML_MAX_DIMS];
-    void * src_data[GGML_MAX_SRC];
-    int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
-};
-
-static_assert(std::is_trivial<ggml_cuda_graph_node_properties>::value, "ggml_cuda_graph_node_properties must be trivial");
 struct ggml_cuda_graph {
 #ifdef USE_CUDA_GRAPH
     ~ggml_cuda_graph() {
@@ -1192,13 +1180,11 @@ struct ggml_cuda_graph {
     std::vector<cudaGraphNode_t> nodes;
     bool disable_due_to_gpu_arch = false;
     bool warmup_complete = false;
-    std::vector<ggml_cuda_graph_node_properties> props;
-
-    // these are extra tensors (inputs) that participate in the ggml graph but are not nodes
-    // they properties also have to match in order to be able to safely reuse a CUDA graph
-    // ref: https://github.com/ggml-org/llama.cpp/pull/18583
-    // ref: https://github.com/ggml-org/llama.cpp/pull/19165
-    std::vector<ggml_cuda_graph_node_properties> extra;
+    struct node_properties {
+        ggml_tensor node;
+        void * node_src_data_ptrs[GGML_MAX_SRC];
+    };
+    std::vector<node_properties> node_props;
 
     bool is_enabled() const {
         static const bool disable_cuda_graphs_due_to_env = (getenv("GGML_CUDA_DISABLE_GRAPHS") != nullptr);
