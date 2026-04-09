@@ -166,6 +166,9 @@ last_non_horde_req_time = time.time()
 currfinishreason = None
 zenity_recent_dir = os.getcwd()
 zenity_permitted = True
+thinkformats = [{"start":"<|channel|>analysis<|message|>","end":"<|start|>assistant<|channel|>final<|message|>"},
+                {"start":"<think>","end":"</think>"},
+                {"start":"<|channel>thought","end":"<channel|>"}]
 
 saved_stdout = None
 saved_stderr = None
@@ -3108,13 +3111,13 @@ def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats 
     return text #fallback
 
 def repack_toolcall_tags(text: str, original_tools:list):
+    global thinkformats
     tool_calls = []
     if not text:
         return tool_calls
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<thinking>.*?</thinking>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<reasoning>.*?</reasoning>', '', text, flags=re.DOTALL)
-    text = re.sub(r'<\|channel>thought.*?<channel\|>', '', text, flags=re.DOTALL)
+    for fmt in thinkformats:
+        pattern = f"{re.escape(fmt['start'])}.*?{re.escape(fmt['end'])}"
+        text = re.sub(pattern, '', text, flags=re.DOTALL)
     text = text.strip()
     tcpairs = [
         ("<tool_call>", "</tool_call>"),
@@ -3533,7 +3536,7 @@ def sweep_media_from_messages(messages_array):
 
 
 def transform_genparams(genparams, api_format, use_jinja):
-    global chatcompl_adapter, maxctx
+    global chatcompl_adapter, maxctx, thinkformats
 
     if api_format < 0: #not text gen, do nothing
         return
@@ -3690,8 +3693,11 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 jinja_output = format_jinja(messages_array,jinjatools,jinjakwargs)
             if jinja_output:
                 messages_string = jinja_output
-                if jinja_output.rstrip().endswith("<think>") or jinja_output.rstrip().endswith("<|channel>thought") : #the prompt template already forced a start think.
-                    genparams["already_started_thinking"] = True
+                for pair in thinkformats:
+                    starter = pair['start']
+                    if jinja_output.rstrip().endswith(starter): #the prompt template already forced a start think.
+                        genparams["already_started_thinking"] = True
+                        break
                 if jinjatools and len(jinjatools)>0:
                     genparams["using_openai_tools"] = True
                 # handle media
@@ -3808,8 +3814,11 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 if (latest_turn_was_assistant and continue_assistant_turn): #allow continue a prefill, chop off end
                     messages_string = messages_string[:-(len(assistant_message_gen)+len(assistant_message_end))]
             genparams["prompt"] = messages_string
-            if messages_string.rstrip().endswith("<think>") or messages_string.rstrip().endswith("<|channel>thought") : #the prompt template already forced a start think.
-                genparams["already_started_thinking"] = True
+            for pair in thinkformats:
+                starter = pair['start']
+                if messages_string.rstrip().endswith(starter): #the prompt template already forced a start think.
+                    genparams["already_started_thinking"] = True
+                    break
             if len(images_added)>0:
                 genparams["images"] = images_added
             if len(audio_added)>0:
@@ -4378,7 +4387,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         return ret
 
     async def generate_text(self, genparams, api_format, stream_flag):
-        global friendlymodelname, chatcompl_adapter, currfinishreason
+        global friendlymodelname, chatcompl_adapter, currfinishreason, thinkformats
         global autoswapmode, textName, sttName, ttsName, embedName, musicName, imageName, mmprojName
 
         currfinishreason = None
@@ -4450,16 +4459,39 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         modelNameToReturn = friendlymodelname
         if autoswapmode and textName is not None:
             modelNameToReturn = textName
+
+        #handle potential think tags, but only chat completions will return them. the others just drop them
+        reasoningtxt = ""
+        if api_format==4 or api_format==8 or api_format==9: #chat completions, responses and anthropic messages, but only chat has reasoning returned
+            for pair in thinkformats:
+                starter = pair['start']
+                ender = pair['end']
+                start_idx = recvtxt.find(starter)
+                end_idx = recvtxt.find(ender, start_idx + len(starter))
+                if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+                    reasoningtxt = recvtxt[start_idx + len(starter):end_idx]
+                    recvtxt = recvtxt[:start_idx] + recvtxt[end_idx + len(ender):]
+                    break
+                elif starter not in recvtxt and ender in recvtxt:
+                    parts = recvtxt.split(ender, 1)
+                    reasoningtxt = parts[0]
+                    recvtxt = parts[1]
+                    break
         if api_format == 1:
             res = {"data": {"seqs": [recvtxt]}}
         elif api_format == 3:
             res = {"id": cmpl_id, "object": "text_completion", "created": int(time.time()), "model": modelNameToReturn,
                    "usage": {"prompt_tokens": prompttokens, "completion_tokens": comptokens, "total_tokens": (prompttokens+comptokens)},
                    "choices": [{"text": recvtxt, "index": 0, "finish_reason": currfinishreason, "logprobs":logprobsdict}]}
-        elif api_format == 4:
+        elif api_format == 4: #chat completions
+            ccmsg = {"role": "assistant", "content": recvtxt, "tool_calls": tool_calls}
+            if reasoningtxt and genparams.get('encapsulate_thinking', True):
+                ccmsg["reasoning_content"] = reasoningtxt
+            else:
+                ccmsg["content"] = reasoningtxt + (recvtxt if recvtxt else "")
             res = {"id": chatcmpl_id, "object": "chat.completion", "created": int(time.time()), "model": modelNameToReturn,
                    "usage": {"prompt_tokens": prompttokens, "completion_tokens": comptokens, "total_tokens": (prompttokens+comptokens)},
-                   "choices": [{"index": 0, "message": {"role": "assistant", "content": recvtxt, "tool_calls": tool_calls}, "finish_reason": currfinishreason, "logprobs":logprobsdict}]}
+                   "choices": [{"index": 0, "message": ccmsg, "finish_reason": currfinishreason, "logprobs":logprobsdict}]}
         elif api_format == 5:
             res = {"caption": end_trim_to_sentence(recvtxt)}
         elif api_format == 6:
@@ -4468,7 +4500,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             res = {"model": modelNameToReturn,"created_at": str(datetime.now(timezone.utc).isoformat()),"response":recvtxt,"done": True,"done_reason":currfinishreason,"context": tokarr,"total_duration": 1,"load_duration": 1,"prompt_eval_count": prompttokens,"prompt_eval_duration": 1,"eval_count": comptokens,"eval_duration": 1}
         elif api_format == 7:
             res = {"model": modelNameToReturn,"created_at": str(datetime.now(timezone.utc).isoformat()),"message":{"role":"assistant","content":recvtxt},"done": True,"done_reason":currfinishreason,"total_duration": 1,"load_duration": 1,"prompt_eval_count": prompttokens,"prompt_eval_duration": 1,"eval_count": comptokens,"eval_duration": 1}
-        elif api_format == 8:
+        elif api_format == 8: #oai-responses
             resp_id = f"resp-A{genparams.get('oai_uniqueid', 1)}"
             output_item_id = f"msg_0{genparams.get('oai_uniqueid', 1)}"
             output_items = []
@@ -4529,7 +4561,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.flush()
 
     async def handle_sse_stream(self, genparams, api_format):
-        global friendlymodelname, currfinishreason
+        global friendlymodelname, currfinishreason, thinkformats
         global autoswapmode, textName, sttName, ttsName, embedName, musicName, imageName, mmprojName
 
         modelNameToReturn = friendlymodelname
@@ -4553,9 +4585,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         if genparams.get('already_started_thinking', False):
             encap_in_thinking = True
         encap_first_loop = True
-        thinkpairs = [{"start":"<|channel|>analysis<|message|>","end":"<|start|>assistant<|channel|>final<|message|>"},
-                      {"start":"<think>","end":"</think>"},
-                      {"start":"<|channel>thought","end":"<channel|>"}]
+        thinkpairs = json.loads(json.dumps(thinkformats))
         responses_first_loop = True
         anthropic_first_loop = True
         rseq_num = 0
@@ -5409,6 +5439,7 @@ Change Mode<br>
         return
 
     def do_POST(self):
+        global thinkformats
         global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey, lastuploadedcomfyimg, lastgeneratedcomfyimg, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, net_save_slots, has_vision_support, savestate_limit, mcp_lock
         global autoswapmode, textName, sttName, ttsName, embedName, musicName, imageName, mmprojName
         contlenstr = self.headers['content-length']
@@ -6160,8 +6191,8 @@ Change Mode<br>
                             # Send content if present
                             if content_text:
                                 reasoning_txt = ""
-                                thinkstrips = ["<think>","<|channel>thought"]
-                                thinksplitters = ["</think>","<channel|>"]
+                                thinkstrips = [item["start"] for item in thinkformats] #start thinking tags
+                                thinksplitters = [item["end"] for item in thinkformats] #end thinking tags
                                 for tsp in thinksplitters:
                                     if tsp in content_text:
                                         parts = content_text.split(tsp, 1)
