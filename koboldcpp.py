@@ -3063,7 +3063,9 @@ def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats 
             return text
         return json.dumps(results) if len(results) > 1 else json.dumps(results[0])
     def parse_gemma4(text: str) -> str:
-        text = text.replace('<|"|>', '"')
+        text = text.replace('<|"|>', '!$$REAL_QUOTE$$!')
+        text = text.replace('"', '\"')
+        text = text.replace('!$$REAL_QUOTE$$!','"')
         fn_match = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*)\{(.*)\}$', text.strip(), re.DOTALL)
         if not fn_match:
             return text
@@ -3071,12 +3073,7 @@ def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats 
         body = fn_match.group(2).strip()
         if not body:
             return json.dumps({"name": fn_name, "arguments": {}})
-        try:   # Try to parse body as JSON object by wrapping it
-            args = json.loads('{' + body + '}',strict=False)
-            return json.dumps({"name": fn_name, "arguments": args})
-        except Exception:
-            pass
-        normalized = re.sub(r'([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'"\1":', body)
+        normalized = re.sub(r'((?:^|(?<=[{,]))\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)',r'\1"\2"\3',body)
         try:
             args = json.loads('{' + normalized + '}',strict=False)
             return json.dumps({"name": fn_name, "arguments": args})
@@ -4463,20 +4460,21 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         #handle potential think tags, but only chat completions will return them. the others just drop them
         reasoningtxt = ""
         if api_format==4 or api_format==8 or api_format==9: #chat completions, responses and anthropic messages, but only chat has reasoning returned
-            for pair in thinkformats:
-                starter = pair['start']
-                ender = pair['end']
-                start_idx = recvtxt.find(starter)
-                end_idx = recvtxt.find(ender, start_idx + len(starter))
-                if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
-                    reasoningtxt = recvtxt[start_idx + len(starter):end_idx]
-                    recvtxt = recvtxt[:start_idx] + recvtxt[end_idx + len(ender):]
-                    break
-                elif starter not in recvtxt and ender in recvtxt:
-                    parts = recvtxt.split(ender, 1)
-                    reasoningtxt = parts[0]
-                    recvtxt = parts[1]
-                    break
+            if recvtxt:
+                for pair in thinkformats:
+                    starter = pair['start']
+                    ender = pair['end']
+                    start_idx = recvtxt.find(starter)
+                    end_idx = recvtxt.find(ender, start_idx + len(starter))
+                    if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+                        reasoningtxt = recvtxt[start_idx + len(starter):end_idx]
+                        recvtxt = recvtxt[:start_idx] + recvtxt[end_idx + len(ender):]
+                        break
+                    elif starter not in recvtxt and ender in recvtxt:
+                        parts = recvtxt.split(ender, 1)
+                        reasoningtxt = parts[0]
+                        recvtxt = parts[1]
+                        break
         if api_format == 1:
             res = {"data": {"seqs": [recvtxt]}}
         elif api_format == 3:
