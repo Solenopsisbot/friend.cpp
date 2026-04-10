@@ -3314,6 +3314,31 @@ def format_jinja(messages_orig, tools, chat_template_kwargs=None):
         for m in messages:
             if m.get("content") is None:
                 m["content"] = ""
+        # fix image placeholders, erase them and slap a reference onto the turn text message
+        mediacount = 1
+        for m in messages:
+            if isinstance(m.get("content"), list):
+                normalized = []
+                turn_text = ""
+                media_text = ""
+                for item in m["content"]:
+                    if item.get("type")=="text":
+                        turn_text += item.get("text","")
+                for item in m["content"]:
+                    if item.get("type")=="text":
+                        pass
+                    elif item.get("type")=="image_url" or item.get("type")=="image":
+                        media_text += f"\n(Attached Image {mediacount})\n"
+                        mediacount += 1
+                    elif item.get("type")=="input_audio":
+                        media_text += f"\n(Attached Audio {mediacount})\n"
+                        mediacount += 1
+                    else:
+                        normalized.append(item)
+                turn_text = media_text + turn_text
+                if turn_text:
+                    normalized.append({"type": "text","text": turn_text})
+                m["content"] = normalized
         for m in messages: # Fix tool_calls arguments and content if parsable
             if m.get("tool_calls"):
                 for tc in m["tool_calls"]:
