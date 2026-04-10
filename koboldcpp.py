@@ -3293,7 +3293,7 @@ def repack_toolcall_tags(text: str, original_tools:list):
             break
     # fallback ONLY if no tags were found at all
     if not found:
-        tool_calls = extract_json_from_string(text)
+        tool_calls = extract_json_from_string(text,True)
     tool_calls = coerce_tool_argtypes(tool_calls, original_tools)
     return tool_calls
 
@@ -6419,7 +6419,7 @@ Change Mode<br>
                                 "object": "chat.completion.chunk",
                                 "created": int(time.time()),
                                 "model": modelNameToReturn,
-                                "choices": [{"index": 0, "finish_reason": "tool_calls", "delta": {}}]
+                                "choices": [{"index": 0, "finish_reason": "tool_calls" if (len(toolsdata_res) > 0) else currfinishreason, "delta": {}}]
                             })
                             self.wfile.write(f"data: {chunk_final}\n\n".encode())
                             self.wfile.write("data: [DONE]\n\n".encode())
