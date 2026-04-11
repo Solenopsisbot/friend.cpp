@@ -3765,32 +3765,10 @@ ws ::= | " " | "\n" [ \t]{0,20}
         genparams["top_k"] = int(genparams.get('top_k', 100))
         genparams["max_length"] = int(genparams.get('max', args.defaultgenamt))
 
-    elif api_format==2:
-        #tool calls only possible if forced, or if ending with assistant tag
+    elif api_format==2: #note: kobold api does not support tool calling
         adapter_obj = {} if chatcompl_adapter is None else chatcompl_adapter
         assistant_message_start = adapter_obj.get("assistant_start", "\n### Response:\n")
         assistant_message_gen = adapter_obj.get("assistant_gen", assistant_message_start)
-        used_tool_json = determine_tool_json_to_use(genparams, genparams.get('prompt', ""), assistant_message_gen, True)
-        if used_tool_json and not genparams.get('grammar', ""):
-            toolparamjson = None
-            toolname = None
-            # Set temperature lower automatically if function calling, cannot exceed 0.5
-            genparams["temperature"] = (1.0 if genparams.get("temperature", 0.5) > 1.0 else genparams.get("temperature", 0.5))
-            genparams["using_openai_tools"] = True
-            # Set grammar to llamacpp example grammar to force json response (see https://github.com/ggerganov/llama.cpp/blob/master/grammars/json_arr.gbnf)
-            genparams["grammar"] = jsongrammar
-            try:
-                toolname = used_tool_json.get('function').get('name')
-                toolparamjson = used_tool_json.get('function').get('parameters')
-                bettergrammarjson = {"type":"array","items":{"type":"object","properties":{"id":{"type":"string","enum":["call_001"]},"type":{"type":"string","enum":["function"]},"function":{"type":"object","properties":{"name":{"type":"string"},"arguments":{}},"required":["name","arguments"],"additionalProperties":False}},"required":["id","type","function"],"additionalProperties":False}}
-                bettergrammarjson["items"]["properties"]["function"]["properties"]["arguments"] = toolparamjson
-                decoded = convert_json_to_gbnf(bettergrammarjson)
-                if decoded:
-                    genparams["grammar"] = decoded
-            except Exception:
-                pass
-            tool_json_formatting_instruction = f"\nPlease use the provided schema to fill the parameters to create a function call for {toolname}, in the following format: " + json.dumps([{"id": "call_001", "type": "function", "function": {"name": f"{toolname}", "arguments": {"first property key": "first property value", "second property key": "second property value"}}}], indent=0)
-            genparams["prompt"] += f"\n\nJSON Schema:\n{used_tool_json}\n\n{tool_json_formatting_instruction}{assistant_message_gen}"
 
     elif api_format==3 or api_format==4 or api_format==7:
         default_adapter = {} if chatcompl_adapter is None else chatcompl_adapter
