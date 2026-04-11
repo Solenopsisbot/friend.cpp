@@ -175,7 +175,7 @@ tool_call_pairs = [
     ("<|tool_call_begin|>", "<|tool_call_end|>"),
     ("<｜tool▁call▁begin｜>", "<｜tool▁call▁end｜>"),
     ("<minimax:tool_call>", "</minimax:tool_call>"),
-    ("<|tool_call>call:", "<tool_call|>"),
+    ("<|tool_call>", "<tool_call|>"),
 ]
 
 saved_stdout = None
@@ -3224,6 +3224,8 @@ def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats 
             return text
         return json.dumps(results) if len(results) > 1 else json.dumps(results[0])
     def parse_gemma4(text: str) -> str:
+        if text.startswith("call:"):
+            text = text[len("call:"):]
         text = text.replace('<|"|>', '!$$REAL_QUOTE$$!')
         text = text.replace('\"', '\\"')
         text = text.replace('!$$REAL_QUOTE$$!','"')
