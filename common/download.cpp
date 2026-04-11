@@ -954,10 +954,9 @@ std::vector<common_cached_model_info> common_list_cached_models() {
 //     throw std::runtime_error("download functionality is not enabled in this build");
 // }
 
-common_download_model_result common_download_model(const common_params_model        & model,
-                            const std::string                & bearer_token,
-                            const common_download_model_opts & opts,
-                            const common_header_list         & headers) {
+common_download_model_result common_download_model(const common_params_model  & model,
+                                                   const common_download_opts & opts,
+                                                   bool download_mmproj) {
     throw std::runtime_error("download functionality is not enabled in this build");
 }
 
@@ -965,11 +964,10 @@ std::string common_docker_resolve_model(const std::string &) {
     throw std::runtime_error("download functionality is not enabled in this build");
 }
 
-int common_download_file_single(const std::string &,
-                                const std::string &,
-                                const std::string &,
-                                bool,
-                                const common_header_list &, bool) {
+int common_download_file_single(const std::string & url,
+                                const std::string & path,
+                                const common_download_opts & opts,
+                                bool skip_etag) {
     throw std::runtime_error("download functionality is not enabled in this build");
 }
 
