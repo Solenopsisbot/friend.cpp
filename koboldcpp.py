@@ -169,13 +169,14 @@ zenity_permitted = True
 thinkformats = [{"start":"<|channel|>analysis<|message|>","end":"<|start|>assistant<|channel|>final<|message|>"},
                 {"start":"<think>","end":"</think>"},
                 {"start":"<|channel>thought","end":"<channel|>"}]
-tool_call_pairs = [
-    ("<tool_call>", "</tool_call>"),
-    ("<seed:tool_call>", "</seed:tool_call>"),
-    ("<|tool_call_begin|>", "<|tool_call_end|>"),
-    ("<｜tool▁call▁begin｜>", "<｜tool▁call▁end｜>"),
-    ("<minimax:tool_call>", "</minimax:tool_call>"),
-    ("<|tool_call>", "<tool_call|>"),
+tool_call_pairs = [ #third element is whether its stream-handleable
+    ("<tool_call>", "</tool_call>", True),
+    ("<seed:tool_call>", "</seed:tool_call>", True),
+    ("<|tool_call_begin|>", "<|tool_call_end|>", True),
+    ("<｜tool▁call▁begin｜>", "<｜tool▁call▁end｜>", True),
+    ("<minimax:tool_call>", "</minimax:tool_call>", True),
+    ("<|tool_call>", "<tool_call|>", True),
+    ("<|end|><|start|>assistant<|channel|>commentary to=", "", False),
 ]
 
 saved_stdout = None
@@ -3254,6 +3255,21 @@ def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats 
             pass
         return text
 
+    def parse_gpt_oss(text: str) -> str:
+        fn_match = re.search(r'functions\.([a-zA-Z_][a-zA-Z0-9_]*)', text)
+        if not fn_match:
+            return text
+        fn_name = fn_match.group(1).strip()
+        msg_split = text.split('<|message|>', 1)
+        if len(msg_split) < 2:
+            return text
+        args_block = msg_split[1].strip()
+        try:
+            args = json.loads(args_block)
+        except Exception:
+            return text
+        return json.dumps({"name": fn_name, "arguments": args})
+
     # gemma4 takes precedence, since it can contain valid json fragments
     if end_tag=="<tool_call|>":
         return parse_gemma4(text)
@@ -3278,6 +3294,9 @@ def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats 
     if ' ' not in text and '\n' not in text: # handle glm without args
         return parse_glm(text)
 
+    if 'functions.' in text and "commentary" in start_tag:  # handle GPT-OSS
+        return parse_gpt_oss(text)
+
     return text #fallback
 
 def repack_toolcall_tags(text: str, original_tools:list):
@@ -3290,8 +3309,12 @@ def repack_toolcall_tags(text: str, original_tools:list):
         text = re.sub(pattern, '', text, flags=re.DOTALL)
     text = text.strip()
     found = False
-    for start, end in tool_call_pairs:
-        pattern = re.escape(start) + r"(.*?)" + re.escape(end)
+    for start, end, streamhandled in tool_call_pairs:
+        pattern=""
+        if end:
+            pattern = re.escape(start) + r"(.*?)" + re.escape(end)
+        else:
+            pattern = re.escape(start) + r"(.*)$"  # match to end of string
         matches = re.findall(pattern, text, flags=re.DOTALL)
         if matches:
             found = True
@@ -4747,8 +4770,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         # if tools, do not send anything else - OAI tool calls will be handled with fakestreaming!
         # only exception is if we know the exact toolcall tag to segment!
         tool_segment_tag = ""
-        for start, end in tool_call_pairs:
-            if cached_chat_template and start in cached_chat_template:
+        for start, end, streamhandled in tool_call_pairs:
+            if streamhandled and cached_chat_template and start in cached_chat_template:
                 tool_segment_tag = start
                 break
         jinjatools = (args.jinja and args.jinja_tools)
