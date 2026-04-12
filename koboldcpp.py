@@ -5710,8 +5710,12 @@ Change Mode<br>
                 genparams = json.loads(body)
                 countprompt = genparams.get('prompt', "")
                 tcaddspecial = genparams.get('special', True)
+                msgs = genparams.get('messages',[])
+                if msgs and len(msgs) > 0 and not countprompt:
+                    transform_genparams(genparams,4,args.jinja)
+                    countprompt = genparams.get('prompt', "")
                 countdata = tokenize_ids(countprompt,tcaddspecial)
-                response_body = (json.dumps({"value": len(countdata),"ids": countdata}).encode())
+                response_body = (json.dumps({"value": len(countdata),"ids": countdata, "prompt":countprompt}).encode())
 
             except Exception as e:
                 utfprint("Count Tokens - Body Error: " + str(e))
@@ -6399,12 +6403,16 @@ Change Mode<br>
                             # if no valid tool splitter, we have to do 100% synchronous
                             if not content_text and not reasoning_text and genparams.get('sync_toolcall_stream_ineligible', False):
                                 temp_content = ""
+                                temp_reasoning = ""
                                 try:
                                     temp_content = gendat['choices'][0]['message'].get('content', None)
                                 except Exception:
                                     temp_content = None
-                                if temp_content:
-                                    temp_reasoning = ""
+                                try:
+                                    temp_reasoning = gendat['choices'][0]['message'].get('reasoning_content', None)
+                                except Exception:
+                                    temp_reasoning = None
+                                if temp_content and not temp_reasoning: #fix incorrect reasoning sent as content
                                     thinkstrips = [item["start"] for item in thinkformats] #start thinking tags
                                     thinksplitters = [item["end"] for item in thinkformats] #end thinking tags
                                     for tsp in thinksplitters:
@@ -6414,16 +6422,18 @@ Change Mode<br>
                                             temp_content = parts[1]
                                             for ts in thinkstrips:
                                                 temp_reasoning = temp_reasoning.replace(ts, "")
-                                    if temp_reasoning:
-                                        chunk_content = json.dumps({
-                                            "id": "koboldcpp",
-                                            "object": "chat.completion.chunk",
-                                            "created": int(time.time()),
-                                            "model": modelNameToReturn,
-                                            "choices": [{"index": 0, "finish_reason": None, "delta": {"reasoning_content": temp_reasoning}}]
-                                        })
-                                        self.wfile.write(f"data: {chunk_content}\n\n".encode())
-                                        self.wfile.flush()
+
+                                if temp_reasoning:
+                                    chunk_content = json.dumps({
+                                        "id": "koboldcpp",
+                                        "object": "chat.completion.chunk",
+                                        "created": int(time.time()),
+                                        "model": modelNameToReturn,
+                                        "choices": [{"index": 0, "finish_reason": None, "delta": {"reasoning_content": temp_reasoning}}]
+                                    })
+                                    self.wfile.write(f"data: {chunk_content}\n\n".encode())
+                                    self.wfile.flush()
+                                if temp_content:
                                     chunk_content = json.dumps({
                                         "id": "koboldcpp",
                                         "object": "chat.completion.chunk",
