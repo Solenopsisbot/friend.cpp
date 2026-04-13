@@ -3860,7 +3860,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     // For the record, the GLM4 one didn't break anyone and everyone forgot GLM4 needed this :D
     if (file_format == FileFormat::GGUF_GENERIC && (file_format_meta.model_architecture == llm_arch::LLM_ARCH_GEMMA4)) {
         std::string temp = gpttype_get_chat_template();
-        if (temp.find("<|channel>thought") != std::string::npos) {
+        if (temp.find("<|channel>thought\\n<channel|>") != std::string::npos) {
             const std::string channel_open  = "<|channel>";
             const std::string channel_close = "<channel|>";
             const std::string channel_prefix = channel_open + channel_close;
