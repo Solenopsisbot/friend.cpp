@@ -3232,7 +3232,8 @@ def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats 
         if text.startswith("call:"):
             text = text[len("call:"):]
         text = text.replace('<|"|>', '!$$REAL_QUOTE$$!')
-        text = text.replace('\"', '\\"')
+        text = text.replace('\\', '\\\\')
+        text = text.replace('"', '\\"')
         text = text.replace('!$$REAL_QUOTE$$!','"')
         fn_match = re.match(r'^([a-zA-Z_][a-zA-Z0-9_]*)\{(.*)\}$', text.strip(), re.DOTALL) # extract fn name
         if not fn_match:
