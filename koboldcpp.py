@@ -8388,7 +8388,14 @@ def show_gui():
         args.model_param = None if model_var.get() == "" else model_var.get()
         args.lora = None if lora_var.get() == "" else ([lora_var.get()])
         args.loramult = (float(loramult_var.get()) if loramult_var.get()!="" else 1.0)
-        args.preloadstory = None if preloadstory_var.get() == "" else preloadstory_var.get()
+        pls_str_or_obj = None if preloadstory_var.get() == "" else preloadstory_var.get()
+        if pls_str_or_obj and isinstance(pls_str_or_obj,str):
+            try:
+                temp = json.loads(pls_str_or_obj)
+                pls_str_or_obj = temp
+            except Exception:
+                pass
+        args.preloadstory = pls_str_or_obj
         args.savedatafile = None if savedatafile_var.get() == "" else savedatafile_var.get()
         args.mcpfile = None if mcpfile_var.get() == "" else mcpfile_var.get()
         args.downloaddir = download_dir_var.get()
@@ -8503,64 +8510,64 @@ def show_gui():
         args.adminunloadtimeout = (0 if admin_unload_timeout_var.get()=="" else int(admin_unload_timeout_var.get()))
         args.showgui = False #prevent showgui from leaking into configs, its cli only
 
-    def import_vars(dict):
+    def import_vars(mydict):
         global importvars_in_progress
         importvars_in_progress = True
-        dict = convert_invalid_args(dict)
+        mydict = convert_invalid_args(mydict)
 
-        if "threads" in dict:
-            threads_var.set(dict["threads"])
-        usemlock.set(1 if "usemlock" in dict and dict["usemlock"] else 0)
-        if "debugmode" in dict:
-            debugmode.set(dict["debugmode"])
-        launchbrowser.set(1 if "launch" in dict and dict["launch"] else 0)
-        highpriority.set(1 if "highpriority" in dict and dict["highpriority"] else 0)
-        usemmap.set(1 if "usemmap" in dict and dict["usemmap"] else 0)
-        smartcontext_var.set(1 if "smartcontext" in dict and dict["smartcontext"] else 0)
-        flashattention_var.set(0 if "noflashattention" in dict and dict["noflashattention"] else 1)
-        contextshift_var.set(0 if "noshift" in dict and dict["noshift"] else 1)
-        fastforward_var.set(0 if "nofastforward" in dict and dict["nofastforward"] else 1)
-        swa_var.set(1 if "useswa" in dict and dict["useswa"] else 0)
-        smartcache_var.set(1 if "smartcache" in dict and dict["smartcache"] else 0)
-        smartcacheslots_var.set(dict["smartcache"] if ("smartcache" in dict and dict["smartcache"] and int(dict["smartcache"])>1) else savestate_limit_default)
-        remotetunnel_var.set(1 if "remotetunnel" in dict and dict["remotetunnel"] else 0)
-        keepforeground.set(1 if "foreground" in dict and dict["foreground"] else 0)
-        terminalonly.set(1 if "cli" in dict and dict["cli"] else 0)
-        pipelineparallel.set(0 if "nopipelineparallel" in dict and dict["nopipelineparallel"] else 1)
-        quietmode.set(1 if "quiet" in dict and dict["quiet"] else 0)
-        nocertifymode.set(1 if "nocertify" in dict and dict["nocertify"] else 0)
-        nomodel.set(1 if "nomodel" in dict and dict["nomodel"] else 0)
-        lowvram_var.set(1 if "lowvram" in dict and dict["lowvram"] else 0)
-        if "quantkv" in dict:
-            quantkv_var.set(dict["quantkv"])
-        if "usecuda" in dict and dict["usecuda"]:
+        if "threads" in mydict:
+            threads_var.set(mydict["threads"])
+        usemlock.set(1 if "usemlock" in mydict and mydict["usemlock"] else 0)
+        if "debugmode" in mydict:
+            debugmode.set(mydict["debugmode"])
+        launchbrowser.set(1 if "launch" in mydict and mydict["launch"] else 0)
+        highpriority.set(1 if "highpriority" in mydict and mydict["highpriority"] else 0)
+        usemmap.set(1 if "usemmap" in mydict and mydict["usemmap"] else 0)
+        smartcontext_var.set(1 if "smartcontext" in mydict and mydict["smartcontext"] else 0)
+        flashattention_var.set(0 if "noflashattention" in mydict and mydict["noflashattention"] else 1)
+        contextshift_var.set(0 if "noshift" in mydict and mydict["noshift"] else 1)
+        fastforward_var.set(0 if "nofastforward" in mydict and mydict["nofastforward"] else 1)
+        swa_var.set(1 if "useswa" in mydict and mydict["useswa"] else 0)
+        smartcache_var.set(1 if "smartcache" in mydict and mydict["smartcache"] else 0)
+        smartcacheslots_var.set(mydict["smartcache"] if ("smartcache" in mydict and mydict["smartcache"] and int(mydict["smartcache"])>1) else savestate_limit_default)
+        remotetunnel_var.set(1 if "remotetunnel" in mydict and mydict["remotetunnel"] else 0)
+        keepforeground.set(1 if "foreground" in mydict and mydict["foreground"] else 0)
+        terminalonly.set(1 if "cli" in mydict and mydict["cli"] else 0)
+        pipelineparallel.set(0 if "nopipelineparallel" in mydict and mydict["nopipelineparallel"] else 1)
+        quietmode.set(1 if "quiet" in mydict and mydict["quiet"] else 0)
+        nocertifymode.set(1 if "nocertify" in mydict and mydict["nocertify"] else 0)
+        nomodel.set(1 if "nomodel" in mydict and mydict["nomodel"] else 0)
+        lowvram_var.set(1 if "lowvram" in mydict and mydict["lowvram"] else 0)
+        if "quantkv" in mydict:
+            quantkv_var.set(mydict["quantkv"])
+        if "usecuda" in mydict and mydict["usecuda"]:
             if cublas_option is not None or hipblas_option is not None:
                 if cublas_option:
                     runopts_var.set(cublas_option)
                 elif hipblas_option:
                     runopts_var.set(hipblas_option)
-                mmq_var.set(1 if "mmq" in dict["usecuda"] else 0)
-                rowsplit_var.set(1 if "rowsplit" in dict["usecuda"] else 0)
+                mmq_var.set(1 if "mmq" in mydict["usecuda"] else 0)
+                rowsplit_var.set(1 if "rowsplit" in mydict["usecuda"] else 0)
                 gpu_choice_var.set("All")
                 for g in range(4):
-                    if str(g) in dict["usecuda"]:
+                    if str(g) in mydict["usecuda"]:
                         gpu_choice_var.set(str(g+1))
                         break
-        elif "usevulkan" in dict and dict['usevulkan'] is not None:
-            if "noavx2" in dict and dict["noavx2"]:
+        elif "usevulkan" in mydict and mydict['usevulkan'] is not None:
+            if "noavx2" in mydict and mydict["noavx2"]:
                 if vulkan_noavx2_option is not None:
                     runopts_var.set(vulkan_noavx2_option)
                     gpu_choice_var.set("All")
                     for opt in range(0,4):
-                        if opt in dict["usevulkan"]:
+                        if opt in mydict["usevulkan"]:
                             gpu_choice_var.set(str(opt+1))
                             break
-            elif "failsafe" in dict and dict["failsafe"]:
+            elif "failsafe" in mydict and mydict["failsafe"]:
                 if vulkan_failsafe_option is not None:
                     runopts_var.set(vulkan_failsafe_option)
                     gpu_choice_var.set("All")
                     for opt in range(0,4):
-                        if opt in dict["usevulkan"]:
+                        if opt in mydict["usevulkan"]:
                             gpu_choice_var.set(str(opt+1))
                             break
             else:
@@ -8568,54 +8575,54 @@ def show_gui():
                     runopts_var.set(vulkan_option)
                     gpu_choice_var.set("All")
                     for opt in range(0,4):
-                        if opt in dict["usevulkan"]:
+                        if opt in mydict["usevulkan"]:
                             gpu_choice_var.set(str(opt+1))
                             break
 
-        elif ("noavx2" in dict and "usecpu" in dict and dict["usecpu"] and dict["noavx2"]) or ("failsafe" in dict and dict["failsafe"]):
+        elif ("noavx2" in mydict and "usecpu" in mydict and mydict["usecpu"] and mydict["noavx2"]) or ("failsafe" in mydict and mydict["failsafe"]):
             if failsafe_option is not None:
                 runopts_var.set(failsafe_option)
-        elif "noavx2" in dict and dict["noavx2"]:
+        elif "noavx2" in mydict and mydict["noavx2"]:
             if noavx2_option is not None:
                 runopts_var.set(noavx2_option)
-        elif "usecpu" in dict and dict["usecpu"]:
+        elif "usecpu" in mydict and mydict["usecpu"]:
             if default_option is not None:
                 runopts_var.set(default_option)
-        if "gpulayers" in dict and dict["gpulayers"]:
-            gpulayers_var.set(dict["gpulayers"])
+        if "gpulayers" in mydict and mydict["gpulayers"]:
+            gpulayers_var.set(mydict["gpulayers"])
         else:
             gpulayers_var.set("0")
-        if "maingpu" in dict:
-            maingpu_var.set(dict["maingpu"])
+        if "maingpu" in mydict:
+            maingpu_var.set(mydict["maingpu"])
         else:
             maingpu_var.set("-1")
-        if "tensor_split" in dict and dict["tensor_split"]:
-            tssep = ','.join(map(str, dict["tensor_split"]))
+        if "tensor_split" in mydict and mydict["tensor_split"]:
+            tssep = ','.join(map(str, mydict["tensor_split"]))
             tensor_split_str_vars.set(tssep)
-        if "draftgpusplit" in dict and dict["draftgpusplit"]:
-            tssep = ','.join(map(str, dict["draftgpusplit"]))
+        if "draftgpusplit" in mydict and mydict["draftgpusplit"]:
+            tssep = ','.join(map(str, mydict["draftgpusplit"]))
             draftgpusplit_str_vars.set(tssep)
-        if "blasthreads" in dict and dict["blasthreads"]:
-            blas_threads_var.set(str(dict["blasthreads"]))
+        if "blasthreads" in mydict and mydict["blasthreads"]:
+            blas_threads_var.set(str(mydict["blasthreads"]))
         else:
             blas_threads_var.set("")
-        if "device" in dict and dict["device"]:
-            deviceoverride_var.set(str(dict["device"]))
+        if "device" in mydict and mydict["device"]:
+            deviceoverride_var.set(str(mydict["device"]))
         else:
             deviceoverride_var.set("")
-        if "contextsize" in dict and dict["contextsize"]:
-            context_var.set(contextsize_text.index(str(dict["contextsize"])))
-        if "overridenativecontext" in dict and dict["overridenativecontext"]>0:
+        if "contextsize" in mydict and mydict["contextsize"]:
+            context_var.set(contextsize_text.index(str(mydict["contextsize"])))
+        if "overridenativecontext" in mydict and mydict["overridenativecontext"]>0:
             customrope_var.set(1)
             manualrope_var.set(0)
-            customrope_nativectx.set(str(dict["overridenativecontext"]))
-        elif "ropeconfig" in dict and dict["ropeconfig"] and len(dict["ropeconfig"])>1:
+            customrope_nativectx.set(str(mydict["overridenativecontext"]))
+        elif "ropeconfig" in mydict and mydict["ropeconfig"] and len(mydict["ropeconfig"])>1:
             customrope_nativectx.set(default_native_ctx)
-            if dict["ropeconfig"][0]>0:
+            if mydict["ropeconfig"][0]>0:
                 customrope_var.set(1)
                 manualrope_var.set(1)
-                customrope_scale.set(str(dict["ropeconfig"][0]))
-                customrope_base.set(str(dict["ropeconfig"][1]))
+                customrope_scale.set(str(mydict["ropeconfig"][0]))
+                customrope_base.set(str(mydict["ropeconfig"][1]))
             else:
                 customrope_var.set(0)
                 manualrope_var.set(0)
@@ -8623,150 +8630,153 @@ def show_gui():
             customrope_nativectx.set(default_native_ctx)
             customrope_var.set(0)
             manualrope_var.set(0)
-        if "moeexperts" in dict and dict["moeexperts"]:
-            moeexperts_var.set(dict["moeexperts"])
-        if "moecpu" in dict and dict["moecpu"]:
-            moecpu_var.set(dict["moecpu"])
-        if "defaultgenamt" in dict and dict["defaultgenamt"]:
-            defaultgenamt_var.set(dict["defaultgenamt"])
-        if "genlimit" in dict and dict["genlimit"]:
-            genlimit_var.set(dict["genlimit"])
+        if "moeexperts" in mydict and mydict["moeexperts"]:
+            moeexperts_var.set(mydict["moeexperts"])
+        if "moecpu" in mydict and mydict["moecpu"]:
+            moecpu_var.set(mydict["moecpu"])
+        if "defaultgenamt" in mydict and mydict["defaultgenamt"]:
+            defaultgenamt_var.set(mydict["defaultgenamt"])
+        if "genlimit" in mydict and mydict["genlimit"]:
+            genlimit_var.set(mydict["genlimit"])
         else:
             genlimit_var.set(str(0))
-        nobostoken_var.set(dict["nobostoken"] if ("nobostoken" in dict) else 0)
-        jinja_var.set(dict["jinja"] if ("jinja" in dict) else 0)
-        jinja_tools_var.set(dict["jinja_tools"] if ("jinja_tools" in dict) else 0)
-        jinja_kwargs = (dict["jinja_kwargs"] if ("jinja_kwargs" in dict and dict["jinja_kwargs"]) else "")
+        nobostoken_var.set(mydict["nobostoken"] if ("nobostoken" in mydict) else 0)
+        jinja_var.set(mydict["jinja"] if ("jinja" in mydict) else 0)
+        jinja_tools_var.set(mydict["jinja_tools"] if ("jinja_tools" in mydict) else 0)
+        jinja_kwargs = (mydict["jinja_kwargs"] if ("jinja_kwargs" in mydict and mydict["jinja_kwargs"]) else "")
         if isinstance(jinja_kwargs, type({})):
             jinja_kwargs = json.dumps(jinja_kwargs)
         jinja_kwargs_var.set(jinja_kwargs)
 
-        enableguidance_var.set(dict["enableguidance"] if ("enableguidance" in dict) else 0)
-        if "overridekv" in dict and dict["overridekv"]:
-            override_kv_var.set(dict["overridekv"])
-        if "overridetensors" in dict and dict["overridetensors"]:
-            override_tensors_var.set(dict["overridetensors"])
+        enableguidance_var.set(mydict["enableguidance"] if ("enableguidance" in mydict) else 0)
+        if "overridekv" in mydict and mydict["overridekv"]:
+            override_kv_var.set(mydict["overridekv"])
+        if "overridetensors" in mydict and mydict["overridetensors"]:
+            override_tensors_var.set(mydict["overridetensors"])
 
-        if "batchsize" in dict and dict["batchsize"]:
-            blas_size_var.set(batchsize_values.index(str(dict["batchsize"])))
+        if "batchsize" in mydict and mydict["batchsize"]:
+            blas_size_var.set(batchsize_values.index(str(mydict["batchsize"])))
 
-        autofit_var.set(1 if "autofit" in dict and dict["autofit"] else 0)
-        model_var.set(dict["model_param"] if ("model_param" in dict and dict["model_param"]) else "")
+        autofit_var.set(1 if "autofit" in mydict and mydict["autofit"] else 0)
+        model_var.set(mydict["model_param"] if ("model_param" in mydict and mydict["model_param"]) else "")
 
-        if "autofitpadding" in dict and dict["autofitpadding"]:
-            autofit_padding_var.set(dict["autofitpadding"])
+        if "autofitpadding" in mydict and mydict["autofitpadding"]:
+            autofit_padding_var.set(mydict["autofitpadding"])
         else:
             autofit_padding_var.set(str(default_autofit_padding))
 
         lora_var.set("")
-        if "lora" in dict and dict["lora"]:
-            if len(dict["lora"]) > 1:
-                lora_var.set(dict["lora"][0])
+        if "lora" in mydict and mydict["lora"]:
+            if len(mydict["lora"]) > 1:
+                lora_var.set(mydict["lora"][0])
             else:
-                lora_var.set(dict["lora"][0])
-        loramult_var.set(str(dict["loramult"]) if ("loramult" in dict and dict["loramult"]) else "1.0")
+                lora_var.set(mydict["lora"][0])
+        loramult_var.set(str(mydict["loramult"]) if ("loramult" in mydict and mydict["loramult"]) else "1.0")
 
-        mmproj_var.set(dict["mmproj"] if ("mmproj" in dict and dict["mmproj"]) else "")
-        mmprojcpu_var.set(1 if ("mmprojcpu" in dict and dict["mmprojcpu"]) else 0)
-        if "visionmaxres" in dict and dict["visionmaxres"]:
-            visionmaxres_var.set(dict["visionmaxres"])
-        draftmodel_var.set(dict["draftmodel"] if ("draftmodel" in dict and dict["draftmodel"]) else "")
-        if "draftamount" in dict:
-            draftamount_var.set(dict["draftamount"])
-        if "draftgpulayers" in dict:
-            draftgpulayers_var.set(dict["draftgpulayers"])
+        mmproj_var.set(mydict["mmproj"] if ("mmproj" in mydict and mydict["mmproj"]) else "")
+        mmprojcpu_var.set(1 if ("mmprojcpu" in mydict and mydict["mmprojcpu"]) else 0)
+        if "visionmaxres" in mydict and mydict["visionmaxres"]:
+            visionmaxres_var.set(mydict["visionmaxres"])
+        draftmodel_var.set(mydict["draftmodel"] if ("draftmodel" in mydict and mydict["draftmodel"]) else "")
+        if "draftamount" in mydict:
+            draftamount_var.set(mydict["draftamount"])
+        if "draftgpulayers" in mydict:
+            draftgpulayers_var.set(mydict["draftgpulayers"])
 
         ssl_cert_var.set("")
         ssl_key_var.set("")
-        if "ssl" in dict and dict["ssl"]:
-            if len(dict["ssl"]) == 2:
-                ssl_cert_var.set(dict["ssl"][0])
-                ssl_key_var.set(dict["ssl"][1])
+        if "ssl" in mydict and mydict["ssl"]:
+            if len(mydict["ssl"]) == 2:
+                ssl_cert_var.set(mydict["ssl"][0])
+                ssl_key_var.set(mydict["ssl"][1])
 
-        password_var.set(dict["password"] if ("password" in dict and dict["password"]) else "")
-        preloadstory_var.set(dict["preloadstory"] if ("preloadstory" in dict and dict["preloadstory"]) else "")
-        savedatafile_var.set(dict["savedatafile"] if ("savedatafile" in dict and dict["savedatafile"]) else "")
-        mcpfile_var.set(dict["mcpfile"] if ("mcpfile" in dict and dict["mcpfile"]) else "")
-        chatcompletionsadapter_var.set(dict["chatcompletionsadapter"] if ("chatcompletionsadapter" in dict and dict["chatcompletionsadapter"]) else "")
-        port_var.set(dict["port_param"] if ("port_param" in dict and dict["port_param"]) else defaultport)
-        host_var.set(dict["host"] if ("host" in dict and dict["host"]) else "")
-        multiuser_var.set(dict["multiuser"] if ("multiuser" in dict) else 1)
-        multiplayer_var.set(dict["multiplayer"] if ("multiplayer" in dict) else 0)
-        websearch_var.set(dict["websearch"] if ("websearch" in dict) else 0)
-        download_dir_var.set(dict["downloaddir"] if ("downloaddir" in dict and dict["downloaddir"]) else "")
+        password_var.set(mydict["password"] if ("password" in mydict and mydict["password"]) else "")
+        pls_obj = ""
+        if ("preloadstory" in mydict and mydict["preloadstory"]):
+            pls_obj = mydict["preloadstory"] if not isinstance(mydict["preloadstory"], dict) else json.dumps(mydict["preloadstory"])
+        preloadstory_var.set(pls_obj)
+        savedatafile_var.set(mydict["savedatafile"] if ("savedatafile" in mydict and mydict["savedatafile"]) else "")
+        mcpfile_var.set(mydict["mcpfile"] if ("mcpfile" in mydict and mydict["mcpfile"]) else "")
+        chatcompletionsadapter_var.set(mydict["chatcompletionsadapter"] if ("chatcompletionsadapter" in mydict and mydict["chatcompletionsadapter"]) else "")
+        port_var.set(mydict["port_param"] if ("port_param" in mydict and mydict["port_param"]) else defaultport)
+        host_var.set(mydict["host"] if ("host" in mydict and mydict["host"]) else "")
+        multiuser_var.set(mydict["multiuser"] if ("multiuser" in mydict) else 1)
+        multiplayer_var.set(mydict["multiplayer"] if ("multiplayer" in mydict) else 0)
+        websearch_var.set(mydict["websearch"] if ("websearch" in mydict) else 0)
+        download_dir_var.set(mydict["downloaddir"] if ("downloaddir" in mydict and mydict["downloaddir"]) else "")
 
-        horde_name_var.set(dict["hordemodelname"] if ("hordemodelname" in dict and dict["hordemodelname"]) else "koboldcpp")
-        horde_context_var.set(dict["hordemaxctx"] if ("hordemaxctx" in dict and dict["hordemaxctx"]) else maxhordectx)
-        horde_gen_var.set(dict["hordegenlen"] if ("hordegenlen" in dict and dict["hordegenlen"]) else maxhordelen)
-        horde_apikey_var.set(dict["hordekey"] if ("hordekey" in dict and dict["hordekey"]) else "")
-        horde_workername_var.set(dict["hordeworkername"] if ("hordeworkername" in dict and dict["hordeworkername"]) else "")
-        usehorde_var.set(1 if ("hordekey" in dict and dict["hordekey"]) else 0)
-        if "maxrequestsize" in dict and dict["maxrequestsize"]:
-            maxrequestsize_var.set(dict["maxrequestsize"])
-        if "ratelimit" in dict and dict["ratelimit"]:
-            ratelimit_var.set(dict["ratelimit"])
+        horde_name_var.set(mydict["hordemodelname"] if ("hordemodelname" in mydict and mydict["hordemodelname"]) else "koboldcpp")
+        horde_context_var.set(mydict["hordemaxctx"] if ("hordemaxctx" in mydict and mydict["hordemaxctx"]) else maxhordectx)
+        horde_gen_var.set(mydict["hordegenlen"] if ("hordegenlen" in mydict and mydict["hordegenlen"]) else maxhordelen)
+        horde_apikey_var.set(mydict["hordekey"] if ("hordekey" in mydict and mydict["hordekey"]) else "")
+        horde_workername_var.set(mydict["hordeworkername"] if ("hordeworkername" in mydict and mydict["hordeworkername"]) else "")
+        usehorde_var.set(1 if ("hordekey" in mydict and mydict["hordekey"]) else 0)
+        if "maxrequestsize" in mydict and mydict["maxrequestsize"]:
+            maxrequestsize_var.set(mydict["maxrequestsize"])
+        if "ratelimit" in mydict and mydict["ratelimit"]:
+            ratelimit_var.set(mydict["ratelimit"])
 
-        sd_model_var.set(dict["sdmodel"] if ("sdmodel" in dict and dict["sdmodel"]) else "")
-        sd_clamped_var.set(int(dict["sdclamped"]) if ("sdclamped" in dict and dict["sdclamped"]) else 0)
-        sd_clamped_soft_var.set(int(dict["sdclampedsoft"]) if ("sdclampedsoft" in dict and dict["sdclampedsoft"]) else 0)
-        sd_threads_var.set(str(dict["sdthreads"]) if ("sdthreads" in dict and dict["sdthreads"]) else str(default_threads))
-        sd_quant_var.set(sd_quant_choices[(dict["sdquant"] if ("sdquant" in dict and dict["sdquant"]>=0 and dict["sdquant"]<len(sd_quant_choices)) else 0)])
-        sd_flash_attention_var.set(1 if ("sdflashattention" in dict and dict["sdflashattention"]) else 0)
-        sd_offload_cpu_var.set(1 if ("sdoffloadcpu" in dict and dict["sdoffloadcpu"]) else 0)
-        sd_vae_cpu_var.set(1 if ("sdvaecpu" in dict and dict["sdvaecpu"]) else 0)
-        sd_clip_gpu_var.set(1 if ("sdclipgpu" in dict and dict["sdclipgpu"]) else 0)
-        sd_convdirect_var.set(sd_convdirect_option(dict.get("sdconvdirect")))
-        sd_vae_var.set(dict["sdvae"] if ("sdvae" in dict and dict["sdvae"]) else "")
-        sd_t5xxl_var.set(dict["sdt5xxl"] if ("sdt5xxl" in dict and dict["sdt5xxl"]) else "")
-        sd_clip1_var.set(dict["sdclip1"] if ("sdclip1" in dict and dict["sdclip1"]) else "")
-        sd_clip2_var.set(dict["sdclip2"] if ("sdclip2" in dict and dict["sdclip2"]) else "")
-        sd_photomaker_var.set(dict["sdphotomaker"] if ("sdphotomaker" in dict and dict["sdphotomaker"]) else "")
-        sd_upscaler_var.set(dict["sdupscaler"] if ("sdupscaler" in dict and dict["sdupscaler"]) else "")
-        sd_vaeauto_var.set(1 if ("sdvaeauto" in dict and dict["sdvaeauto"]) else 0)
-        sd_tiled_vae_var.set(str(dict["sdtiledvae"]) if ("sdtiledvae" in dict and dict["sdtiledvae"]) else str(default_vae_tile_threshold))
-        sd_lora_var.set("|".join(sanitize_lora_list(dict.get('sdlora'))))
-        sd_loramult_var.set(" ".join(f"{n:.3f}".rstrip('0').rstrip('.') for n in dict.get("sdloramult", [])))
-        if "sdmaingpu" in dict:
-            sd_main_gpu_var.set(dict["sdmaingpu"])
+        sd_model_var.set(mydict["sdmodel"] if ("sdmodel" in mydict and mydict["sdmodel"]) else "")
+        sd_clamped_var.set(int(mydict["sdclamped"]) if ("sdclamped" in mydict and mydict["sdclamped"]) else 0)
+        sd_clamped_soft_var.set(int(mydict["sdclampedsoft"]) if ("sdclampedsoft" in mydict and mydict["sdclampedsoft"]) else 0)
+        sd_threads_var.set(str(mydict["sdthreads"]) if ("sdthreads" in mydict and mydict["sdthreads"]) else str(default_threads))
+        sd_quant_var.set(sd_quant_choices[(mydict["sdquant"] if ("sdquant" in mydict and mydict["sdquant"]>=0 and mydict["sdquant"]<len(sd_quant_choices)) else 0)])
+        sd_flash_attention_var.set(1 if ("sdflashattention" in mydict and mydict["sdflashattention"]) else 0)
+        sd_offload_cpu_var.set(1 if ("sdoffloadcpu" in mydict and mydict["sdoffloadcpu"]) else 0)
+        sd_vae_cpu_var.set(1 if ("sdvaecpu" in mydict and mydict["sdvaecpu"]) else 0)
+        sd_clip_gpu_var.set(1 if ("sdclipgpu" in mydict and mydict["sdclipgpu"]) else 0)
+        sd_convdirect_var.set(sd_convdirect_option(mydict.get("sdconvdirect")))
+        sd_vae_var.set(mydict["sdvae"] if ("sdvae" in mydict and mydict["sdvae"]) else "")
+        sd_t5xxl_var.set(mydict["sdt5xxl"] if ("sdt5xxl" in mydict and mydict["sdt5xxl"]) else "")
+        sd_clip1_var.set(mydict["sdclip1"] if ("sdclip1" in mydict and mydict["sdclip1"]) else "")
+        sd_clip2_var.set(mydict["sdclip2"] if ("sdclip2" in mydict and mydict["sdclip2"]) else "")
+        sd_photomaker_var.set(mydict["sdphotomaker"] if ("sdphotomaker" in mydict and mydict["sdphotomaker"]) else "")
+        sd_upscaler_var.set(mydict["sdupscaler"] if ("sdupscaler" in mydict and mydict["sdupscaler"]) else "")
+        sd_vaeauto_var.set(1 if ("sdvaeauto" in mydict and mydict["sdvaeauto"]) else 0)
+        sd_tiled_vae_var.set(str(mydict["sdtiledvae"]) if ("sdtiledvae" in mydict and mydict["sdtiledvae"]) else str(default_vae_tile_threshold))
+        sd_lora_var.set("|".join(sanitize_lora_list(mydict.get('sdlora'))))
+        sd_loramult_var.set(" ".join(f"{n:.3f}".rstrip('0').rstrip('.') for n in mydict.get("sdloramult", [])))
+        if "sdmaingpu" in mydict:
+            sd_main_gpu_var.set(mydict["sdmaingpu"])
         else:
             sd_main_gpu_var.set("-1")
 
-        gendefaults = (dict["gendefaults"] if ("gendefaults" in dict and dict["gendefaults"]) else "")
+        gendefaults = (mydict["gendefaults"] if ("gendefaults" in mydict and mydict["gendefaults"]) else "")
         if isinstance(gendefaults, type({})):
             gendefaults = json.dumps(gendefaults)
         gen_defaults_var.set(gendefaults)
-        gen_defaults_overwrite_var.set(1 if "gendefaultsoverwrite" in dict and dict["gendefaultsoverwrite"] else 0)
+        gen_defaults_overwrite_var.set(1 if "gendefaultsoverwrite" in mydict and mydict["gendefaultsoverwrite"] else 0)
 
-        whisper_model_var.set(dict["whispermodel"] if ("whispermodel" in dict and dict["whispermodel"]) else "")
+        whisper_model_var.set(mydict["whispermodel"] if ("whispermodel" in mydict and mydict["whispermodel"]) else "")
 
-        tts_threads_var.set(str(dict["ttsthreads"]) if ("ttsthreads" in dict and dict["ttsthreads"]) else str(default_threads))
-        tts_model_var.set(dict["ttsmodel"] if ("ttsmodel" in dict and dict["ttsmodel"]) else "")
-        wavtokenizer_var.set(dict["ttswavtokenizer"] if ("ttswavtokenizer" in dict and dict["ttswavtokenizer"]) else "")
-        ttsgpu_var.set(dict["ttsgpu"] if ("ttsgpu" in dict) else 0)
-        ttsmaxlen_var.set(str(dict["ttsmaxlen"]) if ("ttsmaxlen" in dict and dict["ttsmaxlen"]) else str(default_ttsmaxlen))
-        tts_dir_var.set(dict["ttsdir"] if ("ttsdir" in dict and dict["ttsdir"]) else "")
+        tts_threads_var.set(str(mydict["ttsthreads"]) if ("ttsthreads" in mydict and mydict["ttsthreads"]) else str(default_threads))
+        tts_model_var.set(mydict["ttsmodel"] if ("ttsmodel" in mydict and mydict["ttsmodel"]) else "")
+        wavtokenizer_var.set(mydict["ttswavtokenizer"] if ("ttswavtokenizer" in mydict and mydict["ttswavtokenizer"]) else "")
+        ttsgpu_var.set(mydict["ttsgpu"] if ("ttsgpu" in mydict) else 0)
+        ttsmaxlen_var.set(str(mydict["ttsmaxlen"]) if ("ttsmaxlen" in mydict and mydict["ttsmaxlen"]) else str(default_ttsmaxlen))
+        tts_dir_var.set(mydict["ttsdir"] if ("ttsdir" in mydict and mydict["ttsdir"]) else "")
 
-        musicllm_var.set(dict["musicllm"] if ("musicllm" in dict and dict["musicllm"]) else "")
-        musicembeddings_var.set(dict["musicembeddings"] if ("musicembeddings" in dict and dict["musicembeddings"]) else "")
-        musicdiffusion_var.set(dict["musicdiffusion"] if ("musicdiffusion" in dict and dict["musicdiffusion"]) else "")
-        musicvae_var.set(dict["musicvae"] if ("musicvae" in dict and dict["musicvae"]) else "")
-        musiclowvram_var.set(dict["musiclowvram"] if ("musiclowvram" in dict) else 0)
+        musicllm_var.set(mydict["musicllm"] if ("musicllm" in mydict and mydict["musicllm"]) else "")
+        musicembeddings_var.set(mydict["musicembeddings"] if ("musicembeddings" in mydict and mydict["musicembeddings"]) else "")
+        musicdiffusion_var.set(mydict["musicdiffusion"] if ("musicdiffusion" in mydict and mydict["musicdiffusion"]) else "")
+        musicvae_var.set(mydict["musicvae"] if ("musicvae" in mydict and mydict["musicvae"]) else "")
+        musiclowvram_var.set(mydict["musiclowvram"] if ("musiclowvram" in mydict) else 0)
 
-        embeddings_model_var.set(dict["embeddingsmodel"] if ("embeddingsmodel" in dict and dict["embeddingsmodel"]) else "")
-        embeddings_ctx_var.set(str(dict["embeddingsmaxctx"]) if ("embeddingsmaxctx" in dict and dict["embeddingsmaxctx"]) else "")
-        embeddings_gpu_var.set(dict["embeddingsgpu"] if ("embeddingsgpu" in dict) else 0)
+        embeddings_model_var.set(mydict["embeddingsmodel"] if ("embeddingsmodel" in mydict and mydict["embeddingsmodel"]) else "")
+        embeddings_ctx_var.set(str(mydict["embeddingsmaxctx"]) if ("embeddingsmaxctx" in mydict and mydict["embeddingsmaxctx"]) else "")
+        embeddings_gpu_var.set(mydict["embeddingsgpu"] if ("embeddingsgpu" in mydict) else 0)
 
-        admin_var.set(dict["admin"] if ("admin" in dict) else 0)
-        router_mode_var.set(dict["routermode"] if ("routermode" in dict) else 0)
-        autoswap_mode_var.set(dict["autoswapmode"] if ("autoswapmode" in dict) else 0)
-        admin_dir_var.set(dict["admindir"] if ("admindir" in dict and dict["admindir"]) else "")
-        admin_password_var.set(dict["adminpassword"] if ("adminpassword" in dict and dict["adminpassword"]) else "")
-        admin_unload_timeout_var.set(dict["adminunloadtimeout"] if ("adminunloadtimeout" in dict and dict["adminunloadtimeout"]) else 0)
-        singleinstance_var.set(dict["singleinstance"] if ("singleinstance" in dict) else 0)
+        admin_var.set(mydict["admin"] if ("admin" in mydict) else 0)
+        router_mode_var.set(mydict["routermode"] if ("routermode" in mydict) else 0)
+        autoswap_mode_var.set(mydict["autoswapmode"] if ("autoswapmode" in mydict) else 0)
+        admin_dir_var.set(mydict["admindir"] if ("admindir" in mydict and mydict["admindir"]) else "")
+        admin_password_var.set(mydict["adminpassword"] if ("adminpassword" in mydict and mydict["adminpassword"]) else "")
+        admin_unload_timeout_var.set(mydict["adminunloadtimeout"] if ("adminunloadtimeout" in mydict and mydict["adminunloadtimeout"]) else 0)
+        singleinstance_var.set(mydict["singleinstance"] if ("singleinstance" in mydict) else 0)
 
         importvars_in_progress = False
         gui_changed_modelfile()
-        if "istemplate" in dict and dict["istemplate"]:
+        if "istemplate" in mydict and mydict["istemplate"]:
             auto_set_backend_gui(True)
 
     def save_config_gui():
@@ -8897,8 +8907,8 @@ def show_gui():
 
     if args.showgui:
         if isinstance(args, argparse.Namespace):
-            dict = vars(args)
-            import_vars(dict)
+            mydict = vars(args)
+            import_vars(mydict)
 
     # runs main loop until closed or launch clicked
     try:
