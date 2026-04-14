@@ -4268,10 +4268,11 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
         is_chat_completions_path = (self.path.endswith('/v1/chat/completions') or self.path=='/chat/completions')
 
         #any requests to the following endpoints is capable of waking the server
-        wake_requests = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions","/v1/responses","/api/extra/transcribe","/v1/audio/transcriptions","/api/extra/tts","/v1/audio/speech","/api/extra/embeddings","/v1/embeddings","/api/extra/music/prepare","/api/extra/music/generate","/sdapi/v1/txt2img","/sdapi/v1/img2img","/sdapi/v1/upscale"]
+        wake_requests = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions","/v1/responses","/completions","/chat/completions","/responses","/api/extra/transcribe","/v1/audio/transcriptions","/api/extra/tts","/v1/audio/speech","/api/extra/embeddings","/v1/embeddings","/api/extra/music/prepare","/api/extra/music/generate","/sdapi/v1/txt2img","/sdapi/v1/img2img","/sdapi/v1/upscale"]
         is_wake_request = self.path in wake_requests
 
         autoswapEnabled = global_memory["autoswapmode"] is not None and global_memory["autoswapmode"]
+        model_switch_pass = False
         if is_post and (is_completions_path or is_chat_completions_path or (not autoswapEnabled and is_wake_request)):
             model_name = ""
             if body:
@@ -4283,6 +4284,7 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
 
             was_auto_unloaded = (global_memory["triggered_sleeping"] and global_memory["current_model"]=="unload_model")
             if (model_name and model_name != global_memory["current_model"]) or was_auto_unloaded:
+                model_switch_pass = True
                 with proxy_reload_lock:
                     whitelist = get_current_admindir_list() # see if its an allowed swap
                     if was_auto_unloaded and not model_name:
@@ -4307,8 +4309,8 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
                             self.send_error(504, "KoboldCpp model swap reload timed out")
                             return
                         time.sleep(0.1)
-        elif autoswapEnabled:
-            textReqs = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions"]
+        if autoswapEnabled and not model_switch_pass:
+            textReqs = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions","/v1/responses","/completions","/chat/completions","/responses"]
             sttReqs = ["/api/extra/transcribe","/v1/audio/transcriptions"]
             ttsReqs = ["/api/extra/tts", "/v1/audio/speech"]
             embedReqs = ["/api/extra/embeddings", "/v1/embeddings"]
