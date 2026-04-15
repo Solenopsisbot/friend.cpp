@@ -4283,13 +4283,19 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
                     pass
 
             was_auto_unloaded = (global_memory["triggered_sleeping"] and global_memory["current_model"]=="unload_model")
-            if (model_name and model_name != global_memory["current_model"]) or was_auto_unloaded:
+
+            is_different_model = False
+            # we only need to check if the currently loaded model is different from the requested model. everything else is handled downstream in the stack
+            if model_name and model_name != global_memory["current_model"]:
+                is_different_model = True
+
+            if is_different_model or was_auto_unloaded:
                 model_switch_pass = True
                 with proxy_reload_lock:
                     whitelist = get_current_admindir_list() # see if its an allowed swap
                     if was_auto_unloaded and not model_name:
                         model_name = "initial_model"
-                    if model_name != global_memory["current_model"] and (model_name in whitelist):
+                    if is_different_model and (model_name in whitelist):
                         global_memory["last_active_timestamp"] = datetime.now()
                         global_memory["triggered_sleeping"] = False
                         reqbody = json.dumps({"filename":model_name})
@@ -7337,6 +7343,7 @@ def show_gui():
 
     admin_var = ctk.IntVar(value=0)
     admin_dir_var = ctk.StringVar()
+    baseconfig_var = ctk.StringVar()
     admin_password_var = ctk.StringVar()
     singleinstance_var = ctk.IntVar(value=0)
     router_mode_var = ctk.IntVar(value=0)
@@ -8178,10 +8185,11 @@ def show_gui():
     makecheckbox(admin_tab, "Enable Model Administration", admin_var, 1, 0, command=toggleadmin,tooltiptxt="Enable a admin server, allowing you to remotely relaunch and swap models and configs.")
     makelabelentry(admin_tab, "Admin Password:" , admin_password_var, 3, 150,padx=(120),singleline=True,tooltip="Require a password to access admin functions. You are strongly advised to use one for publically accessible instances!")
     makefileentry(admin_tab, "Config Directory (Required):", "Select directory containing .gguf or .kcpps files to relaunch from", admin_dir_var, 5, width=280, dialog_type=2, tooltiptxt="Specify a directory to look for .kcpps configs in, which can be used to swap models.")
-    makelabelentry(admin_tab, "Auto Unload Timeout:" , admin_unload_timeout_var, 7, 70,padx=(150),singleline=True,tooltip="Set an idle timeout in seconds after which KoboldCpp will automatically unload the current model.")
-    makecheckbox(admin_tab, "SingleInstance Mode", singleinstance_var, 9, 0,tooltiptxt="Allows this server to be shut down by another KoboldCpp instance with singleinstance starting on the same port.")
-    router_mode_box = makecheckbox(admin_tab, "Router Mode", router_mode_var, 11, 0, command=togglerouter, tooltiptxt="Router mode uses a reverse proxy router, allowing you to easily hotswap models and configs within a single request. Requires admin mode.")
-    autoswap_mode_box = makecheckbox(admin_tab, "Autoswap Mode", autoswap_mode_var, 13, 0,tooltiptxt="Autoswap mode builds on router mode to allow switching of model types within the same config automatically. Requires admin mode and router mode. All models desired must be defined within the same config.")
+    makefileentry(admin_tab, "Base config .kcpps (For reloading):", "", baseconfig_var, 7, width=280, dialog_type=0, tooltiptxt="Specify a base .kcpps config to apply, if no custom base config is selected during a model swap.")
+    makelabelentry(admin_tab, "Auto Unload Timeout:" , admin_unload_timeout_var, 17, 70,padx=(150),singleline=True,tooltip="Set an idle timeout in seconds after which KoboldCpp will automatically unload the current model.")
+    makecheckbox(admin_tab, "SingleInstance Mode", singleinstance_var, 19, 0,tooltiptxt="Allows this server to be shut down by another KoboldCpp instance with singleinstance starting on the same port.")
+    router_mode_box = makecheckbox(admin_tab, "Router Mode", router_mode_var, 21, 0, command=togglerouter, tooltiptxt="Router mode uses a reverse proxy router, allowing you to easily hotswap models and configs within a single request. Requires admin mode.")
+    autoswap_mode_box = makecheckbox(admin_tab, "Autoswap Mode", autoswap_mode_var, 23, 0,tooltiptxt="Autoswap mode builds on router mode to allow switching of model types within the same config automatically. Requires admin mode and router mode. All models desired must be defined within the same config.")
 
     def kcpp_export_template():
         nonlocal kcpp_exporting_template
@@ -8509,6 +8517,7 @@ def show_gui():
         args.singleinstance = (singleinstance_var.get()==1)
         args.routermode = (router_mode_var.get()==1 and admin_var.get()==1)
         args.autoswapmode = (autoswap_mode_var.get()==1 and router_mode_var.get()==1 and admin_var.get()==1)
+        args.baseconfig = baseconfig_var.get()
         args.adminunloadtimeout = (0 if admin_unload_timeout_var.get()=="" else int(admin_unload_timeout_var.get()))
         args.showgui = False #prevent showgui from leaking into configs, its cli only
 
@@ -8772,6 +8781,7 @@ def show_gui():
         router_mode_var.set(mydict["routermode"] if ("routermode" in mydict) else 0)
         autoswap_mode_var.set(mydict["autoswapmode"] if ("autoswapmode" in mydict) else 0)
         admin_dir_var.set(mydict["admindir"] if ("admindir" in mydict and mydict["admindir"]) else "")
+        baseconfig_var.set(mydict["baseconfig"] if ("baseconfig" in mydict and mydict["baseconfig"]) else "")
         admin_password_var.set(mydict["adminpassword"] if ("adminpassword" in mydict and mydict["adminpassword"]) else "")
         admin_unload_timeout_var.set(mydict["adminunloadtimeout"] if ("adminunloadtimeout" in mydict and mydict["adminunloadtimeout"]) else 0)
         singleinstance_var.set(mydict["singleinstance"] if ("singleinstance" in mydict) else 0)
@@ -9318,7 +9328,7 @@ def reload_from_new_args(newargs):
         args.istemplate = False
         newargs = convert_invalid_args(newargs)
         for key, value in newargs.items(): #do not overwrite certain values
-            if key not in ["remotetunnel","showgui","port","host","port_param","admin","adminpassword","password","adminunloadtimeout","routermode","admindir","ssl","nocertify","benchmark","prompt","config","downloaddir"]:
+            if key not in ["remotetunnel","showgui","port","host","port_param","admin","adminpassword","password","adminunloadtimeout","routermode","admindir","ssl","nocertify","benchmark","prompt","config","baseconfig","downloaddir"]:
                 setattr(args, key, value)
         setattr(args,"showgui",False)
         setattr(args,"benchmark",False)
@@ -9344,7 +9354,7 @@ def reload_new_config(filename,defaultargs,overwrite_blank=False): #for changing
             print(f"Reload New Config Failed: {e}")
 
 def load_config_cli(filename):
-    print("Loading .kcpps configuration file...")
+    print(f"Loading configuration file {filename}...")
     with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
         config = json.load(f)
         config = convert_invalid_args(config)
@@ -9756,8 +9766,11 @@ def main(launch_args, default_args):
         analyze_gguf_model_wrapper(args.analyze)
         return
 
+    cfgname = ""
     if args.config and len(args.config)==1: #handle initial config loading for launch
-        cfgname = args.config[0]
+        cfgname = args.config[0] #store first so baseconfig wont overwrite it
+
+    if cfgname: #handle initial config loading for launch
         if isinstance(cfgname, str):
             dlfile = download_model_from_url(cfgname,[".kcpps",".kcppt"])
             if dlfile:
@@ -9935,6 +9948,15 @@ def main(launch_args, default_args):
                                 kcpp_instance = None
                                 print("Restarting KoboldCpp...")
                                 fault_recovery_mode = True
+
+                                #if override config is not specified, AND baseconfig is, swap it as our override
+                                if restart_target!="unload_model" and restart_target!="initial_model" and args.baseconfig and not targetfilepath2:
+                                    basecfg_path = os.path.abspath(args.baseconfig)
+                                    if os.path.exists(basecfg_path):
+                                        targetfilepath2 = basecfg_path
+                                        print(f"No override config provided, using baseconfig {args.baseconfig}")
+
+                                #then, apply the rest of the config stack
                                 if restart_target=="unload_model":
                                     reload_from_new_args(defaultargs)
                                     args.model_param = None
@@ -9942,17 +9964,21 @@ def main(launch_args, default_args):
                                     args.nomodel = True
                                 elif restart_target=="initial_model":
                                     reload_from_new_args(vars(original_args))
-                                elif targetfilepath.endswith(".gguf") and restart_override_config_target=="":
+                                elif targetfilepath.endswith(".gguf") and targetfilepath2=="":
                                     reload_from_new_args(defaultargs)
                                     args.model_param = targetfilepath
-                                elif targetfilepath.endswith(".gguf") and restart_override_config_target!="":
-                                    reload_new_config(targetfilepath2,defaultargs)
+                                elif targetfilepath.endswith(".gguf") and targetfilepath2!="":
+                                    reload_from_new_args(defaultargs)
+                                    reload_new_config(targetfilepath2,vars(args),True)
                                     args.model_param = targetfilepath
-                                elif targetfilepath and targetfilepath2 and restart_override_config_target!="":
-                                    reload_new_config(targetfilepath2,defaultargs)
+                                elif targetfilepath and targetfilepath2 and targetfilepath2!="":
+                                    # stuff applied later overwrites stuff applied earlier, if they have the same field names
+                                    reload_from_new_args(defaultargs)
+                                    reload_new_config(targetfilepath2,vars(args),True)
                                     reload_new_config(targetfilepath,vars(args),True)
                                 else:
-                                    reload_new_config(targetfilepath,defaultargs)
+                                    reload_from_new_args(defaultargs)
+                                    reload_new_config(targetfilepath,vars(args),True)
                                 global_memory["autoswapmode"] = args.autoswapmode
                                 kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "g_memory": global_memory, "gui_launcher": False})
                                 kcpp_instance.daemon = True
@@ -11223,6 +11249,7 @@ if __name__ == '__main__':
     admingroup.add_argument("--adminunloadtimeout", help="Set an idle timeout in seconds after which KoboldCpp will automatically unload the current model.", type=int, default=0)
     admingroup.add_argument("--routermode", help="Router mode uses a reverse proxy router, allowing you to easily hotswap models and configs within a single request. Requires admin mode.", action='store_true')
     admingroup.add_argument("--autoswapmode", help="Autoswap mode builds on router mode to allow switching of model types within the same config automatically. Requires admin mode and router mode. All models desired must be defined within the same config.", action='store_true')
+    admingroup.add_argument("--baseconfig", help="Specify a base .kcpps config to apply, if no custom base config is selected during a model swap", default="")
 
     deprecatedgroup = parser.add_argument_group('Deprecated Commands, DO NOT USE!')
     deprecatedgroup.add_argument("--hordeconfig", help=argparse.SUPPRESS, nargs='+')
