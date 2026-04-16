@@ -1943,39 +1943,6 @@ static bool kcpp_eval_media(llama_context * ctx_llama, const media_chunk & media
     return true;
 }
 
-//counts the number of matching prefix tokens between two sequences, returns percentage matched 0.0 to 1.0
-float ComputePrefixMatchPercent(std::vector<int> &current_context_tokens, std::vector<int> &new_context_tokens)
-{
-    int match_count = 0;
-    size_t min_length = std::min(current_context_tokens.size(), new_context_tokens.size());
-    for (size_t i = 0; i < min_length; ++i) {
-        if (current_context_tokens[i] == new_context_tokens[i]) {
-            match_count++;
-        } else {
-            break;
-        }
-    }
-    // Handle case where both sequences are empty to avoid division by zero
-    if (min_length == 0) {
-        return 0.0f; // Both empty sequences are considered not matched
-    }
-    return static_cast<float>(match_count) / static_cast<float>(min_length);
-}
-
-//returns true if and only if sequence 1 is fully contained within the starting of sequence 2
-bool FullyContainedPrefix(std::vector<int> &sequence1, std::vector<int> &sequence2)
-{
-    if (sequence1.size() > sequence2.size() || sequence1.size()==0 || sequence2.size()==0) {
-        return false;
-    }
-    for (size_t i = 0; i < sequence1.size(); ++i) {
-        if (sequence1[i] != sequence2[i]) {
-            return false;
-        }
-    }
-    return true;
-}
-
 //given an old GGUF context and a new context that has some middle portion removed,
 //find and remove the middle portion from the old context from the KV. Does not fast forward after this destructive action
 //returns true if contextshift is doable, executes it if dryrun is false
@@ -4325,14 +4292,30 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     else
     {
         bool triggersc = kcpp_data->use_smartcontext;
+        bool triggerff = kcpp_data->use_fastforward;
         if(!blank_prompt) //special case for blank prompts, no fast forward or shifts
         {
-            if(kcpp_data->use_fastforward && kcpp_data->use_contextshift && (file_format == FileFormat::GGUF_GENERIC))
+            if(triggerff && !kcpp_data->swa_full)
+            {
+                int goal_npast = ComputeSharedPrefixLength(current_context_tokens,embd_inp);
+                int last_npast = current_context_tokens.size();
+                int swa_limit = kcpp_active_swa_size-4;
+                if(last_npast-goal_npast > swa_limit)
+                {
+                    triggerff = false;
+                    if (debugmode==1 && !is_quiet)
+                    {
+                         printf("\n(Rewind of %d-%d=%d would exceed SWA window of %d, doing a full reprocess... to avoid this, disable SWA or increase SWA padding)\n",
+                         last_npast,goal_npast,last_npast-goal_npast, swa_limit);
+                    }
+                }
+            }
+            if(triggerff && kcpp_data->use_contextshift && (file_format == FileFormat::GGUF_GENERIC))
             {
                 DoContextShifting(llama_ctx_v4, draft_ctx, current_context_tokens, embd_inp, inputs.max_length, nctx, false);
                 triggersc = false;
             }
-            if(kcpp_data->use_fastforward)
+            if(triggerff)
             {
                 ContextFastForward(current_context_tokens, embd_inp, n_past, last_n_tokens, nctx, smartcontext, triggersc, false, 4);
             }

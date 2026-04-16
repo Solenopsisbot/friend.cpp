@@ -8306,7 +8306,7 @@ def show_gui():
         args.noshift = contextshift_var.get()==0
         args.nofastforward = fastforward_var.get()==0
         args.useswa = swa_var.get()==1
-        args.swapadding = int(swa_padding_var.get()) if swa_padding_var.get()!="" else 0
+        args.swapadding = int(swa_padding_var.get()) if swa_padding_var.get()!="" else swa_padding_default
         args.smartcache = (0 if smartcache_var.get()!=1 else int(smartcacheslots_var.get()))
         args.remotetunnel = remotetunnel_var.get()==1
         args.foreground = keepforeground.get()==1
@@ -8556,7 +8556,7 @@ def show_gui():
         contextshift_var.set(0 if "noshift" in mydict and mydict["noshift"] else 1)
         fastforward_var.set(0 if "nofastforward" in mydict and mydict["nofastforward"] else 1)
         swa_var.set(1 if "useswa" in mydict and mydict["useswa"] else 0)
-        swa_padding_var.set(mydict["swapadding"] if ("swapadding" in mydict and mydict["swapadding"]) else 0)
+        swa_padding_var.set(mydict["swapadding"] if ("swapadding" in mydict) else swa_padding_default)
         smartcache_var.set(1 if "smartcache" in mydict and mydict["smartcache"] else 0)
         smartcacheslots_var.set(mydict["smartcache"] if ("smartcache" in mydict and mydict["smartcache"] and int(mydict["smartcache"])>1) else savestate_limit_default)
         remotetunnel_var.set(1 if "remotetunnel" in mydict and mydict["remotetunnel"] else 0)
