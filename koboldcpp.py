@@ -9931,16 +9931,22 @@ def main(launch_args, default_args):
                         time.sleep(0.5) #sleep for 0.5s then restart
                         if args.admin and args.admindir:
                             dirpath = os.path.abspath(args.admindir)
-                            targetfilepath = os.path.abspath(os.path.join(dirpath, restart_target))
-                            targetfilepath2 = os.path.abspath(os.path.join(dirpath, restart_override_base_config)) if restart_override_base_config else ""
-                            if os.path.commonpath([dirpath, targetfilepath]) != dirpath: # Enforce admindir jail
+                            maintarget_filepath = os.path.abspath(os.path.join(dirpath, restart_target))
+                            basecfg_filepath = os.path.abspath(os.path.join(dirpath, restart_override_base_config)) if restart_override_base_config else ""
+                            if os.path.commonpath([dirpath, maintarget_filepath]) != dirpath: # Enforce admindir jail
                                 print("Security: Invalid restart target path.")
                                 continue
-                            if targetfilepath2 and os.path.commonpath([dirpath, targetfilepath2]) != dirpath:
+                            if basecfg_filepath and os.path.commonpath([dirpath, basecfg_filepath]) != dirpath:
                                 print("Security: Invalid override config path.")
                                 continue
+                            #if override config is not specified, AND baseconfig is, swap it as our override
+                            if restart_target!="unload_model" and restart_target!="initial_model" and args.baseconfig and not basecfg_filepath:
+                                my_basecfg_path = os.path.abspath(args.baseconfig)
+                                if os.path.exists(my_basecfg_path):
+                                    basecfg_filepath = my_basecfg_path
+                                    print(f"No override config provided, using baseconfig {args.baseconfig}")
                             defaultargs = vars(default_args)
-                            if (os.path.exists(targetfilepath) or restart_target=="unload_model" or restart_target=="initial_model") and (restart_override_base_config=="" or os.path.exists(targetfilepath2)):
+                            if (os.path.exists(maintarget_filepath) or restart_target=="unload_model" or restart_target=="initial_model") and (restart_override_base_config=="" or os.path.exists(basecfg_filepath)):
                                 print("Terminating old process...")
                                 global_memory["load_complete"] = False
                                 kcpp_instance.terminate()
@@ -9948,14 +9954,6 @@ def main(launch_args, default_args):
                                 kcpp_instance = None
                                 print("Restarting KoboldCpp...")
                                 fault_recovery_mode = True
-
-                                #if override config is not specified, AND baseconfig is, swap it as our override
-                                if restart_target!="unload_model" and restart_target!="initial_model" and args.baseconfig and not targetfilepath2:
-                                    basecfg_path = os.path.abspath(args.baseconfig)
-                                    if os.path.exists(basecfg_path):
-                                        targetfilepath2 = basecfg_path
-                                        print(f"No override config provided, using baseconfig {args.baseconfig}")
-
                                 #then, apply the rest of the config stack
                                 if restart_target=="unload_model":
                                     reload_from_new_args(defaultargs)
@@ -9964,21 +9962,21 @@ def main(launch_args, default_args):
                                     args.nomodel = True
                                 elif restart_target=="initial_model":
                                     reload_from_new_args(vars(original_args))
-                                elif targetfilepath.endswith(".gguf") and targetfilepath2=="":
+                                elif maintarget_filepath.endswith(".gguf") and basecfg_filepath=="":
                                     reload_from_new_args(defaultargs)
-                                    args.model_param = targetfilepath
-                                elif targetfilepath.endswith(".gguf") and targetfilepath2!="":
+                                    args.model_param = maintarget_filepath
+                                elif maintarget_filepath.endswith(".gguf") and basecfg_filepath!="":
                                     reload_from_new_args(defaultargs)
-                                    reload_new_config(targetfilepath2,vars(args),True)
-                                    args.model_param = targetfilepath
-                                elif targetfilepath and targetfilepath2 and targetfilepath2!="":
+                                    reload_new_config(basecfg_filepath,vars(args),True)
+                                    args.model_param = maintarget_filepath
+                                elif maintarget_filepath and basecfg_filepath and basecfg_filepath!="":
                                     # stuff applied later overwrites stuff applied earlier, if they have the same field names
                                     reload_from_new_args(defaultargs)
-                                    reload_new_config(targetfilepath2,vars(args),True)
-                                    reload_new_config(targetfilepath,vars(args),True)
+                                    reload_new_config(basecfg_filepath,vars(args),True)
+                                    reload_new_config(maintarget_filepath,vars(args),True)
                                 else:
                                     reload_from_new_args(defaultargs)
-                                    reload_new_config(targetfilepath,vars(args),True)
+                                    reload_new_config(maintarget_filepath,vars(args),True)
                                 global_memory["autoswapmode"] = args.autoswapmode
                                 kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "g_memory": global_memory, "gui_launcher": False})
                                 kcpp_instance.daemon = True
