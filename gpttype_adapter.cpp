@@ -2149,6 +2149,8 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             printf("\nSWA Mode is ENABLED!\nNote that using SWA Mode cannot be used with Context Shifting, and can lead to degraded recall when combined with Fast Forwarding!\n");
         } else {
             printf("\nSWA Mode IS ENABLED!\nNote that using SWA Mode cannot be used with Context Shifting\n");
+            //since fastforward is disabled, we need no swa padding, because full reprocess always happens
+            kcpp_extra_swa_padding = 0;
         }
     }
     debugmode = inputs.debugmode;
@@ -4295,18 +4297,17 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         bool triggerff = kcpp_data->use_fastforward;
         if(!blank_prompt) //special case for blank prompts, no fast forward or shifts
         {
-            if(triggerff && !kcpp_data->swa_full)
+            if(triggerff && !kcpp_data->swa_full && (file_format == FileFormat::GGUF_GENERIC))
             {
-                int goal_npast = ComputeSharedPrefixLength(current_context_tokens,embd_inp);
-                int last_npast = current_context_tokens.size();
-                int swa_limit = kcpp_active_swa_size-4;
-                if(last_npast-goal_npast > swa_limit)
-                {
+                const int swa_pos_min = llama_memory_seq_pos_min(llama_get_memory(llama_ctx_v4), 0); //this is the furthest back we can rewind to.
+                int goal_npast = ComputeSharedPrefixLength(current_context_tokens,embd_inp); //this is where we want to rewind to.
+                goal_npast -= 4;
+                goal_npast = goal_npast < 0 ? 0 : goal_npast;
+                if (swa_pos_min < 0 || goal_npast <= swa_pos_min) {
                     triggerff = false;
                     if (debugmode==1 && !is_quiet)
                     {
-                         printf("\n(Rewind of %d-%d=%d would exceed SWA window of %d, doing a full reprocess... to avoid this, disable SWA or increase SWA padding)\n",
-                         last_npast,goal_npast,last_npast-goal_npast, swa_limit);
+                         printf("\nNote: Context cannot be reused (Desired n_past=%d, SWA lowest n_past=%d), doing a full reprocess... to avoid this, disable SWA or increase SWA padding)\n", goal_npast, swa_pos_min);
                     }
                 }
             }
