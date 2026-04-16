@@ -7741,6 +7741,7 @@ def show_gui():
         if fastforward_var.get()==0:
             contextshift_var.set(0)
             smartcontext_var.set(0)
+            smartcache_var.set(0)
 
     def togglectxshift(a,b,c):
         if contextshift_var.get()==0:
