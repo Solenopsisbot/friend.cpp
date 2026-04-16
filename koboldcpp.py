@@ -75,7 +75,7 @@ extra_images_max = 4 # for kontext/qwen img
 KcppVersion = "1.112"
 showdebug = True
 kcpp_instance = None #global running instance
-global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "current_override":"", "swapReqType": None, "autoswapmode": False}
+global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_base_config":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "base_config":"", "swapReqType": None, "autoswapmode": False}
 using_gui_launcher = False
 
 handle = None
@@ -4345,7 +4345,7 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
 
             if (global_memory["swapReqType"] is not None and swapModeChanged):
                 with proxy_reload_lock:
-                    reqbody = json.dumps({"filename":global_memory["current_model"], "overrideconfig": global_memory["current_override"]})
+                    reqbody = json.dumps({"filename":global_memory["current_model"], "baseconfig": global_memory["base_config"]})
                     reqheaders = {
                         'Content-Type': 'application/json',
                         'Content-Length': str(len(reqbody)),
@@ -6008,19 +6008,19 @@ Change Mode<br>
             resp = {"success": False}
             if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                 targetfile = ""
-                overrideconfig = ""
+                baseconfig = ""
                 try:
                     tempbody = json.loads(body)
                     if isinstance(tempbody, dict):
                         targetfile = tempbody.get('filename', "")
-                        overrideconfig = tempbody.get('overrideconfig', "")
+                        baseconfig = tempbody.get('baseconfig', tempbody.get('overrideconfig', ""))
                 except Exception:
                     targetfile = ""
                 if targetfile and targetfile!="":
                     if targetfile=="unload_model" or targetfile=="initial_model": #special request to simply unload model or swap back top intial model
                         print("Admin: Received request to unload model")
                         global_memory["restart_target"] = targetfile
-                        global_memory["restart_override_config_target"] = ""
+                        global_memory["restart_override_base_config"] = ""
                         resp = {"success": True}
                     else:
                         dirpath = os.path.abspath(args.admindir)
@@ -6029,12 +6029,12 @@ Change Mode<br>
                         targetfilepath = os.path.abspath(os.path.join(dirpath, targetfile))
 
                         if (targetfile in allowed_files and os.path.commonpath([dirpath, targetfilepath]) == dirpath and os.path.exists(targetfilepath)):
-                            global_memory["restart_override_config_target"] = "" # Jail enforcement
-                            if targetfile and overrideconfig:
-                                overrideconfigfilepath = os.path.abspath(os.path.join(dirpath, overrideconfig))
-                                if (overrideconfig in allowed_files and os.path.commonpath([dirpath, overrideconfigfilepath]) == dirpath and os.path.exists(overrideconfigfilepath)):
-                                    print(f"Admin: Override base config set to {overrideconfig}")
-                                    global_memory["restart_override_config_target"] = overrideconfig
+                            global_memory["restart_override_base_config"] = "" # Jail enforcement
+                            if targetfile and baseconfig:
+                                baseconfigfilepath = os.path.abspath(os.path.join(dirpath, baseconfig))
+                                if (baseconfig in allowed_files and os.path.commonpath([dirpath, baseconfigfilepath]) == dirpath and os.path.exists(baseconfigfilepath)):
+                                    print(f"Admin: Override base config set to {baseconfig}")
+                                    global_memory["restart_override_base_config"] = baseconfig
                             print(f"Admin: Received request to reload config to {targetfile}")
                             global_memory["restart_target"] = targetfile
                             resp = {"success": True}
@@ -9867,7 +9867,7 @@ def main(launch_args, default_args):
             input()
     else:  # manager command queue for admin mode
         with multiprocessing.Manager() as mp_manager:
-            global_memory = mp_manager.dict({"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "current_override":"", "swapReqType": None, "autoswapmode": False})
+            global_memory = mp_manager.dict({"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_base_config":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "base_config":"", "swapReqType": None, "autoswapmode": False})
 
             if args.remotetunnel and not args.prompt and not args.benchmark and not args.cli:
                 setuptunnel(global_memory, True if args.sdmodel else False)
@@ -9884,7 +9884,7 @@ def main(launch_args, default_args):
             while True: # keep the manager alive
                 try:
                     restart_target = ""
-                    restart_override_config_target = ""
+                    restart_override_base_config = ""
                     if not kcpp_instance or not kcpp_instance.is_alive():
                         if fault_recovery_mode:
                             #attempt to recover
@@ -9899,7 +9899,7 @@ def main(launch_args, default_args):
                             kcpp_instance.daemon = True
                             kcpp_instance.start()
                             global_memory["restart_target"] = ""
-                            global_memory["restart_override_config_target"] = ""
+                            global_memory["restart_override_base_config"] = ""
                             global_memory["swapReqType"] = None
                             time.sleep(3)
                         else:
@@ -9907,7 +9907,7 @@ def main(launch_args, default_args):
                     if fault_recovery_mode and global_memory["load_complete"]:
                         fault_recovery_mode = False
                     restart_target = global_memory["restart_target"]
-                    restart_override_config_target = global_memory["restart_override_config_target"]
+                    restart_override_base_config = global_memory["restart_override_base_config"]
                     last_active = global_memory["last_active_timestamp"]
                     if last_active and args.adminunloadtimeout>0:
                         curtime = datetime.now()
@@ -9924,15 +9924,15 @@ def main(launch_args, default_args):
                                 restart_target = "unload_model"
                                 global_memory["triggered_sleeping"] = True
                     if restart_target!="":
-                        overridetxt = ("" if not restart_override_config_target else f" with override config {restart_override_config_target}")
+                        overridetxt = ("" if not restart_override_base_config else f" with override config {restart_override_base_config}")
                         print(f"Reloading new model/config: {restart_target}{overridetxt}")
                         global_memory["restart_target"] = ""
-                        global_memory["restart_override_config_target"] = ""
+                        global_memory["restart_override_base_config"] = ""
                         time.sleep(0.5) #sleep for 0.5s then restart
                         if args.admin and args.admindir:
                             dirpath = os.path.abspath(args.admindir)
                             targetfilepath = os.path.abspath(os.path.join(dirpath, restart_target))
-                            targetfilepath2 = os.path.abspath(os.path.join(dirpath, restart_override_config_target)) if restart_override_config_target else ""
+                            targetfilepath2 = os.path.abspath(os.path.join(dirpath, restart_override_base_config)) if restart_override_base_config else ""
                             if os.path.commonpath([dirpath, targetfilepath]) != dirpath: # Enforce admindir jail
                                 print("Security: Invalid restart target path.")
                                 continue
@@ -9940,7 +9940,7 @@ def main(launch_args, default_args):
                                 print("Security: Invalid override config path.")
                                 continue
                             defaultargs = vars(default_args)
-                            if (os.path.exists(targetfilepath) or restart_target=="unload_model" or restart_target=="initial_model") and (restart_override_config_target=="" or os.path.exists(targetfilepath2)):
+                            if (os.path.exists(targetfilepath) or restart_target=="unload_model" or restart_target=="initial_model") and (restart_override_base_config=="" or os.path.exists(targetfilepath2)):
                                 print("Terminating old process...")
                                 global_memory["load_complete"] = False
                                 kcpp_instance.terminate()
@@ -9984,11 +9984,11 @@ def main(launch_args, default_args):
                                 kcpp_instance.daemon = True
                                 kcpp_instance.start()
                                 global_memory["restart_target"] = ""
-                                if (restart_override_config_target and restart_override_config_target!=""):
-                                    global_memory["current_override"] = restart_override_config_target
+                                if (restart_override_base_config and restart_override_base_config!=""):
+                                    global_memory["base_config"] = restart_override_base_config
                                 else:
-                                    global_memory["current_override"] = ""
-                                global_memory["restart_override_config_target"] = ""
+                                    global_memory["base_config"] = ""
+                                global_memory["restart_override_base_config"] = ""
                                 global_memory["current_model"] = restart_target
                                 time.sleep(3)
                     else:
