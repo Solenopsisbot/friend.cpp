@@ -63,7 +63,7 @@ overridekv_max = 16
 default_autofit_padding = 1024
 lora_filenames_max = 4
 multiuser_concurrent_limit = 10
-swa_padding_default = 1024
+swa_padding_default = 0
 
 # abuse prevention
 stop_token_max = 256
