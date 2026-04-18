@@ -135,6 +135,7 @@ has_audio_support = False
 has_vision_support = False
 has_whisper = False
 cached_chat_template = None
+cached_sd_info = {}
 savedata_obj = None
 mcp_connections = [] #every element is linked to one mcp source, contains obj {"client":obj, "tools":[]}
 mcp_lock = threading.Lock()
@@ -2235,10 +2236,6 @@ def sd_get_info():
         print("An error occurred while getting sd metadata info")
     return {}
 
-def sd_get_available_schedulers():
-    info = sd_get_info()
-    return info.get('available_schedulers', [])
-
 sampler_aliases = [
     # sd.cpp name, UI name, aliases
     ['euler',         'Euler',    'k_euler'],
@@ -2253,8 +2250,8 @@ sampler_aliases = [
 ]
 
 def sd_sampler_canonical_name(name):
-    info = sd_get_info()
-    available = info.get('available_samplers', [])
+    global cached_sd_info
+    available = cached_sd_info.get('available_samplers', [])
     alias_map = {}
     for aliases in sampler_aliases:
         for alias in aliases:
@@ -2266,9 +2263,9 @@ def sd_sampler_canonical_name(name):
     return 'default'
 
 def sd_sdapi_samplers():
+    global cached_sd_info
     result = []
-    info = sd_get_info()
-    available = set(info.get('available_samplers', []))
+    available = set(cached_sd_info.get('available_samplers', []))
     # ensure we only advertise supported samplers
     smap = {}
     for aliases in sampler_aliases:
@@ -5386,7 +5383,7 @@ Change Mode<br>
 
     def do_GET(self):
         global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, embedded_kailite_gz, embedded_kcpp_docs_gz, embedded_kcpp_sdui_gz, embedded_lcpp_ui_gz, embedded_musicui, embedded_musicui_gz
-        global last_req_time, start_time, cached_chat_template, has_vision_support, has_audio_support, has_whisper, friendlymodelname
+        global last_req_time, start_time, cached_chat_template, cached_sd_info, has_vision_support, has_audio_support, has_whisper, friendlymodelname
         global savedata_obj, has_multiplayer, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, maxctx, maxhordelen, friendlymodelname, lastuploadedcomfyimg, lastgeneratedcomfyimg, KcppVersion, totalgens, preloaded_story, exitcounter, currentusergenkey, friendlysdmodelname, fullsdmodelpath, password, friendlyembeddingsmodelname, voicelist
         global autoswapmode, textName, sttName, ttsName, embedName, musicName, imageName, mmprojName
 
@@ -5570,7 +5567,7 @@ Change Mode<br>
             if (friendlysdmodelname=="inactive" or fullsdmodelpath=="") and not(autoswapmode and imageName is not None):
                 response_body = (json.dumps([]).encode())
             else:
-                response_body = (json.dumps([{"name":name,"label":name} for name in sd_get_available_schedulers()]).encode())
+                response_body = (json.dumps([{"name":name,"label":name} for name in cached_sd_info.get('available_schedulers', [])]).encode())
         elif clean_path.endswith('/sdapi/v1/latent-upscale-modes'):
            response_body = (json.dumps([]).encode())
         elif clean_path.endswith('/sdapi/v1/upscalers'):
@@ -10230,7 +10227,7 @@ def disableSwappedFieldsInConfig(args, swapReqType):
 
 def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, embedded_kailite_gz, embedded_kcpp_docs_gz, embedded_kcpp_sdui_gz, embedded_lcpp_ui_gz, embedded_musicui, embedded_musicui_gz, start_time, exitcounter, global_memory, using_gui_launcher
-    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, musicllmmodelpath, friendlyembeddingsmodelname, has_audio_support, has_vision_support, cached_chat_template, preloaded_custom_jinja
+    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, musicllmmodelpath, friendlyembeddingsmodelname, has_audio_support, has_vision_support, cached_chat_template, cached_sd_info, preloaded_custom_jinja
 
     start_server = True
 
@@ -10780,6 +10777,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             friendlysdmodelname = os.path.splitext(friendlysdmodelname)[0]
             friendlysdmodelname = sanitize_string(friendlysdmodelname)
             loadok = sd_load_model(imgmodel,imgvae,imgt5xxl,imgclip1,imgclip2,imgphotomaker,imgupscaler)
+            cached_sd_info = sd_get_info()
             print("Load Image Model OK: " + str(loadok))
             if not loadok:
                 exitcounter = 999
