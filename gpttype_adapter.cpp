@@ -156,6 +156,7 @@ static bool check_slowness = false; //will display a suggestion to use highprior
 static bool showed_rnn_warning = false;
 static bool highpriority = false;
 static int rnn_reusable_slot_idx = -1;
+static std::string overridden_jinja_template = ""; //if set, overrides jinja template
 
 static int delayed_generated_tokens_limit = 0;
 std::deque<std::string> delayed_generated_tokens; //for use with antislop sampling
@@ -2225,6 +2226,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     audio_multimodal_supported = false;
     vision_multimodal_supported = false;
     use_mrope = false;
+    overridden_jinja_template = inputs.jinja_template;
 
     auto clamped_max_context_length = inputs.max_context_length;
 
@@ -3271,6 +3273,10 @@ std::string gpttype_get_chat_template()
     {
         printf("\nWarning: KCPP text generation not initialized!\n");
         return "";
+    }
+    if(overridden_jinja_template!="")
+    {
+        return overridden_jinja_template;
     }
     if(file_format!=FileFormat::GGUF_GENERIC || !llama_ctx_v4)
     {

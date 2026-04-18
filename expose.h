@@ -74,6 +74,7 @@ struct load_model_inputs
     const int quant_k = 0;
     const int quant_v = 0;
     const bool check_slowness = false;
+    const char * jinja_template = nullptr;
     const bool highpriority = false;
     const bool swa_support = false;
     const int swa_padding = 0;
