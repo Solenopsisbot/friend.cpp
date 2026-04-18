@@ -325,7 +325,8 @@ class generation_inputs(ctypes.Structure):
                 ("logit_biases_len", ctypes.c_int),
                 ("logit_biases", ctypes.POINTER(logit_bias)),
                 ("banned_tokens_len", ctypes.c_int),
-                ("banned_tokens", ctypes.POINTER(ctypes.c_char_p))]
+                ("banned_tokens", ctypes.POINTER(ctypes.c_char_p)),
+                ("reasoning_budget", ctypes.c_int)]
 
 class generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2008,6 +2009,7 @@ def generate(genparams, stream_flag=False):
     ban_eos_token = genparams.get('ban_eos_token', False)
     stream_sse = stream_flag
     grammar = genparams.get('grammar', '')
+    reasoning_budget = tryparseint(genparams.get('reasoning_budget', 0),0)
     #translate grammar if its json
     try:
         grammarjson = json.loads(grammar)
@@ -2183,6 +2185,8 @@ def generate(genparams, stream_flag=False):
     inputs.banned_tokens = (ctypes.c_char_p * inputs.banned_tokens_len)()
     for n, tok in enumerate(banned_tokens):
         inputs.banned_tokens[n] = tok.encode("UTF-8")
+
+    inputs.reasoning_budget = reasoning_budget
 
     currentusergenkey = genkey
     totalgens += 1

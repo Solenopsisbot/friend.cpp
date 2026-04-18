@@ -1870,6 +1870,56 @@ const std::vector<samplers> & sampler_order, llama_grammar * grammar, float dyna
     return id;
 }
 
+static int apply_reasoning_budget(int id, const std::vector<int> & start_think, const std::vector<int> & end_think, int budget)
+{
+    if(budget<=0 || start_think.size()==0 || end_think.size()!=1) //start_think can be 1-3 tokens long, end_think is always 1 token
+    {
+        return id;
+    }
+
+    int end_think_index = -1;
+    int start_think_index = -1;
+    int ctx_size = (int)current_context_tokens.size();
+
+    for (int i = ctx_size - 1; i >= 0; --i) { // Search backwards for the latest end_think token
+        if (end_think_index == -1 && current_context_tokens[i] == end_think[0]) {
+            end_think_index = i;
+        }
+        if (start_think_index == -1) {  // Search backwards for the latest start_think sequence
+            int seq_len = (int) start_think.size();
+            if (i - seq_len + 1 >= 0) {
+                bool match = true;
+                for (int j = 0; j < seq_len; ++j) {
+                    if (current_context_tokens[i - seq_len + 1 + j] != start_think[j]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    start_think_index = i;  // index of the last token of the start_think sequence
+                }
+            }
+        }
+        if (start_think_index != -1 && end_think_index != -1) {  // Early exit once both are found
+            break;
+        }
+    }
+
+    if (start_think_index == -1) {  // If no start_think found, do nothing
+        return id;
+    }
+
+    if (end_think_index != -1 && end_think_index > start_think_index) { // If end_think comes after start_think, thinking is already closed
+        return id;
+    }
+
+    int tokens_since_start = ctx_size - 1 - start_think_index; // start_think is unclosed, check budget
+    if (tokens_since_start >= budget) {
+        return end_think[0]; // Force-close thinking by returning the end_think token
+    }
+
+    return id;
+}
 
 static void grammar_accept_token(FileFormat file_format, int32_t n_vocab, struct llama_grammar * grammar, llama_token token)
 {
@@ -3741,6 +3791,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     kcpp_data->smoothing_curve = inputs.smoothing_curve;
     kcpp_data->adaptive_target = inputs.adaptive_target;
     kcpp_data->adaptive_decay = inputs.adaptive_decay;
+    kcpp_data->reasoning_budget = inputs.reasoning_budget;
 
     adaptive_p_weighted_sum = 0;
     adaptive_p_total_weight = 0;
@@ -3861,6 +3912,34 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             }
         }
     }
+
+    //thinking budget handling
+    std::vector<int> thinking_start_sequence;
+    std::vector<int> thinking_end_sequence;
+    std::string chat_template = "";
+    if (file_format == FileFormat::GGUF_GENERIC) {
+        chat_template = gpttype_get_chat_template();
+        if (file_format_meta.model_architecture == llm_arch::LLM_ARCH_GEMMA4) {
+            TokenizeString("<|channel>thought",thinking_start_sequence,file_format,false);
+            TokenizeString("<channel|>",thinking_end_sequence,file_format,false);
+            //sanity check, start is 2 tokens and end is 1
+            if(thinking_start_sequence.size()!=2 || thinking_end_sequence.size()!=1)
+            {
+                thinking_start_sequence.clear();
+                thinking_end_sequence.clear();
+            }
+        } else {
+            TokenizeString("<think>",thinking_start_sequence,file_format,false);
+            TokenizeString("</think>",thinking_end_sequence,file_format,false);
+            //sanity check, start is 1 tokens and end is 1
+            if(thinking_start_sequence.size()!=1 || thinking_end_sequence.size()!=1)
+            {
+                thinking_start_sequence.clear();
+                thinking_end_sequence.clear();
+            }
+        }
+    }
+
 
     bool stream_sse = inputs.stream_sse;
     bool allow_regular_prints = (!is_quiet && debugmode!=-1);
@@ -4840,6 +4919,13 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 if (adaptive_target > 0.0f) {
                     float original_prob = original_candidates[id].p;
                     adaptive_p_update_history(original_prob, adaptive_p_weighted_sum, adaptive_p_total_weight, adaptive_decay);
+                }
+
+                //apply reasoning budget
+                int newid = apply_reasoning_budget(id, thinking_start_sequence, thinking_end_sequence, kcpp_data->reasoning_budget);
+                if (id != newid) {
+                    printf("\n(Reasoning Budget of %d tokens exceeded! Attempting to stop thinking, insert token %d!)\n", kcpp_data->reasoning_budget, newid);
+                    id = newid;
                 }
 
                 if(draft_used)
