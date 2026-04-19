@@ -4730,7 +4730,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     recvtxt = None
                     currfinishreason = "tool_calls"
                     if args.debugmode:
-                        print(f"Debug ToolCall Response: {json.dumps(tool_calls)}")
+                        print(f"\nDebug ToolCall Response: {json.dumps(tool_calls)}")
 
         modelNameToReturn = friendlymodelname
         if autoswapmode and textName is not None:

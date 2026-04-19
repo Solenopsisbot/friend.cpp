@@ -3560,7 +3560,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     top_picks_history.clear();
     early_abort = false;
 
-    double time0 = 0, time1 = 0, time2 = 0;
+    double init_time = 0, process_time = 0, gen_time = 0;
     timer_start();
 
     bool media_data_changed = false;
@@ -4490,9 +4490,9 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     bool draft_used = false;
     int draft_successes = 0;
     int draft_failures = 0;
-    int realnprocessed = 0;
+    int real_n_processed = 0;
 
-    time0 = timer_check();
+    init_time = timer_check();
     timer_start();
 
     if(file_format == FileFormat::RWKV_1 || file_format==FileFormat::RWKV_2)
@@ -4558,7 +4558,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         //print progress
         if (!startedsampling && allow_regular_prints)
         {
-            realnprocessed = embd_inp.size();
+            real_n_processed = embd_inp.size();
             printf("\rProcessing Prompt%s (%d / %zu tokens)", (blasmode ? " [BATCH]" : ""), input_consumed, embd_inp.size());
         }
         fflush(stdout);
@@ -4784,7 +4784,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             if (!startedsampling)
             {
                 startedsampling = true;
-                time1 = timer_check();
+                process_time = timer_check();
                 timer_start();
                 if(allow_regular_prints)
                 {
@@ -5345,21 +5345,21 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         llama_perf_context_print(llama_ctx_v4);
     }
 
-    time2 = timer_check();
-    float pt1 = (time1*1000.0/(embd_inp.size()==0?1:embd_inp.size()));
-    float ts1 = (pt1>0?(1000.0/pt1):0);
-    int realnpredict = kcpp_data->n_predict-remaining_tokens;
-    float pt2 = (time2*1000.0/(realnpredict<=0?1:realnpredict));
-    float ts2 = (pt2>0?(1000.0/pt2):0);
-    float tottime = (time1 + time2);
-    float tokens_per_second = tottime>0?(realnpredict <= 0 ? 0 : realnpredict / tottime):0;
+    gen_time = timer_check();
+    float pt1 = (process_time*1000.0/(embd_inp.size()==0?1:embd_inp.size()));
+    float processed_tps = (pt1>0?(1000.0/pt1):0);
+    int real_n_generated = kcpp_data->n_predict-remaining_tokens;
+    float pt2 = (gen_time*1000.0/(real_n_generated<=0?1:real_n_generated));
+    float generated_tps = (pt2>0?(1000.0/pt2):0);
+    float total_time = (init_time + process_time + gen_time);
     printf("\n[%s] CtxLimit:%d/%d, Init:%.2fs, Processed:%d in %.2fs (%.2fT/s), Generated:%d/%d in %.2fs (%.2fT/s), Total:%.2fs",
-    get_timestamp_str().c_str(),(int)current_context_tokens.size(),(int)nctx, realnprocessed, time0, time1, ts1, realnpredict, kcpp_data->n_predict, time2, ts2, (time1 + time2));
+    get_timestamp_str().c_str(),(int)current_context_tokens.size(),(int)nctx, init_time, real_n_processed, process_time, processed_tps, real_n_generated, kcpp_data->n_predict, gen_time, generated_tps, total_time);
+
     if(debugmode==1 && !is_quiet && (draft_successes+draft_failures)>0)
     {
         printf("\n(Draft Results - Success:%d, Failure:%d)",draft_successes,draft_failures);
     }
-    if(check_slowness && ts2<2.0f)
+    if(check_slowness && generated_tps<2.0f)
     {
         check_slowness = false;
         if(!is_quiet)
@@ -5369,13 +5369,13 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     }
     fflush(stdout);
     output.status = 1;
-    int finaltokcount = (int)current_context_tokens.size()-realnpredict;
+    int finaltokcount = (int)current_context_tokens.size()-real_n_generated;
     output.prompt_tokens = (finaltokcount<0?0:finaltokcount);
-    output.completion_tokens = realnpredict;
+    output.completion_tokens = real_n_generated;
     output.stopreason = last_stop_reason;
     last_eval_time = pt2;
     last_process_time = pt1;
-    last_token_count = realnpredict;
+    last_token_count = real_n_generated;
     last_input_count = (finaltokcount<0?0:finaltokcount);
     last_seed = kcpp_data->seed;
     last_draft_failed = draft_failures;
