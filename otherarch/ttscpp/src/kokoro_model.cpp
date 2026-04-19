@@ -1489,7 +1489,7 @@ struct kokoro_duration_context * build_new_duration_kokoro_context(struct kokoro
     kctx->backend_cpu = ggml_backend_cpu_init();
     kctx->set_threads();
     kctx->build_schedule();
-    kctx->buf_compute_meta.resize(ggml_tensor_overhead()*model->max_duration_nodes()*2 + ggml_graph_overhead_custom(model->max_duration_nodes()*2, false));
+    kctx->buf_compute_meta.resize(ggml_tensor_overhead()*model->max_duration_nodes()*5 + ggml_graph_overhead_custom(model->max_duration_nodes()*5, false));
     return kctx;
 }
 
@@ -1499,6 +1499,6 @@ struct kokoro_context * build_new_kokoro_context(struct kokoro_model * model, in
     kctx->backend_cpu = ggml_backend_cpu_init();
     kctx->set_threads();
     kctx->build_schedule();
-    kctx->buf_compute_meta.resize(ggml_tensor_overhead()*model->max_gen_nodes()*20 + ggml_graph_overhead_custom(model->max_gen_nodes()*20, false));
+    kctx->buf_compute_meta.resize(ggml_tensor_overhead()*model->max_gen_nodes()*30 + ggml_graph_overhead_custom(model->max_gen_nodes()*30, false));
     return kctx;
 }
