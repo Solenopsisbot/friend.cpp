@@ -2086,7 +2086,9 @@ def generate(genparams, stream_flag=False):
     reasoning_budget = -1
     if reasoning_effort == "none":
         reasoning_budget = 0
-    elif reasoning_effort == "minimal" or reasoning_effort == "low":
+    elif reasoning_effort == "minimal":
+        reasoning_budget = tryparseint(0.1 * max_length,-1)  # 10% of gen amount
+    elif reasoning_effort == "low":
         reasoning_budget = tryparseint(0.25 * max_length,-1)  # 25% of gen amount
     elif reasoning_effort == "medium":
         reasoning_budget = tryparseint(0.5 * max_length,-1)  # 50% of gen amount
