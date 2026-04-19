@@ -332,7 +332,7 @@ struct kokoro_duration_context : runner_context {
     struct ggml_tensor * token_types = nullptr;
 
     void build_schedule() {
-        runner_context::build_schedule(model->max_duration_nodes()*5);
+        runner_context::build_schedule(model->max_duration_nodes()*2);
     }
 };
 
@@ -410,7 +410,7 @@ struct kokoro_context : runner_context {
     struct ggml_tensor * uv_noise_data;
 
     void build_schedule() {
-        runner_context::build_schedule(model->max_gen_nodes()*30);
+        runner_context::build_schedule(model->max_gen_nodes()*20);
     }
 };
 
