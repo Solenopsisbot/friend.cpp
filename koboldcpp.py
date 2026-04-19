@@ -136,6 +136,7 @@ has_vision_support = False
 has_whisper = False
 cached_chat_template = None
 cached_sd_info = {}
+cached_jinja_kwargs = None
 savedata_obj = None
 mcp_connections = [] #every element is linked to one mcp source, contains obj {"client":obj, "tools":[]}
 mcp_lock = threading.Lock()
@@ -2409,17 +2410,41 @@ def sd_comfyui_tranform_params(genparams):
 def parse_json_object(value, field):
     broken = False
     if isinstance(value, str):
+        retry = False
         try: # Try parsing as-is
             value = json.loads(value)
+            retry = False
         except json.JSONDecodeError:
-            # Try wrapping in braces for loose key/value strings
+            retry = True
+
+        if retry and ":" in value: # Try wrapping in braces for loose key/value strings
             try:
                 value = json.loads(f"{{{value}}}")
+                retry = False
             except json.JSONDecodeError:
-                broken = True
+                retry = True
+
+        if retry and '\\"' in value:  #try handle double escape
+            try:
+                tmp = json.loads(f"\"{value}\"")
+                value = json.loads(tmp)
+                retry = False
+            except json.JSONDecodeError:
+                retry = True
+
+        if retry:
+            broken = True
     if isinstance(value, dict):
         return value
     elif broken:
+        if value:
+            try:
+                import ast
+                value = ast.literal_eval(value)
+                if value and isinstance(value, dict):
+                    return value
+            except Exception:
+                pass
         print(f"Warning: couldn't parse {field} field.")
     else:
         print(f"Warning: {field} field - not a JSON object.")
@@ -3828,7 +3853,7 @@ def sweep_media_from_messages(messages_array):
 
 
 def transform_genparams(genparams, api_format, use_jinja):
-    global chatcompl_adapter, maxctx, thinkformats
+    global chatcompl_adapter, maxctx, thinkformats, cached_jinja_kwargs
 
     if api_format < 0: #not text gen, do nothing
         return
@@ -3951,16 +3976,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
             attachedaudid = 0
             jinja_output = None
             jinjatools = genparams.get('tools', [])
-            jinjakwargs = None
-            try:
-                jinjakwargsstr = args.jinja_kwargs if args.jinja_kwargs else None
-                if jinjakwargsstr and isinstance(jinjakwargsstr, str):
-                    jinjakwargs = json.loads(jinjakwargsstr)
-            except Exception:
-                print("Jinja Kwargs not valid JSON dict!")
-                pass
             if use_jinja and cached_chat_template:
-                jinja_output = format_jinja(messages_array,jinjatools,jinjakwargs)
+                jinja_output = format_jinja(messages_array,jinjatools,cached_jinja_kwargs)
             if jinja_output:
                 messages_string = jinja_output
                 for pair in thinkformats:
@@ -10229,7 +10246,7 @@ def disableSwappedFieldsInConfig(args, swapReqType):
 
 def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     global embedded_kailite, embedded_kcpp_docs, embedded_kcpp_sdui, embedded_kailite_gz, embedded_kcpp_docs_gz, embedded_kcpp_sdui_gz, embedded_lcpp_ui_gz, embedded_musicui, embedded_musicui_gz, start_time, exitcounter, global_memory, using_gui_launcher
-    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, musicllmmodelpath, friendlyembeddingsmodelname, has_audio_support, has_vision_support, cached_chat_template, cached_sd_info, preloaded_custom_jinja
+    global libname, args, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, musicllmmodelpath, friendlyembeddingsmodelname, has_audio_support, has_vision_support, cached_chat_template, cached_jinja_kwargs, cached_sd_info, preloaded_custom_jinja
 
     start_server = True
 
@@ -10720,6 +10737,16 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                         print(f"Chat completion heuristic: {entry['name']}")
                         chatcompl_adapter = entry['adapter']
                         break
+            cached_jinja_kwargs = None
+            try:
+                jinjakwargsstr = args.jinja_kwargs if args.jinja_kwargs else None
+                if jinjakwargsstr and isinstance(jinjakwargsstr, str):
+                    cached_jinja_kwargs = parse_json_object(jinjakwargsstr,"jinja_kwargs")
+                    cached_jinja_kwargs = cached_jinja_kwargs if cached_jinja_kwargs else None
+            except Exception:
+                print("Jinja Kwargs not valid JSON dict!")
+                pass
+
             if chatcompl_adapter is None:
                 print("Chat template heuristics failed to identify chat completions format. Alpaca will be used.")
 
