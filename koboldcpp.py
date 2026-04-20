@@ -5173,7 +5173,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             print("Token streaming was interrupted or aborted!")
             print(ex)
             handle.abort_generate()
-            time.sleep(0.2) #short delay
+            await asyncio.sleep(0.2) #short delay
 
         # flush buffers, sleep a bit to make sure all data sent, and then force close the connection
         self.wfile.flush()
@@ -5199,7 +5199,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             print("An ongoing connection was aborted or interrupted!")
             print(cae)
             handle.abort_generate()
-            time.sleep(0.2) #short delay
+            await asyncio.sleep(0.2) #short delay
         except Exception as e:
             print(e)
 
