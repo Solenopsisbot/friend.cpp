@@ -4556,10 +4556,13 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         // predict
         unsigned int embdsize = embd.size();
         //print progress
-        if (!startedsampling && allow_regular_prints)
+        if (!startedsampling)
         {
             real_n_processed = embd_inp.size();
-            printf("\rProcessing Prompt%s (%d / %zu tokens)", (blasmode ? " [BATCH]" : ""), input_consumed, embd_inp.size());
+            if(allow_regular_prints)
+            {
+                printf("\rProcessing Prompt%s (%d / %zu tokens)", (blasmode ? " [BATCH]" : ""), input_consumed, embd_inp.size());
+            }
         }
         fflush(stdout);
 

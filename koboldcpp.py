@@ -73,7 +73,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.112"
+KcppVersion = "1.112.1"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_base_config":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "base_config":"", "swapReqType": None, "autoswapmode": False}
@@ -1896,8 +1896,15 @@ def load_model(model_filename):
     inputs.mmproj_filename = args.mmproj.encode("UTF-8") if args.mmproj else "".encode("UTF-8")
     inputs.mmproj_cpu = (True if args.mmprojcpu else False)
     inputs.visionmaxres = (512 if args.visionmaxres < 512 else (2048 if args.visionmaxres > 2048 else args.visionmaxres))
-    inputs.visionmintokens = args.visionmintokens
-    inputs.visionmaxtokens = args.visionmaxtokens
+    vmintk = args.visionmintokens
+    vmaxtk = args.visionmaxtokens
+    vmintk = -1 if vmintk<-1 else vmintk
+    vmaxtk = -1 if vmaxtk<-1 else vmaxtk
+    if(vmintk!=-1 or vmaxtk!=-1) and (vmintk==-1 or vmaxtk==-1): #if exactly one of the args is -1
+        vmintk = max(vmintk,vmaxtk)
+        vmaxtk = max(vmintk,vmaxtk)
+    inputs.visionmintokens = vmintk
+    inputs.visionmaxtokens = vmaxtk
     inputs.use_smartcontext = args.smartcontext
     inputs.use_contextshift = (0 if args.noshift else 1)
     inputs.use_fastforward = (0 if args.nofastforward else 1)
