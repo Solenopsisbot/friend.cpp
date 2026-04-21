@@ -3391,6 +3391,28 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
         int outrosize = media_outro.size();
         last_media_mem.clear();
 
+        bool clip_is_mrope = false;
+        if(file_format == FileFormat::GGUF_GENERIC)
+        {
+            //added after https://github.com/ggml-org/llama.cpp/pull/22161, replacing clip_is_mrope function
+            auto decoder_rope_type = llama_model_rope_type(llama_get_model(llama_ctx_v4));
+            switch (decoder_rope_type) {
+                case LLAMA_ROPE_TYPE_NORM:
+                case LLAMA_ROPE_TYPE_NEOX:
+                    {
+                        clip_is_mrope = false;
+                    } break;
+                case LLAMA_ROPE_TYPE_MROPE:
+                case LLAMA_ROPE_TYPE_IMROPE:
+                    {
+                        clip_is_mrope = true;
+                    }
+                    break;
+                default:
+                    printf("\nWARNING: clip unsupported decoder rope type: %d\n", decoder_rope_type);
+            }
+        }
+
         for(int i=0;i<media_objects.size();++i)
         {
             std::string media_obj = media_objects[i].b64data;
@@ -3410,7 +3432,7 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
                         printf("\nCreating clip image embed...");
                     }
                     media_chunk chunk;
-                    if (!llava_image_embed_make_with_clip_img(clp_ctx_v, kcpp_data->n_threads, clp_img_data, &chunk.clp_img_embd, &chunk.clp_image_tokens, &chunk.nx, &chunk.ny)) {
+                    if (!llava_image_embed_make_with_clip_img(clp_ctx_v, kcpp_data->n_threads, clp_img_data, &chunk.clp_img_embd, &chunk.clp_image_tokens, &chunk.nx, &chunk.ny, clip_is_mrope)) {
                         printf("\nError: Clip image %d failed to create embd!",i);
                     }
                     if(debugmode==1 && !is_quiet)
