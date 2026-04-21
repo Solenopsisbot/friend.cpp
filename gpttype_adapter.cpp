@@ -5384,7 +5384,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     {
         printf("\n(Draft Results - Success:%d, Failure:%d)",draft_successes,draft_failures);
     }
-    if(check_slowness && generated_tps<2.0f)
+    if(check_slowness && generated_tps<2.0f && real_n_generated>1)
     {
         check_slowness = false;
         if(!is_quiet)

@@ -5188,17 +5188,45 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.close_connection = True
         await asyncio.sleep(0.05)
 
+    async def monitor_connection(self): #Poll the socket to detect client disconnection during prompt processing
+        import select
+        loop = asyncio.get_event_loop()
+        def check_connection_closed():
+            try:
+                sock = self.connection
+                readable, _, exceptional = select.select([sock], [], [sock], 0)
+                if exceptional:
+                    return True
+                if readable:
+                    data = sock.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+                    if len(data) == 0:
+                        return True
+                return False
+            except (OSError, Exception):
+                return True  # Treat any error as disconnected
+        while True:
+            try:
+                await asyncio.sleep(0.5)
+                disconnected = await loop.run_in_executor(None, check_connection_closed)
+                if disconnected:
+                    if args.debugmode:
+                        print("\nClient disconnected unexpectedly, aborting...")
+                    handle.abort_generate()
+                    return
+            except Exception:
+                return
 
     async def handle_request(self, genparams, api_format, stream_flag):
         tasks = []
         genparams["oai_uniqueid"] = random.randint(100000, 999999)
+        monitor_task = None
         try:
             if stream_flag:
                 tasks.append(self.handle_sse_stream(genparams, api_format))
-
             generate_task = asyncio.create_task(self.generate_text(genparams, api_format, stream_flag))
             tasks.append(generate_task)
-
+            if stream_flag:
+                monitor_task = asyncio.create_task(self.monitor_connection())
             await asyncio.gather(*tasks)
             generate_result = generate_task.result()
             return generate_result
@@ -5209,6 +5237,13 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             await asyncio.sleep(0.2) #short delay
         except Exception as e:
             print(e)
+        finally:
+            if monitor_task and not monitor_task.done():
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except asyncio.CancelledError:
+                    pass
 
     def get_multiplayer_idle_state(self,userid):
         if modelbusy.locked():
@@ -9378,7 +9413,7 @@ def convert_invalid_args(args):
         dict["sdloramult"] = sanitize_lora_multipliers(dict["sdloramult"])
     return args
 
-def setuptunnel(global_memory, has_sd):
+def setuptunnel(global_memory, has_sd, has_music):
     # This script will help setup a cloudflared tunnel for accessing KoboldCpp over the internet
     # It should work out of the box on both linux and windows
     try:
@@ -9432,6 +9467,8 @@ def setuptunnel(global_memory, has_sd):
                             print(f"Your remote llama.cpp secondary WebUI at {tunneloutput}/lcpp/")
                             if has_sd:
                                 print(f"StableUI is available at {tunneloutput}/sdui/")
+                            if has_music:
+                                print(f"MusicUI is available at {tunneloutput}/musicui/")
                             print("======\n")
                             print(f"Your remote tunnel is ready, please connect to {tunneloutput}", flush=True)
                         if global_memory:
@@ -10002,7 +10039,7 @@ def main(launch_args, default_args):
 
     if not args.admin: #run in single process mode
         if args.remotetunnel and not args.prompt and not args.benchmark and not args.cli:
-            setuptunnel(global_memory, True if args.sdmodel else False)
+            setuptunnel(global_memory, True if args.sdmodel else False, True if (args.musicdiffusion or args.musicllm or args.ttsmodel) else False)
         kcpp_main_process(args,global_memory,using_gui_launcher)
         if global_memory["input_to_exit"]:
             print("===")
@@ -10013,7 +10050,7 @@ def main(launch_args, default_args):
             global_memory = mp_manager.dict({"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_base_config":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "base_config":"", "swapReqType": None, "autoswapmode": False})
 
             if args.remotetunnel and not args.prompt and not args.benchmark and not args.cli:
-                setuptunnel(global_memory, True if args.sdmodel else False)
+                setuptunnel(global_memory, True if args.sdmodel else False, True if (args.musicdiffusion or args.musicllm or args.ttsmodel) else False)
 
             # invoke the main koboldcpp process
             original_args = copy.deepcopy(args)
