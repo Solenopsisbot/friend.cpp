@@ -2629,7 +2629,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
                 llama_log_set(log_callback_off, nullptr);
             }
             fit_params_target[0] = taxmb*1024*1024;
-            bool success = (llama_params_fit(kcpp_data->model_filename.c_str(), &model_params, &llama_ctx_params,
+            bool success = (common_fit_params(kcpp_data->model_filename.c_str(), &model_params, &llama_ctx_params,
             tensor_split_temp, tenos.data(), fit_params_target.data(), kcpp_data->n_ctx,
             GGML_LOG_LEVEL_NONE)==0);
             if(!dospam)
