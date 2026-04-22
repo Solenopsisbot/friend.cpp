@@ -2623,15 +2623,17 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             bool dospam = (debugmode==1 && !is_quiet);
             ggml_log_callback currlogger;
             void * curruserdat;
+            auto oldverbosity = common_log_get_verbosity_thold();
             if(!dospam)
             {
                 llama_log_get(&currlogger, &curruserdat);
                 llama_log_set(log_callback_off, nullptr);
+                common_log_set_verbosity_thold(GGML_LOG_LEVEL_NONE);
             }
             fit_params_target[0] = taxmb*1024*1024;
             bool success = (common_fit_params(kcpp_data->model_filename.c_str(), &model_params, &llama_ctx_params,
             tensor_split_temp, tenos.data(), fit_params_target.data(), kcpp_data->n_ctx,
-            GGML_LOG_LEVEL_NONE)==0);
+            dospam?GGML_LOG_LEVEL_DEBUG:GGML_LOG_LEVEL_NONE)==0);
             if(!dospam)
             {
                 llama_log_set(currlogger, curruserdat);
@@ -2642,6 +2644,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             {
                 //revert to previous
                 model_params.n_gpu_layers = inputs.gpulayers;
+                common_log_set_verbosity_thold(oldverbosity);
             }
         }
 
