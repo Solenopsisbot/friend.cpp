@@ -3400,6 +3400,7 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
             //added after https://github.com/ggml-org/llama.cpp/pull/22161, replacing clip_is_mrope function
             auto decoder_rope_type = llama_model_rope_type(llama_get_model(llama_ctx_v4));
             switch (decoder_rope_type) {
+                case LLAMA_ROPE_TYPE_NONE:
                 case LLAMA_ROPE_TYPE_NORM:
                 case LLAMA_ROPE_TYPE_NEOX:
                     {
