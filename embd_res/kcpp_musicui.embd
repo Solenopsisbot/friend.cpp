@@ -819,15 +819,10 @@ function loadLibrary(){
           <audio controls src="${url}"></audio>
           <div style="margin-top:6px;display:flex;gap:6px;">
             <a href="${url}" download="${item.title}${savfmt}">
-                <button class="secondary">Download Track</button>
+                <button class="secondary">Download</button>
             </a>
-            <button class="secondary" onclick="loadTrackJSON(${item.id})">
-                Load Params
-            </button>
-            <button class="secondary" onclick="exportTrackJSON(${item.id}, '${item.title}')">
-                Download Params
-            </button>
-
+            <button class="secondary" onclick="exportTrackJSON(${item.id}, '${item.title}')">JSON</button>
+             <button class="secondary" onclick="loadTrackJSON(${item.id})">Edit</button>
             <button class="danger" onclick="deleteTrack(${item.id})">Delete</button>
           </div>
         `;
