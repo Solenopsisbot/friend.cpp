@@ -73,7 +73,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.112.1"
+KcppVersion = "1.112.2"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_base_config":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "base_config":"", "swapReqType": None, "autoswapmode": False}
@@ -4401,30 +4401,29 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
 
                 if is_different_model or was_auto_unloaded:
                     model_switch_pass = True
-                    with proxy_reload_lock:
-                        whitelist = get_current_admindir_list() # see if its an allowed swap
-                        if was_auto_unloaded and not model_name:
-                            model_name = "initial_model"
-                        if is_different_model and (model_name in whitelist):
-                            global_memory["last_active_timestamp"] = datetime.now()
-                            global_memory["triggered_sleeping"] = False
-                            reqbody = json.dumps({"filename":model_name})
-                            reqheaders = {
-                                'Content-Type': 'application/json',
-                                'Content-Length': str(len(reqbody)),
-                            }
-                            if args.adminpassword:
-                                reqheaders["Authorization"] = f"Bearer {args.adminpassword}"
-                            conn = http.client.HTTPConnection('localhost', upstream_port, timeout=600)
-                            conn.request("POST", "/api/admin/reload_config", body=reqbody, headers=reqheaders)
-                            resp = conn.getresponse()
-                            time.sleep(3)
-                            global_memory["last_active_timestamp"] = datetime.now()
-                            global_memory["triggered_sleeping"] = False
-                            if not self.wait_for_upstream_ready(upstream_port,120,0.5):
-                                self.send_error(504, "KoboldCpp model swap reload timed out")
-                                return
-                            time.sleep(0.1)
+                    whitelist = get_current_admindir_list() # see if its an allowed swap
+                    if was_auto_unloaded and not model_name:
+                        model_name = "initial_model"
+                    if is_different_model and (model_name in whitelist):
+                        global_memory["last_active_timestamp"] = datetime.now()
+                        global_memory["triggered_sleeping"] = False
+                        reqbody = json.dumps({"filename":model_name})
+                        reqheaders = {
+                            'Content-Type': 'application/json',
+                            'Content-Length': str(len(reqbody)),
+                        }
+                        if args.adminpassword:
+                            reqheaders["Authorization"] = f"Bearer {args.adminpassword}"
+                        conn = http.client.HTTPConnection('localhost', upstream_port, timeout=600)
+                        conn.request("POST", "/api/admin/reload_config", body=reqbody, headers=reqheaders)
+                        resp = conn.getresponse()
+                        time.sleep(3)
+                        global_memory["last_active_timestamp"] = datetime.now()
+                        global_memory["triggered_sleeping"] = False
+                        if not self.wait_for_upstream_ready(upstream_port,120,0.5):
+                            self.send_error(504, "KoboldCpp model swap reload timed out")
+                            return
+                        time.sleep(0.1)
             if autoswapEnabled and not model_switch_pass:
                 textReqs = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions","/v1/responses","/completions","/chat/completions","/responses"]
                 sttReqs = ["/api/extra/transcribe","/v1/audio/transcriptions"]
@@ -4454,23 +4453,22 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
                     swapModeChanged = True
 
                 if (global_memory["swapReqType"] is not None and swapModeChanged):
-                    with proxy_reload_lock:
-                        reqbody = json.dumps({"filename":global_memory["current_model"], "baseconfig": global_memory["base_config"]})
-                        reqheaders = {
-                            'Content-Type': 'application/json',
-                            'Content-Length': str(len(reqbody)),
-                        }
-                        if args.adminpassword:
-                            reqheaders["Authorization"] = f"Bearer {args.adminpassword}"
-                        conn = http.client.HTTPConnection('localhost', upstream_port, timeout=600)
-                        conn.request("POST", "/api/admin/reload_config", body=reqbody, headers=reqheaders)
-                        resp = conn.getresponse()
-                        time.sleep(3)
-                        global_memory["last_active_timestamp"] = datetime.now()
-                        if not self.wait_for_upstream_ready(upstream_port,120,0.5):
-                            self.send_error(504, "KoboldCpp model swap reload timed out")
-                            return
-                        time.sleep(0.1)
+                    reqbody = json.dumps({"filename":global_memory["current_model"], "baseconfig": global_memory["base_config"]})
+                    reqheaders = {
+                        'Content-Type': 'application/json',
+                        'Content-Length': str(len(reqbody)),
+                    }
+                    if args.adminpassword:
+                        reqheaders["Authorization"] = f"Bearer {args.adminpassword}"
+                    conn = http.client.HTTPConnection('localhost', upstream_port, timeout=600)
+                    conn.request("POST", "/api/admin/reload_config", body=reqbody, headers=reqheaders)
+                    resp = conn.getresponse()
+                    time.sleep(3)
+                    global_memory["last_active_timestamp"] = datetime.now()
+                    if not self.wait_for_upstream_ready(upstream_port,120,0.5):
+                        self.send_error(504, "KoboldCpp model swap reload timed out")
+                        return
+                    time.sleep(0.1)
 
         try:  # connect upstream
             conn = http.client.HTTPConnection('localhost', upstream_port, timeout=600)
