@@ -7272,6 +7272,7 @@ def show_gui():
         togglectxshift(1,1,1)
         togglehorde(1,1,1)
         toggletaesd(1,1,1)
+        togglesdlora(1,1,1)
         togglejinja(1,1,1)
         toggleadmin(1,1,1)
         tabbuttonaction(tabnames[curr_tab_idx])
@@ -7480,6 +7481,7 @@ def show_gui():
     sd_offload_cpu_var = ctk.IntVar(value=0)
     sd_vae_cpu_var = ctk.IntVar(value=0)
     sd_clip_gpu_var = ctk.IntVar(value=0)
+    sd_runtime_loras_var = ctk.IntVar(value=0)
     sd_vaeauto_var = ctk.IntVar(value=0)
     sd_tiled_vae_var = ctk.StringVar(value=str(default_vae_tile_threshold))
     sd_convdirect_var = ctk.StringVar(value=str(sd_convdirect_choices[0]))
@@ -8284,18 +8286,41 @@ def show_gui():
     # Image Gen Tab
 
     images_tab = tabcontent["Image Gen"]
-    makefileentry(images_tab, "Image Gen. Model (safetensors/gguf):", "Select Image Gen Model File", sd_model_var, 1, width=280, singlecol=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")], tooltiptxt="Select a .safetensors or .gguf Image Generation model file on disk to be loaded.")
-    makelabelentry(images_tab, "Clamp Resolution Limit (Hard):", sd_clamped_var, 4, 50, padx=(190),singleline=True,tooltip="Limit generation steps and output image size for shared use.\nSet to 0 to disable, otherwise value is clamped to the max size limit (min 512px).")
-    makelabelentry(images_tab, "(Soft):", sd_clamped_soft_var, 4, 50, padx=(290),singleline=True,tooltip="Square image size restriction, to protect the server against memory crashes.\nAllows width-height tradeoffs, eg. 640 allows 640x640 and 512x768\nLeave at 0 for the default value: 832 for SD1.5/SD2, 1024 otherwise.",labelpadx=(250))
+    makefileentry(images_tab, "Image Model:", "Select Image Gen Model File (safetensors/gguf)", sd_model_var, 1, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")], tooltiptxt="Select a .safetensors or .gguf Image Generation model file on disk to be loaded.")
+
+    def togglesdlora(a,b,c):
+        if sd_runtime_loras_var.get()==1:
+            imglora1.grid_remove()
+            imglora2.grid_remove()
+            imglora3.grid_remove()
+            imglora4.grid_remove()
+            imglora5.grid_remove()
+            imglora6.grid()
+            imglora7.grid()
+            imglora8.grid()
+        else:
+            imglora1.grid()
+            imglora2.grid()
+            imglora3.grid()
+            imglora4.grid()
+            imglora5.grid()
+            imglora6.grid_remove()
+            imglora7.grid_remove()
+            imglora8.grid_remove()
+
+    makelabelentry(images_tab, "Clamp Resolution (Hard):", sd_clamped_var, 14, 50, padx=(150),singleline=True,tooltip="Limit generation steps and output image size for shared use.\nSet to 0 to disable, otherwise value is clamped to the max size limit (min 512px).")
+    makelabelentry(images_tab, "(Soft):", sd_clamped_soft_var, 14, 50, padx=(250),singleline=True,tooltip="Square image size restriction, to protect the server against memory crashes.\nAllows width-height tradeoffs, eg. 640 allows 640x640 and 512x768\nLeave at 0 for the default value: 832 for SD1.5/SD2, 1024 otherwise.",labelpadx=(210))
+    makecheckbox(images_tab, "Runtime LoRAs", sd_runtime_loras_var, 14,command=togglesdlora, padx=(310), tooltiptxt="Allow using LoRAs in a directory dynamically (syntax is <lora:name:weight>)")
+
     makelabelentry(images_tab, "ImgThreads:" , sd_threads_var, 8, 40,padx=(280),singleline=True,tooltip="How many threads to use during image generation.\nIf left blank, uses same value as threads.",labelpadx=(200))
     makelabelentry(images_tab, "ImgGPU:" , sd_main_gpu_var, 8, 40,padx=394,singleline=True,tooltip="Which GPU ID to use for Image Gen?\nIf left blank or -1, uses default value.",labelpadx=340)
-
     sd_model_var.trace_add("write", gui_changed_modelfile)
     makelabelcombobox(images_tab, "Compress Weights: ", sd_quant_var, 8, width=(60), padx=(126), labelpadx=8, tooltiptxt="Quantizes the SD model weights to save memory.\nHigher levels save more memory, and cause more quality degradation.", values=sd_quant_choices)
     sd_quant_var.trace_add("write", changed_gpulayers_estimate)
 
-    makefileentry(images_tab, "Image LoRA:", "Select SD lora file",sd_lora_var, 20, width=160, singlerow=True, filetypes=[("*.safetensors *.gguf", "*.safetensors *.gguf")],tooltiptxt="Select a .safetensors or .gguf SD LoRA model file to be loaded. Should be unquantized!", multiple=True)
-    makelabelentry(images_tab, "Multiplier:" , sd_loramult_var, 20, 50,padx=(390),singleline=True,tooltip="What mutiplier value to apply the SD LoRA with.",labelpadx=(330))
+    imglora1,imglora2,imglora3 = makefileentry(images_tab, "Image LoRAs:", "Select SD lora files to load",sd_lora_var, 20, width=160, singlerow=True, filetypes=[("*.safetensors *.gguf", "*.safetensors *.gguf")],tooltiptxt="Select multiple .safetensors or .gguf SD LoRA model files to be loaded. Should be unquantized!", multiple=True)
+    imglora4,imglora5 = makelabelentry(images_tab, "Multiplier:" , sd_loramult_var, 20, 50,padx=(390),singleline=True,tooltip="What mutiplier value to apply the SD LoRA with.",labelpadx=(330))
+    imglora6,imglora7,imglora8 = makefileentry(images_tab, "LoRA Dir:", "Select directory for runtime lora triggers",sd_lora_var, 20, width=280, singlerow=True, dialog_type=2,tooltiptxt="Select directory containing LoRAs that can be used at runtime.\nSyntax is <lora:name:weight>")
 
     makefileentry(images_tab, "T5-XXL File:", "Select T5-XXL model file (SD3, Flux, WAN)",sd_t5xxl_var, 24, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select a .safetensors t5xxl file to be loaded.")
     makefileentry(images_tab, "Clip-1 File:", "Select First Clip model file (Clip-L for SD3 or Flux, or other vision encoder)",sd_clip1_var, 26, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select a .safetensors Clip-1 file to be loaded.\nThis is Clip-L for SD3 and Flux, Clip Vision for WAN, and Qwen2.5VL for QwenImage")
@@ -8445,6 +8470,8 @@ def show_gui():
     toggleflashattn(1,1,1)
     togglectxshift(1,1,1)
     togglehorde(1,1,1)
+    toggletaesd(1,1,1)
+    togglesdlora(1,1,1)
     togglejinja(1,1,1)
     toggleadmin(1,1,1)
 
@@ -10196,20 +10223,14 @@ def main(launch_args, default_args):
                 input()
 
 
-def mk_lora_info(imgloras, multipliers, mock_filesystem=False):
+def mk_lora_info(imgloras, multipliers):
     first_multiplier = multipliers[0] if len(multipliers) > 0 else 1.
     lora_files = []
     lora_dirs = []
     # identify files and dirs
     for i, lora_path in enumerate(imgloras):
         multiplier = multipliers[i] if i < len(multipliers) else first_multiplier
-        if mock_filesystem:
-            print('fake filesystem access')
-            if lora_path.endswith('/'):
-                lora_dirs.append(lora_path)
-            else:
-                lora_files.append(('', lora_path, multiplier))
-        elif os.path.isfile(lora_path):
+        if os.path.isfile(lora_path):
             lora_files.append(('', lora_path, multiplier))
         elif os.path.isdir(lora_path):
             lora_dirs.append(lora_path)
@@ -10220,11 +10241,7 @@ def mk_lora_info(imgloras, multipliers, mock_filesystem=False):
     # scan all dirs
     for lora_dir in lora_dirs:
         print(f'Scanning {lora_dir} for LoRAs...')
-        if mock_filesystem:
-            print('fake directory scan')
-            files = ['lora1_makebelieve.gguf', 'lora2/makebelieve.gguf']
-        else:
-            files = scan_directory(lora_dir, ('.safetensors', '.gguf'), 1)
+        files = scan_directory(lora_dir, ('.safetensors', '.gguf'), 1)
         print(f'  found {len(files)} files under {lora_dir}')
         for file in files:
             lora_files.append((lora_dir, file, 0.0))
@@ -10243,8 +10260,7 @@ def mk_lora_info(imgloras, multipliers, mock_filesystem=False):
             # we don't know which portion of the path we can show, so omit it
             lora_file = os.path.basename(lora_path)
             preloaded = True
-        if not mock_filesystem:
-            lora_fullpath = os.path.abspath(lora_fullpath)
+        lora_fullpath = os.path.abspath(lora_fullpath)
         # dedup paths (e.g. preloaded and on directory)
         info = lora_fullmap.get(lora_fullpath)
         if info:
