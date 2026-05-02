@@ -237,7 +237,7 @@ class load_model_inputs(ctypes.Structure):
                 ("max_context_length", ctypes.c_int),
                 ("low_vram", ctypes.c_bool),
                 ("use_mmq", ctypes.c_bool),
-                ("use_rowsplit", ctypes.c_bool),
+                ("splitmode", ctypes.c_int),
                 ("executable_path", ctypes.c_char_p),
                 ("model_filename", ctypes.c_char_p),
                 ("lora_filename", ctypes.c_char_p),
@@ -1888,8 +1888,8 @@ def load_model(model_filename):
     inputs.max_context_length = maxctx #initial value to use for ctx, can be overwritten
     inputs.threads = args.threads
     inputs.low_vram = True if args.lowvram else False
-    inputs.use_mmq = (True if (args.usecuda and "nommq" not in args.usecuda) else False)
-    inputs.use_rowsplit = (True if (args.usecuda and "rowsplit" in args.usecuda) else False)
+    inputs.use_mmq = False if args.nommq else True
+    inputs.splitmode = splitmode_choices_to_int(args.splitmode) #layer=1, row=2, tensor=3
     inputs.vulkan_info = "0".encode("UTF-8")
     inputs.blasthreads = args.blasthreads
     inputs.use_mmap = args.usemmap
@@ -7144,6 +7144,16 @@ def save_config_dict(filename, savdict, template):
         file.write(json.dumps(filtered,indent=2))
     return filenamestr
 
+splitmode_choices = ['layer','row','tensor']
+def splitmode_choices_to_int(value): #layer=1, row=2, tensor=3
+    if value=='layer':
+        return 1
+    elif value=='row':
+        return 2
+    elif value=='tensor':
+        return 3
+    return 1
+
 # note: customtkinter-5.2.0
 def show_gui():
     global using_gui_launcher
@@ -7399,7 +7409,7 @@ def show_gui():
     blas_size_var = ctk.IntVar()
     autofit_var = ctk.IntVar()
     tensor_split_str_vars = ctk.StringVar(value="")
-    rowsplit_var = ctk.IntVar()
+    splitmode_var = ctk.StringVar(value=splitmode_choices[0])
     maingpu_var = ctk.StringVar(value="-1")
     deviceoverride_var = ctk.StringVar(value="")
 
@@ -7566,7 +7576,6 @@ def show_gui():
 
     def makelabelcombobox(parent, text, variable=None, row=0, width=50, command=None, padx=8,tooltiptxt="", values=[], labelpadx=8):
         label = makelabel(parent, text, row, 0, tooltiptxt, padx=labelpadx)
-        label=None
         combo = ctk.CTkComboBox(parent, variable=variable, width=width, values=values, state="readonly")
         if command is not None and variable is not None:
             variable.trace_add("write", command)
@@ -7956,7 +7965,9 @@ def show_gui():
             CUDA_quick_gpu_selector_box.grid(row=3, column=1, padx=8, pady=1, stick="nw")
             maingpu_label.grid(row=8, column=0, padx = 270, pady=1, stick="nw")
             maingpu_entry.grid(row=8, column=0, padx = 340, pady=1, stick="nw")
-            lowvram_box.grid(row=4, column=0, padx=8, pady=1,  stick="nw")
+            lowvram_box.grid(row=4, column=0, padx=8, pady=1, stick="nw")
+            splitmode_box.grid(row=4, column=0, padx=230, pady=1, stick="nw")
+            splitmode_box_label.grid(row=4, column=0, padx=160, pady=1, stick="nw")
         else:
             quick_gpuname_label.grid_remove()
             gpuname_label.grid_remove()
@@ -7967,11 +7978,12 @@ def show_gui():
             maingpu_label.grid_remove()
             maingpu_entry.grid_remove()
             lowvram_box.grid_remove()
+            splitmode_box.grid_remove()
+            splitmode_box_label.grid_remove()
 
         if index == "Use CUDA" or index == "Use hipBLAS (ROCm)":
-            mmq_box.grid(row=4, column=0, padx=160, pady=1,  stick="nw")
+            mmq_box.grid(row=4, column=0, padx=340, pady=1,  stick="nw")
             quick_mmq_box.grid(row=4, column=1, padx=8, pady=1,  stick="nw")
-            splitmode_box.grid(row=4, column=0, padx=300, pady=1,  stick="nw")
             tensor_split_label.grid(row=8, column=0, padx = 8, pady=1, stick="nw")
             tensor_split_entry.grid(row=8, column=0, padx = 160, pady=1, stick="nw")
         else:
@@ -7979,7 +7991,6 @@ def show_gui():
             quick_mmq_box.grid_remove()
             tensor_split_label.grid_remove()
             tensor_split_entry.grid_remove()
-            splitmode_box.grid_remove()
 
         if index == "Use Vulkan" or index == "Use Vulkan (Old CPU)":
             tensor_split_label.grid(row=8, column=0, padx = 8, pady=1, stick="nw")
@@ -8084,8 +8095,8 @@ def show_gui():
     gpuname_label.grid(row=3, column=0, padx=230, sticky="W")
     gpuname_label.configure(text_color="#ffff00")
     lowvram_box = makecheckbox(hardware_tab,  "No KV offload", lowvram_var, 4,0, tooltiptxt='Avoid offloading KV Cache or scratch buffers to VRAM.\nAllows more layers to fit, but may result in a large speed loss.')
-    mmq_box = makecheckbox(hardware_tab,  "Use MMQ", mmq_var, 4,0,padx=160, tooltiptxt="Enable MMQ mode to use finetuned kernels instead of default CuBLAS/HipBLAS for prompt processing.\nRead the wiki. Speed may vary.")
-    splitmode_box = makecheckbox(hardware_tab,  "Row-Split", rowsplit_var, 4,0,padx=300, tooltiptxt="Split rows across GPUs instead of splitting layers and KV across GPUs.\nUses the main GPU for small tensors and intermediate results. Speed may vary.")
+    mmq_box = makecheckbox(hardware_tab,  "Use MMQ", mmq_var, 4,0,padx=340, tooltiptxt="Enable MMQ mode to use finetuned kernels instead of default CuBLAS/HipBLAS for prompt processing.\nRead the wiki. Speed may vary.")
+    splitmode_box,splitmode_box_label = makelabelcombobox(hardware_tab, "SplitMode: ", splitmode_var, 4, width=(80), padx=(230), labelpadx=160, tooltiptxt="How to split the model across multiple GPUs. Layer split is default.", values=splitmode_choices)
     gpu_layers_entry,gpu_layers_label = makelabelentry(hardware_tab,"GPU Layers:", gpulayers_var, 6, 50, padx=160,singleline=True,tooltip="How many layers to offload onto the GPU.\nUsage varies based on model type and increases with model and context size.\nRequires some trial and error to find the best fit value.\n\nNote: The auto estimation is often inaccurate! Please set layers yourself for best results!")
     autofit_padding_entry,autofit_padding_label = makelabelentry(hardware_tab,"Autofit Padding (MB):", autofit_padding_var, 6, 50, padx=160,singleline=True,tooltip="How much spare allowance in MB should autofit reserve? If it's too little, the load might fail.")
     layercounter_label = ctk.CTkLabel(hardware_tab, text="")
@@ -8514,6 +8525,8 @@ def show_gui():
         qkvopt = quantkv_text[quantkv_var.get()].lower() if (quantkv_var.get()>=0 and quantkv_var.get() < len(quantkv_text)) else "f16"
         args.quantkv = qkvopt
         args.lowvram = lowvram_var.get()==1
+        args.nommq = mmq_var.get()==1
+        args.splitmode = splitmode_var.get() if splitmode_var.get() in splitmode_choices else splitmode_choices[0]
 
         gpuchoiceidx = 0
         args.usecpu = False
@@ -8528,12 +8541,6 @@ def show_gui():
                 args.usecuda = ["normal"]
             else:
                 args.usecuda = ["normal",str(gpuchoiceidx)]
-            if mmq_var.get()==1:
-                args.usecuda.append("mmq")
-            else:
-                args.usecuda.append("nommq")
-            if rowsplit_var.get()==1:
-                args.usecuda.append("rowsplit")
         if runopts_var.get() == "Use Vulkan" or runopts_var.get() == "Use Vulkan (Old CPU)" or runopts_var.get() == "Use Vulkan (Older CPU)":
             if gpu_choice_var.get()=="All":
                 args.usevulkan = []
@@ -8770,8 +8777,6 @@ def show_gui():
                     runopts_var.set(cublas_option)
                 elif hipblas_option:
                     runopts_var.set(hipblas_option)
-                mmq_var.set(1 if "mmq" in mydict["usecuda"] else 0)
-                rowsplit_var.set(1 if "rowsplit" in mydict["usecuda"] else 0)
                 gpu_choice_var.set("All")
                 for g in range(4):
                     if str(g) in mydict["usecuda"]:
@@ -8898,6 +8903,9 @@ def show_gui():
                 lora_var.set(mydict["lora"][0])
         loramult_var.set(str(mydict["loramult"]) if ("loramult" in mydict and mydict["loramult"]) else "1.0")
 
+        splitmode_var.set(mydict["splitmode"] if ("splitmode" in mydict and mydict["splitmode"] in splitmode_choices) else splitmode_choices[0])
+        mmq_var.set(0 if "nommq" in mydict and mydict["nommq"] else 1)
+
         mmproj_var.set(mydict["mmproj"] if ("mmproj" in mydict and mydict["mmproj"]) else "")
         mmprojcpu_var.set(1 if ("mmprojcpu" in mydict and mydict["mmprojcpu"]) else 0)
         if "visionmaxres" in mydict and mydict["visionmaxres"]:
@@ -8962,12 +8970,17 @@ def show_gui():
         sd_upscaler_var.set(mydict["sdupscaler"] if ("sdupscaler" in mydict and mydict["sdupscaler"]) else "")
         sd_vaeauto_var.set(1 if ("sdvaeauto" in mydict and mydict["sdvaeauto"]) else 0)
         sd_tiled_vae_var.set(str(mydict["sdtiledvae"]) if ("sdtiledvae" in mydict and mydict["sdtiledvae"]) else str(default_vae_tile_threshold))
-        sd_lora_var.set("|".join(sanitize_lora_list(mydict.get('sdlora'))))
+        sdl_sanitized = sanitize_lora_list(mydict.get('sdlora'))
+        sd_lora_var.set("|".join(sdl_sanitized))
         sd_loramult_var.set(" ".join(f"{n:.3f}".rstrip('0').rstrip('.') for n in mydict.get("sdloramult", [])))
         if "sdmaingpu" in mydict:
             sd_main_gpu_var.set(mydict["sdmaingpu"])
         else:
             sd_main_gpu_var.set("-1")
+        if sdl_sanitized and len(sdl_sanitized)==1 and os.path.isdir(sdl_sanitized[0]):
+            sd_runtime_loras_var.set(1)
+        else:
+            sd_runtime_loras_var.set(0)
 
         gendefaults = (mydict["gendefaults"] if ("gendefaults" in mydict and mydict["gendefaults"]) else "")
         if isinstance(gendefaults, type({})):
@@ -9397,6 +9410,10 @@ def convert_invalid_args(args):
         dict["usecuda"] = dict["usecublas"]
     if "usecuda" in dict and dict["usecuda"] and "lowvram" in dict["usecuda"]:
         dict["lowvram"] = True
+    if "usecuda" in dict and dict["usecuda"] and "nommq" in dict["usecuda"]:
+        dict["nommq"] = True
+    if "usecuda" in dict and dict["usecuda"] and "rowsplit" in dict["usecuda"]:
+        dict["splitmode"] = "row"
     if "batchsize" not in dict and "blasbatchsize" in dict and dict["blasbatchsize"]:
         dict["batchsize"] = dict["blasbatchsize"]
     if "sdconfig" in dict and dict["sdconfig"] and len(dict["sdconfig"])>0:
@@ -9620,6 +9637,8 @@ def convert_args_to_template(savdict):
     savdict["draftgpusplit"] = None
     savdict["config"] = None
     savdict["ttsthreads"] = 0
+    savdict["nommq"] = False
+    savdict["splitmode"] = splitmode_choices[0]
     return savdict
 
 def save_config_cli(filename, template):
@@ -11272,7 +11291,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 s_pp = float(benchmaxctx-benchlen)/t_pp
                 s_gen = float(benchlen)/t_gen
                 datetimestamp = datetime.now(timezone.utc)
-                benchflagstr = f"NoAVX2={args.noavx2} Threads={args.threads} HighPriority={args.highpriority} Cuda_Args={args.usecuda} Tensor_Split={args.tensor_split} BlasThreads={args.blasthreads} BatchSize={args.batchsize} FlashAttention={not args.noflashattention} KvCache={args.quantkv}"
+                benchflagstr = f"{str(vars(args))}"
                 print(f"\nBenchmark Completed - v{KcppVersion} Results:\n======")
                 print(f"Flags: {benchflagstr}")
                 print(f"Timestamp: {datetimestamp}")
@@ -11339,7 +11358,7 @@ if __name__ == '__main__':
     parser.add_argument("--config", metavar=('[filename]'), help="Load settings from a .kcpps file. Other arguments will be ignored", type=str, nargs=1)
     parser.add_argument("--threads","-t", metavar=('[threads]'), help="Use a custom number of threads if specified. Otherwise, uses an amount based on CPU cores", type=int, default=get_default_threads())
     compatgroup = parser.add_mutually_exclusive_group()
-    compatgroup.add_argument("--usecuda", "--usecublas", "--usehipblas", help="Use CUDA for GPU Acceleration. Requires CUDA. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs.", nargs='*',metavar=('[main GPU ID] [mmq|nommq] [rowsplit]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'all', 'mmq', 'nommq', 'rowsplit'])
+    compatgroup.add_argument("--usecuda", "--usecublas", "--usehipblas", help="Use CUDA for GPU Acceleration. Requires CUDA. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs.", nargs='*',metavar=('[main GPU ID]'), choices=['0','1','2','3','all',  'mmq','nommq','normal','lowvram','rowsplit'])
     compatgroup.add_argument("--usevulkan", help="Use Vulkan for GPU Acceleration. Can optionally specify one or more GPU Device ID (e.g. --usevulkan 0), leave blank to autodetect.", metavar=('[Device IDs]'), nargs='*', type=int, default=None)
     compatgroup.add_argument("--usecpu", help="Do not use any GPU acceleration (CPU Only)", action='store_true')
     parser.add_argument("--contextsize","--ctx-size", "-c", help="Controls the memory allocated for maximum context size, only change if you need more RAM for big contexts. (default 8192).",metavar=('[256 to 262144]'), type=check_range(int,256,262144), default=8192)
@@ -11354,6 +11373,8 @@ if __name__ == '__main__':
     advparser.add_argument("--maingpu","--main-gpu","-mg", help="Only used in a multi-gpu setup. Sets the index of the main GPU that will be used.",metavar=('[Device ID]'), type=int, default=-1)
     advparser.add_argument("--batchsize","--blasbatchsize","--batch-size","-b", help="Sets the batch size used in batched processing (default 512). Setting it to -1 disables batched mode, but keeps other benefits like GPU offload.", type=int,choices=[-1,16,32,64,128,256,512,1024,2048,4096], default=512)
     advparser.add_argument("--blasthreads","--batchthreads","--threadsbatch","--threads-batch", help="Use a different number of threads during batching if specified. Otherwise, has the same value as --threads",metavar=('[threads]'), type=int, default=0)
+    advparser.add_argument("--splitmode","-sm","--split-mode", help="How to split the model across multiple GPUs", metavar=('[split mode]'), type=str, choices=splitmode_choices, default=splitmode_choices[0])
+    advparser.add_argument("--nommq", help="Disables MMQ, only used for cuda backend. This flag may be removed in future.", action='store_true')
     advparser.add_argument("--lora", help="GGUF models only, applies a lora file on top of model.", metavar=('[lora_filename]'), nargs='+')
     advparser.add_argument("--loramult", metavar=('[amount]'), help="Multiplier for the Text LORA model to be applied.", type=float, default=1.0)
     advparser.add_argument("--noshift","--no-context-shift", help="If set, do not attempt to Trim and Shift the GGUF context.", action='store_true')

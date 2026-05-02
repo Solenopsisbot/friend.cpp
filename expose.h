@@ -36,7 +36,7 @@ struct load_model_inputs
     const int max_context_length = 0;
     const bool low_vram = 0;
     const bool use_mmq = 0;
-    const bool use_rowsplit = 0;
+    const int splitmode = 1;
     const char * executable_path = nullptr;
     const char * model_filename = nullptr;
     const char * lora_filename = nullptr;
