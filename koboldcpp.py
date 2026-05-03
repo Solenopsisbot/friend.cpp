@@ -989,7 +989,8 @@ def set_backend_props(inputs):
 
     if "GGML_VK_VISIBLE_DEVICES" not in os.environ:
         if args.usevulkan: # is an empty array if using vulkan without defined gpu
-            os.environ["GGML_VK_VISIBLE_DEVICES"] = ','.join([str(g) for g in args.usevulkan])
+            vulkangpus = ','.join([str(g) for g in args.usevulkan])
+            handle.set_environment_variable("GGML_VK_VISIBLE_DEVICES".encode("UTF-8"),vulkangpus.encode("UTF-8"))
 
     # set universal flags
     inputs.devices_override = (args.device if args.device else "").encode("UTF-8")

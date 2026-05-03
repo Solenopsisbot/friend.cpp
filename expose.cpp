@@ -402,4 +402,13 @@ extern "C"
     {
         return gpttype_clear_state_kv(true);
     }
+
+    void set_environment_variable(const char * identifier, const char * value)
+    {
+        #ifdef _WIN32
+            _putenv_s(identifier, value);
+        #else
+            setenv(identifier, value, 1);
+        #endif
+    }
 }
