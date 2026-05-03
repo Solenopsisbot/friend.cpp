@@ -4986,10 +4986,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                             if api_format == 4 and using_openai_tools:
                                 tokenStr = tokenReserve + tokenStr
                                 tokenReserve = ""
-                                splitter = tool_segment_tag
-                                if splitter in tokenStr:
+                                if tool_segment_tag in tokenStr:
                                     if not genparams.get("sync_toolcall_potential_triggered",False):
-                                        sync_potential_toolcall_splitmatch = splitter
+                                        sync_potential_toolcall_splitmatch = tool_segment_tag
                                         genparams['sync_toolcall_potential_triggered'] = True #if tool calls is triggered, rest will be sync fake streaming. we'll buffer it for later
 
                             need_split_final_msg = True if (currfinishreason is not None and streamDone and tokenStr!="") else False
@@ -5004,14 +5003,23 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                             encap_in_thinking = False
                                             foundend = True
                                             out1, out2 = tokenStr.split(pair["end"], 1)
+                                            # Swallow any extraneous start tags that appear while already thinking
+                                            if pair["start"] in out1:
+                                                out1 = out1.replace(pair["start"], "")
                                             if out1:
                                                 delta['reasoning_content'] = out1
+                                            # Swallow any extraneous end tags that appear after already ending
+                                            if pair["end"] in out2:
+                                                out2 = out2.replace(pair["end"], "")
                                             if out2:
                                                 delta['content'] = out2
                                             break
                                     if not foundend:
-                                        # Still thinking
-                                        delta['reasoning_content'] = tokenStr
+                                        # Still thinking - swallow extraneous start tags from THIS pair only
+                                        cleaned = tokenStr
+                                        if pair["start"] in cleaned:
+                                            cleaned = cleaned.replace(pair["start"], "")
+                                        delta['reasoning_content'] = cleaned
                                 else:
                                     # Not thinking. Let's see if a start tag appears in this chunk.
                                     matched_start = False
@@ -5045,8 +5053,13 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                             matched_start = True
                                             break
                                     # Condition C: No start tag found, just normal text
+                                    # Swallow any extraneous end tags that appear while not thinking
                                     if not matched_start:
-                                        delta['content'] = tokenStr
+                                        cleaned = tokenStr
+                                        # Only swallow stray end tags if we've already locked in a pair
+                                        if len(thinkpairs) == 1 and thinkpairs[0]["end"] in cleaned:
+                                            cleaned = cleaned.replace(thinkpairs[0]["end"], "")
+                                        delta['content'] = cleaned
                                 encap_first_loop = False
                             else:
                                 delta['content'] = tokenStr
