@@ -949,6 +949,8 @@ def init_library():
     handle.last_logprobs.restype = last_logprobs_outputs
     handle.detokenize.argtypes = [token_count_outputs]
     handle.detokenize.restype = ctypes.c_char_p
+    handle.set_environment_variable.restype = ctypes.c_int
+    handle.set_environment_variable.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
 
 def set_backend_props(inputs):
     # we must force an explicit tensor split
