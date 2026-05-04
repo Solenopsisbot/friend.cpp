@@ -24,6 +24,7 @@
 #include <chrono>
 
 #include "utils.h"
+#include "llmutils.h"
 
 //for easier compilation
 //concat source files into one file for compilation purposes

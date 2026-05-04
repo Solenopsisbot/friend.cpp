@@ -1,5 +1,6 @@
 #include "model_adapter.h"
 #include "otherarch/utils.h"
+#include "otherarch/llmutils.h"
 
 #include "common.h"
 #include "sampling.h"

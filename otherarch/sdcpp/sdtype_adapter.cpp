@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <filesystem>
 
+#include "otherarch/utils.h"
+
 #include "model_adapter.h"
 #include "tokenizers/vocab/vocab.h"
 #include "flux.hpp"
@@ -54,10 +56,6 @@ using namespace torch_zip;
 #include "tokenizers/tokenizer.cpp"
 #include "tokenizers/tokenize_util.cpp"
 
-// FIXME: llama.h errors out if included (through utils.h)
-std::vector<uint8_t> kcpp_base64_decode(const std::string & encoded_string);
-std::string kcpp_base64_encode(const unsigned char* data, unsigned int data_length);
-std::string get_timestamp_str();
 
 // #include "preprocessing.hpp"
 #include "stable-diffusion.h"
