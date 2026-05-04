@@ -54,7 +54,10 @@ using namespace torch_zip;
 #include "tokenizers/tokenizer.cpp"
 #include "tokenizers/tokenize_util.cpp"
 
-#include "otherarch/utils.h"
+// FIXME: llama.h errors out if included (through utils.h)
+std::vector<uint8_t> kcpp_base64_decode(const std::string & encoded_string);
+std::string kcpp_base64_encode(const unsigned char* data, unsigned int data_length);
+std::string get_timestamp_str();
 
 // #include "preprocessing.hpp"
 #include "stable-diffusion.h"
@@ -316,6 +319,8 @@ std::string load_umt5_tokenizer_json()
     return umt5str;
 }
 
+void kcpp_sd_set_main_gpu(int value);
+
 bool sdtype_load_model(const sd_load_model_inputs inputs) {
     sd_is_quiet = inputs.quiet;
     set_sd_quiet(sd_is_quiet);
@@ -339,17 +344,8 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     cfg_square_limit = inputs.img_soft_limit;
     printf("\nImageGen Init - Load Model: %s\n",inputs.model_filename);
 
-    {
-        //kcpp allow gpu id override
-        std::string sdmaingpu = std::to_string(inputs.kcpp_main_gpu);
-        const char* existingenv = getenv("SD_VK_DEVICE");
-        int kcpp_parseinfo_maindevice = inputs.kcpp_main_gpu<=0?0:inputs.kcpp_main_gpu;
-        if(kcpp_parseinfo_maindevice>0 && !existingenv && sdmaingpu!="")
-        {
-            sdmaingpuenv = "SD_VK_DEVICE="+sdmaingpu;
-            putenv((char*)sdmaingpuenv.c_str());
-        }
-    }
+    //kcpp allow gpu id override
+    kcpp_sd_set_main_gpu(inputs.kcpp_main_gpu);
 
     int lora_apply_mode = LORA_APPLY_AT_RUNTIME;
     bool lora_dynamic = false;
@@ -1630,6 +1626,28 @@ sd_info_outputs sdtype_get_info()
         }
     }
     j["available_samplers"] = available_samplers;
+
+    auto get_dev_type_name = [](auto dev_type) -> std::string {
+        if (dev_type == GGML_BACKEND_DEVICE_TYPE_CPU)
+            return "CPU";
+        else if (dev_type == GGML_BACKEND_DEVICE_TYPE_GPU)
+            return "GPU";
+        else if (dev_type == GGML_BACKEND_DEVICE_TYPE_IGPU)
+            return "IGPU";
+        return "TYPE_" + std::to_string(dev_type);
+    };
+
+    auto devices = json::array();
+    size_t dev_count = ggml_backend_dev_count();
+    for (size_t i = 0; i < dev_count; ++i) {
+        auto dev = ggml_backend_dev_get(i);
+        json jdev;
+        jdev["name"]        = ggml_backend_dev_name(dev);
+        jdev["description"] = ggml_backend_dev_description(dev);
+        jdev["type"]        = get_dev_type_name(ggml_backend_dev_type(dev));
+        devices.push_back(jdev);
+    }
+    j["devices"] = devices;
 
     static std::string recent_info = j.dump();
     sd_info_outputs output;
