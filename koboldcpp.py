@@ -9358,7 +9358,7 @@ def make_url_request(url, data, method='POST', headers={}, timeout=300):
         return None
 
 #A very simple and stripped down embedded horde worker with no dependencies
-def run_horde_worker(args, api_key, worker_name):
+def run_horde_worker(args, api_key, worker_name, worker_id):
     global friendlymodelname, maxhordectx, maxhordelen, exitcounter, punishcounter, modelbusy, session_starttime, sslvalid
     epurl = get_my_epurl()
 
@@ -9367,7 +9367,7 @@ def run_horde_worker(args, api_key, worker_name):
         reply = make_url_request_horde(url, submit_dict)
         if not reply:
             punishcounter += 1
-            print_with_time("Error, Job submit failed.")
+            print_with_time(f"Worker {worker_id} - Error, Job submit failed.")
         else:
             reward = reply["reward"]
             session_kudos_earned += reward
@@ -9382,7 +9382,7 @@ def run_horde_worker(args, api_key, worker_name):
             earnrate = session_kudos_earned / hrs_float
             jobrate = session_jobs / hrs_float
             jobcost = session_kudos_earned / session_jobs
-            print_with_time(f'Submitted {jobid} and earned {reward:.0f} kudos\n[Total:{session_kudos_earned:.0f} kudos, Time:{elapsedtimestr}, Jobs:{session_jobs}, EarnRate:{earnrate:.2f} kudos/hr, JobRate:{jobrate:.2f} jobs/hr, JobCost:{jobcost:.2f} kudos/job]')
+            print_with_time(f'Worker {worker_id} - Submitted {jobid} and earned {reward:.0f} kudos\n[Total:{session_kudos_earned:.0f} kudos, Time:{elapsedtimestr}, Jobs:{session_jobs}, EarnRate:{earnrate:.2f} kudos/hr, JobRate:{jobrate:.2f} jobs/hr, JobCost:{jobcost:.2f} kudos/job]')
             rewardcounter += 1
             if rewardcounter > 50:
                 rewardcounter = 0
@@ -9396,7 +9396,7 @@ def run_horde_worker(args, api_key, worker_name):
             headers["Authorization"] = f"Bearer {password}"
         ret = make_url_request(url, data, method, headers)
         if not ret:
-            print("Make sure your Horde API key and worker name is valid!")
+            print(f"Worker {worker_id} - Make sure your Horde API key and worker name is valid!")
         return ret
 
     current_id = None
@@ -9412,7 +9412,7 @@ def run_horde_worker(args, api_key, worker_name):
         time.sleep(3)
         readygo = make_url_request_horde(f'{epurl}/api/v1/info/version', None,'GET',addmykey=True)
         if readygo:
-            print_with_time(f"Embedded Horde Worker '{worker_name}' is started.")
+            print_with_time(f"Worker {worker_id} - Embedded Horde Worker '{worker_name}' is started.")
             break
 
     while exitcounter < 10:
@@ -9427,9 +9427,9 @@ def run_horde_worker(args, api_key, worker_name):
                 print_with_time(f"Horde Worker Paused for {penaltytime} min - Too many errors. It will resume automatically, but you should restart it.")
                 print_with_time("Caution: Too many failed jobs may lead to entering maintenance mode.")
                 time.sleep(60 * penaltytime)
-                print_with_time("Horde Worker Resumed")
+                print_with_time(f"Worker {worker_id} - Horde Worker Resumed")
             else:
-                 print_with_time("Horde Worker Exit limit reached, too many errors.")
+                 print_with_time(f"Worker {worker_id} - Horde Worker Exit limit reached, too many errors.")
 
         global last_non_horde_req_time
         sec_since_non_horde = time.time() - last_non_horde_req_time
@@ -9457,7 +9457,7 @@ def run_horde_worker(args, api_key, worker_name):
         pop = make_url_request_horde(f'{cluster}/api/v2/generate/text/pop',gen_dict)
         if not pop:
             punishcounter += 1
-            print_with_time(f"Failed to fetch job from {cluster}. Waiting 10 seconds...")
+            print_with_time(f"Worker {worker_id} - Failed to fetch job from {cluster}. Waiting 10 seconds...")
             time.sleep(10)
             continue
         if not pop["id"]:
@@ -9465,7 +9465,7 @@ def run_horde_worker(args, api_key, worker_name):
             time.sleep(slp)
             sleepy_counter += 1
             if sleepy_counter==20:
-                print_with_time("No recent jobs, entering low power mode...")
+                print_with_time(f"Worker {worker_id} - No recent jobs, entering low power mode...")
             continue
 
         sleepy_counter = 0
@@ -9487,7 +9487,7 @@ def run_horde_worker(args, api_key, worker_name):
                     if currentjob_attempts>5:
                         break
 
-            print_with_time("Server Busy - Not ready to generate...")
+            print_with_time(f"Worker {worker_id} - Server Busy - Not ready to generate...")
             time.sleep(5)
 
         #submit reply
@@ -9502,15 +9502,15 @@ def run_horde_worker(args, api_key, worker_name):
             submit_thread = threading.Thread(target=submit_completed_generation, args=(submiturl, current_id, session_starttime, submit_dict))
             submit_thread.start() #submit job in new thread so nothing is waiting
         else:
-            print_with_time("Error, Abandoned current job due to errors. Getting new job.")
+            print_with_time(f"Worker {worker_id} - Error, Abandoned current job due to errors. Getting new job.")
         current_id = None
         current_payload = None
         time.sleep(0.1)
 
     if exitcounter<100:
-        print_with_time("Horde Worker Shutdown - Too many errors.")
+        print_with_time(f"Worker {worker_id} - Horde Worker Shutdown - Too many errors.")
     else:
-        print_with_time("Horde Worker Shutdown - Server Closing.")
+        print_with_time(f"Worker {worker_id} - Horde Worker Shutdown - Server Closing.")
     exitcounter = 999
     time.sleep(3)
     sys.exit(2)
@@ -11313,9 +11313,15 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
 
         if args.hordekey and args.hordekey!="":
             if args.hordeworkername and args.hordeworkername!="":
-                horde_thread = threading.Thread(target=run_horde_worker,args=(args,args.hordekey,args.hordeworkername))
-                horde_thread.daemon = True
-                horde_thread.start()
+                workers_to_use = 1
+                if args.continuous_batching:
+                    workers_to_use = int(args.continuous_batching) if hasattr(args, "continuous_batching") else 1
+                for w in range(0,workers_to_use):
+                    wid = (w+1)
+                    print(f"Launching horde worker {wid}...")
+                    horde_thread = threading.Thread(target=run_horde_worker,args=(args,args.hordekey,args.hordeworkername,wid))
+                    horde_thread.daemon = True
+                    horde_thread.start()
             else:
                 print("Horde worker could not start. You need to specify a horde worker name with --hordeworkername")
 
