@@ -9358,7 +9358,7 @@ def make_url_request(url, data, method='POST', headers={}, timeout=300):
         return None
 
 #A very simple and stripped down embedded horde worker with no dependencies
-def run_horde_worker(args, api_key, worker_name, worker_id):
+def run_horde_worker(args, api_key, worker_name, worker_id, threads_to_show):
     global friendlymodelname, maxhordectx, maxhordelen, exitcounter, punishcounter, modelbusy, session_starttime, sslvalid
     epurl = get_my_epurl()
 
@@ -9454,6 +9454,8 @@ def run_horde_worker(args, api_key, worker_name, worker_id):
             "softprompts": [],
             "bridge_agent": BRIDGE_AGENT,
         }
+        if threads_to_show>1:
+            gen_dict["threads"] = threads_to_show
         pop = make_url_request_horde(f'{cluster}/api/v2/generate/text/pop',gen_dict)
         if not pop:
             punishcounter += 1
@@ -11319,7 +11321,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 for w in range(0,workers_to_use):
                     wid = (w+1)
                     print(f"Launching horde worker {wid}...")
-                    horde_thread = threading.Thread(target=run_horde_worker,args=(args,args.hordekey,args.hordeworkername,wid))
+                    horde_thread = threading.Thread(target=run_horde_worker,args=(args,args.hordekey,args.hordeworkername,wid,workers_to_use))
                     horde_thread.daemon = True
                     horde_thread.start()
             else:
