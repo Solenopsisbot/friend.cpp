@@ -685,13 +685,15 @@ budget.o: common/reasoning-budget.cpp common/reasoning-budget.h
 
 SDCPP_DIR := otherarch/sdcpp
 
-SDCPP_COMMON_FILENAMES := $(foreach f,$(filter-out #%,$(file < $(SDCPP_DIR)/src_common.txt)),$(SDCPP_DIR)/$(f))
+SDCPP_COMMON_FILES := $(shell cat $(SDCPP_DIR)/src_common.txt)
+SDCPP_COMMON_FILENAMES := $(foreach f,$(filter-out #%,$(SDCPP_COMMON_FILES)),$(SDCPP_DIR)/$(f))
 SOURCES_C_SDCOMMON := $(filter %.c,$(SDCPP_COMMON_FILENAMES))
 SOURCES_CPP_SDCOMMON := $(filter %.cpp,$(SDCPP_COMMON_FILENAMES))
 HEADERS_SDCOMMON := $(filter %.h %.hpp,$(SDCPP_COMMON_FILENAMES))
 OBJS_SDCOMMON := $(patsubst %.cpp,%.o,$(SOURCES_CPP_SDCOMMON)) $(patsubst %.c,%.o,$(SOURCES_C_SDCOMMON))
 
-SDCPP_MAIN_FILENAMES := $(foreach f,$(filter-out #%,$(file < $(SDCPP_DIR)/src_main.txt)),$(SDCPP_DIR)/$(f))
+SDCPP_MAIN_FILES := $(shell cat $(SDCPP_DIR)/src_main.txt)
+SDCPP_MAIN_FILENAMES := $(foreach f,$(filter-out #%,$(SDCPP_MAIN_FILES)),$(SDCPP_DIR)/$(f))
 SOURCES_C_SDMAIN := $(filter %.c,$(SDCPP_MAIN_FILENAMES))
 SOURCES_CPP_SDMAIN := $(filter %.cpp,$(SDCPP_MAIN_FILENAMES))
 HEADERS_SDMAIN := $(filter %.h %.hpp,$(SDCPP_MAIN_FILENAMES))
