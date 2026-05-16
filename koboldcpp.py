@@ -9448,8 +9448,8 @@ def run_horde_worker(args, api_key, worker_name, worker_id, parallel_batching_th
             time.sleep(1)
             continue
 
-        #first, make sure we are not generating
-        if parallel_batching_threads<=1 and modelbusy.locked():
+        #first, make sure we are not generating (queue is empty)
+        if modelbusy.locked():
             time.sleep(0.2)
             continue
 
