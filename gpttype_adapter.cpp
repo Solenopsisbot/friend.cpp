@@ -2166,13 +2166,15 @@ void kcpp_init_audio_proj(clip_ctx * ctx_a)
     switch (proj) {
         case PROJECTOR_TYPE_QWEN2A:
         case PROJECTOR_TYPE_QWEN25O:
-        case PROJECTOR_TYPE_QWEN3A:
         case PROJECTOR_TYPE_ULTRAVOX:
         case PROJECTOR_TYPE_VOXTRAL:
         case PROJECTOR_TYPE_GLMA:
         case PROJECTOR_TYPE_MUSIC_FLAMINGO:
         case PROJECTOR_TYPE_MERALION:
             audio_preproc = std::make_unique<mtmd_audio_preprocessor_whisper>(ctx_a);
+            break;
+        case PROJECTOR_TYPE_QWEN3A:
+            audio_preproc = std::make_unique<mtmd_audio_preprocessor_qwen3a>(ctx_a);
             break;
         case PROJECTOR_TYPE_LFM2A:
             audio_preproc = std::make_unique<mtmd_audio_preprocessor_conformer>(ctx_a);
@@ -4682,10 +4684,15 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             if(clp_ctx_a)
             {
                 int ptype = clip_get_projector_type_ext(clp_ctx_a);
-                if(ptype==PROJECTOR_TYPE_QWEN2A || ptype==PROJECTOR_TYPE_QWEN3A || ptype==PROJECTOR_TYPE_QWEN25O) //qwen omni
+                if(ptype==PROJECTOR_TYPE_QWEN2A || ptype==PROJECTOR_TYPE_QWEN25O) //qwen omni
                 {
                     aud_start = "<|audio_bos|>";
                     aud_end = "<|audio_eos|>\n";
+                }
+                else if(ptype==PROJECTOR_TYPE_QWEN3A)
+                {
+                    aud_start = "<|audio_start|>";
+                    aud_end = "<|audio_end|>";
                 }
                 else if(ptype==PROJECTOR_TYPE_VOXTRAL) //voxtral
                 {
