@@ -1,12 +1,16 @@
 #ifndef __DENOISER_HPP__
 #define __DENOISER_HPP__
 
+#include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <functional>
 #include <string>
 #include <utility>
 
 #include "ggml_extend.hpp"
 #include "gits_noise.inl"
+#include "guidance.h"
 #include "tensor.hpp"
 
 /*================================================= CompVisDenoiser ==================================================*/
@@ -480,6 +484,141 @@ struct KLOptimalScheduler : SigmaScheduler {
     }
 };
 
+struct LTX2Scheduler : SigmaScheduler {
+    int token_count  = 4096;
+    float max_shift  = 2.05f;
+    float base_shift = 0.95f;
+    bool stretch     = true;
+    float terminal   = 0.1f;
+
+    explicit LTX2Scheduler(int token_count, const char* extra_sample_args = nullptr)
+        : token_count(token_count > 0 ? token_count : 4096) {
+        parse_extra_sample_args(extra_sample_args);
+    }
+
+    static std::string trim(std::string value) {
+        const char* whitespace = " \t\r\n";
+        size_t begin           = value.find_first_not_of(whitespace);
+        if (begin == std::string::npos) {
+            return "";
+        }
+        size_t end = value.find_last_not_of(whitespace);
+        return value.substr(begin, end - begin + 1);
+    }
+
+    void parse_extra_sample_args(const char* extra_sample_args) {
+        if (extra_sample_args == nullptr || extra_sample_args[0] == '\0') {
+            return;
+        }
+
+        std::string raw(extra_sample_args);
+        size_t start   = 0;
+        auto parse_arg = [&](const std::string& item) {
+            std::string token = trim(item);
+            if (token.empty()) {
+                return;
+            }
+            size_t eq = token.find('=');
+            if (eq == std::string::npos) {
+                LOG_WARN("ignoring invalid ltx2 scheduler arg '%s'", token.c_str());
+                return;
+            }
+
+            std::string key   = trim(token.substr(0, eq));
+            std::string value = trim(token.substr(eq + 1));
+            auto parse_float  = [&](float* out) -> bool {
+                try {
+                    size_t consumed = 0;
+                    float parsed    = std::stof(value, &consumed);
+                    if (!trim(value.substr(consumed)).empty()) {
+                        return false;
+                    }
+                    *out = parsed;
+                    return true;
+                } catch (const std::exception&) {
+                    return false;
+                }
+            };
+            try {
+                if (key == "max_shift") {
+                    if (!parse_float(&max_shift)) {
+                        LOG_WARN("ignoring invalid ltx2 scheduler arg '%s'", token.c_str());
+                    }
+                } else if (key == "base_shift") {
+                    if (!parse_float(&base_shift)) {
+                        LOG_WARN("ignoring invalid ltx2 scheduler arg '%s'", token.c_str());
+                    }
+                } else if (key == "terminal") {
+                    if (!parse_float(&terminal)) {
+                        LOG_WARN("ignoring invalid ltx2 scheduler arg '%s'", token.c_str());
+                    }
+                } else if (key == "stretch") {
+                    std::string v = value;
+                    std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    if (v == "1" || v == "true" || v == "yes" || v == "on") {
+                        stretch = true;
+                    } else if (v == "0" || v == "false" || v == "no" || v == "off") {
+                        stretch = false;
+                    } else {
+                        LOG_WARN("ignoring invalid ltx2 scheduler arg '%s'", token.c_str());
+                    }
+                } else {
+                    LOG_WARN("ignoring unknown ltx2 scheduler arg '%s'", key.c_str());
+                }
+            } catch (const std::exception&) {
+                LOG_WARN("ignoring invalid ltx2 scheduler arg '%s'", token.c_str());
+            }
+        };
+
+        for (size_t pos = 0; pos <= raw.size(); ++pos) {
+            if (pos == raw.size() || raw[pos] == ',' || raw[pos] == ';') {
+                parse_arg(raw.substr(start, pos - start));
+                start = pos + 1;
+            }
+        }
+    }
+
+    std::vector<float> get_sigmas(uint32_t n, float /*sigma_min*/, float /*sigma_max*/, t_to_sigma_t /*t_to_sigma*/) override {
+        std::vector<float> sigmas;
+        if (n == 0) {
+            sigmas.push_back(0.0f);
+            return sigmas;
+        }
+
+        constexpr float base_shift_anchor = 1024.0f;
+        constexpr float max_shift_anchor  = 4096.0f;
+        float m                           = (max_shift - base_shift) / (max_shift_anchor - base_shift_anchor);
+        float b                           = base_shift - m * base_shift_anchor;
+        float sigma_shift                 = static_cast<float>(token_count) * m + b;
+        float exp_shift                   = std::exp(sigma_shift);
+        float target_terminal             = std::clamp(terminal, 0.0f, 0.99f);
+
+        LOG_DEBUG("LTX2 scheduler: tokens=%d, shift=%.4f, stretch=%d, terminal=%.4f", token_count, sigma_shift, stretch ? 1 : 0, target_terminal);
+
+        sigmas.reserve(n + 1);
+        for (uint32_t i = 0; i <= n; ++i) {
+            float sigma = 1.0f - static_cast<float>(i) / static_cast<float>(n);
+            if (sigma != 0.0f) {
+                sigma = exp_shift / (exp_shift + (1.0f / sigma - 1.0f));
+            }
+            sigmas.push_back(sigma);
+        }
+
+        if (stretch && sigmas.size() > 2) {
+            float one_minus_last = 1.0f - sigmas[n - 1];
+            float scale_factor   = one_minus_last / (1.0f - target_terminal);
+            if (scale_factor > 1e-8f) {
+                for (uint32_t i = 0; i < n; ++i) {
+                    sigmas[i] = 1.0f - (1.0f - sigmas[i]) / scale_factor;
+                }
+            }
+        }
+
+        sigmas[n] = 0.0f;
+        return sigmas;
+    }
+};
+
 struct Denoiser {
     virtual float sigma_min()                                                        = 0;
     virtual float sigma_max()                                                        = 0;
@@ -492,7 +631,7 @@ struct Denoiser {
     virtual sd::Tensor<float> inverse_noise_scaling(float sigma,
                                                     const sd::Tensor<float>& latent) = 0;
 
-    virtual std::vector<float> get_sigmas(uint32_t n, int /*image_seq_len*/, scheduler_t scheduler_type, SDVersion version) {
+    virtual std::vector<float> get_sigmas(uint32_t n, int image_seq_len, scheduler_t scheduler_type, SDVersion version, const char* extra_sample_args = nullptr) {
         auto bound_t_to_sigma = std::bind(&Denoiser::t_to_sigma, this, std::placeholders::_1);
         std::shared_ptr<SigmaScheduler> scheduler;
         switch (scheduler_type) {
@@ -539,6 +678,10 @@ struct Denoiser {
             case LCM_SCHEDULER:
                 LOG_INFO("get_sigmas with LCM scheduler");
                 scheduler = std::make_shared<LCMScheduler>();
+                break;
+            case LTX2_SCHEDULER:
+                LOG_INFO("get_sigmas with LTX2 scheduler");
+                scheduler = std::make_shared<LTX2Scheduler>(image_seq_len, extra_sample_args);
                 break;
             default:
                 LOG_INFO("get_sigmas with discrete scheduler (default)");
@@ -745,15 +888,15 @@ struct Flux2FlowDenoiser : public FluxFlowDenoiser {
         return mu;
     }
 
-    std::vector<float> get_sigmas(uint32_t n, int image_seq_len, scheduler_t scheduler_type, SDVersion version) override {
+    std::vector<float> get_sigmas(uint32_t n, int image_seq_len, scheduler_t scheduler_type, SDVersion version, const char* extra_sample_args = nullptr) override {
         float mu = compute_empirical_mu(n, image_seq_len);
         LOG_DEBUG("Flux2FlowDenoiser: set shift to %.3f", mu);
         set_shift(mu);
-        return Denoiser::get_sigmas(n, image_seq_len, scheduler_type, version);
+        return Denoiser::get_sigmas(n, image_seq_len, scheduler_type, version, extra_sample_args);
     }
 };
 
-typedef std::function<sd::Tensor<float>(const sd::Tensor<float>&, float, int, sd::Tensor<float>*)> denoise_cb_t;
+typedef std::function<sd::guidance::GuiderOutput(const sd::Tensor<float>&, float, int)> denoise_cb_t;
 
 static std::pair<float, float> get_ancestral_step(float sigma_from,
                                                   float sigma_to,
@@ -831,11 +974,11 @@ static sd::Tensor<float> sample_euler_ancestral(denoise_cb_t model,
     for (int i = 0; i < steps; i++) {
         float sigma       = sigmas[i];
         float sigma_to    = sigmas[i + 1];
-        auto denoised_opt = model(x, sigma, i + 1, nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigma, i + 1);
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
         if (sigma_to == 0.f) {
             x = denoised;
         } else if (eta == 0.f) {
@@ -862,11 +1005,11 @@ static sd::Tensor<float> sample_euler(denoise_cb_t model,
     int steps = static_cast<int>(sigmas.size()) - 1;
     for (int i = 0; i < steps; i++) {
         float sigma       = sigmas[i];
-        auto denoised_opt = model(x, sigma, i + 1, nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigma, i + 1);
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
         sd::Tensor<float> d        = (x - denoised) / sigma;
         x += d * (sigmas[i + 1] - sigma);
     }
@@ -878,22 +1021,22 @@ static sd::Tensor<float> sample_heun(denoise_cb_t model,
                                      const std::vector<float>& sigmas) {
     int steps = static_cast<int>(sigmas.size()) - 1;
     for (int i = 0; i < steps; i++) {
-        auto denoised_opt = model(x, sigmas[i], -(i + 1), nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigmas[i], -(i + 1));
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
         sd::Tensor<float> d        = (x - denoised) / sigmas[i];
         float dt                   = sigmas[i + 1] - sigmas[i];
         if (sigmas[i + 1] == 0) {
             x += d * dt;
         } else {
             sd::Tensor<float> x2 = x + d * dt;
-            auto denoised2_opt   = model(x2, sigmas[i + 1], i + 1, nullptr);
-            if (denoised2_opt.empty()) {
+            auto denoised2_opt   = model(x2, sigmas[i + 1], i + 1);
+            if (denoised2_opt.pred.empty()) {
                 return {};
             }
-            sd::Tensor<float> denoised2 = std::move(denoised2_opt);
+            sd::Tensor<float> denoised2 = std::move(denoised2_opt.pred);
             d                           = (d + (x2 - denoised2) / sigmas[i + 1]) / 2.0f;
             x += d * dt;
         }
@@ -906,11 +1049,11 @@ static sd::Tensor<float> sample_dpm2(denoise_cb_t model,
                                      const std::vector<float>& sigmas) {
     int steps = static_cast<int>(sigmas.size()) - 1;
     for (int i = 0; i < steps; i++) {
-        auto denoised_opt = model(x, sigmas[i], -(i + 1), nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigmas[i], -(i + 1));
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
         sd::Tensor<float> d        = (x - denoised) / sigmas[i];
         if (sigmas[i + 1] == 0) {
             x += d * (sigmas[i + 1] - sigmas[i]);
@@ -919,11 +1062,11 @@ static sd::Tensor<float> sample_dpm2(denoise_cb_t model,
             float dt_1           = sigma_mid - sigmas[i];
             float dt_2           = sigmas[i + 1] - sigmas[i];
             sd::Tensor<float> x2 = x + d * dt_1;
-            auto denoised2_opt   = model(x2, sigma_mid, i + 1, nullptr);
-            if (denoised2_opt.empty()) {
+            auto denoised2_opt   = model(x2, sigma_mid, i + 1);
+            if (denoised2_opt.pred.empty()) {
                 return {};
             }
-            sd::Tensor<float> denoised2 = std::move(denoised2_opt);
+            sd::Tensor<float> denoised2 = std::move(denoised2_opt.pred);
             x += ((x2 - denoised2) / sigma_mid) * dt_2;
         }
     }
@@ -940,11 +1083,11 @@ static sd::Tensor<float> sample_dpmpp_2s_ancestral(denoise_cb_t model,
 
     int steps = static_cast<int>(sigmas.size()) - 1;
     for (int i = 0; i < steps; i++) {
-        auto denoised_opt = model(x, sigmas[i], -(i + 1), nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigmas[i], -(i + 1));
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised  = std::move(denoised_opt);
+        sd::Tensor<float> denoised  = std::move(denoised_opt.pred);
         auto [sigma_down, sigma_up] = get_ancestral_step(sigmas[i], sigmas[i + 1], eta);
 
         if (sigma_down == 0) {
@@ -956,11 +1099,11 @@ static sd::Tensor<float> sample_dpmpp_2s_ancestral(denoise_cb_t model,
             float s              = t + 0.5f * h;
             float sigma_s        = sigma_fn(s);
             sd::Tensor<float> x2 = (sigma_s / sigma_fn(t)) * x - (exp(-h * 0.5f) - 1) * denoised;
-            auto denoised2_opt   = model(x2, sigma_s, i + 1, nullptr);
-            if (denoised2_opt.empty()) {
+            auto denoised2_opt   = model(x2, sigma_s, i + 1);
+            if (denoised2_opt.pred.empty()) {
                 return {};
             }
-            sd::Tensor<float> denoised2 = std::move(denoised2_opt);
+            sd::Tensor<float> denoised2 = std::move(denoised2_opt.pred);
             x                           = (sigma_fn(t_next) / sigma_fn(t)) * x - (exp(-h) - 1) * denoised2;
         }
 
@@ -983,11 +1126,11 @@ static sd::Tensor<float> sample_dpmpp_2s_ancestral_flow(denoise_cb_t model,
 
         bool opt_first_step = (1.0 - sigma < 1e-6);
 
-        auto denoised_opt = model(x, sigma, (opt_first_step ? 1 : -1) * (i + 1), nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigma, (opt_first_step ? 1 : -1) * (i + 1));
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
 
         if (sigma_to == 0.0f) {
             // Euler method (final step, no noise)
@@ -1012,8 +1155,8 @@ static sd::Tensor<float> sample_dpmpp_2s_ancestral_flow(denoise_cb_t model,
                 // so sigma_s = 1 = sigma, and sigma_s_i_ratio = sigma_s / sigma = 1
                 // u = (x*sigma_s_i_ratio)+(denoised*(1.0f-sigma_s_i_ratio))
                 //   = (x*1)+(denoised*0) = x
-                // so D_i = model(u, sigma_s, i + 1, nullptr)
-                //        = model(x, sigma,   i + 1, nullptr)
+                // so D_i = model(u, sigma_s, i + 1)
+                //        = model(x, sigma,   i + 1)
                 //        = denoised
                 D_i = denoised;
 
@@ -1046,11 +1189,11 @@ static sd::Tensor<float> sample_dpmpp_2s_ancestral_flow(denoise_cb_t model,
                 float sigma_s_i_ratio = sigma_s / sigma;
                 sd::Tensor<float> u   = (x * sigma_s_i_ratio) + (denoised * (1.0f - sigma_s_i_ratio));
 
-                auto denoised2_opt = model(u, sigma_s, i + 1, nullptr);
-                if (denoised2_opt.empty()) {
+                auto denoised2_opt = model(u, sigma_s, i + 1);
+                if (denoised2_opt.pred.empty()) {
                     return {};
                 }
-                D_i = std::move(denoised2_opt);
+                D_i = std::move(denoised2_opt.pred);
             }
 
             float sigma_down_i_ratio = sigma_down / sigma;
@@ -1073,11 +1216,11 @@ static sd::Tensor<float> sample_dpmpp_2m(denoise_cb_t model,
 
     int steps = static_cast<int>(sigmas.size()) - 1;
     for (int i = 0; i < steps; i++) {
-        auto denoised_opt = model(x, sigmas[i], i + 1, nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigmas[i], i + 1);
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
         float t                    = t_fn(sigmas[i]);
         float t_next               = t_fn(sigmas[i + 1]);
         float h                    = t_next - t;
@@ -1105,11 +1248,11 @@ static sd::Tensor<float> sample_dpmpp_2m_v2(denoise_cb_t model,
 
     int steps = static_cast<int>(sigmas.size()) - 1;
     for (int i = 0; i < steps; i++) {
-        auto denoised_opt = model(x, sigmas[i], i + 1, nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigmas[i], i + 1);
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
         float t                    = t_fn(sigmas[i]);
         float t_next               = t_fn(sigmas[i + 1]);
         float h                    = t_next - t;
@@ -1133,91 +1276,61 @@ static sd::Tensor<float> sample_dpmpp_2m_v2(denoise_cb_t model,
     return x;
 }
 
+using SamplerExtraArgs = std::vector<std::pair<std::string, std::string>>;
+
 static sd::Tensor<float> sample_lcm(denoise_cb_t model,
                                     sd::Tensor<float> x,
                                     const std::vector<float>& sigmas,
                                     std::shared_ptr<RNG> rng,
                                     bool is_flow_denoiser,
-                                    const char* extra_sample_args = nullptr) {
+                                    const SamplerExtraArgs& extra_sample_args) {
     struct LCMSampleArgs {
         float noise_clip_std    = 0.0f;
         float noise_scale_start = 1.0f;
         float noise_scale_end   = 1.0f;
     };
 
-    auto trim = [](std::string value) -> std::string {
-        const char* whitespace = " \t\r\n";
-        size_t begin           = value.find_first_not_of(whitespace);
-        if (begin == std::string::npos) {
-            return "";
-        }
-        size_t end = value.find_last_not_of(whitespace);
-        return value.substr(begin, end - begin + 1);
-    };
-
     LCMSampleArgs args;
-    if (extra_sample_args != nullptr && extra_sample_args[0] != '\0') {
-        std::string raw(extra_sample_args);
-        size_t start                   = 0;
-        bool noise_scale_end_was_set   = false;
-        bool noise_scale_start_was_set = false;
-        auto parse_arg                 = [&](const std::string& item) {
-            std::string token = trim(item);
-            if (token.empty()) {
-                return;
-            }
-            size_t eq = token.find('=');
-            if (eq == std::string::npos) {
-                LOG_WARN("ignoring invalid lcm extra sample arg '%s'", token.c_str());
-                return;
-            }
+    bool noise_scale_end_was_set   = false;
+    bool noise_scale_start_was_set = false;
 
-            std::string key   = trim(token.substr(0, eq));
-            std::string value = trim(token.substr(eq + 1));
-            float parsed      = 0.0f;
-            try {
-                size_t consumed = 0;
-                parsed          = std::stof(value, &consumed);
-                if (trim(value.substr(consumed)).size() != 0) {
-                    LOG_WARN("ignoring invalid lcm extra sample arg '%s'", token.c_str());
-                    return;
-                }
-            } catch (const std::exception&) {
-                LOG_WARN("ignoring invalid lcm extra sample arg '%s'", token.c_str());
-                return;
+    for (const auto& [key, value] : extra_sample_args) {
+        float parsed = 0.0f;
+        try {
+            size_t consumed = 0;
+            parsed          = std::stof(value, &consumed);
+            if (trim(value.substr(consumed)).size() != 0) {
+                LOG_WARN("ignoring invalid lcm extra sample arg '%s'", key.c_str());
+                continue;
             }
-
-            if (key == "noise_clip_std") {
-                args.noise_clip_std = parsed;
-            } else if (key == "noise_scale_start") {
-                args.noise_scale_start    = parsed;
-                noise_scale_start_was_set = true;
-            } else if (key == "noise_scale_end") {
-                args.noise_scale_end    = parsed;
-                noise_scale_end_was_set = true;
-            } else {
-                LOG_WARN("ignoring unknown lcm extra sample arg '%s'", key.c_str());
-            }
-        };
-
-        for (size_t pos = 0; pos <= raw.size(); ++pos) {
-            if (pos == raw.size() || raw[pos] == ',' || raw[pos] == ';') {
-                parse_arg(raw.substr(start, pos - start));
-                start = pos + 1;
-            }
+        } catch (const std::exception&) {
+            LOG_WARN("ignoring invalid lcm extra sample arg '%s=%s'", key.c_str());
+            continue;
         }
-        if (noise_scale_start_was_set && !noise_scale_end_was_set) {
-            args.noise_scale_end = args.noise_scale_start;
+        if (key == "noise_clip_std") {
+            args.noise_clip_std = parsed;
+        } else if (key == "noise_scale_start") {
+            args.noise_scale_start    = parsed;
+            noise_scale_start_was_set = true;
+        } else if (key == "noise_scale_end") {
+            args.noise_scale_end    = parsed;
+            noise_scale_end_was_set = true;
+        } else {
+            LOG_WARN("ignoring unknown lcm extra sample arg '%s'", key.c_str());
         }
+    }
+
+    if (noise_scale_start_was_set && !noise_scale_end_was_set) {
+        args.noise_scale_end = args.noise_scale_start;
     }
 
     int steps = static_cast<int>(sigmas.size()) - 1;
     for (int i = 0; i < steps; i++) {
-        auto denoised_opt = model(x, sigmas[i], i + 1, nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigmas[i], i + 1);
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        x = std::move(denoised_opt);
+        x = std::move(denoised_opt.pred);
         if (sigmas[i + 1] > 0) {
             if (is_flow_denoiser) {
                 x *= (1 - sigmas[i + 1]);
@@ -1259,11 +1372,11 @@ static sd::Tensor<float> sample_ipndm(denoise_cb_t model,
         float sigma      = sigmas[i];
         float sigma_next = sigmas[i + 1];
 
-        auto denoised_opt = model(x, sigma, i + 1, nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigma, i + 1);
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
 
         sd::Tensor<float> d_cur = (x - denoised) / sigma;
         int order               = std::min(max_order, i + 1);
@@ -1303,11 +1416,11 @@ static sd::Tensor<float> sample_ipndm_v(denoise_cb_t model,
         float sigma  = sigmas[i];
         float t_next = sigmas[i + 1];
 
-        auto denoised_opt = model(x, sigma, i + 1, nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigma, i + 1);
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
 
         sd::Tensor<float> d_cur = (x - denoised) / sigma;
         int order               = std::min(max_order, i + 1);
@@ -1365,11 +1478,11 @@ static sd::Tensor<float> sample_res_multistep(denoise_cb_t model,
 
     int steps = static_cast<int>(sigmas.size()) - 1;
     for (int i = 0; i < steps; i++) {
-        auto denoised_opt = model(x, sigmas[i], i + 1, nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigmas[i], i + 1);
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
 
         float sigma_from = sigmas[i];
         float sigma_to   = sigmas[i + 1];
@@ -1442,11 +1555,11 @@ static sd::Tensor<float> sample_res_2s(denoise_cb_t model,
         float sigma_from = sigmas[i];
         float sigma_to   = sigmas[i + 1];
 
-        auto denoised_opt = model(x, sigma_from, -(i + 1), nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigma_from, -(i + 1));
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
 
         auto [sigma_down, sigma_up, alpha_scale] = get_ancestral_step(sigma_from, sigma_to, eta, is_flow_denoiser);
 
@@ -1468,11 +1581,11 @@ static sd::Tensor<float> sample_res_2s(denoise_cb_t model,
             sd::Tensor<float> eps1 = denoised - x0;
             sd::Tensor<float> x2   = x0 + eps1 * (h * a21);
 
-            auto denoised2_opt = model(x2, sigma_c2, i + 1, nullptr);
-            if (denoised2_opt.empty()) {
+            auto denoised2_opt = model(x2, sigma_c2, i + 1);
+            if (denoised2_opt.pred.empty()) {
                 return {};
             }
-            sd::Tensor<float> denoised2 = std::move(denoised2_opt);
+            sd::Tensor<float> denoised2 = std::move(denoised2_opt.pred);
             sd::Tensor<float> eps2      = denoised2 - x0;
             x                           = x0 + h * (b1 * eps1 + b2 * eps2);
         }
@@ -1545,10 +1658,11 @@ static sd::Tensor<float> sample_er_sde(denoise_cb_t model,
 
     int steps = static_cast<int>(sigmas.size()) - 1;
     for (int i = 0; i < steps; i++) {
-        sd::Tensor<float> denoised = model(x, sigmas[i], i + 1, nullptr);
-        if (denoised.empty()) {
+        auto denoised_opt = model(x, sigmas[i], i + 1);
+        if (denoised_opt.pred.empty()) {
             return {};
         }
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
 
         int stage_used = std::min(max_stage, i + 1);
 
@@ -1663,11 +1777,11 @@ static sd::Tensor<float> sample_tcd(denoise_cb_t model,
         int timestep_s    = (int)floor((1 - eta) * prev_timestep);
         float sigma       = sigmas[i];
 
-        auto denoised_opt = model(x, sigma, i + 1, nullptr);
-        if (denoised_opt.empty()) {
+        auto denoised_opt = model(x, sigma, i + 1);
+        if (denoised_opt.pred.empty()) {
             return {};
         }
-        sd::Tensor<float> denoised = std::move(denoised_opt);
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
         sd::Tensor<float> d        = (x - denoised) / sigma;
 
         float alpha_prod_t      = 1.0f / (sigma * sigma + 1.0f);
@@ -1692,16 +1806,15 @@ static sd::Tensor<float> sample_euler_cfg_pp(denoise_cb_t model,
                                              const std::vector<float>& sigmas) {
     int steps = static_cast<int>(sigmas.size()) - 1;
     for (int i = 0; i < steps; i++) {
-        float sigma = sigmas[i];
-        sd::Tensor<float> uncond_denoised;
-
-        auto denoised_opt = model(x, sigma, i + 1, &uncond_denoised);
-        if (denoised_opt.empty() || uncond_denoised.empty()) {
+        float sigma       = sigmas[i];
+        auto denoised_opt = model(x, sigma, i + 1);
+        if (denoised_opt.pred.empty() || denoised_opt.pred_uncond.empty()) {
             return {};
         }
 
-        sd::Tensor<float> denoised = std::move(denoised_opt);
-        sd::Tensor<float> d        = (x - uncond_denoised) / sigma;
+        sd::Tensor<float> denoised        = std::move(denoised_opt.pred);
+        sd::Tensor<float> uncond_denoised = std::move(denoised_opt.pred_uncond);
+        sd::Tensor<float> d               = (x - uncond_denoised) / sigma;
 
         x = denoised + d * sigmas[i + 1];
     }
@@ -1715,16 +1828,15 @@ static sd::Tensor<float> sample_euler_ancestral_cfg_pp(denoise_cb_t model,
                                                        float eta) {
     int steps = static_cast<int>(sigmas.size()) - 1;
     for (int i = 0; i < steps; i++) {
-        float sigma = sigmas[i];
-        sd::Tensor<float> uncond_denoised;
-
-        auto denoised_opt = model(x, sigma, i + 1, &uncond_denoised);
-        if (denoised_opt.empty() || uncond_denoised.empty()) {
+        float sigma       = sigmas[i];
+        auto denoised_opt = model(x, sigma, i + 1);
+        if (denoised_opt.pred.empty() || denoised_opt.pred_uncond.empty()) {
             return {};
         }
 
-        sd::Tensor<float> denoised = std::move(denoised_opt);
-        sd::Tensor<float> d        = (x - uncond_denoised) / sigma;
+        sd::Tensor<float> denoised        = std::move(denoised_opt.pred);
+        sd::Tensor<float> uncond_denoised = std::move(denoised_opt.pred_uncond);
+        sd::Tensor<float> d               = (x - uncond_denoised) / sigma;
 
         auto [sigma_down, sigma_up] = get_ancestral_step(sigmas[i], sigmas[i + 1], eta);
 
@@ -1737,6 +1849,113 @@ static sd::Tensor<float> sample_euler_ancestral_cfg_pp(denoise_cb_t model,
     return x;
 }
 
+// https://github.com/ToyotaResearchInstitute/gradient-estimation-sampler
+static sd::Tensor<float> sample_gradient_estimation(denoise_cb_t model,
+                                                    sd::Tensor<float> x,
+                                                    const std::vector<float>& sigmas,
+                                                    std::shared_ptr<RNG> rng,
+                                                    bool is_flow_denoiser,
+                                                    float eta,
+                                                    const SamplerExtraArgs& extra_sample_args) {
+    float ge_gamma = 2.0f;
+
+    for (const auto& [key, value] : extra_sample_args) {
+        float parsed = 0.0f;
+        try {
+            size_t consumed = 0;
+            parsed          = std::stof(value, &consumed);
+            if (trim(value.substr(consumed)).size() != 0) {
+                LOG_WARN("ignoring invalid euler_ge extra sample arg '%s'", key.c_str());
+                continue;
+            }
+        } catch (const std::exception&) {
+            LOG_WARN("ignoring invalid euler_ge extra sample arg '%s'", key.c_str());
+            continue;
+        }
+        if (key == "gamma") {
+            LOG_DEBUG("setting euler_ge gamma to %.2f", parsed);
+            ge_gamma = parsed;
+        } else {
+            LOG_WARN("ignoring unknown euler_ge extra sample arg '%s'", key.c_str());
+        }
+    }
+
+    int steps = static_cast<int>(sigmas.size()) - 1;
+    sd::Tensor<float> old_d;
+    bool has_old_d = false;
+    for (int i = 0; i < steps; i++) {
+        float sigma       = sigmas[i];
+        float sigma_to    = sigmas[i + 1];
+        auto denoised_opt = model(x, sigma, i + 1);
+        if (denoised_opt.pred.empty()) {
+            return {};
+        }
+        sd::Tensor<float> denoised = std::move(denoised_opt.pred);
+        if (sigma_to == 0.f) {
+            x = denoised;
+        } else {
+            auto [sigma_down, sigma_up, alpha_scale] = get_ancestral_step(sigma, sigma_to, eta, is_flow_denoiser);
+            sd::Tensor<float> d                      = (x - denoised) / sigma;
+            float dt                                 = sigma_down - sigma;
+            if (has_old_d) {
+                sd::Tensor<float> d_bar = d * ge_gamma + old_d * (1.0f - ge_gamma);
+                x += d_bar * dt;
+            } else {
+                x += d * dt;
+            }
+            old_d     = std::move(d);
+            has_old_d = true;
+            if (sigma_up > 0.f) {
+                if (is_flow_denoiser) {
+                    x *= alpha_scale;
+                }
+                x += sd::Tensor<float>::randn_like(x, rng) * sigma_up;
+            }
+        }
+    }
+    return x;
+}
+
+static SamplerExtraArgs parse_sampler_args(const char* extra_sample_args) {
+    SamplerExtraArgs pairs;
+
+    if (extra_sample_args == nullptr || extra_sample_args[0] == '\0') {
+        return pairs;
+    }
+
+    auto trim = [](std::string value) -> std::string {
+        const char* whitespace = " \t\r\n";
+        size_t begin           = value.find_first_not_of(whitespace);
+        if (begin == std::string::npos) {
+            return "";
+        }
+        size_t end = value.find_last_not_of(whitespace);
+        return value.substr(begin, end - begin + 1);
+    };
+
+    std::string raw(extra_sample_args);
+    size_t start = 0;
+
+    for (size_t pos = 0; pos <= raw.size(); ++pos) {
+        if (pos == raw.size() || raw[pos] == ',' || raw[pos] == ';') {
+            std::string item  = raw.substr(start, pos - start);
+            std::string token = trim(item);
+
+            if (!token.empty()) {
+                size_t eq = token.find('=');
+                if (eq != std::string::npos) {
+                    std::string key   = trim(token.substr(0, eq));
+                    std::string value = trim(token.substr(eq + 1));
+                    pairs.emplace_back(std::move(key), std::move(value));
+                }
+            }
+            start = pos + 1;
+        }
+    }
+
+    return pairs;
+}
+
 // k diffusion reverse ODE: dx = (x - D(x;\sigma)) / \sigma dt; \sigma(t) = t
 static sd::Tensor<float> sample_k_diffusion(sample_method_t method,
                                             denoise_cb_t model,
@@ -1746,6 +1965,7 @@ static sd::Tensor<float> sample_k_diffusion(sample_method_t method,
                                             float eta,
                                             bool is_flow_denoiser,
                                             const char* extra_sample_args) {
+    SamplerExtraArgs extra_args = parse_sampler_args(extra_sample_args);
     switch (method) {
         case EULER_A_SAMPLE_METHOD:
             return sample_euler_ancestral(model, std::move(x), sigmas, rng, is_flow_denoiser, eta);
@@ -1765,7 +1985,7 @@ static sd::Tensor<float> sample_k_diffusion(sample_method_t method,
         case DPMPP2Mv2_SAMPLE_METHOD:
             return sample_dpmpp_2m_v2(model, std::move(x), sigmas);
         case LCM_SAMPLE_METHOD:
-            return sample_lcm(model, std::move(x), sigmas, rng, is_flow_denoiser, extra_sample_args);
+            return sample_lcm(model, std::move(x), sigmas, rng, is_flow_denoiser, extra_args);
         case IPNDM_SAMPLE_METHOD:
             return sample_ipndm(model, std::move(x), sigmas);
         case IPNDM_V_SAMPLE_METHOD:
@@ -1785,6 +2005,8 @@ static sd::Tensor<float> sample_k_diffusion(sample_method_t method,
             return sample_euler_cfg_pp(model, std::move(x), sigmas);
         case EULER_A_CFG_PP_SAMPLE_METHOD:
             return sample_euler_ancestral_cfg_pp(model, std::move(x), sigmas, rng, eta);
+        case EULER_GE_SAMPLE_METHOD:
+            return sample_gradient_estimation(model, std::move(x), sigmas, rng, is_flow_denoiser, eta, extra_args);
         default:
             return {};
     }

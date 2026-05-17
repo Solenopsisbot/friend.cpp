@@ -53,6 +53,7 @@ enum sample_method_t {
     ER_SDE_SAMPLE_METHOD,
     EULER_CFG_PP_SAMPLE_METHOD,
     EULER_A_CFG_PP_SAMPLE_METHOD,
+    EULER_GE_SAMPLE_METHOD,
     SAMPLE_METHOD_COUNT
 };
 
@@ -68,6 +69,7 @@ enum scheduler_t {
     KL_OPTIMAL_SCHEDULER,
     LCM_SCHEDULER,
     BONG_TANGENT_SCHEDULER,
+    LTX2_SCHEDULER,
     SCHEDULER_COUNT
 };
 
@@ -152,6 +154,7 @@ enum lora_apply_mode_t {
 
 typedef struct {
     bool enabled;
+    bool temporal_tiling;
     int tile_size_x;
     int tile_size_y;
     float target_overlap;
@@ -174,7 +177,9 @@ typedef struct {
     const char* llm_vision_path;
     const char* diffusion_model_path;
     const char* high_noise_diffusion_model_path;
+    const char* embeddings_connectors_path;
     const char* vae_path;
+    const char* audio_vae_path;
     const char* taesd_path;
     const char* control_net_path;
     const sd_embedding_t* embeddings;
@@ -210,6 +215,13 @@ typedef struct {
     const char* backend;
     const char* params_backend;
 } sd_ctx_params_t;
+
+typedef struct {
+    uint32_t sample_rate;
+    uint32_t channels;
+    uint64_t sample_count;
+    float* data;
+} sd_audio_t;
 
 typedef struct {
     uint32_t width;
@@ -366,6 +378,7 @@ typedef struct {
     float strength;
     int64_t seed;
     int video_frames;
+    int fps;
     float vace_strength;
     sd_tiling_params_t vae_tiling_params;
     sd_cache_params_t cache;
@@ -410,6 +423,7 @@ SD_API char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params);
 
 SD_API sd_ctx_t* new_sd_ctx(const sd_ctx_params_t* sd_ctx_params);
 SD_API void free_sd_ctx(sd_ctx_t* sd_ctx);
+SD_API void free_sd_audio(sd_audio_t* audio);
 
 SD_API void sd_sample_params_init(sd_sample_params_t* sample_params);
 SD_API char* sd_sample_params_to_str(const sd_sample_params_t* sample_params);
@@ -422,7 +436,11 @@ SD_API char* sd_img_gen_params_to_str(const sd_img_gen_params_t* sd_img_gen_para
 SD_API sd_image_t* generate_image(sd_ctx_t* sd_ctx, const sd_img_gen_params_t* sd_img_gen_params);
 
 SD_API void sd_vid_gen_params_init(sd_vid_gen_params_t* sd_vid_gen_params);
-SD_API sd_image_t* generate_video(sd_ctx_t* sd_ctx, const sd_vid_gen_params_t* sd_vid_gen_params, int* num_frames_out);
+SD_API bool generate_video(sd_ctx_t* sd_ctx,
+                           const sd_vid_gen_params_t* sd_vid_gen_params,
+                           sd_image_t** frames_out,
+                           int* num_frames_out,
+                           sd_audio_t** audio_out);
 
 typedef struct upscaler_ctx_t upscaler_ctx_t;
 
