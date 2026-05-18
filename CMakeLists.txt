@@ -59,6 +59,7 @@ find_package(Threads REQUIRED)
 add_compile_definitions(LOG_DISABLE_LOGS)
 add_compile_definitions(GGML_USE_CPU)
 add_compile_definitions(GGML_USE_CPU_REPACK)
+add_compile_definitions(GGML_USE_RPC)
 add_compile_definitions(NOMINMAX)
 add_compile_definitions(_REGEX_MAX_STACK_COUNT=5000)
 
@@ -233,6 +234,10 @@ if (WIN32)
     if (BUILD_SHARED_LIBS)
         set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
     endif()
+endif()
+
+if(WIN32)
+    list(APPEND LLAMA_EXTRA_LIBS ws2_32)
 endif()
 
 if (LLAMA_LTO)
@@ -411,6 +416,10 @@ add_library(ggml
             ggml/src/ggml-backend-reg.cpp
             ggml/include/gguf.h
             ggml/src/gguf.cpp
+            ggml/src/ggml-rpc/ggml-rpc.cpp
+            ggml/src/ggml-rpc/transport.cpp
+            ggml/include/ggml-rpc.h
+            ggml/src/ggml-rpc/transport.h
             ${GGML_SOURCES_CUDA})
 target_include_directories(ggml PUBLIC . ./ggml/include ./ggml/src ./ggml/src/ggml-cpu ./include ./otherarch ./otherarch/tools ./vendor/stb ./vendor/nlohmann ./vendor)
 target_compile_features(ggml PUBLIC c_std_11) # don't bump
@@ -499,7 +508,8 @@ add_library(sdtype_adapter
             otherarch/sdcpp/tokenizers/qwen2_tokenizer.cpp
             otherarch/sdcpp/tokenizers/t5_unigram_tokenizer.cpp
             otherarch/sdcpp/tokenizers/tokenizer.cpp
-            otherarch/sdcpp/tokenizers/tokenize_util.cpp)
+            otherarch/sdcpp/tokenizers/tokenize_util.cpp
+            otherarch/sdcpp/ggml_extend_backend.cpp)
 target_include_directories(sdtype_adapter PUBLIC . ./ggml/include ./ggml/src ./ggml/src/ggml-cpu ./include ./otherarch ./otherarch/tools ./vendor/stb ./vendor/nlohmann ./vendor ./otherarch/sdcpp ./otherarch/sdcpp/thirdparty ./tools ./common)
 target_compile_features(sdtype_adapter PUBLIC cxx_std_17) # don't bump
 target_link_libraries(sdtype_adapter PRIVATE common2 ggml ${LLAMA_EXTRA_LIBS})
