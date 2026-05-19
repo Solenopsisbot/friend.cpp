@@ -74,7 +74,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.113.1"
+KcppVersion = "1.113.2"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_base_config":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "base_config":"", "swapReqType": None, "autoswapmode": False}
@@ -8789,6 +8789,8 @@ def show_gui():
         args.maxrequestsize = int(maxrequestsize_var.get()) if maxrequestsize_var.get()!="" else 32
         args.ratelimit = int(ratelimit_var.get()) if ratelimit_var.get()!="" else 0
         args.reqtimeout = int(reqtimeout_var.get()) if reqtimeout_var.get()!="" else 0
+        if not args.reqtimeout:
+            args.reqtimeout = default_reqtimeout
 
         if usehorde_var.get() != 0:
             args.hordemodelname = horde_name_var.get()
