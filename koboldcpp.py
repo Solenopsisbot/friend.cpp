@@ -8789,6 +8789,8 @@ def show_gui():
         args.maxrequestsize = int(maxrequestsize_var.get()) if maxrequestsize_var.get()!="" else 32
         args.ratelimit = int(ratelimit_var.get()) if ratelimit_var.get()!="" else 0
         args.reqtimeout = int(reqtimeout_var.get()) if reqtimeout_var.get()!="" else 0
+        if not args.reqtimeout:
+            args.reqtimeout = default_reqtimeout
 
         if usehorde_var.get() != 0:
             args.hordemodelname = horde_name_var.get()
