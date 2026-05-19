@@ -208,7 +208,7 @@ saved_stderr_py = None
 stdout_nullfile = None
 stdout_nullfile_py = None
 
-CUDevices = ["1","2","3","4","All"]
+CUDevices = ["0","1","2","3","All"]
 CUDevicesNames = ["","","","",""]
 VKDevicesNames = ["","","",""]
 VKIsDGPU = [0,0,0,0]
@@ -2401,7 +2401,7 @@ def sd_quant_option(value):
     except Exception:
         return 0
 
-sd_device_choices = ['CPU', 'main', '1', '2', '3', '4']
+sd_device_choices = ['CPU', 'main', '0', '1', '2', '3']
 
 def sd_get_device_number(name, offset=0):
     if name is None: # default handling should be done elsewhere
@@ -7548,7 +7548,7 @@ def show_gui():
     gpulayers_var = ctk.StringVar(value="-1")
     threads_var = ctk.StringVar(value=str(default_threads))
     runopts_var = ctk.StringVar()
-    gpu_choice_var = ctk.StringVar(value="1")
+    gpu_choice_var = ctk.StringVar(value="0")
     autofit_padding_var = ctk.StringVar(value=str(default_autofit_padding))
 
     launchbrowser = ctk.IntVar(value=1)
@@ -7956,12 +7956,12 @@ def show_gui():
         if eligible_cuda and exitcounter < 100 and MaxMemory[0]>3500000000 and (("Use CUDA" in runopts and CUDevicesNames[0]!="") or "Use hipBLAS (ROCm)" in runopts) and (any(CUDevicesNames)) and runmode_untouched:
             if "Use CUDA" in runopts:
                 runopts_var.set("Use CUDA")
-                gpu_choice_var.set("1")
+                gpu_choice_var.set("0")
                 print(f"Auto Selected CUDA Backend (flag={cpusupport})\n")
                 found_new_backend = True
             elif "Use hipBLAS (ROCm)" in runopts:
                 runopts_var.set("Use hipBLAS (ROCm)")
-                gpu_choice_var.set("1")
+                gpu_choice_var.set("0")
                 print(f"Auto Selected HIP Backend (flag={cpusupport})\n")
                 found_new_backend = True
         elif exitcounter < 100 and (1 in VKIsDGPU) and runmode_untouched and ("Use Vulkan" in runopts or "Use Vulkan (Old CPU)" in runopts):
@@ -7971,7 +7971,7 @@ def show_gui():
                         runopts_var.set("Use Vulkan")
                     else:
                         runopts_var.set("Use Vulkan (Old CPU)")
-                    gpu_choice_var.set(str(i+1))
+                    gpu_choice_var.set(str(i))
                     print(f"Auto Selected Vulkan Backend (flag={cpusupport})\n")
                     found_new_backend = True
                     break
@@ -8047,7 +8047,7 @@ def show_gui():
             return
         if gpu_choice_var.get()!="All":
             try:
-                s = int(gpu_choice_var.get())-1
+                s = int(gpu_choice_var.get())
                 v = runopts_var.get()
                 if v == "Use Vulkan" or v == "Use Vulkan (Old CPU)" or v == "Use Vulkan (Older CPU)":
                     quick_gpuname_label.configure(text=VKDevicesNames[s])
@@ -8695,7 +8695,7 @@ def show_gui():
         args.noavx2 = False
         args.failsafe = False
         if gpu_choice_var.get()!="All":
-            gpuchoiceidx = int(gpu_choice_var.get())-1
+            gpuchoiceidx = int(gpu_choice_var.get())
         if runopts_var.get() == "Use CUDA" or runopts_var.get() == "Use hipBLAS (ROCm)":
             if gpu_choice_var.get()=="All":
                 args.usecuda = ["normal"]
@@ -8942,7 +8942,7 @@ def show_gui():
                 gpu_choice_var.set("All")
                 for g in range(4):
                     if str(g) in mydict["usecuda"]:
-                        gpu_choice_var.set(str(g+1))
+                        gpu_choice_var.set(str(g))
                         break
         elif "usevulkan" in mydict and mydict['usevulkan'] is not None:
             if "noavx2" in mydict and mydict["noavx2"]:
@@ -8951,7 +8951,7 @@ def show_gui():
                     gpu_choice_var.set("All")
                     for opt in range(0,4):
                         if opt in mydict["usevulkan"]:
-                            gpu_choice_var.set(str(opt+1))
+                            gpu_choice_var.set(str(opt))
                             break
             elif "failsafe" in mydict and mydict["failsafe"]:
                 if vulkan_failsafe_option is not None:
@@ -8959,7 +8959,7 @@ def show_gui():
                     gpu_choice_var.set("All")
                     for opt in range(0,4):
                         if opt in mydict["usevulkan"]:
-                            gpu_choice_var.set(str(opt+1))
+                            gpu_choice_var.set(str(opt))
                             break
             else:
                 if vulkan_option is not None:
@@ -8967,7 +8967,7 @@ def show_gui():
                     gpu_choice_var.set("All")
                     for opt in range(0,4):
                         if opt in mydict["usevulkan"]:
-                            gpu_choice_var.set(str(opt+1))
+                            gpu_choice_var.set(str(opt))
                             break
 
         elif ("noavx2" in mydict and "usecpu" in mydict and mydict["usecpu"] and mydict["noavx2"]) or ("failsafe" in mydict and mydict["failsafe"]):
