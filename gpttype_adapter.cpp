@@ -2158,6 +2158,29 @@ static float CalcGradientAIRopeFreqBase(float original_rope_base, int n_ctx_trai
     }
 }
 
+static void connect_rpc_servers(const std::string & servers) {
+    auto rpc_servers = string_split<std::string>(servers, ',');
+    if (rpc_servers.empty()) {
+        throw std::invalid_argument("no RPC servers specified");
+    }
+    ggml_backend_load_all();
+    ggml_backend_reg_t rpc_reg = ggml_backend_reg_by_name("RPC");
+    if (!rpc_reg) {
+        throw std::invalid_argument("failed to find RPC backend");
+    }
+    typedef ggml_backend_reg_t (*ggml_backend_rpc_add_server_t)(const char * endpoint);
+    ggml_backend_rpc_add_server_t ggml_backend_rpc_add_server_fn = (ggml_backend_rpc_add_server_t) ggml_backend_reg_get_proc_address(rpc_reg, "ggml_backend_rpc_add_server");
+    if (!ggml_backend_rpc_add_server_fn) {
+        throw std::invalid_argument("failed to find RPC add server function");
+    }
+    printf("\n");
+    for (const auto & server : rpc_servers) {
+        printf("Use RPC server: %s\n",server.c_str());
+        auto reg = ggml_backend_rpc_add_server_fn(server.c_str());
+        ggml_backend_register(reg);
+    }
+}
+
 void kcpp_init_audio_proj(clip_ctx * ctx_a)
 {
     projector_type proj = clip_get_projector_type(ctx_a);
@@ -2434,6 +2457,13 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     else if(file_format==FileFormat::GGUF_GENERIC)
     {
         llama_backend_init();
+        int num_backends = ggml_backend_reg_count();
+        printf("Number of Backends: %d\n",num_backends);
+        for (size_t i = 0; i < num_backends; i++) {
+            auto * reg = ggml_backend_reg_get(i);
+            printf("Backend %d: %s\n", i, ggml_backend_reg_name(reg));
+        }
+        // connect_rpc_servers("127.0.0.1:7777");
 
         llama_model_params model_params = llama_model_default_params();
         llama_context_params llama_ctx_params = llama_context_default_params();
