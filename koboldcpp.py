@@ -351,7 +351,8 @@ class generation_inputs(ctypes.Structure):
                 ("logit_biases", ctypes.POINTER(logit_bias)),
                 ("banned_tokens_len", ctypes.c_int),
                 ("banned_tokens", ctypes.POINTER(ctypes.c_char_p)),
-                ("reasoning_budget", ctypes.c_int)]
+                ("reasoning_budget", ctypes.c_int),
+                ("blue_noise", ctypes.c_bool)]
 
 class generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2055,6 +2056,7 @@ def generate(genparams, stream_flag=False):
     xtc_threshold = tryparsefloat(genparams.get('xtc_threshold', 0.2),0.2)
     xtc_probability = tryparsefloat(genparams.get('xtc_probability', 0),0)
     sampler_order = genparams.get('sampler_order', [6, 0, 1, 3, 4, 2, 5])
+    blue_noise = genparams.get('blue_noise', False)
     seed = tryparseint(genparams.get('sampler_seed', -1),-1)
     stop_sequence = genparams.get('stop_sequence', [])
     ban_eos_token = genparams.get('ban_eos_token', False)
@@ -2161,6 +2163,7 @@ def generate(genparams, stream_flag=False):
     inputs.smoothing_curve = smoothing_curve
     inputs.adaptive_target = adaptive_target
     inputs.adaptive_decay = adaptive_decay
+    inputs.blue_noise = bool(blue_noise)
     inputs.grammar = grammar.encode("UTF-8")
     inputs.grammar_retain_state = grammar_retain_state
     inputs.allow_eos_token = not ban_eos_token

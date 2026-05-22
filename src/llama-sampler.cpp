@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <memory>
 #include <numeric>
 #include <random>
 #include <unordered_map>
@@ -345,6 +346,138 @@ static uint32_t get_rng_seed(uint32_t seed) {
     }
     return seed;
 }
+
+// abstract RNG interface for the dist sampler
+struct llama_dist_rng {
+    virtual ~llama_dist_rng() = default;
+
+    virtual bool                            requires_sorted()  = 0;
+    virtual uint32_t                        next32()           = 0;
+    virtual uint64_t                        next64()           = 0;
+    virtual double                          nextf()            = 0;
+    virtual void                            reseed(uint32_t s) = 0;
+    virtual std::unique_ptr<llama_dist_rng> clone() const      = 0;
+};
+
+// Generative error diffusion for sequential blue noise, adapted from
+// kaetemi/llama.cpp feature/blue-noise.
+struct blue_noise_rng {
+    uint8_t bit_depth = 0;
+    std::unique_ptr<llama_dist_rng> rng;
+    std::vector<std::array<int8_t, 2>> states;
+
+    blue_noise_rng(uint8_t bit_depth, std::unique_ptr<llama_dist_rng> rng) {
+        init(bit_depth, std::move(rng));
+    }
+
+    blue_noise_rng(const blue_noise_rng & other)
+        : bit_depth(other.bit_depth)
+        , rng(other.rng ? other.rng->clone() : nullptr)
+        , states(other.states) {}
+
+    void init(uint8_t depth, std::unique_ptr<llama_dist_rng> source) {
+        bit_depth = std::clamp<uint8_t>(depth, 1, 16);
+        rng = std::move(source);
+        states.resize((1 << bit_depth) - 1);
+        reset_states();
+    }
+
+    void reseed(uint32_t s) {
+        rng->reseed(s);
+        reset_states();
+    }
+
+    void reset_states() {
+        static const int8_t tbl[10][2] = {
+            { 0,  0}, { 0,  0}, { 0,  0},
+            {-1,  0}, {-1,  0}, {-1,  0},
+            { 0, -1}, { 0, -1},
+            {-2,  0},
+            {-1, -1},
+        };
+
+        for (auto & state : states) {
+            uint32_t h = (uint32_t)(((uint64_t) rng->next32() * 10) >> 32);
+            state = { tbl[h][0], tbl[h][1] };
+        }
+    }
+
+    uint16_t advance(uint32_t h) {
+        uint32_t acc = 0;
+        for (int level = 0; level < bit_depth; level++) {
+            auto & s = states[(1 << level) - 1 + acc];
+
+            int    out = (s[0] >= 0) ? 1 : 0;
+            int8_t qe  = s[0] + (int8_t) (out ? -1 : 1);
+
+            s[0] = s[1];
+            s[1] = 0;
+            s[(h >> (31 - level)) & 1 ? 0 : 1] += qe;
+
+            acc = acc * 2 + out;
+        }
+        return (uint16_t) acc;
+    }
+
+    uint32_t next32() {
+        uint32_t h = rng->next32();
+        uint32_t val = advance(h);
+        return (val << (32 - bit_depth)) | (h & ((1u << (32 - bit_depth)) - 1));
+    }
+
+    uint64_t next64() {
+        uint64_t r = rng->next64();
+        uint32_t val = advance((uint32_t) (r >> 32));
+        return ((uint64_t) val << (64 - bit_depth)) | (r & ((UINT64_C(1) << (64 - bit_depth)) - 1));
+    }
+
+    double nextf() {
+        uint64_t combined = next64();
+        return (combined >> 11) * 0x1.0p-53;
+    }
+};
+
+struct llama_dist_rng_mt19937 : llama_dist_rng {
+    uint32_t seed;
+    std::mt19937 rng;
+
+    llama_dist_rng_mt19937(uint32_t seed) : seed(seed), rng(seed) {}
+
+    bool requires_sorted() override { return false; }
+    uint32_t next32() override { return rng(); }
+    uint64_t next64() override { return ((uint64_t) rng() << 32) | (uint64_t) rng(); }
+
+    double nextf() override {
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
+        return dist(rng);
+    }
+
+    void reseed(uint32_t s) override {
+        seed = s;
+        rng.seed(s);
+    }
+
+    std::unique_ptr<llama_dist_rng> clone() const override {
+        return std::make_unique<llama_dist_rng_mt19937>(*this);
+    }
+};
+
+struct llama_dist_rng_blue : llama_dist_rng {
+    blue_noise_rng bn_rng;
+
+    llama_dist_rng_blue(std::unique_ptr<llama_dist_rng> source)
+        : bn_rng(16, std::move(source)) {}
+
+    bool requires_sorted() override { return true; }
+    uint32_t next32() override { return bn_rng.next32(); }
+    uint64_t next64() override { return bn_rng.next64(); }
+    double nextf() override { return bn_rng.nextf(); }
+    void reseed(uint32_t s) override { bn_rng.reseed(s); }
+
+    std::unique_ptr<llama_dist_rng> clone() const override {
+        return std::make_unique<llama_dist_rng_blue>(*this);
+    }
+};
 
 // llama_sampler API
 
@@ -1023,7 +1156,7 @@ struct llama_sampler_dist : public llama_sampler_backend {
     const uint32_t seed;
           uint32_t seed_cur;
 
-    std::mt19937 rng;
+    std::unique_ptr<llama_dist_rng> rng;
 
     ggml_tensor * inp_uniform;
 };
@@ -1049,6 +1182,10 @@ static void llama_sampler_dist_apply(struct llama_sampler * smpl, llama_token_da
         return;
     }
 
+    if (ctx->rng->requires_sorted() && !cur_p->sorted) {
+        llama_token_data_array_partial_sort_inplace(cur_p, cur_p->size);
+    }
+
     // max logit for numerical stability
     float max_l = cur_p->data[0].logit;
     if (!cur_p->sorted) {
@@ -1069,8 +1206,7 @@ static void llama_sampler_dist_apply(struct llama_sampler * smpl, llama_token_da
     // sample from the obtained probabilities and normalize the probs in a single pass
     // this is ~3x faster on Mac with full gpt-oss vocab than the version below
     //
-    std::uniform_real_distribution<double> dist(0.0f, 1.0f);
-    const double rnd = dist(ctx->rng);
+    const double rnd = ctx->rng->nextf();
 
           double sum_run = 0.0f;
     const double sum_tgt = sum_cum*rnd;
@@ -1108,21 +1244,21 @@ static void llama_sampler_dist_apply(struct llama_sampler * smpl, llama_token_da
 static void llama_sampler_dist_reset(struct llama_sampler * smpl) {
     auto * ctx = (llama_sampler_dist *) smpl->ctx;
     ctx->seed_cur = get_rng_seed(ctx->seed);
-    ctx->rng.seed(ctx->seed_cur);
+    ctx->rng->reseed(ctx->seed_cur);
 }
 
 static struct llama_sampler * llama_sampler_dist_clone(const struct llama_sampler * smpl) {
     const auto * ctx = (const llama_sampler_dist *) smpl->ctx;
-    auto * result = llama_sampler_init_dist(ctx->seed);
-
-    // copy the state
-    {
-        auto * result_ctx = (llama_sampler_dist *) result->ctx;
-
-        result_ctx->rng = ctx->rng;
-    }
-
-    return result;
+    return llama_sampler_init(
+        /* .iface = */ smpl->iface,
+        /* .ctx   = */ new llama_sampler_dist {
+            {"dist"},
+            /* .seed        = */ ctx->seed,
+            /* .seed_cur    = */ ctx->seed_cur,
+            /* .rng         = */ ctx->rng->clone(),
+            /* .inp_uniform = */ nullptr,
+        }
+    );
 }
 
 static void llama_sampler_dist_free(struct llama_sampler * smpl) {
@@ -1153,6 +1289,28 @@ static void llama_sampler_dist_backend_apply(
     sctx->inp_uniform = ggml_new_tensor_1d(ctx, GGML_TYPE_F32, 1);
     ggml_set_name (sctx->inp_uniform, "uniform");
     ggml_set_input(sctx->inp_uniform);
+
+    if (sctx->rng->requires_sorted()) {
+        auto ggml_sort = [ctx](struct ggml_tensor * a, struct ggml_tensor * b) {
+            GGML_ASSERT(ggml_nrows(a) == 1);
+            struct ggml_tensor * a_reshaped = ggml_reshape_2d(ctx, a, 1, a->ne[0]);
+            struct ggml_tensor * a_sorted   = ggml_get_rows(ctx, a_reshaped, b);
+            return ggml_reshape_1d(ctx, a_sorted, a->ne[0]);
+        };
+
+        struct ggml_tensor * sorted_idx = ggml_argsort(ctx, data->logits, GGML_SORT_ORDER_DESC);
+        ggml_set_name(sorted_idx, "dist_sorted_idx");
+
+        data->logits = ggml_sort(data->logits, sorted_idx);
+        ggml_set_name(data->logits, "dist_sorted_logits");
+
+        if (data->candidates) {
+            data->candidates = ggml_sort(data->candidates, sorted_idx);
+        } else {
+            data->candidates = sorted_idx;
+        }
+        ggml_set_name(data->candidates, "dist_sorted_candidates");
+    }
 
     struct ggml_tensor * probs = ggml_soft_max(ctx, data->logits);
     ggml_set_name(probs, "dist_probs");
@@ -1204,12 +1362,8 @@ static void llama_sampler_dist_backend_set_input(struct llama_sampler * smpl) {
     GGML_ASSERT(sctx->inp_uniform != nullptr);
 
     // We sample in double precision and cast to float to match rnd numbers of
-    // llama_dampler_dist which uses double precision (sampling from
-    // std::uniform_real_distribution<double> and
-    // std::uniform_real_distribution<float> with same rng will produce
-    // different sequences).
-    std::uniform_real_distribution<double> dist(0.0f, 1.0f);
-    const float rnd = dist(sctx->rng);
+    // llama_sampler_dist, which uses double precision.
+    const float rnd = (float) sctx->rng->nextf();
 
     ggml_backend_tensor_set(sctx->inp_uniform, &rnd, 0, sizeof(float));
 }
@@ -1227,7 +1381,15 @@ static struct llama_sampler_i llama_sampler_dist_i = {
     /* .backend_set_input = */ llama_sampler_dist_backend_set_input,
 };
 
-struct llama_sampler * llama_sampler_init_dist(uint32_t seed) {
+static std::unique_ptr<llama_dist_rng> llama_sampler_make_dist_rng(uint32_t seed, bool blue_noise) {
+    auto rng = std::make_unique<llama_dist_rng_mt19937>(seed);
+    if (blue_noise) {
+        return std::make_unique<llama_dist_rng_blue>(std::move(rng));
+    }
+    return rng;
+}
+
+static struct llama_sampler * llama_sampler_init_dist_impl(uint32_t seed, bool blue_noise) {
     auto seed_cur = get_rng_seed(seed);
     return llama_sampler_init(
         /* .iface = */ &llama_sampler_dist_i,
@@ -1235,10 +1397,18 @@ struct llama_sampler * llama_sampler_init_dist(uint32_t seed) {
             ("dist"),
             /* .seed        = */ seed,
             /* .seed_cur    = */ seed_cur,
-            /* .rng         = */ std::mt19937(seed_cur),
+            /* .rng         = */ llama_sampler_make_dist_rng(seed_cur, blue_noise),
             /* .inp_uniform = */ nullptr,
         }
     );
+}
+
+struct llama_sampler * llama_sampler_init_dist(uint32_t seed) {
+    return llama_sampler_init_dist_impl(seed, false);
+}
+
+struct llama_sampler * llama_sampler_init_dist_blue(uint32_t seed) {
+    return llama_sampler_init_dist_impl(seed, true);
 }
 
 // top-k

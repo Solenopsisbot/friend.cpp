@@ -469,6 +469,18 @@ const SETTINGS_REGISTRY: Record<string, SettingsSectionEntry> = {
 					serverKey: SETTINGS_KEYS.BACKEND_SAMPLING,
 					paramType: SyncableParameterType.BOOLEAN
 				}
+			},
+			{
+				key: SETTINGS_KEYS.BLUE_NOISE,
+				label: 'Blue noise',
+				help: 'Use blue-noise RNG for token sampling instead of white-noise RNG.',
+				defaultValue: false,
+				type: SettingsFieldType.CHECKBOX,
+				section: SETTINGS_SECTION_SLUGS.SAMPLING,
+				sync: {
+					serverKey: SETTINGS_KEYS.BLUE_NOISE,
+					paramType: SyncableParameterType.BOOLEAN
+				}
 			}
 		]
 	},

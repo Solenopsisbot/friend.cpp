@@ -144,6 +144,7 @@ struct generation_inputs
     const int banned_tokens_len = 0;
     const char ** banned_tokens = nullptr;
     const int reasoning_budget = -1;
+    const bool blue_noise = false;
 };
 struct generation_outputs
 {
