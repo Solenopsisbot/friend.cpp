@@ -1672,6 +1672,7 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, musiclowvram): #shitty algo to d
                         fsize *= total_parts
 
             calulated_gpu_overhead = 0
+            unsubmitted_overhead = 0 #this overhead is used to calculate for local estimate but not sent to backend
             musicoh1 = 0
             musicoh2 = 0
             if modelfile_extracted_meta[3] > 1024*1024*1024*5: #sdxl tax
@@ -1680,8 +1681,8 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, musiclowvram): #shitty algo to d
                 calulated_gpu_overhead += 1024*1024*1024*(4.25 - sdquanted * 0.5) # 4.25, 3.75, 3.25
             if modelfile_extracted_meta[4] > 1024*1024*10: #whisper tax
                 calulated_gpu_overhead += max(350*1024*1024,modelfile_extracted_meta[4]*1.5)
-            # if modelfile_extracted_meta[5] > 1024*1024*10: #mmproj tax (now internal to kcpp)
-            #     calulated_gpu_overhead += max(350*1024*1024,modelfile_extracted_meta[5]*1.5)
+            if modelfile_extracted_meta[5] > 1024*1024*10: #mmproj tax (now internal to kcpp)
+                unsubmitted_overhead += max(350*1024*1024,modelfile_extracted_meta[5]*1.5)
             if modelfile_extracted_meta[6] > 1024*1024*10: #draft model tax
                 calulated_gpu_overhead += (modelfile_extracted_meta[6] * 1.5)
             if modelfile_extracted_meta[7] > 1024*1024*10: #tts model tax
@@ -1701,6 +1702,7 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, musiclowvram): #shitty algo to d
                 calulated_gpu_overhead += musicoh1 + musicoh2
 
             mem -= calulated_gpu_overhead
+            mem -= unsubmitted_overhead
             mem = 0 if mem < 0 else mem
 
             csmul = (cs/4096) if cs >= 8192 else 1.8 if cs > 4096 else 1.2 if cs > 2048 else 1.0
