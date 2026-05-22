@@ -90,6 +90,7 @@ export interface SettingsChatServiceOptions {
 	// Sampler configuration
 	samplers?: string | string[];
 	backend_sampling?: boolean;
+	blue_noise?: boolean;
 	// Custom parameters
 	custom?: string;
 	timings_per_token?: boolean;

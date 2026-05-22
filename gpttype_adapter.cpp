@@ -23,6 +23,7 @@
 #include <locale>
 #include <chrono>
 #include <algorithm>
+#include <array>
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -906,19 +907,95 @@ void sample_top_k(llama_token_data_array * cur_p, int32_t k) {
     cur_p->size = k;
 }
 
-llama_token sample_token(llama_token_data_array * candidates, std::mt19937 & rng)
-{
-    sample_softmax(candidates);
-    std::vector<float> probs;
-    probs.reserve(candidates->size);
-    TopPicksData newpick;
+struct BlueNoiseRng {
+    uint8_t bit_depth = 16;
+    std::mt19937 * rng = nullptr;
+    std::vector<std::array<int8_t, 2>> states;
 
-    for (size_t i = 0; i < candidates->size; ++i) {
-        probs.push_back(candidates->data[i].p);
+    BlueNoiseRng(std::mt19937 & source) : rng(&source), states((1 << bit_depth) - 1) {
+        reset_states();
     }
 
-    std::discrete_distribution<> dist(probs.begin(), probs.end());
-    int idx = dist(rng);
+    uint32_t next32_white() {
+        return (*rng)();
+    }
+
+    uint64_t next64_white() {
+        return ((uint64_t) next32_white() << 32) | (uint64_t) next32_white();
+    }
+
+    void reset_states() {
+        static const int8_t tbl[10][2] = {
+            { 0,  0}, { 0,  0}, { 0,  0},
+            {-1,  0}, {-1,  0}, {-1,  0},
+            { 0, -1}, { 0, -1},
+            {-2,  0},
+            {-1, -1},
+        };
+
+        for (auto & state : states) {
+            uint32_t h = (uint32_t) (((uint64_t) next32_white() * 10) >> 32);
+            state = { tbl[h][0], tbl[h][1] };
+        }
+    }
+
+    uint16_t advance(uint32_t h) {
+        uint32_t acc = 0;
+        for (int level = 0; level < bit_depth; level++) {
+            auto & s = states[(1 << level) - 1 + acc];
+
+            int    out = (s[0] >= 0) ? 1 : 0;
+            int8_t qe  = s[0] + (int8_t) (out ? -1 : 1);
+
+            s[0] = s[1];
+            s[1] = 0;
+            s[(h >> (31 - level)) & 1 ? 0 : 1] += qe;
+
+            acc = acc * 2 + out;
+        }
+        return (uint16_t) acc;
+    }
+
+    uint64_t next64() {
+        uint64_t r = next64_white();
+        uint32_t val = advance((uint32_t) (r >> 32));
+        return ((uint64_t) val << (64 - bit_depth)) | (r & ((UINT64_C(1) << (64 - bit_depth)) - 1));
+    }
+
+    double nextf() {
+        uint64_t combined = next64();
+        return (combined >> 11) * 0x1.0p-53;
+    }
+};
+
+llama_token sample_token(llama_token_data_array * candidates, std::mt19937 & rng, BlueNoiseRng * blue_noise_rng = nullptr)
+{
+    sample_softmax(candidates);
+    TopPicksData newpick;
+
+    int idx = 0;
+    if (blue_noise_rng) {
+        double sum_run = 0.0;
+        const double rnd = blue_noise_rng->nextf();
+        idx = (int) candidates->size - 1;
+
+        for (size_t i = 0; i < candidates->size; ++i) {
+            sum_run += candidates->data[i].p;
+            if (sum_run >= rnd) {
+                idx = (int) i;
+                break;
+            }
+        }
+    } else {
+        std::vector<float> probs;
+        probs.reserve(candidates->size);
+        for (size_t i = 0; i < candidates->size; ++i) {
+            probs.push_back(candidates->data[i].p);
+        }
+
+        std::discrete_distribution<> dist(probs.begin(), probs.end());
+        idx = dist(rng);
+    }
 
     newpick.selected_token = FileFormatTokenizeID(candidates->data[idx].id, file_format, true);
     float rp1 = (candidates->data[idx].p<=0.0001?0.0001f:candidates->data[idx].p);
@@ -946,7 +1023,7 @@ llama_token sample_token(llama_token_data_array * candidates, std::mt19937 & rng
     return result;
 }
 
-llama_token sample_token_mirostat(int n_vocab, llama_token_data_array * candidates, std::mt19937 & rng, float tau, float eta, int m, float * mu)
+llama_token sample_token_mirostat(int n_vocab, llama_token_data_array * candidates, std::mt19937 & rng, float tau, float eta, int m, float * mu, BlueNoiseRng * blue_noise_rng = nullptr)
 {
     float N = float(n_vocab);
     sample_softmax(candidates);
@@ -966,7 +1043,7 @@ llama_token sample_token_mirostat(int n_vocab, llama_token_data_array * candidat
     float k = powf((epsilon_hat * powf(2, *mu)) / (1 - powf(N, -epsilon_hat)), 1 / s_hat);
     // Sample the next word X using top-k sampling
     sample_top_k(candidates, int(k));
-    llama_token X = sample_token(candidates, rng);    // Compute error as the difference between observed surprise and target surprise value
+    llama_token X = sample_token(candidates, rng, blue_noise_rng);    // Compute error as the difference between observed surprise and target surprise value
     size_t X_idx = std::distance(candidates->data, std::find_if(candidates->data, candidates->data + candidates->size, [&](const llama_token_data & candidate) {
         return candidate.id == X;
     }));
@@ -977,7 +1054,7 @@ llama_token sample_token_mirostat(int n_vocab, llama_token_data_array * candidat
     return X;
 }
 
-llama_token sample_token_mirostat_v2(llama_token_data_array * candidates, std::mt19937 & rng, float tau, float eta, float * mu)
+llama_token sample_token_mirostat_v2(llama_token_data_array * candidates, std::mt19937 & rng, float tau, float eta, float * mu, BlueNoiseRng * blue_noise_rng = nullptr)
 {
     sample_softmax(candidates);
     // Truncate the words with surprise values greater than mu
@@ -992,7 +1069,7 @@ llama_token sample_token_mirostat_v2(llama_token_data_array * candidates, std::m
     // Normalize the probabilities of the remaining words
     sample_softmax(candidates);
     // Sample the next word X from the remaining words
-    llama_token X = sample_token(candidates,rng);
+    llama_token X = sample_token(candidates, rng, blue_noise_rng);
 
     // Compute error as the difference between observed surprise and target surprise value
     size_t X_idx = std::distance(candidates->data, std::find_if(candidates->data, candidates->data + candidates->size, [&](const llama_token_data & candidate) {
@@ -1820,7 +1897,7 @@ static int apply_reasoning_budget(int id, const std::vector<int> & start_think, 
 int SampleLogits(const float * logits, int n_ctx, int n_vocab, int rep_pen_range, float rep_pen, float rep_pen_slope, float presence_penalty, float top_k, float top_a, float top_p, float min_p, float typical_p, float tfs, float nsigma, float temp, std::mt19937 & rng,
 int mirostat, float mirostat_tau, float mirostat_eta, float dry_multiplier, float dry_base, int dry_allowed_length, int dry_penalty_last_n, float xtc_threshold, float xtc_probability,
 const std::vector<samplers> & sampler_order, llama_grammar * grammar, float dynatemp_range, float dynatemp_exponent, float smoothing_factor, float smoothing_curve, float adaptive_target,
-const std::vector<int> & think_start_seq, const std::vector<int> & think_end_seq, std::vector<int> & think_end_phrase_toks, int reasoning_budget)
+const std::vector<int> & think_start_seq, const std::vector<int> & think_end_seq, std::vector<int> & think_end_phrase_toks, int reasoning_budget, BlueNoiseRng * blue_noise_rng)
 {
     // printf("SampleLogits called with: n_ctx=%d, n_vocab=%d, rep_pen_range=%d, rep_pen=%f, rep_pen_slope=%f, presence_penalty=%f, top_k=%f, top_a=%f, top_p=%f, min_p=%f, typical_p=%f, tfs=%f, nsigma=%f, temp=%f, mirostat=%d, mirostat_tau=%f, mirostat_eta=%f, dry_multiplier=%f, dry_base=%f, dry_allowed_length=%d, dry_penalty_last_n=%d, xtc_threshold=%f, xtc_probability=%f, sampler_order_size=%zu, dynatemp_range=%f, dynatemp_exponent=%f, smoothing_factor=%f\n",
     // n_ctx, n_vocab, rep_pen_range, rep_pen, rep_pen_slope, presence_penalty, top_k, top_a, top_p, min_p, typical_p, tfs, nsigma, temp, mirostat, mirostat_tau, mirostat_eta, dry_multiplier, dry_base, dry_allowed_length, dry_penalty_last_n, xtc_threshold, xtc_probability, sampler_order.size(), dynatemp_range, dynatemp_exponent, smoothing_factor);
@@ -1849,7 +1926,7 @@ const std::vector<int> & think_start_seq, const std::vector<int> & think_end_seq
         }
         candidates[newid].logit += 99999;
         sample_top_k(&candidates_p, 1);
-        id = sample_token(&candidates_p, rng);
+        id = sample_token(&candidates_p, rng, blue_noise_rng);
         return id;
     }
 
@@ -1880,11 +1957,11 @@ const std::vector<int> & think_start_seq, const std::vector<int> & think_end_seq
         sample_temperature(&candidates_p, temp, smoothing_factor, smoothing_curve);
         if (mirostat == 1)
         {
-            id = sample_token_mirostat(n_vocab, &candidates_p, rng, mirostat_tau, mirostat_eta, mirostat_m, &mirostat_mu);
+            id = sample_token_mirostat(n_vocab, &candidates_p, rng, mirostat_tau, mirostat_eta, mirostat_m, &mirostat_mu, blue_noise_rng);
         }
         else
         {
-            id = sample_token_mirostat_v2(&candidates_p, rng, mirostat_tau, mirostat_eta, &mirostat_mu);
+            id = sample_token_mirostat_v2(&candidates_p, rng, mirostat_tau, mirostat_eta, &mirostat_mu, blue_noise_rng);
         }
     }
     else
@@ -1941,7 +2018,7 @@ const std::vector<int> & think_start_seq, const std::vector<int> & think_end_seq
         sample_xtc(&candidates_p, xtc_threshold, xtc_probability, rng);
         //adaptive p must be last, it messes up all probs
         sample_adaptive_p(adaptive_target, adaptive_p_weighted_sum, adaptive_p_total_weight, &candidates_p);
-        id = sample_token(&candidates_p, rng);
+        id = sample_token(&candidates_p, rng, blue_noise_rng);
     }
 
     return id;
@@ -3435,6 +3512,7 @@ struct BatchGenerateRequest
     bool allow_eos_token = true;
     bool bypass_eos_token = false;
     bool render_special = false;
+    bool blue_noise = false;
     std::vector<llama_token> prompt_tokens;
     int prompt_pos = 0;
     int n_past = 0;
@@ -3768,7 +3846,8 @@ static llama_sampler * batch_build_sampler(const BatchGenerateRequest & req)
     if(req.temperature > 0.0f)
     {
         llama_sampler_chain_add(chain, llama_sampler_init_temp(req.temperature));
-        llama_sampler_chain_add(chain, llama_sampler_init_dist(req.seed < 0 ? LLAMA_DEFAULT_SEED : (uint32_t) req.seed));
+        uint32_t seed = req.seed < 0 ? LLAMA_DEFAULT_SEED : (uint32_t) req.seed;
+        llama_sampler_chain_add(chain, req.blue_noise ? llama_sampler_init_dist_blue(seed) : llama_sampler_init_dist(seed));
     }
     else
     {
@@ -4066,6 +4145,7 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     req->allow_eos_token = inputs.allow_eos_token;
     req->bypass_eos_token = inputs.bypass_eos_token;
     req->render_special = inputs.render_special;
+    req->blue_noise = inputs.blue_noise;
     req->logit_biases = {};
     for(int i = 0; i < inputs.logit_biases_len; ++i)
     {
@@ -4755,6 +4835,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     kcpp_data->adaptive_target = inputs.adaptive_target;
     kcpp_data->adaptive_decay = inputs.adaptive_decay;
     kcpp_data->reasoning_budget = inputs.reasoning_budget;
+    kcpp_data->blue_noise = inputs.blue_noise;
 
     adaptive_p_weighted_sum = 0;
     adaptive_p_total_weight = 0;
@@ -5297,6 +5378,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     remaining_tokens = kcpp_data->n_predict;
     int input_consumed = 0;
     std::mt19937 rng(kcpp_data->seed);
+    std::unique_ptr<BlueNoiseRng> blue_noise_rng;
+    if (kcpp_data->blue_noise) {
+        blue_noise_rng = std::make_unique<BlueNoiseRng>(rng);
+    }
 
     //do some reservation so we don't have to realloc
     generated_tokens.reserve(remaining_tokens+16);
@@ -5787,7 +5872,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 kcpp_data->dry_multiplier, kcpp_data->dry_base,
                 kcpp_data->dry_allowed_length, kcpp_data->dry_penalty_last_n, kcpp_data->xtc_threshold, kcpp_data->xtc_probability,
                 sampler_order, grammar, dynatemp_range, dynatemp_exponent, smoothing_factor, smoothing_curve, adaptive_target,
-                thinking_start_sequence, thinking_end_sequence, thinking_end_phrase_toksleft, kcpp_data->reasoning_budget);
+                thinking_start_sequence, thinking_end_sequence, thinking_end_phrase_toksleft, kcpp_data->reasoning_budget,
+                blue_noise_rng.get());
 
                 if (adaptive_target > 0.0f) {
                     float original_prob = original_candidates[id].p;

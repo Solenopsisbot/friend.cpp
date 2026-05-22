@@ -42,6 +42,7 @@ export const SETTINGS_KEYS = {
 	MAX_TOKENS: 'max_tokens',
 	SAMPLERS: 'samplers',
 	BACKEND_SAMPLING: 'backend_sampling',
+	BLUE_NOISE: 'blue_noise',
 	// Penalties
 	REPEAT_LAST_N: 'repeat_last_n',
 	REPEAT_PENALTY: 'repeat_penalty',
