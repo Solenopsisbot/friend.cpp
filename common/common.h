@@ -280,6 +280,8 @@ struct common_params_sampling {
     std::string              reasoning_budget_message;         // message injected before end tag when budget exhausted
 
     bool backend_sampling = false;
+    bool blue_noise = false;
+    enum llama_rng_type rng_type = LLAMA_RNG_TYPE_MT19937;
 
     bool has_logit_bias() const {
         return !logit_bias.empty();

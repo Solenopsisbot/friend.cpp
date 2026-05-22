@@ -1808,6 +1808,8 @@ class ChatStore {
 		if (currentConfig.samplers) apiOptions.samplers = currentConfig.samplers;
 
 		apiOptions.backend_sampling = currentConfig.backend_sampling;
+		apiOptions.blue_noise = currentConfig.blue_noise;
+		if (currentConfig.rng_type) apiOptions.rng_type = currentConfig.rng_type;
 
 		if (currentConfig.custom) apiOptions.custom = currentConfig.custom;
 

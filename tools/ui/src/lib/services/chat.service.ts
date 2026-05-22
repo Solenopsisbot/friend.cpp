@@ -126,6 +126,8 @@ export class ChatService {
 			// Other parameters
 			samplers,
 			backend_sampling,
+			blue_noise,
+			rng_type,
 			custom,
 			timings_per_token,
 			// Config options
@@ -247,6 +249,8 @@ export class ChatService {
 		}
 
 		if (backend_sampling !== undefined) requestBody.backend_sampling = backend_sampling;
+		if (blue_noise !== undefined) requestBody.blue_noise = blue_noise;
+		if (rng_type !== undefined) requestBody.rng_type = rng_type;
 
 		if (timings_per_token !== undefined) requestBody.timings_per_token = timings_per_token;
 

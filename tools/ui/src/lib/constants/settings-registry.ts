@@ -481,6 +481,18 @@ const SETTINGS_REGISTRY: Record<string, SettingsSectionEntry> = {
 					serverKey: SETTINGS_KEYS.BLUE_NOISE,
 					paramType: SyncableParameterType.BOOLEAN
 				}
+			},
+			{
+				key: SETTINGS_KEYS.RNG_TYPE,
+				label: 'RNG type',
+				help: 'Token sampling RNG source. Use mt19937 for the standard RNG or lowbias32 for the low-bias counter RNG.',
+				defaultValue: 'mt19937',
+				type: SettingsFieldType.INPUT,
+				section: SETTINGS_SECTION_SLUGS.SAMPLING,
+				sync: {
+					serverKey: SETTINGS_KEYS.RNG_TYPE,
+					paramType: SyncableParameterType.STRING
+				}
 			}
 		]
 	},

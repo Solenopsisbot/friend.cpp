@@ -56,6 +56,7 @@ struct kcpp_params {
     float adaptive_decay      = 0.9f;
     int reasoning_budget       = 0; //if > 0, controls thinking budget
     bool blue_noise            = false; // use blue-noise RNG for token sampling
+    int rng_type               = 0; // 0 = mt19937, 1 = lowbias32
 
     std::string model_filename       = ""; // model path
     std::string prompt               = "";
