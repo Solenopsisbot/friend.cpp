@@ -2216,6 +2216,46 @@ void kcpp_init_audio_proj(clip_ctx * ctx_a)
     audio_preproc->initialize();
 }
 
+clip_context_params init_clip_ctx_params(bool mmproj_cpu, bool dryrun)
+{
+    #if defined(GGML_USE_METAL)
+    if(file_format_meta.model_architecture == llm_arch::LLM_ARCH_QWEN2VL || file_format_meta.model_architecture == llm_arch::LLM_ARCH_GEMMA3)
+    {
+        mmproj_cpu = true;
+        if(!dryrun)
+        {
+            set_clip_uses_gpu(false);
+            printf("Clip will use CPU for this model!\n");
+        }
+    }
+    #endif
+    clip_flash_attn_type clip_fa = (kcpp_data->flash_attn?CLIP_FLASH_ATTN_TYPE_ENABLED:CLIP_FLASH_ATTN_TYPE_DISABLED); //kcpp: disabled in 1.102.2 as some headsizes break on turing
+    #if defined(GGML_USE_CUDA)
+    clip_fa = CLIP_FLASH_ATTN_TYPE_DISABLED; //kcpp: disabled in 1.102.2 as some headsizes break on turing
+    #endif
+    if(mmproj_cpu)
+    {
+        if(!dryrun)
+        {
+            set_clip_uses_gpu(false);
+            printf("Clip forced to use CPU!\n");
+        }
+        clip_fa = (kcpp_data->flash_attn?CLIP_FLASH_ATTN_TYPE_ENABLED:CLIP_FLASH_ATTN_TYPE_DISABLED); //however if using CPU, fa is fine
+    }
+    clip_context_params ctx_clip_params {
+        /* use_gpu           */ true,
+        /* flash_attn_type   */ clip_fa,
+        /* image_min_tokens  */ kcpp_data->vision_min_tokens,
+        /* image_max_tokens  */ kcpp_data->vision_max_tokens,
+        /* warmup            */ false,
+        /* cb_eval           */ nullptr,
+        /* cb_eval_user_data */ nullptr,
+        /* no_alloc          */ dryrun?true:false,
+    };
+
+    return ctx_clip_params;
+}
+
 ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in_file_format, FileFormatExtraMeta in_file_format_meta)
 {
     is_quiet = inputs.quiet;
@@ -2659,8 +2699,41 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             rocblas_initialize();
             #endif // defined(GGML_USE_HIP)
 
+            size_t totalmmprojtax = 0;
+            if(mmproj_filename != "" && file_format==FileFormat::GGUF_GENERIC && !inputs.mmproj_cpu)
+            {
+                printf("\nEstimating MMProj GPU usage...");
+                auto saved_log_callback = g_logger_state.log_callback;
+                auto saved_log_user_data = g_logger_state.log_callback_user_data;
+                g_logger_state.log_callback = log_callback_off;
+                g_logger_state.log_callback_user_data = nullptr;
+                clip_context_params ctx_clip_params = init_clip_ctx_params(inputs.mmproj_cpu,true);
+                clip_init_result cres = clip_init(mmproj_filename.c_str(), ctx_clip_params);
+                g_logger_state.log_callback = saved_log_callback;
+                g_logger_state.log_callback_user_data = saved_log_user_data;
+                clip_ctx * test1 = cres.ctx_v;
+                clip_ctx * test2 = cres.ctx_a;
+
+                if(test1)
+                {
+                    for (auto & [dev, size] : clip_get_mem_usage(test1)) {
+                        totalmmprojtax += size;
+                    }
+                    clip_free(test1);
+                }
+                if(test2)
+                {
+                    for (auto & [dev, size] : clip_get_mem_usage(test2)) {
+                        totalmmprojtax += size;
+                    }
+                    clip_free(test2);
+                }
+                totalmmprojtax = totalmmprojtax / (1024*1024);
+                printf("MMProj Autofit Usage: %zu MB", totalmmprojtax);
+            }
+
             common_params temp_params;
-            size_t taxmb = inputs.autofit_tax_mb;
+            size_t taxmb = inputs.autofit_tax_mb + totalmmprojtax;
             printf("\nAttempting to use llama.cpp's automating fitting code. This will override all your layer configs, may or may not work!\n");
             //zero out any customizations made
             tenos.clear();
@@ -2821,29 +2894,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         if(mmproj_filename != "" && file_format==FileFormat::GGUF_GENERIC)
         {
             printf("\nAttempting to apply Multimodal Projector: %s\n", mmproj_filename.c_str());
-            #if defined(GGML_USE_METAL)
-            if(file_format_meta.model_architecture == llm_arch::LLM_ARCH_QWEN2VL || file_format_meta.model_architecture == llm_arch::LLM_ARCH_GEMMA3)
-            {
-                set_clip_uses_gpu(false);
-                printf("Clip will use CPU for this model!\n");
-            }
-            #endif
-            clip_flash_attn_type clip_fa = (kcpp_data->flash_attn?CLIP_FLASH_ATTN_TYPE_ENABLED:CLIP_FLASH_ATTN_TYPE_DISABLED); //kcpp: disabled in 1.102.2 as some headsizes break on turing
-            #if defined(GGML_USE_CUDA)
-            clip_fa = CLIP_FLASH_ATTN_TYPE_DISABLED; //kcpp: disabled in 1.102.2 as some headsizes break on turing
-            #endif
-            if(inputs.mmproj_cpu)
-            {
-                set_clip_uses_gpu(false);
-                printf("Clip forced to use CPU!\n");
-                clip_fa = (kcpp_data->flash_attn?CLIP_FLASH_ATTN_TYPE_ENABLED:CLIP_FLASH_ATTN_TYPE_DISABLED); //however if using CPU, fa is fine
-            }
-            clip_context_params ctx_clip_params {
-                /* use_gpu           */ true,
-                /* flash_attn_type   */ clip_fa,
-                /* image_min_tokens  */ kcpp_data->vision_min_tokens,
-                /* image_max_tokens  */ kcpp_data->vision_max_tokens,
-            };
+            clip_context_params ctx_clip_params = init_clip_ctx_params(inputs.mmproj_cpu,false);
             clip_init_result cres = clip_init(mmproj_filename.c_str(), ctx_clip_params);
             clp_ctx_v = cres.ctx_v;
             clp_ctx_a = cres.ctx_a;

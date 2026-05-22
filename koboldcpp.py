@@ -1679,8 +1679,8 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, musiclowvram): #shitty algo to d
                 calulated_gpu_overhead += 1024*1024*1024*(4.25 - sdquanted * 0.5) # 4.25, 3.75, 3.25
             if modelfile_extracted_meta[4] > 1024*1024*10: #whisper tax
                 calulated_gpu_overhead += max(350*1024*1024,modelfile_extracted_meta[4]*1.5)
-            if modelfile_extracted_meta[5] > 1024*1024*10: #mmproj tax
-                calulated_gpu_overhead += max(350*1024*1024,modelfile_extracted_meta[5]*1.5)
+            # if modelfile_extracted_meta[5] > 1024*1024*10: #mmproj tax (now internal to kcpp)
+            #     calulated_gpu_overhead += max(350*1024*1024,modelfile_extracted_meta[5]*1.5)
             if modelfile_extracted_meta[6] > 1024*1024*10: #draft model tax
                 calulated_gpu_overhead += (modelfile_extracted_meta[6] * 1.5)
             if modelfile_extracted_meta[7] > 1024*1024*10: #tts model tax
