@@ -43,6 +43,7 @@ export const SETTINGS_KEYS = {
 	SAMPLERS: 'samplers',
 	BACKEND_SAMPLING: 'backend_sampling',
 	BLUE_NOISE: 'blue_noise',
+	RNG_TYPE: 'rng_type',
 	// Penalties
 	REPEAT_LAST_N: 'repeat_last_n',
 	REPEAT_PENALTY: 'repeat_penalty',

@@ -462,6 +462,48 @@ struct llama_dist_rng_mt19937 : llama_dist_rng {
     }
 };
 
+struct llama_dist_rng_lowbias32 : llama_dist_rng {
+    uint32_t hashed_seed = 0;
+    uint32_t position = 0;
+
+    llama_dist_rng_lowbias32(uint32_t seed) : hashed_seed(hash(seed)) {}
+
+    bool requires_sorted() override { return false; }
+
+    static uint32_t hash(uint32_t x) {
+        x ^= x >> 16; x *= 0x21f0aaad;
+        x ^= x >> 15; x *= 0x735a2d97;
+        x ^= x >> 15;
+        return x;
+    }
+
+    uint32_t next32() override {
+        uint32_t val = hash(position ^ hashed_seed);
+        position++;
+        return val;
+    }
+
+    uint64_t next64() override {
+        uint64_t lo = hash(position ^ ~hashed_seed);
+        uint64_t hi = next32();
+        return (hi << 32) | lo;
+    }
+
+    double nextf() override {
+        uint64_t combined = next64();
+        return (combined >> 11) * 0x1.0p-53;
+    }
+
+    void reseed(uint32_t s) override {
+        hashed_seed = hash(s);
+        position = 0;
+    }
+
+    std::unique_ptr<llama_dist_rng> clone() const override {
+        return std::make_unique<llama_dist_rng_lowbias32>(*this);
+    }
+};
+
 struct llama_dist_rng_blue : llama_dist_rng {
     blue_noise_rng bn_rng;
 
@@ -1381,15 +1423,24 @@ static struct llama_sampler_i llama_sampler_dist_i = {
     /* .backend_set_input = */ llama_sampler_dist_backend_set_input,
 };
 
-static std::unique_ptr<llama_dist_rng> llama_sampler_make_dist_rng(uint32_t seed, bool blue_noise) {
-    auto rng = std::make_unique<llama_dist_rng_mt19937>(seed);
+static std::unique_ptr<llama_dist_rng> llama_sampler_make_dist_rng(uint32_t seed, bool blue_noise, enum llama_rng_type rng_type) {
+    std::unique_ptr<llama_dist_rng> rng;
+    switch (rng_type) {
+        case LLAMA_RNG_TYPE_LOWBIAS32:
+            rng = std::make_unique<llama_dist_rng_lowbias32>(seed);
+            break;
+        case LLAMA_RNG_TYPE_MT19937:
+        default:
+            rng = std::make_unique<llama_dist_rng_mt19937>(seed);
+            break;
+    }
     if (blue_noise) {
         return std::make_unique<llama_dist_rng_blue>(std::move(rng));
     }
     return rng;
 }
 
-static struct llama_sampler * llama_sampler_init_dist_impl(uint32_t seed, bool blue_noise) {
+struct llama_sampler * llama_sampler_init_dist_rng(uint32_t seed, bool blue_noise, enum llama_rng_type rng_type) {
     auto seed_cur = get_rng_seed(seed);
     return llama_sampler_init(
         /* .iface = */ &llama_sampler_dist_i,
@@ -1397,18 +1448,18 @@ static struct llama_sampler * llama_sampler_init_dist_impl(uint32_t seed, bool b
             ("dist"),
             /* .seed        = */ seed,
             /* .seed_cur    = */ seed_cur,
-            /* .rng         = */ llama_sampler_make_dist_rng(seed_cur, blue_noise),
+            /* .rng         = */ llama_sampler_make_dist_rng(seed_cur, blue_noise, rng_type),
             /* .inp_uniform = */ nullptr,
         }
     );
 }
 
 struct llama_sampler * llama_sampler_init_dist(uint32_t seed) {
-    return llama_sampler_init_dist_impl(seed, false);
+    return llama_sampler_init_dist_rng(seed, false, LLAMA_RNG_TYPE_MT19937);
 }
 
 struct llama_sampler * llama_sampler_init_dist_blue(uint32_t seed) {
-    return llama_sampler_init_dist_impl(seed, true);
+    return llama_sampler_init_dist_rng(seed, true, LLAMA_RNG_TYPE_MT19937);
 }
 
 // top-k

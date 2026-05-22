@@ -194,6 +194,11 @@ extern "C" {
 
     LLAMA_API const char * llama_flash_attn_type_name(enum llama_flash_attn_type flash_attn_type);
 
+    enum llama_rng_type {
+        LLAMA_RNG_TYPE_MT19937   = 0,
+        LLAMA_RNG_TYPE_LOWBIAS32 = 1,
+    };
+
     enum llama_split_mode {
         LLAMA_SPLIT_MODE_NONE   = 0, // single GPU
         LLAMA_SPLIT_MODE_LAYER  = 1, // split layers and KV across GPUs
@@ -1312,6 +1317,7 @@ extern "C" {
 
     /// seed == LLAMA_DEFAULT_SEED to use a random seed.
     LLAMA_API struct llama_sampler * llama_sampler_init_dist(uint32_t seed);
+    LLAMA_API struct llama_sampler * llama_sampler_init_dist_rng(uint32_t seed, bool blue_noise, enum llama_rng_type rng_type);
     LLAMA_API struct llama_sampler * llama_sampler_init_dist_blue(uint32_t seed);
 
     /// @details Top-K sampling described in academic paper "The Curious Case of Neural Text Degeneration" https://arxiv.org/abs/1904.09751

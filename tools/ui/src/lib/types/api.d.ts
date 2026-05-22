@@ -147,6 +147,7 @@ export interface ApiLlamaCppServerProps {
 			dry_penalty_last_n: number;
 			dry_sequence_breakers: string[];
 			blue_noise: boolean;
+			rng_type: string;
 			mirostat: number;
 			mirostat_tau: number;
 			mirostat_eta: number;
@@ -240,6 +241,7 @@ export interface ApiChatCompletionRequest {
 	samplers?: string[];
 	backend_sampling?: boolean;
 	blue_noise?: boolean;
+	rng_type?: string;
 	// Custom parameters (JSON string)
 	custom?: Record<string, unknown>;
 	timings_per_token?: boolean;
@@ -331,6 +333,7 @@ export interface ApiSlotData {
 		dry_allowed_length: number;
 		dry_penalty_last_n: number;
 		blue_noise: boolean;
+		rng_type: string;
 		mirostat: number;
 		mirostat_tau: number;
 		mirostat_eta: number;
@@ -348,6 +351,7 @@ export interface ApiSlotData {
 		samplers: string[];
 		backend_sampling: boolean;
 		blue_noise: boolean;
+		rng_type: string;
 		'speculative.n_max': number;
 		'speculative.n_min': number;
 		'speculative.p_min': number;

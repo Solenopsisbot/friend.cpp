@@ -352,7 +352,8 @@ class generation_inputs(ctypes.Structure):
                 ("banned_tokens_len", ctypes.c_int),
                 ("banned_tokens", ctypes.POINTER(ctypes.c_char_p)),
                 ("reasoning_budget", ctypes.c_int),
-                ("blue_noise", ctypes.c_bool)]
+                ("blue_noise", ctypes.c_bool),
+                ("rng_type", ctypes.c_int)]
 
 class generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2057,6 +2058,8 @@ def generate(genparams, stream_flag=False):
     xtc_probability = tryparsefloat(genparams.get('xtc_probability', 0),0)
     sampler_order = genparams.get('sampler_order', [6, 0, 1, 3, 4, 2, 5])
     blue_noise = genparams.get('blue_noise', False)
+    rng_type_raw = genparams.get('rng_type', 'mt19937')
+    rng_type = 1 if str(rng_type_raw).lower() == 'lowbias32' or rng_type_raw == 1 else 0
     seed = tryparseint(genparams.get('sampler_seed', -1),-1)
     stop_sequence = genparams.get('stop_sequence', [])
     ban_eos_token = genparams.get('ban_eos_token', False)
@@ -2164,6 +2167,7 @@ def generate(genparams, stream_flag=False):
     inputs.adaptive_target = adaptive_target
     inputs.adaptive_decay = adaptive_decay
     inputs.blue_noise = bool(blue_noise)
+    inputs.rng_type = rng_type
     inputs.grammar = grammar.encode("UTF-8")
     inputs.grammar_retain_state = grammar_retain_state
     inputs.allow_eos_token = not ban_eos_token

@@ -80,6 +80,8 @@ json task_params::to_json(bool only_metrics) const {
             {"timings_per_token",         timings_per_token},
             {"post_sampling_probs",       post_sampling_probs},
             {"backend_sampling",          sampling.backend_sampling},
+            {"blue_noise",                sampling.blue_noise},
+            {"rng_type",                  sampling.rng_type == LLAMA_RNG_TYPE_LOWBIAS32 ? "lowbias32" : "mt19937"},
             {"lora",                      lora},
         };
     }
@@ -137,6 +139,8 @@ json task_params::to_json(bool only_metrics) const {
         {"timings_per_token",         timings_per_token},
         {"post_sampling_probs",       post_sampling_probs},
         {"backend_sampling",          sampling.backend_sampling},
+        {"blue_noise",                sampling.blue_noise},
+        {"rng_type",                  sampling.rng_type == LLAMA_RNG_TYPE_LOWBIAS32 ? "lowbias32" : "mt19937"},
         {"lora",                      lora},
     };
 }
@@ -292,6 +296,17 @@ task_params server_task::params_from_json_cmpl(
     params.sampling.n_probs            = json_value(data, "n_probs",             defaults.sampling.n_probs);
     params.sampling.min_keep           = json_value(data, "min_keep",            defaults.sampling.min_keep);
     params.sampling.backend_sampling   = json_value(data, "backend_sampling",    defaults.sampling.backend_sampling);
+    params.sampling.blue_noise         = json_value(data, "blue_noise",          defaults.sampling.blue_noise);
+    {
+        const auto rng_source = json_value(data, "rng_type", std::string(""));
+        if (rng_source == "lowbias32") {
+            params.sampling.rng_type = LLAMA_RNG_TYPE_LOWBIAS32;
+        } else if (rng_source == "mt19937") {
+            params.sampling.rng_type = LLAMA_RNG_TYPE_MT19937;
+        } else {
+            params.sampling.rng_type = defaults.sampling.rng_type;
+        }
+    }
     params.post_sampling_probs         = json_value(data, "post_sampling_probs", defaults.post_sampling_probs);
 
     params.speculative = defaults.speculative;
