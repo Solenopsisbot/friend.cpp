@@ -2225,7 +2225,7 @@ bool host_rpc_server(std::string endpoint, std::string devices_str)
 
     printf("\nNote: It's not advised to expose RPC server to the open internet.\n=====\nStarting RPC server on %s, clients may now connect\n=====\n",endpoint.c_str());
 
-    start_server_fn(endpoint.c_str(), "", 4, devices.size(), devices.data());
+    start_server_fn(endpoint.c_str(), nullptr, 4, devices.size(), devices.data());
     return true;
 }
 
