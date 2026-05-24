@@ -974,6 +974,12 @@ static std::string raw_image_to_png_base64(const sd_image_t& img, std::string pa
     return result;
 }
 
+bool supports_reference_images(kcpp_sd::model_info info)
+{
+    bool supported = (info.is_wan || info.is_qwenimg || info.is_flux2 || info.is_kontext || photomaker_enabled);
+    return supported;
+}
+
 sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 {
     if(sd_ctx == nullptr || sd_params == nullptr)
@@ -1053,6 +1059,16 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             sd_params->cfg_scale = 1.0f;
             sd_params->sample_steps = 1;
         }
+    }
+
+    //if a single extra image is provided, mask is NOT provided, and img2img image is NOT provided
+    //and it's a (SD1.5, SDXL) model that doesn't support extra images (see extra_image_data later)
+    //swap extra image data into img2img instead (graceful fallback)
+    if(!supports_reference_images(info) && extra_image_data.size()==1 && !is_img2img && img2img_mask=="")
+    {
+        is_img2img = true;
+        img2img_data = extra_image_data[0];
+        extra_image_data.clear();
     }
 
     if(info.is_wan && extra_image_data.size()==0 && is_img2img)
@@ -1135,42 +1151,11 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         {
             int nx2, ny2, nc2;
             int desiredchannels = 3;
-            if(info.is_wan)
+            if(supports_reference_images(info))
             {
-                uint8_t * loaded = load_image_from_b64(extra_image_data[i],nx2,ny2,img2imgW,img2imgH,3);
-                if(loaded)
+                if(info.is_wan)
                 {
-                    input_extraimage_buffers.push_back(loaded);
-                    sd_image_t extraimage_reference;
-                    extraimage_reference.width = nx2;
-                    extraimage_reference.height = ny2;
-                    extraimage_reference.channel = desiredchannels;
-                    extraimage_reference.data = loaded;
-                    wan_imgs.push_back(extraimage_reference);
-                }
-            }
-            else if(info.is_qwenimg || info.is_flux2)
-            {
-                uint8_t * loaded = load_image_from_b64(extra_image_data[i],nx2,ny2);
-                if(loaded)
-                {
-                    //kcpp fix: qwen image can stack overflow and crash when ref images exceed
-                    // a total res of 512x512 = 262144, so we downscale if that's the case
-                    // kcpp edit 2mar2026: this seems to be better now, so limit to 1024x1024 instead
-                    int tgtx = nx2;
-                    int tgty = ny2;
-                    int res_lim_crash = 1024 * 1024;
-                    if (nx2 * ny2 > res_lim_crash)
-                    {
-                        float factor = sqrtf((float)res_lim_crash / ((float)nx2 * (float)ny2));
-                        tgtx = (int)(nx2 * factor);
-                        tgty = (int)(ny2 * factor);
-                        if (!sd_is_quiet && sddebugmode == 1)
-                        {
-                            printf("\nResized RefImg %dx%d to %dx%d", nx2, ny2, tgtx, tgty);
-                        }
-                        loaded = resize_image(loaded, nx2, ny2, tgtx, tgty);
-                    }
+                    uint8_t * loaded = load_image_from_b64(extra_image_data[i],nx2,ny2,img2imgW,img2imgH,3);
                     if(loaded)
                     {
                         input_extraimage_buffers.push_back(loaded);
@@ -1179,28 +1164,62 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                         extraimage_reference.height = ny2;
                         extraimage_reference.channel = desiredchannels;
                         extraimage_reference.data = loaded;
-                        reference_imgs.push_back(extraimage_reference);
+                        wan_imgs.push_back(extraimage_reference);
                     }
                 }
-            }
-            else if (info.is_kontext || photomaker_enabled)
-            {
-                uint8_t * loaded = load_image_from_b64(extra_image_data[i],nx2,ny2);
-                if(loaded)
+                else if(info.is_qwenimg || info.is_flux2)
                 {
-                    input_extraimage_buffers.push_back(loaded);
-                    sd_image_t extraimage_reference;
-                    extraimage_reference.width = nx2;
-                    extraimage_reference.height = ny2;
-                    extraimage_reference.channel = desiredchannels;
-                    extraimage_reference.data = loaded;
-                    if(info.is_kontext)
+                    uint8_t * loaded = load_image_from_b64(extra_image_data[i],nx2,ny2);
+                    if(loaded)
                     {
-                        reference_imgs.push_back(extraimage_reference);
+                        //kcpp fix: qwen image can stack overflow and crash when ref images exceed
+                        // a total res of 512x512 = 262144, so we downscale if that's the case
+                        // kcpp edit 2mar2026: this seems to be better now, so limit to 1024x1024 instead
+                        int tgtx = nx2;
+                        int tgty = ny2;
+                        int res_lim_crash = 1024 * 1024;
+                        if (nx2 * ny2 > res_lim_crash)
+                        {
+                            float factor = sqrtf((float)res_lim_crash / ((float)nx2 * (float)ny2));
+                            tgtx = (int)(nx2 * factor);
+                            tgty = (int)(ny2 * factor);
+                            if (!sd_is_quiet && sddebugmode == 1)
+                            {
+                                printf("\nResized RefImg %dx%d to %dx%d", nx2, ny2, tgtx, tgty);
+                            }
+                            loaded = resize_image(loaded, nx2, ny2, tgtx, tgty);
+                        }
+                        if(loaded)
+                        {
+                            input_extraimage_buffers.push_back(loaded);
+                            sd_image_t extraimage_reference;
+                            extraimage_reference.width = nx2;
+                            extraimage_reference.height = ny2;
+                            extraimage_reference.channel = desiredchannels;
+                            extraimage_reference.data = loaded;
+                            reference_imgs.push_back(extraimage_reference);
+                        }
                     }
-                    else
+                }
+                else if (info.is_kontext || photomaker_enabled)
+                {
+                    uint8_t * loaded = load_image_from_b64(extra_image_data[i],nx2,ny2);
+                    if(loaded)
                     {
-                        photomaker_imgs.push_back(extraimage_reference);
+                        input_extraimage_buffers.push_back(loaded);
+                        sd_image_t extraimage_reference;
+                        extraimage_reference.width = nx2;
+                        extraimage_reference.height = ny2;
+                        extraimage_reference.channel = desiredchannels;
+                        extraimage_reference.data = loaded;
+                        if(info.is_kontext)
+                        {
+                            reference_imgs.push_back(extraimage_reference);
+                        }
+                        else
+                        {
+                            photomaker_imgs.push_back(extraimage_reference);
+                        }
                     }
                 }
             }
