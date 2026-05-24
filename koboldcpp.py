@@ -2516,6 +2516,7 @@ def sd_comfyui_tranform_params(genparams):
                 genparams["steps"] = inp.get("steps", 20)
                 genparams["cfg_scale"] = inp.get("cfg", 5)
                 genparams["sampler_name"] = inp.get("sampler_name", "euler")
+                genparams["scheduler"] = inp.get("scheduler", "default")
 
                 pos = inp.get("positive",[]) #positive prompt node
                 neg = inp.get("negative",[]) #negative prompt node
