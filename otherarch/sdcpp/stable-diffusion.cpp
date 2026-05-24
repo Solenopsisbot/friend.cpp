@@ -568,6 +568,11 @@ public:
                                             ? (ggml_type)sd_ctx_params->wtype
                                             : GGML_TYPE_COUNT;
         std::string tensor_type_rules = SAFE_STR(sd_ctx_params->tensor_type_rules);
+        //kcpp: patch hidream to fix broken images on vulkan https://github.com/leejet/stable-diffusion.cpp/issues/1496
+        if(version == VERSION_HIDREAM_O1 && tensor_type_rules.size()==0)
+        {
+            tensor_type_rules = "^model.language_model.layers.[0-9]+.mlp.down_proj.weight=bf16";
+        }
         if (wtype != GGML_TYPE_COUNT || tensor_type_rules.size() > 0) {
             model_loader.set_wtype_override(wtype, tensor_type_rules);
         }
