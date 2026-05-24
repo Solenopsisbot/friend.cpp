@@ -2349,11 +2349,11 @@ def sd_get_info():
 sampler_aliases = [
     # sd.cpp name, UI name, aliases
     ['euler',         'Euler',    'k_euler'],
-    ['euler_a',       'Euler A',  'k_euler_a', 'euler a'],
+    ['euler_a',       'Euler A',  'k_euler_a', 'euler a', 'euler_ancestral'],
     ['heun',          'Heun',     'k_heun'],
-    ['dpm2',          'DPM2',     'k_dpm_2'],
+    ['dpm2',          'DPM2',     'k_dpm_2', 'dpm_2'],
     ['lcm',           'LCM',      'k_lcm'],
-    ['dpm++2m',       'DPM++ 2M', 'k_dpmpp_2m', 'dpm++ 2m karras', 'dpm++ 2m'],
+    ['dpm++2m',       'DPM++ 2M', 'k_dpmpp_2m', 'dpm++ 2m karras', 'dpm++ 2m', 'dpmpp_2m'],
     ['ddim_trailing', 'DDIM',     'ddim'],
     ['res_multistep', 'Res Multistep', 'k_res_multistep', 'res multistep'],
     ['res_2s',        'Res 2s',        'k_res_2s', 'res 2s'],
