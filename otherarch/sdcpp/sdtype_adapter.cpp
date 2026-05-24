@@ -219,6 +219,26 @@ std::string load_qwen2_merges()
     qwenmergesstr = read_str_from_disk(filepath);
     return qwenmergesstr;
 }
+std::string load_gemma_merges()
+{
+    static std::string gemmamergesstr;  // cached string
+    if (!gemmamergesstr.empty()) {
+        return gemmamergesstr;  // already loaded
+    }
+    std::string filepath = executable_path + "embd_res/gemma2_merges_utf8_c_str.embd";
+    gemmamergesstr = read_str_from_disk(filepath);
+    return gemmamergesstr;
+}
+std::string load_gemma_vocab_json()
+{
+    static std::string gemmavocabstr;  // cached string
+    if (!gemmavocabstr.empty()) {
+        return gemmavocabstr;  // already loaded
+    }
+    std::string filepath = executable_path + "embd_res/gemma2_vocab_json.embd";
+    gemmavocabstr = read_str_from_disk(filepath);
+    return gemmavocabstr;
+}
 std::string load_mistral_merges()
 {
     static std::string mistralmergesstr;  // cached string
@@ -1322,7 +1342,13 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         }
 
         fflush(stdout);
-        results = generate_video(sd_ctx, &vid_gen_params, &generated_num_results);
+
+        sd_audio_t* generated_audio = nullptr;
+        results = nullptr;
+        if (!generate_video(sd_ctx, &vid_gen_params, &results, &generated_num_results, &generated_audio)) {
+            results = nullptr;
+            generated_audio = nullptr;
+        }
         if(!sd_is_quiet && sddebugmode==1)
         {
             printf("\nRequested Vid Frames: %d, Generated Vid Frames: %d\n",vid_req_frames, generated_num_results);

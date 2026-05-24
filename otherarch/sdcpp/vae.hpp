@@ -67,7 +67,9 @@ public:
 
     int get_scale_factor() {
         int scale_factor = 8;
-        if (version == VERSION_WAN2_2_TI2V) {
+        if (version == VERSION_LTXAV) {
+            scale_factor = 32;
+        } else if (version == VERSION_WAN2_2_TI2V) {
             scale_factor = 16;
         } else if (sd_version_uses_flux2_vae(version)) {
             scale_factor = 16;
@@ -165,6 +167,7 @@ public:
         int64_t t0              = ggml_time_ms();
         sd::Tensor<float> input = x;
         sd::Tensor<float> output;
+        set_tiling_params(tiling_params);
 
         if (tiling_params.enabled) {
             const int scale_factor = get_scale_factor();
@@ -213,6 +216,10 @@ public:
     virtual sd::Tensor<float> vae_to_diffusion_latents(const sd::Tensor<float>& latents)                           = 0;
     virtual void get_param_tensors(std::map<std::string, ggml_tensor*>& tensors, const std::string prefix)         = 0;
     virtual void set_conv2d_scale(float scale) { SD_UNUSED(scale); };
+    virtual void set_temporal_tiling_enabled(bool enabled) { SD_UNUSED(enabled); };
+    virtual void set_tiling_params(const sd_tiling_params_t& params) {
+        set_temporal_tiling_enabled(params.temporal_tiling);
+    };
 };
 
 struct FakeVAE : public VAE {

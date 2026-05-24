@@ -1127,18 +1127,33 @@ __STATIC_INLINE__ ggml_tensor* ggml_ext_conv_3d(ggml_context* ctx,
                                                 ggml_tensor* w,
                                                 ggml_tensor* b,
                                                 int64_t IC,
-                                                int s0 = 1,
-                                                int s1 = 1,
-                                                int s2 = 1,
-                                                int p0 = 0,
-                                                int p1 = 0,
-                                                int p2 = 0,
-                                                int d0 = 1,
-                                                int d1 = 1,
-                                                int d2 = 1) {
-    int64_t OC = w->ne[3] / IC;
-    int64_t N  = x->ne[3] / IC;
-    x          = ggml_conv_3d(ctx, w, x, IC, s0, s1, s2, p0, p1, p2, d0, d1, d2);
+                                                int s0              = 1,
+                                                int s1              = 1,
+                                                int s2              = 1,
+                                                int p0              = 0,
+                                                int p1              = 0,
+                                                int p2              = 0,
+                                                int d0              = 1,
+                                                int d1              = 1,
+                                                int d2              = 1,
+                                                bool force_prec_f32 = false) {
+    if (force_prec_f32) {
+        ggml_tensor* im2col = ggml_im2col_3d(ctx, w, x, IC, s0, s1, s2, p0, p1, p2, d0, d1, d2, w->type);
+
+        int64_t OC = w->ne[3] / IC;
+        int64_t N  = x->ne[3] / IC;
+        x          = ggml_mul_mat(ctx,
+                                  ggml_reshape_2d(ctx, im2col, im2col->ne[0], im2col->ne[3] * im2col->ne[2] * im2col->ne[1]),
+                                  ggml_reshape_2d(ctx, w, w->ne[0] * w->ne[1] * w->ne[2] * IC, OC));
+        ggml_mul_mat_set_prec(x, GGML_PREC_F32);
+
+        int64_t OD = im2col->ne[3] / N;
+        x          = ggml_reshape_4d(ctx, x, im2col->ne[1] * im2col->ne[2], OD, N, OC);
+        x          = ggml_cont(ctx, ggml_permute(ctx, x, 0, 1, 3, 2));
+        x          = ggml_reshape_4d(ctx, x, im2col->ne[1], im2col->ne[2], OD, OC * N);
+    } else {
+        x = ggml_conv_3d(ctx, w, x, IC, s0, s1, s2, p0, p1, p2, d0, d1, d2);
+    }
 
     if (b != nullptr) {
         b = ggml_reshape_4d(ctx, b, 1, 1, 1, b->ne[0]);  // [OC, 1, 1, 1]
@@ -1585,6 +1600,23 @@ __STATIC_INLINE__ size_t ggml_tensor_num(ggml_context* ctx) {
         num++;
     }
     return num;
+}
+
+__STATIC_INLINE__ ggml_tensor* ggml_ext_vec_concat(ggml_context* ctx,
+                                                   std::vector<ggml_tensor*>& tensors,
+                                                   int dim) {
+    while (tensors.size() > 1) {
+        std::vector<ggml_tensor*> next_level;
+        for (size_t i = 0; i < tensors.size(); i += 2) {
+            if (i + 1 < tensors.size()) {
+                next_level.push_back(ggml_concat(ctx, tensors[i], tensors[i + 1], dim));
+            } else {
+                next_level.push_back(tensors[i]);
+            }
+        }
+        tensors = std::move(next_level);
+    }
+    return tensors[0];
 }
 
 /* SDXL with LoRA requires more space */
@@ -3124,6 +3156,163 @@ public:
     }
 };
 
+class Conv2d_grouped : public UnaryBlock {
+protected:
+    int64_t in_channels;
+    int64_t out_channels;
+    int groups;
+    std::pair<int, int> kernel_size;
+    std::pair<int, int> stride;
+    std::pair<int, int> padding;
+    std::pair<int, int> dilation;
+    bool bias;
+    float scale = 1.f;
+    std::string prefix;
+
+    void init_params(ggml_context* ctx, const String2TensorStorage& tensor_storage_map, const std::string prefix = "") override {
+        this->prefix         = prefix;
+        enum ggml_type wtype = GGML_TYPE_F16;
+        params["weight"]     = ggml_new_tensor_4d(ctx, wtype, kernel_size.second, kernel_size.first, in_channels / groups, out_channels);
+        if (bias) {
+            enum ggml_type wtype = GGML_TYPE_F32;
+            params["bias"]       = ggml_new_tensor_1d(ctx, wtype, out_channels);
+        }
+    }
+
+public:
+    Conv2d_grouped(int64_t in_channels,
+                   int64_t out_channels,
+                   int groups,
+                   std::pair<int, int> kernel_size,
+                   std::pair<int, int> stride   = {1, 1},
+                   std::pair<int, int> padding  = {0, 0},
+                   std::pair<int, int> dilation = {1, 1},
+                   bool bias                    = true)
+        : in_channels(in_channels),
+          out_channels(out_channels),
+          groups(groups),
+          kernel_size(kernel_size),
+          stride(stride),
+          padding(padding),
+          dilation(dilation),
+          bias(bias) {}
+
+    void set_scale(float scale_value) {
+        scale = scale_value;
+    }
+
+    std::string get_desc() {
+        return "Conv2d_grouped";
+    }
+
+    ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
+        ggml_tensor* w = params["weight"];
+        ggml_tensor* b = nullptr;
+        if (bias) {
+            b = params["bias"];
+        }
+
+        if (groups == 1) {
+            if (ctx->weight_adapter) {
+                WeightAdapter::ForwardParams forward_params;
+                forward_params.op_type           = WeightAdapter::ForwardParams::op_type_t::OP_CONV2D;
+                forward_params.conv2d.s0         = stride.second;
+                forward_params.conv2d.s1         = stride.first;
+                forward_params.conv2d.p0         = padding.second;
+                forward_params.conv2d.p1         = padding.first;
+                forward_params.conv2d.d0         = dilation.second;
+                forward_params.conv2d.d1         = dilation.first;
+                forward_params.conv2d.direct     = ctx->conv2d_direct_enabled;
+                forward_params.conv2d.circular_x = ctx->circular_x_enabled;
+                forward_params.conv2d.circular_y = ctx->circular_y_enabled;
+                forward_params.conv2d.scale      = scale;
+                return ctx->weight_adapter->forward_with_lora(ctx->ggml_ctx, ctx->backend, x, w, b, prefix, forward_params);
+            }
+            return ggml_ext_conv_2d(ctx->ggml_ctx, x, w, b,
+                                    stride.second, stride.first,
+                                    padding.second, padding.first,
+                                    dilation.second, dilation.first,
+                                    ctx->conv2d_direct_enabled,
+                                    ctx->circular_x_enabled,
+                                    ctx->circular_y_enabled,
+                                    scale);
+        }
+
+        if (groups == in_channels && groups == out_channels) {
+            ggml_tensor* res;
+            if (ctx->conv2d_direct_enabled) {
+                res = ggml_conv_2d_dw_direct(ctx->ggml_ctx, x, w,
+                                             stride.second, stride.first,
+                                             padding.second, padding.first,
+                                             dilation.second, dilation.first);
+            } else {
+                res = ggml_conv_2d_dw(ctx->ggml_ctx, x, w,
+                                      stride.second, stride.first,
+                                      padding.second, padding.first,
+                                      dilation.second, dilation.first);
+            }
+            if (b) {
+                res = ggml_add(ctx->ggml_ctx, res, b);
+            }
+            return res;
+        }
+
+        int64_t ic_g = in_channels / groups;
+        int64_t oc_g = out_channels / groups;
+
+        std::vector<ggml_tensor*> out_slices(groups);
+
+        for (int i = 0; i < groups; ++i) {
+            size_t x_offset  = i * ic_g * x->nb[2];
+            ggml_tensor* x_i = ggml_view_4d(ctx->ggml_ctx, x,
+                                            x->ne[0], x->ne[1], ic_g, x->ne[3],
+                                            x->nb[1], x->nb[2], x->nb[3],
+                                            x_offset);
+
+            size_t w_offset  = i * oc_g * w->nb[3];
+            ggml_tensor* w_i = ggml_view_4d(ctx->ggml_ctx, w,
+                                            w->ne[0], w->ne[1], w->ne[2], oc_g,
+                                            w->nb[1], w->nb[2], w->nb[3],
+                                            w_offset);
+
+            ggml_tensor* b_i = nullptr;
+            if (b) {
+                size_t b_offset = i * oc_g * b->nb[0];
+                b_i             = ggml_view_1d(ctx->ggml_ctx, b, oc_g, b_offset);
+            }
+
+            if (ctx->weight_adapter) {
+                WeightAdapter::ForwardParams forward_params;
+                forward_params.op_type           = WeightAdapter::ForwardParams::op_type_t::OP_CONV2D;
+                forward_params.conv2d.s0         = stride.second;
+                forward_params.conv2d.s1         = stride.first;
+                forward_params.conv2d.p0         = padding.second;
+                forward_params.conv2d.p1         = padding.first;
+                forward_params.conv2d.d0         = dilation.second;
+                forward_params.conv2d.d1         = dilation.first;
+                forward_params.conv2d.direct     = ctx->conv2d_direct_enabled;
+                forward_params.conv2d.circular_x = ctx->circular_x_enabled;
+                forward_params.conv2d.circular_y = ctx->circular_y_enabled;
+                forward_params.conv2d.scale      = scale;
+                out_slices[i]                    = ctx->weight_adapter->forward_with_lora(ctx->ggml_ctx, ctx->backend, x_i, w_i, b_i, prefix, forward_params);
+            } else {
+                out_slices[i] = ggml_ext_conv_2d(ctx->ggml_ctx, x_i, w_i, b_i,
+                                                 stride.second, stride.first,
+                                                 padding.second, padding.first,
+                                                 dilation.second, dilation.first,
+                                                 ctx->conv2d_direct_enabled,
+                                                 ctx->circular_x_enabled,
+                                                 ctx->circular_y_enabled,
+                                                 scale);
+            }
+        }
+
+        ggml_tensor* out = ggml_ext_vec_concat(ctx->ggml_ctx, out_slices, 2);
+
+        return out;
+    }
+};
+
 class Conv3d : public UnaryBlock {
 protected:
     int64_t in_channels;
@@ -3133,6 +3322,7 @@ protected:
     std::tuple<int, int, int> padding;
     std::tuple<int, int, int> dilation;
     bool bias;
+    bool force_prec_f32;
     std::string prefix;
 
     void init_params(ggml_context* ctx, const String2TensorStorage& tensor_storage_map, const std::string prefix = "") override {
@@ -3156,14 +3346,16 @@ public:
            std::tuple<int, int, int> stride   = {1, 1, 1},
            std::tuple<int, int, int> padding  = {0, 0, 0},
            std::tuple<int, int, int> dilation = {1, 1, 1},
-           bool bias                          = true)
+           bool bias                          = true,
+           bool force_prec_f32                = false)
         : in_channels(in_channels),
           out_channels(out_channels),
           kernel_size(kernel_size),
           stride(stride),
           padding(padding),
           dilation(dilation),
-          bias(bias) {}
+          bias(bias),
+          force_prec_f32(force_prec_f32) {}
 
     ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) {
         ggml_tensor* w = params["weight"];
@@ -3183,7 +3375,8 @@ public:
         return ggml_ext_conv_3d(ctx->ggml_ctx, x, w, b, in_channels,
                                 std::get<2>(stride), std::get<1>(stride), std::get<0>(stride),
                                 std::get<2>(padding), std::get<1>(padding), std::get<0>(padding),
-                                std::get<2>(dilation), std::get<1>(dilation), std::get<0>(dilation));
+                                std::get<2>(dilation), std::get<1>(dilation), std::get<0>(dilation),
+                                force_prec_f32);
     }
 };
 
