@@ -497,6 +497,8 @@ add_library(sdtype_adapter
             otherarch/sdcpp/util.cpp
             otherarch/sdcpp/name_conversion.cpp
             otherarch/sdcpp/upscaler.cpp
+            otherarch/sdcpp/guidance.cpp
+            otherarch/sdcpp/guidance.h
             otherarch/sdcpp/stable-diffusion.cpp
             otherarch/sdcpp/thirdparty/zip.c
             otherarch/sdcpp/model_io/gguf_io.cpp
@@ -509,6 +511,7 @@ add_library(sdtype_adapter
             otherarch/sdcpp/tokenizers/mistral_tokenizer.cpp
             otherarch/sdcpp/tokenizers/qwen2_tokenizer.cpp
             otherarch/sdcpp/tokenizers/t5_unigram_tokenizer.cpp
+            otherarch/sdcpp/tokenizers/gemma_tokenizer.cpp
             otherarch/sdcpp/tokenizers/tokenizer.cpp
             otherarch/sdcpp/tokenizers/tokenize_util.cpp
             otherarch/sdcpp/ggml_extend_backend.cpp)
