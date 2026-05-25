@@ -1950,7 +1950,7 @@ def load_model(model_filename):
     inputs.visionmintokens = vmintk
     inputs.visionmaxtokens = vmaxtk
     inputs.use_smartcontext = args.smartcontext
-    if getattr(args, "continuous_batching", 0) > 1 and not args.noshift:
+    if args.parallelrequests > 1 and not args.noshift:
         print("\nWarning: Continuous batching is enabled, so context shifting has been disabled automatically.\n")
         args.noshift = True
     inputs.use_contextshift = (0 if args.noshift else 1)
@@ -2025,7 +2025,7 @@ def load_model(model_filename):
     savestate_limit = sclimit
     inputs.smartcacheslots = sclimit
     inputs.pipelineparallel = (not args.nopipelineparallel)
-    inputs.continuous_batching_slots = int(args.continuous_batching) if hasattr(args, "continuous_batching") else 0
+    inputs.continuous_batching_slots = args.parallelrequests if (args.parallelrequests>1) else 0
     inputs.rpc_mode = (2 if args.rpcmode=="host" else (1 if args.rpcmode=="connect" else 0))
     inputs.rpc_targets = (args.rpctargets if args.rpcmode=="connect" else "").encode("UTF-8")
 
@@ -2276,7 +2276,7 @@ def generate(genparams, stream_flag=False):
         return {"text":"","status":-1,"stopreason":-1, "prompt_tokens":0, "completion_tokens": 0, "total_tokens": 0}
     else:
         batch_request_id = -1
-        if getattr(args, "continuous_batching", 0) > 1:
+        if args.parallelrequests > 1:
             try:
                 batch_request_id = handle.batch_generate_submit(inputs)
             except Exception:
@@ -2303,7 +2303,7 @@ def generate(genparams, stream_flag=False):
         return {"text":outstr,"status":ret.status,"stopreason":ret.stopreason,"prompt_tokens":ret.prompt_tokens, "completion_tokens": ret.completion_tokens}
 
 def continuous_batching_python_eligible(genparams, api_format):
-    if getattr(args, "continuous_batching", 0) <= 1 or api_format <= 0:
+    if not args.parallelrequests or args.parallelrequests <= 1 or api_format <= 0:
         return False
     model_path = str(getattr(args, "model_param", "") or "").lower()
     if model_path and not model_path.endswith(".gguf"):
@@ -6464,7 +6464,7 @@ Change Mode<br>
         muint = int(args.multiuser)
         if muint<=0 and ((args.whispermodel and args.whispermodel!="") or (args.sdmodel and args.sdmodel!="") or (args.ttsmodel and args.ttsmodel!="") or (args.embeddingsmodel and args.embeddingsmodel!="")):
             muint = 2 # this prevents errors when using voice/img together with text
-        if getattr(args, "continuous_batching", 0) > 1 and muint <=0:
+        if args.parallelrequests > 1 and muint <=0:
             muint = multiuser_concurrent_limit # multiuser required for batching
         multiuserlimit = ((muint-1) if muint > 1 else multiuser_concurrent_limit)
         #backwards compatibility for up to X concurrent requests, use default limit of X if multiuser set to 1
@@ -7660,6 +7660,7 @@ def show_gui():
     maxrequestsize_var = ctk.StringVar(value=str(32))
     ratelimit_var = ctk.StringVar(value=str(0))
     reqtimeout_var = ctk.StringVar(value=str(default_reqtimeout))
+    parallel_requests_var = ctk.StringVar(value=str(1))
     rpcmode_var =  ctk.StringVar(value=str("disabled"))
     rpcendpoints_var = ctk.StringVar(value="")
     rpc_host_var = ctk.StringVar(value="0.0.0.0")
@@ -8479,6 +8480,8 @@ def show_gui():
     makelabelentry(network_tab, "Max Req. Size (MB):", maxrequestsize_var, row=30, width=50, padx=(340), singleline=True, tooltip="Specify a max request payload size. Any requests to the server larger than this size will be dropped. Do not change if unsure.",labelpadx=210)
     makelabelentry(network_tab, "IP Rate Limiter (s):", ratelimit_var, row=34, width=50, padx=(120), singleline=True, tooltip="Rate limits each IP to allow a new request once per X seconds. Do not change if unsure.")
     makelabelentry(network_tab, "Request Timeout (s):", reqtimeout_var, row=34, width=50, padx=(340), singleline=True, tooltip="Timeout in seconds for HTTP requests",labelpadx=210)
+    makelabelentry(network_tab, "Parallel Requests:", parallel_requests_var, row=38, width=50, padx=(120), singleline=True, tooltip="Allows multiple requests to be batched and executed in parallel. Only works for basic text generation requests. Experimental!")
+
 
     def togglerpcmode(a,b,c):
         if rpcmode_var.get()=="connect":
@@ -8915,6 +8918,7 @@ def show_gui():
         args.reqtimeout = int(reqtimeout_var.get()) if reqtimeout_var.get()!="" else 0
         if not args.reqtimeout:
             args.reqtimeout = default_reqtimeout
+        args.parallelrequests = int(parallel_requests_var.get()) if parallel_requests_var.get()!="" else 1
 
         args.rpcmode = rpcmode_var.get() if rpcmode_var.get() else "disabled"
         args.rpchost = rpc_host_var.get() if (args.rpcmode=="host" and rpc_host_var.get()) else "0.0.0.0"
@@ -9212,6 +9216,7 @@ def show_gui():
         multiplayer_var.set(mydict["multiplayer"] if ("multiplayer" in mydict) else 0)
         websearch_var.set(mydict["websearch"] if ("websearch" in mydict) else 0)
         download_dir_var.set(mydict["downloaddir"] if ("downloaddir" in mydict and mydict["downloaddir"]) else "")
+        parallel_requests_var.set(mydict["parallelrequests"] if ("parallelrequests" in mydict and mydict["parallelrequests"]>1) else 1)
 
         horde_name_var.set(mydict["hordemodelname"] if ("hordemodelname" in mydict and mydict["hordemodelname"]) else "koboldcpp")
         horde_context_var.set(mydict["hordemaxctx"] if ("hordemaxctx" in mydict and mydict["hordemaxctx"]) else maxhordectx)
@@ -11491,8 +11496,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         if args.hordekey and args.hordekey!="":
             if args.hordeworkername and args.hordeworkername!="":
                 workers_to_use = 1
-                if args.continuous_batching:
-                    workers_to_use = int(args.continuous_batching) if hasattr(args, "continuous_batching") else 1
+                if args.parallelrequests:
+                    workers_to_use = args.parallelrequests if (args.parallelrequests>1) else 1
                 for w in range(0,workers_to_use):
                     wid = (w+1)
                     print(f"Launching horde worker {wid}...")
@@ -11668,7 +11673,7 @@ if __name__ == '__main__':
     advparser.add_argument("--analyze", metavar=('[filename]'), help="Reads the metadata, weight types and tensor names in any GGUF file.", default="")
     advparser.add_argument("--maingpu","--main-gpu","-mg", help="Only used in a multi-gpu setup. Sets the index of the main GPU that will be used.",metavar=('[Device ID]'), type=int, default=-1)
     advparser.add_argument("--batchsize","--blasbatchsize","--batch-size","-b", help="Sets the batch size used in batched processing (default 512). Setting it to -1 disables batched mode, but keeps other benefits like GPU offload.", type=int,choices=[-1,16,32,64,128,256,512,1024,2048,4096], default=512)
-    advparser.add_argument("--continuous-batching","--contbatch", help=argparse.SUPPRESS, metavar=('[slots]'), type=check_range(int,0,64), default=0)
+    advparser.add_argument("--parallelrequests","--continuous-batching","--contbatch", help="Allows multiple requests to be batched and executed in parallel. Only works for basic text generation requests (Experimental, No media)", metavar=('[slots]'), type=check_range(int,0,32), default=1)
     advparser.add_argument("--blasthreads","--batchthreads","--threadsbatch","--threads-batch", help="Use a different number of threads during batching if specified. Otherwise, has the same value as --threads",metavar=('[threads]'), type=int, default=0)
     advparser.add_argument("--splitmode","-sm","--split-mode", help="How to split the model across multiple GPUs", metavar=('[split mode]'), type=str, choices=splitmode_choices, default=splitmode_choices[0])
     advparser.add_argument("--nommq", help="Disables MMQ, only used for cuda backend. This flag may be removed in future.", action='store_true')
