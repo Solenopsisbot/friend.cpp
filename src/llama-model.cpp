@@ -161,6 +161,7 @@
 #include "models/step35.cpp"
 #include "models/t5.cpp"
 #include "models/t5encoder.cpp"
+#include "models/talkie.cpp"
 #include "models/wavtokenizer-dec.cpp"
 #include "models/xverse.cpp"
 
@@ -174,6 +175,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_llama_embed(params);
         case LLM_ARCH_MAINCODER:
             return new llama_model_maincoder(params);
+        case LLM_ARCH_TALKIE:
+            return new llama_model_talkie(params);
         case LLM_ARCH_DECI:
             return new llama_model_deci(params);
         case LLM_ARCH_BAICHUAN:
@@ -2484,6 +2487,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_QWEN3NEXT:
         case LLM_ARCH_MIMO2:
         case LLM_ARCH_STEP35:
+        case LLM_ARCH_TALKIE:
             return LLAMA_ROPE_TYPE_NEOX;
 
         case LLM_ARCH_QWEN2VL:
