@@ -8706,6 +8706,11 @@ def show_gui():
         nozenity_var.trace_add("write", togglezenity)
 
     extra_terminal_process = None
+    def stdout_has_terminal():
+        try:
+            return bool(sys.stdout and sys.stdout.isatty())
+        except Exception:
+            return False
     def showtermlogs():
         nonlocal extra_terminal_process
         try:
@@ -10331,7 +10336,7 @@ def main(launch_args, default_args):
     if args.showgui or not has_valid_model():
         #give them a chance to pick a file
         print("For command line arguments, please run --help in the terminal.")
-        print("The GUI mode is not accessible to screen readers.")
+        print("Note: The GUI mode is not accessible to screen readers.")
         print("***")
         try:
             show_gui()
