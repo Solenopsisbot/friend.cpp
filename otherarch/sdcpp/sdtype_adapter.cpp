@@ -279,6 +279,26 @@ std::string load_umt5_tokenizer_json()
     umt5str = read_str_from_disk(filepath);
     return umt5str;
 }
+std::string load_gpt_oss_merges()
+{
+    static std::string mergesstr;  // cached string
+    if (!mergesstr.empty()) {
+        return mergesstr;  // already loaded
+    }
+    std::string filepath = executable_path + "embd_res/gpt_oss_merges_utf8_c_str.embd";
+    mergesstr = read_str_from_disk(filepath);
+    return mergesstr;
+}
+std::string load_gpt_oss_vocab_json()
+{
+    static std::string vocabstr;  // cached string
+    if (!vocabstr.empty()) {
+        return vocabstr;  // already loaded
+    }
+    std::string filepath = executable_path + "embd_res/gpt_oss_vocab_json.embd";
+    vocabstr = read_str_from_disk(filepath);
+    return vocabstr;
+}
 
 static std::string get_device_override(int value, const char * module = nullptr)
 {
