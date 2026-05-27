@@ -512,6 +512,7 @@ add_library(sdtype_adapter
             otherarch/sdcpp/tokenizers/qwen2_tokenizer.cpp
             otherarch/sdcpp/tokenizers/t5_unigram_tokenizer.cpp
             otherarch/sdcpp/tokenizers/gemma_tokenizer.cpp
+            otherarch/sdcpp/tokenizers/gpt_oss_tokenizer.cpp
             otherarch/sdcpp/tokenizers/tokenizer.cpp
             otherarch/sdcpp/tokenizers/tokenize_util.cpp
             otherarch/sdcpp/ggml_extend_backend.cpp)
