@@ -10330,7 +10330,8 @@ def main(launch_args, default_args):
     # show the GUI launcher if a model was not provided
     if args.showgui or not has_valid_model():
         #give them a chance to pick a file
-        print("For command line arguments, please refer to --help")
+        print("For command line arguments, please run --help in the terminal.")
+        print("The GUI mode is not accessible to screen readers.")
         print("***")
         try:
             show_gui()
