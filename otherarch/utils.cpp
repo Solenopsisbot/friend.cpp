@@ -641,7 +641,7 @@ std::string save_stereo_mp3_base64(const std::vector<float> & raw_audio,int T_au
         enc_T     = (int)resampled.size() / 2;
     }
 
-    const int kbps = 128;
+    const int kbps = 192;
 
     // Encode PCM [offset, offset+len) with optional warm-up.
     // warmup=true primes filterbank/MDCT/psy with the 1152 PCM samples
@@ -706,17 +706,17 @@ std::string save_stereo_mp3_base64(const std::vector<float> & raw_audio,int T_au
 
     // Multi-threaded path: partition audio, encode chunks in parallel
     struct Chunk { int offset; int n_samples; };
-    std::vector<Chunk> chunks(n_threads);    
+    std::vector<Chunk> chunks(n_threads);
     {
         constexpr int FRAME = 1152;
-    
+
         int pos = 0;
-    
+
         for (int i = 0; i < n_threads; i++) {
             // Compute ideal boundaries
             int start = (int)(((int64_t)enc_T * i) / n_threads);
             int end   = (int)(((int64_t)enc_T * (i + 1)) / n_threads);
-    
+
             // Align internal boundaries down to frame boundaries
             if (i != 0) {
                 start = (start / FRAME) * FRAME;
@@ -724,7 +724,7 @@ std::string save_stereo_mp3_base64(const std::vector<float> & raw_audio,int T_au
             if (i != n_threads - 1) {
                 end = (end / FRAME) * FRAME;
             }
-    
+
             // Enforce monotonicity
             if (start < pos) {
                 start = pos;
@@ -732,13 +732,13 @@ std::string save_stereo_mp3_base64(const std::vector<float> & raw_audio,int T_au
             if (end < start) {
                 end = start;
             }
-    
+
             chunks[i].offset    = start;
             chunks[i].n_samples = end - start;
-    
+
             pos = end;
         }
-    
+
         // Ensure final chunk reaches exact end
         if (!chunks.empty()) {
             chunks.back().n_samples = enc_T - chunks.back().offset;
