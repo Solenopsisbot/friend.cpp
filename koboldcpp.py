@@ -4129,6 +4129,11 @@ ws ::= | " " | "\n" [ \t]{0,20}
             jinjatools = genparams.get('tools', [])
             if use_jinja and cached_chat_template:
                 copied_jinja_kwargs = dict(cached_jinja_kwargs or {})
+                # Merge user-provided chat_template_kwargs into our defaults
+                user_chat_template_kwargs = genparams.get("chat_template_kwargs")
+                if user_chat_template_kwargs is not None and isinstance(user_chat_template_kwargs, dict):
+                    # User kwargs override cached/default kwargs
+                    copied_jinja_kwargs.update(user_chat_template_kwargs)
                 if "reasoning_effort" in genparams and genparams["reasoning_effort"] is not None:
                     copied_jinja_kwargs["reasoning_effort"] = genparams["reasoning_effort"]
                 jinja_output = format_jinja(messages_array,jinjatools,copied_jinja_kwargs)
