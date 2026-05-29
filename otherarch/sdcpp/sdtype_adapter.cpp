@@ -1343,6 +1343,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
      //special case, is img2img and denoise strength is 0 and steps is 1, do a passthru
     bool is_passthrough = (sd_params->sample_steps<=1 && sd_params->strength<=0 && is_img2img && vid_req_frames<=1 && extra_image_data.size()==0);
+    sd_audio_t* generated_audio = nullptr;
 
     if(is_vid_model)
     {
@@ -1390,7 +1391,6 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
         fflush(stdout);
 
-        sd_audio_t* generated_audio = nullptr;
         results = nullptr;
         if (!generate_video(sd_ctx, &vid_gen_params, &results, &generated_num_results, &generated_audio)) {
             results = nullptr;
@@ -1568,7 +1568,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                 }
                 if(video_output_type==1 || video_output_type==2)
                 {
-                    status2 = create_mjpg_avi_membuf_from_sd_images(results, generated_num_results, 16, 40, &out_data2,&out_len2);
+                    status2 = create_mjpg_avi_membuf_from_sd_images(results, generated_num_results, 16, 40, &out_data2,&out_len2, generated_audio);
                 }
 
                 if(!sd_is_quiet && sddebugmode==1)
@@ -1621,6 +1621,11 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     {
         free(upscaled_image.data);
         upscaled_image.data = nullptr;
+    }
+
+    if (generated_audio) {
+        free_sd_audio(generated_audio);
+        generated_audio = nullptr;
     }
 
     free(results);
