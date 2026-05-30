@@ -52,6 +52,7 @@ bias_max_value = 100.0
 logprobs_max = 10
 default_draft_amount = 8
 default_ttsmaxlen = 4096
+default_embeddingsmaxctx = 4096
 default_visionmaxres = 1024
 net_save_slots = 12
 savestate_limit_default = 5
@@ -7724,7 +7725,7 @@ def show_gui():
     musiclowvram_var = ctk.IntVar(value=0)
 
     embeddings_model_var = ctk.StringVar()
-    embeddings_ctx_var = ctk.StringVar(value=str(""))
+    embeddings_ctx_var = ctk.StringVar(value=str(default_embeddingsmaxctx))
     embeddings_gpu_var = ctk.IntVar(value=0)
 
     admin_var = ctk.IntVar(value=0)
@@ -11842,7 +11843,7 @@ if __name__ == '__main__':
 
     embeddingsparsergroup = parser.add_argument_group('Embeddings Model Commands')
     embeddingsparsergroup.add_argument("--embeddingsmodel", metavar=('[filename]'), help="Specify an embeddings model to be loaded for generating embedding vectors.", default="")
-    embeddingsparsergroup.add_argument("--embeddingsmaxctx", metavar=('[amount]'), help="Overrides the default maximum supported context of an embeddings model (defaults to trained context).", type=int, default=0)
+    embeddingsparsergroup.add_argument("--embeddingsmaxctx", metavar=('[amount]'), help="Overrides the default maximum supported context of an embeddings model (defaults to trained context).", type=int, default=default_embeddingsmaxctx)
     embeddingsparsergroup.add_argument("--embeddingsgpu", help="Attempts to offload layers of the embeddings model to GPU. Usually not needed.", action='store_true')
 
     rpcgroup = parser.add_argument_group('RPC Commands')
