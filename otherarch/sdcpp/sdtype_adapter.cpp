@@ -161,11 +161,13 @@ static bool remove_limits = false;
 static struct {
     std::string data;
     std::string data_extra;
+    std::string final_frame;
     std::string info;
     bool animated;
     void reset() {
         data = "";
         data_extra = "";
+        final_frame = "";
         info = "{}";
         animated = false;
     }
@@ -174,6 +176,7 @@ static struct {
         output.status = status;
         output.data = data.c_str();
         output.data_extra = data_extra.c_str();
+        output.final_frame = final_frame.c_str();
         output.info = info.c_str();
         output.animated = animated;
         return output;
@@ -1529,6 +1532,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     upscaled_image.data = nullptr;
     std::string gen_data;
     std::string gen_data2;
+    std::string final_frame_data;
 
     if (is_passthrough)
     {
@@ -1571,6 +1575,12 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
                 if(video_output_type==1 || video_output_type==2)
                 {
                     status2 = create_mjpg_avi_membuf_from_sd_images(results, generated_num_results, vid_fps, 40, &out_data2,&out_len2, generated_audio);
+                }
+
+                if(generated_num_results>1)
+                {
+                    sd_image_t *final_frame_image = &results[generated_num_results-1];
+                    final_frame_data = raw_image_to_png_base64(*final_frame_image);
                 }
 
                 if(!sd_is_quiet && sddebugmode==1)
@@ -1641,6 +1651,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
     sd_generation.data = gen_data;
     sd_generation.data_extra = gen_data2;
+    sd_generation.final_frame = final_frame_data;
     sd_generation.animated = isanim;
     sd_generation.info = jsoninfo.dump();
     return sd_generation.outputs(1);

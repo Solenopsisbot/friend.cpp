@@ -438,6 +438,7 @@ class sd_generation_outputs(ctypes.Structure):
                 ("animated", ctypes.c_int),
                 ("data", ctypes.c_char_p),
                 ("data_extra", ctypes.c_char_p),
+                ("final_frame", ctypes.c_char_p),
                 ("info", ctypes.c_char_p)]
 
 class sd_upscale_inputs(ctypes.Structure):
@@ -2859,15 +2860,17 @@ def sd_generate(genparams):
     ret = handle.sd_generate(inputs)
     data_main = ""
     data_extra = ""
+    final_frame = ""
     info = {}
     animated = False
     if ret.status==1:
         data_main = ret.data.decode("UTF-8","ignore")
         data_extra = ret.data_extra.decode("UTF-8","ignore")
+        final_frame = ret.final_frame.decode("UTF-8","ignore")
         info = json.loads(ret.info.decode("UTF-8","ignore"))
         animated = True if ret.animated else False
     info["job_timestamp"] = job_timestamp
-    return {"animated": animated, "data":data_main, "data_extra":data_extra, "info": info}
+    return {"animated": animated, "data":data_main, "data_extra":data_extra, "final_frame":final_frame, "info": info}
 
 
 def whisper_load_model(model_filename):
@@ -6936,6 +6939,7 @@ Change Mode<br>
                         gendat = gen["data"]
                         genanim = gen["animated"]
                         gendatextra = gen["data_extra"]
+                        genfinalframe = gen["final_frame"]
                         geninfo = json.dumps(gen["info"]) # sdapi really expects a stringified JSON
                         genresp = None
                         if is_comfyui_imggen:
@@ -6947,7 +6951,7 @@ Change Mode<br>
                         elif is_oai_imggen:
                             genresp = (json.dumps({"created":int(time.time()),"data":[{"b64_json":gendat}],"background":"opaque","output_format":"png","size":"1024x1024","quality":"medium"}).encode())
                         else:
-                            genresp = (json.dumps({"images":[gendat],"parameters":{},"info":geninfo,"animated":genanim,"extra_data":gendatextra}).encode())
+                            genresp = (json.dumps({"images":[gendat],"parameters":{},"info":geninfo,"animated":genanim,"extra_data":gendatextra, "final_frame":genfinalframe}).encode())
                         self.send_response(200)
                         self.send_header('content-length', str(len(genresp)))
                         self.end_headers(content_type='application/json')

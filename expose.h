@@ -256,6 +256,7 @@ struct sd_generation_outputs
     int animated = 0;
     const char * data = "";
     const char * data_extra = "";
+    const char * final_frame = ""; //for videos to allow extend
     const char * info = "";
 };
 struct sd_upscale_inputs
