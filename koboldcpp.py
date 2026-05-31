@@ -7474,7 +7474,7 @@ def show_gui():
     def actually_resize(windowwidth,windowheight,lastpos,smallratio):
         root.geometry(str(windowwidth) + "x" + str(windowheight) + str(lastpos))
         ctk.set_widget_scaling(smallratio)
-        changerunmode(1,1,1)
+        update_runmode_gui()
         togglerope(1,1,1)
         toggleflashattn(1,1,1)
         togglectxshift(1,1,1)
@@ -7999,7 +7999,7 @@ def show_gui():
 
         #autopick cublas if suitable, requires at least 3.5GB VRAM to auto pick
         #we do not want to autoselect hip/cublas if the user has already changed their desired backend!
-        if eligible_cuda and exitcounter < 100 and MaxMemory[0]>3500000000 and (("Use CUDA" in runopts and CUDevicesNames[0]!="") or "Use hipBLAS (ROCm)" in runopts) and (any(CUDevicesNames)) and runmode_untouched:
+        if eligible_cuda and exitcounter < 100 and MaxMemory[0]>3500000000 and runmode_untouched and (("Use CUDA" in runopts and CUDevicesNames[0]!="") or "Use hipBLAS (ROCm)" in runopts) and (any(CUDevicesNames)):
             if "Use CUDA" in runopts:
                 runopts_var.set("Use CUDA")
                 gpu_choice_var.set("0")
@@ -8059,7 +8059,7 @@ def show_gui():
     def changed_autofit(*args):
         global runmode_untouched
         orig_rmu = runmode_untouched
-        changerunmode(1,1,1)
+        update_runmode_gui()
         runmode_untouched = orig_rmu
         changed_gpulayers_estimate()
 
@@ -8159,6 +8159,9 @@ def show_gui():
     def changerunmode(a,b,c):
         global runmode_untouched
         runmode_untouched = False
+        update_runmode_gui()
+
+    def update_runmode_gui():
         index = runopts_var.get()
         if index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use Vulkan (Older CPU)" or index == "Use CUDA" or index == "Use hipBLAS (ROCm)":
             quick_gpuname_label.grid(row=3, column=1, padx=75, sticky="W")
@@ -8531,7 +8534,7 @@ def show_gui():
             rpcdevicebox.grid_remove()
             rpcdevicelbl.grid_remove()
             rpcdesc.configure(text="RPC is disabled and will not be used")
-        changerunmode(1,1,1)
+        update_runmode_gui()
     makelabelcombobox(network_tab, "RPC Mode:", rpcmode_var, row=40, padx=(100), width=90, command=togglerpcmode, tooltiptxt="RPC functionality to connect to remote RPC instances or host one, allowing GPUs to be shared over a network.", values=["disabled","connect","host"])
     rpcdesc = makelabel(network_tab, "RPC is disabled and will not be used", row=42)
     rpcepbox, rpceplbl = makelabelentry(network_tab, "RPC Endpoints: ", rpcendpoints_var, row=44, padx=(100), width=200, singleline=True,tooltip="Specify a comma separated list of remote RPC endpoints to connect to e.g. 127.0.0.1:5551,127.0.0.1:5552")
@@ -8754,7 +8757,7 @@ def show_gui():
 
     # refresh
     runopts_var.trace_add("write", changerunmode)
-    changerunmode(1,1,1)
+    update_runmode_gui()
     togglerope(1,1,1)
     toggleflashattn(1,1,1)
     togglectxshift(1,1,1)
@@ -9063,7 +9066,7 @@ def show_gui():
             elif qkvstr=="q4_0" or qkvstr=="2":
                 qkvval = 4
             quantkv_var.set(qkvval)
-        if "usecuda" in mydict and mydict["usecuda"]:
+        if "usecuda" in mydict and mydict["usecuda"] is not None:
             if cublas_option is not None or hipblas_option is not None:
                 if cublas_option:
                     runopts_var.set(cublas_option)
