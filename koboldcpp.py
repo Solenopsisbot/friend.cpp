@@ -2813,7 +2813,7 @@ def sd_generate(genparams):
         flow_shift = None # fall back to the default
     sample_steps = (1 if sample_steps < 1 else (forced_steplimit if sample_steps > forced_steplimit else sample_steps))
     vid_req_frames = (1 if vid_req_frames < 1 else (400 if vid_req_frames > 400 else vid_req_frames))
-    vid_fps = (16 if vid_fps < 16 else (24 if vid_fps > 24 else vid_fps))
+    vid_fps = (16 if vid_fps < 16 else (32 if vid_fps > 32 else vid_fps))
 
     swap_refimg = (True if tryparseint(genparams.get("send_as_refimg", 0),0) else False)
     reverse_refimg = (True if tryparseint(genparams.get("reverse_refimg", 0),0) else False)
