@@ -1395,8 +1395,6 @@ common_init_result_ptr common_init_from_params(common_params & params, bool mode
     if (params.warmup) {
         LOG_INF("%s: warming up the model with an empty run - please wait ... (--no-warmup to disable)\n", __func__);
 
-        llama_set_warmup(lctx, true);
-
         std::vector<llama_token> tmp;
         llama_token bos = llama_vocab_bos(vocab);
         llama_token eos = llama_vocab_eos(vocab);
@@ -1427,7 +1425,6 @@ common_init_result_ptr common_init_from_params(common_params & params, bool mode
         llama_memory_clear(llama_get_memory(lctx), true);
         llama_synchronize(lctx);
         llama_perf_context_reset(lctx);
-        llama_set_warmup(lctx, false);
 
         // reset samplers to reset RNG state after warmup to the seeded state
         res->reset_samplers();
@@ -1569,6 +1566,7 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     cparams.n_ctx             = params.n_ctx;
     cparams.n_seq_max         = params.n_parallel;
     cparams.n_rs_seq          = params.speculative.need_n_rs_seq();
+    cparams.n_outputs_max     = std::max(params.n_outputs_max, 0);
     cparams.n_batch           = params.n_batch;
     cparams.n_ubatch          = params.n_ubatch;
     cparams.n_threads         = params.cpuparams.n_threads;
