@@ -4807,7 +4807,16 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     std::vector<int> media_intro; //added before media list
     std::vector<int> media_outro; //added before media list
-    TokenizeString("\nAttached Media:\n", media_intro, file_format, true);
+    std::string intro = "\nAttached Media:\n";
+    if(clp_ctx_v) //ugly fix for gemma4uv vision coherency
+    {
+        int ptype = clip_get_projector_type_ext(clp_ctx_v);
+        if(ptype==PROJECTOR_TYPE_GEMMA4UV)
+        {
+            intro = "\n<|channel><channel|>" + intro;
+        }
+    }
+    TokenizeString(intro, media_intro, file_format, true);
 
     //clear previous run llava embd memory, just-in-time free
     for(int i=0;i<media_objects.size();++i)
