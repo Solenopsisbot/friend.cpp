@@ -2279,6 +2279,9 @@ void kcpp_init_audio_proj(clip_ctx * ctx_a)
         case PROJECTOR_TYPE_GEMMA4A:
             audio_preproc = std::make_unique<mtmd_audio_preprocessor_gemma4a>(ctx_a);
             break;
+        case PROJECTOR_TYPE_GEMMA4UA:
+            audio_preproc = std::make_unique<mtmd_audio_preprocessor_gemma4ua>(ctx_a);
+            break;
         default:
             GGML_ABORT("unsupported audio projector type");
     }
