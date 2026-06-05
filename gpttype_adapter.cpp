@@ -2008,7 +2008,8 @@ static bool kcpp_eval_media(llama_context * ctx_llama, const media_chunk & media
     const int image_n_past = *n_past;
 
     kcpp_embd_batch media_batch = kcpp_embd_batch(img_embd, num_img_tokens, image_n_past, use_mrope, is2d, img_nx, img_ny);
-    if(vision_use_non_casual)
+    const bool non_casual = (vision_use_non_casual && !mediachunk.is_audio);
+    if(non_casual)
     {
         llama_set_causal_attn(llama_ctx_v4, false);
     }
@@ -2017,10 +2018,14 @@ static bool kcpp_eval_media(llama_context * ctx_llama, const media_chunk & media
         llama_batch batch_embd_view = media_batch.get_view(i, n_eval, n_embd_mmproj);
         if (llama_decode(ctx_llama, batch_embd_view)) {
             fprintf(stderr, "\n%s : failed to eval image\n", __func__);
+            if(non_casual)
+            {
+                llama_set_causal_attn(llama_ctx_v4, true);
+            }
             return false;
         }
     }
-    if(vision_use_non_casual)
+    if(non_casual)
     {
         llama_set_causal_attn(llama_ctx_v4, true);
     }
@@ -4537,6 +4542,7 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
                         printf("\nCreating clip image embed...");
                     }
                     media_chunk chunk;
+                    chunk.is_audio = media_objects[i].is_audio;
                     if (!llava_image_embed_make_with_clip_img(clp_ctx_v, kcpp_data->n_threads, clp_img_data, &chunk.clp_img_embd, &chunk.clp_image_tokens, &chunk.nx, &chunk.ny, clip_is_mrope)) {
                         printf("\nError: Clip image %d failed to create embd!",i);
                     }
@@ -4584,6 +4590,7 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
                 int total_chunk_tokens = 0;
                 for (auto & mel_spec : mel_spec_chunks) {
                     media_chunk chunk;
+                    chunk.is_audio = media_objects[i].is_audio;
                     bool ok = audio_embd_make_with_clip_img(clp_ctx_a, kcpp_data->n_threads, mel_spec, &chunk.clp_img_embd, &chunk.clp_image_tokens);
                     if (!ok) {
                         printf("\nError: Clip audio chunk in %d failed to make embd!",i);
@@ -4900,7 +4907,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                     aud_start = "[INST][BEGIN_AUDIO]";
                     aud_end = "[/INST]\n";
                 }
-                else if(ptype==PROJECTOR_TYPE_GEMMA4A)
+                else if(ptype==PROJECTOR_TYPE_GEMMA4A || ptype==PROJECTOR_TYPE_GEMMA4UA)
                 {
                     aud_start = "<|audio>";
                     aud_end = "<audio|>\n";
