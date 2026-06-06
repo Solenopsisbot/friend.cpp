@@ -589,8 +589,8 @@ std::string clean_input_prompt(const std::string& input) {
             result.push_back(ch);
         }
     }
-    //limit to max 800 chars
-    result = result.substr(0, 800);
+    //limit to max 2048 chars
+    result = result.substr(0, 2048);
     return result;
 }
 
