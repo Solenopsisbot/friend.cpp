@@ -6854,8 +6854,13 @@ Change Mode<br>
                                                 raw_args = json.loads(raw_args)
                                             except Exception:
                                                 raw_args = {}
-                                        tc_block = {"type": "tool_use", "id": tool_call.get("id", f"toolu_{random.randint(10000,99999)}"), "name": func.get("name", ""), "input": raw_args}
+                                        tc_id = tool_call.get("id", f"toolu_{random.randint(10000,99999)}")
+                                        tc_name = func.get("name", "")
+                                        # Start block with EMPTY input — the actual args come in the delta
+                                        tc_block = {"type": "tool_use", "id": tc_id, "name": tc_name, "input": {}}
                                         self.wfile.write(f'event: content_block_start\ndata: {json.dumps({"type":"content_block_start","index":block_index,"content_block":tc_block})}\n\n'.encode())
+                                        # Deliver the args as a single input_json_delta
+                                        self.wfile.write(f'event: content_block_delta\ndata: {json.dumps({"type":"content_block_delta","index":block_index,"delta":{"type":"input_json_delta","partial_json":json.dumps(raw_args)}})}\n\n'.encode())
                                         self.wfile.write(f'event: content_block_stop\ndata: {json.dumps({"type":"content_block_stop","index":block_index})}\n\n'.encode())
                                         block_index += 1
                                 else:
