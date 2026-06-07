@@ -492,6 +492,8 @@ add_library(sdtype_adapter
             otherarch/sdcpp/ggml_graph_cut.cpp
             otherarch/sdcpp/ggml_graph_cut.h
             otherarch/sdcpp/image_metadata.cpp
+            otherarch/sdcpp/layer_registry.cpp
+            otherarch/sdcpp/layer_registry.h
             otherarch/sdcpp/model.cpp
             otherarch/sdcpp/sample-cache.cpp
             otherarch/sdcpp/util.cpp
