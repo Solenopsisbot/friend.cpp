@@ -3687,7 +3687,23 @@ def remove_outer_tags(inputstr):
     except Exception:
         return stripped
 
-def normalize_tool_call(obj): # Normalize various tool call formats to OpenAI format
+def normalize_anthropic_tools_input(tools): #Convert Anthropic-format tool definitions to OpenAI format.
+    normalized = []
+    for tool in tools:
+        if tool.get("type") == "function" and "function" in tool: # Already in OpenAI format — leave it alone
+            normalized.append(tool)
+            continue
+        if "name" in tool and ("input_schema" in tool or "parameters" in tool):  # Anthropic format: top-level name + input_schema
+            params = tool.get("input_schema", tool.get("parameters", {}))
+            normalized.append({
+                "type": "function",
+                "function": {"name": tool["name"], "description": tool.get("description", ""), "parameters": params}
+            })
+            continue
+        normalized.append(tool) # Unknown format — pass through unchanged so nothing is silently dropped
+    return normalized
+
+def normalize_tool_call_resp(obj): # Normalize various tool call formats to OpenAI format
     if "type" in obj and "function" in obj: # Already in OpenAI format
         return obj
     if "name" in obj and ("arguments" in obj or "parameters" in obj):
@@ -4375,6 +4391,9 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 sys_prompt = "".join([s.get("text","") for s in sys_prompt if s.get("type") == "text"])
             messages.insert(0, {"role": "system", "content": sys_prompt})
         genparams["messages"] = messages
+        # Normalize Anthropic-format tool definitions to OpenAI format before delegating
+        if genparams.get("tools"):
+            genparams["tools"] = normalize_anthropic_tools_input(genparams["tools"])
         transform_genparams(genparams, 4, use_jinja) # Delegate to oai chat completions
         return genparams
 
@@ -4898,7 +4917,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         #tool calls resolution
         tool_calls = []
-        if api_format == 4 or api_format == 2 or api_format == 8:
+        if api_format == 4 or api_format == 2 or api_format == 8 or api_format == 9:
             using_openai_tools = genparams.get('using_openai_tools', False)
             if using_openai_tools:
                 # first, check and potentially segment multiple tags for multi-tool calls
@@ -4910,7 +4929,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                             flat.extend(obj)
                         else:
                             flat.append(obj)
-                    tool_calls = [normalize_tool_call(obj) for obj in flat]
+                    tool_calls = [normalize_tool_call_resp(obj) for obj in flat]
                     for tc in tool_calls:
                         tcarg = tc.get("function",{}).get("arguments",None)
                         tc["id"] = f"call_{random.randint(10000, 99999)}"
@@ -4986,14 +5005,35 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             res["status"] = "completed" if currfinishreason != "error" else "failed"
             res["output"] = output_items
             res["usage"] = {"input_tokens": prompttokens, "output_tokens": comptokens, "total_tokens": prompttokens + comptokens, "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0}}
-        elif api_format == 9: # Anthropic Format
-            anthropic_reason = "end_turn" if currfinishreason == "stop" else ("max_tokens" if currfinishreason == "length" else "stop_sequence")
+        elif api_format == 9:  # Anthropic Format
+            if tool_calls and len(tool_calls) > 0:
+                anthropic_reason = "tool_use"
+                content_blocks = []
+                if recvtxt:  # include any text that preceded the tool call
+                    content_blocks.append({"type": "text", "text": recvtxt})
+                for tc in tool_calls:
+                    func = tc.get("function", {})
+                    raw_args = func.get("arguments", {})
+                    if isinstance(raw_args, str):
+                        try:
+                            raw_args = json.loads(raw_args)
+                        except Exception:
+                            raw_args = {}
+                    content_blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id", f"toolu_{random.randint(10000,99999)}"),
+                        "name": func.get("name", ""),
+                        "input": raw_args,
+                    })
+            else:
+                anthropic_reason = "end_turn" if currfinishreason == "stop" else ("max_tokens" if currfinishreason == "length" else "stop_sequence")
+                content_blocks = [{"type": "text", "text": recvtxt}]
             res = {
                 "id": f"msg_A{req_id_suffix}",
                 "type": "message",
                 "role": "assistant",
                 "model": modelNameToReturn,
-                "content": [{"type": "text", "text": recvtxt}],
+                "content": content_blocks,
                 "stop_reason": anthropic_reason,
                 "stop_sequence": None,
                 "usage": {"input_tokens": prompttokens, "output_tokens": comptokens}
