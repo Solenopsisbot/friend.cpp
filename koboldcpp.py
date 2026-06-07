@@ -8493,8 +8493,8 @@ def show_gui():
     makecheckbox(network_tab, "Shared Multiplayer", multiplayer_var, 13,tooltiptxt="Hosts a shared multiplayer session that others can join.")
     makecheckbox(network_tab, "Enable WebSearch", websearch_var, 13,padx=(200),tooltiptxt="Enable the local search engine proxy so Web Searches can be done.")
 
-    makefileentry(network_tab, "SSL Cert:", "Select SSL cert.pem file",ssl_cert_var, 20, width=200,filetypes=[("Unencrypted Certificate PEM", "*.pem")], singlerow=True,tooltiptxt="Select your unencrypted .pem SSL certificate file for https.\nCan be generated with OpenSSL.")
-    makefileentry(network_tab, "SSL Key:", "Select SSL key.pem file", ssl_key_var, 22, width=200, filetypes=[("Unencrypted Key PEM", "*.pem")], singlerow=True, tooltiptxt="Select your unencrypted .pem SSL key file for https.\nCan be generated with OpenSSL.")
+    makefileentry(network_tab, "SSL Cert:", "Select Unencrypted SSL cert.pem file",ssl_cert_var, 20, width=200,filetypes=[("*.pem *.crt *.key", "*.pem *.crt *.cer *.key")], singlerow=True,tooltiptxt="Select your unencrypted .pem SSL certificate file for https.\nCan be generated with OpenSSL.")
+    makefileentry(network_tab, "SSL Key:", "Select Unencrypted SSL key.pem file", ssl_key_var, 22, width=200, filetypes=[("*.pem *.crt *.key", "*.pem *.key")], singlerow=True, tooltiptxt="Select your unencrypted .pem SSL key file for https.\nCan be generated with OpenSSL.")
     makelabelentry(network_tab, "Password: ", password_var, 24, 200, padx=(100), singleline=True, tooltip="Enter a password required to use this instance.\nThis key will be required for all text endpoints.\nImage endpoints are not secured.")
 
     makelabelentry(network_tab, "Multiuser Queue:", multiuser_var, row=30, width=50, padx=(120), singleline=True, tooltip="Maximum queued incoming requests.")
