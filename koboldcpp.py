@@ -4531,12 +4531,13 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
         global global_memory
         #specifically look for generation requests from completions or chat completions to handle hotswap
         is_post = self.command.upper() == "POST"
-        is_completions_path = (self.path.endswith('/v1/completions') or self.path.endswith('/v1/completion') or self.path=='/completions')
-        is_chat_completions_path = (self.path.endswith('/v1/chat/completions') or self.path=='/chat/completions')
+        clean_path = self.path.split("?")[0] #for cases where we do not want query params
+        is_completions_path = (clean_path.endswith('/v1/completions') or clean_path.endswith('/v1/completion') or clean_path=='/completions')
+        is_chat_completions_path = (clean_path.endswith('/v1/chat/completions') or clean_path=='/chat/completions')
 
         #any requests to the following endpoints is capable of waking the server
         wake_requests = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions","/v1/responses","/completions","/chat/completions","/responses","/api/extra/transcribe","/v1/audio/transcriptions","/api/extra/tts","/v1/audio/speech","/api/extra/embeddings","/v1/embeddings","/api/extra/music/prepare","/api/extra/music/generate","/sdapi/v1/txt2img","/sdapi/v1/img2img","/sdapi/v1/upscale"]
-        is_wake_request = self.path in wake_requests
+        is_wake_request = clean_path in wake_requests
 
         autoswapEnabled = global_memory["autoswapmode"] is not None and global_memory["autoswapmode"]
         model_switch_pass = False
@@ -4592,22 +4593,22 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
                 imageReqs = ["/sdapi/v1/txt2img", "/sdapi/v1/img2img", "/sdapi/v1/upscale"] # "/sdapi/v1/sd-models", "/sdapi/v1/options", "/sdapi/v1/samplers"
 
                 swapModeChanged = False
-                if any(self.path.endswith(e) for e in textReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "text"):
+                if any(clean_path.endswith(e) for e in textReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "text"):
                     global_memory["swapReqType"] = "text"
                     swapModeChanged = True
-                elif any(self.path.endswith(e) for e in sttReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "stt"):
+                elif any(clean_path.endswith(e) for e in sttReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "stt"):
                     global_memory["swapReqType"] = "stt"
                     swapModeChanged = True
-                elif any(self.path.endswith(e) for e in ttsReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "tts"):
+                elif any(clean_path.endswith(e) for e in ttsReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "tts"):
                     global_memory["swapReqType"] = "tts"
                     swapModeChanged = True
-                elif any(self.path.endswith(e) for e in embedReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "embed"):
+                elif any(clean_path.endswith(e) for e in embedReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "embed"):
                     global_memory["swapReqType"] = "embed"
                     swapModeChanged = True
-                elif any(self.path.endswith(e) for e in musicReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "music"):
+                elif any(clean_path.endswith(e) for e in musicReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "music"):
                     global_memory["swapReqType"] = "music"
                     swapModeChanged = True
-                elif any(self.path.endswith(e) for e in imageReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "image"):
+                elif any(clean_path.endswith(e) for e in imageReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "image"):
                     global_memory["swapReqType"] = "image"
                     swapModeChanged = True
 
@@ -6070,10 +6071,11 @@ Change Mode<br>
                 return
 
         self.path = self.path.rstrip('/')
+        clean_path = self.path.split("?")[0] #for cases where we do not want query params
         response_body = None
         response_code = 200
 
-        if self.path.endswith('/api/extra/tokencount') or self.path.endswith('/api/extra/tokenize'):
+        if clean_path.endswith('/api/extra/tokencount') or clean_path.endswith('/api/extra/tokenize'):
             if not self.secure_endpoint():
                 return
             try:
@@ -6092,7 +6094,7 @@ Change Mode<br>
                 response_code = 400
                 response_body = (json.dumps({"value": -1}).encode())
 
-        elif self.path.endswith('/api/extra/detokenize'):
+        elif clean_path.endswith('/api/extra/detokenize'):
             if not self.secure_endpoint():
                 return
             try:
@@ -6106,7 +6108,7 @@ Change Mode<br>
                 response_code = 400
                 response_body = (json.dumps({"result": "","success":False}).encode())
 
-        elif self.path.endswith('/api/extra/json_to_grammar'):
+        elif clean_path.endswith('/api/extra/json_to_grammar'):
             if not self.secure_endpoint():
                 return
             try:
@@ -6121,7 +6123,7 @@ Change Mode<br>
                 response_code = 400
                 response_body = (json.dumps({"result": "","success":False}).encode())
 
-        elif self.path.endswith('/api/extra/abort'):
+        elif clean_path.endswith('/api/extra/abort'):
             if not self.secure_endpoint():
                 return
             multiuserkey = ""
@@ -6143,7 +6145,7 @@ Change Mode<br>
             else:
                 response_body = (json.dumps({"success": "false", "done":"false"}).encode())
 
-        elif self.path.endswith('/api/extra/generate/check'):
+        elif clean_path.endswith('/api/extra/generate/check'):
             if not self.secure_endpoint():
                 return
             pendtxtStr = ""
@@ -6161,7 +6163,7 @@ Change Mode<br>
                     pendtxtStr = ctypes.string_at(pendtxt).decode("UTF-8","ignore")
             response_body = (json.dumps({"results": [{"text": pendtxtStr}]}).encode())
 
-        elif self.path.endswith('/api/extra/last_logprobs'):
+        elif clean_path.endswith('/api/extra/last_logprobs'):
             if not self.secure_endpoint():
                 return
             logprobsdict = None
@@ -6179,7 +6181,7 @@ Change Mode<br>
                     logprobsdict = parse_last_logprobs(lastlogprobs)
             response_body = (json.dumps({"logprobs":logprobsdict}).encode())
 
-        elif self.path.endswith('/api/extra/multiplayer/status'):
+        elif clean_path.endswith('/api/extra/multiplayer/status'):
             if not self.secure_endpoint():
                 return
             if not has_multiplayer:
@@ -6198,7 +6200,7 @@ Change Mode<br>
                     multiplayer_lastactive[sender] = int(time.time())
                 response_body = (json.dumps({"turn_major":multiplayer_turn_major,"turn_minor":multiplayer_turn_minor,"idle":self.get_multiplayer_idle_state(sender),"data_format":multiplayer_dataformat}).encode())
 
-        elif self.path.endswith('/api/extra/data/list'):
+        elif clean_path.endswith('/api/extra/data/list'):
             if not self.secure_endpoint():
                 return
             if savedata_obj is None:
@@ -6212,7 +6214,7 @@ Change Mode<br>
                     output.append("")
             response_body = (json.dumps(output).encode())
 
-        elif self.path.endswith('/api/extra/data/load'):
+        elif clean_path.endswith('/api/extra/data/load'):
             if not self.secure_endpoint():
                 return
             if savedata_obj is None:
@@ -6228,7 +6230,7 @@ Change Mode<br>
             else:
                 response_body = (json.dumps({"success":True,"data":savedata_obj[str(loadid)]}).encode())
 
-        elif self.path.endswith('/api/extra/data/save'):
+        elif clean_path.endswith('/api/extra/data/save'):
             if not self.secure_endpoint():
                 return
             if savedata_obj is None:
@@ -6276,7 +6278,7 @@ Change Mode<br>
                     response_code = 400
                     response_body = (json.dumps({"success": False, "error":"Submitted story invalid!"}).encode())
 
-        elif self.path.endswith('/api/extra/multiplayer/getstory'):
+        elif clean_path.endswith('/api/extra/multiplayer/getstory'):
             if not self.secure_endpoint():
                 return
             if not has_multiplayer:
@@ -6286,7 +6288,7 @@ Change Mode<br>
             else:
                 response_body = multiplayer_story_data_compressed.encode()
 
-        elif self.path.endswith('/api/extra/multiplayer/setstory'):
+        elif clean_path.endswith('/api/extra/multiplayer/setstory'):
             if not self.secure_endpoint():
                 return
             if not has_multiplayer:
@@ -6323,7 +6325,7 @@ Change Mode<br>
                     response_code = 400
                     response_body = (json.dumps({"success": False, "error":"Submitted story invalid!"}).encode())
 
-        elif self.path.startswith(("/api/extra/websearch")):
+        elif clean_path.startswith(("/api/extra/websearch")):
             if not self.secure_endpoint():
                 return
             if args.websearch:
@@ -6339,7 +6341,7 @@ Change Mode<br>
             else:
                 response_body = (json.dumps([]).encode())
 
-        elif self.path.startswith(("/api/admin/reload_config")):
+        elif clean_path.startswith(("/api/admin/reload_config")):
             resp = {"success": False}
             if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                 targetfile = ""
@@ -6375,13 +6377,13 @@ Change Mode<br>
                             resp = {"success": True}
             response_body = (json.dumps(resp).encode())
 
-        elif self.path.endswith('/set_tts_settings'): #return dummy response
+        elif clean_path.endswith('/set_tts_settings'): #return dummy response
             response_body = (json.dumps({"message": "Settings successfully applied"}).encode())
 
-        elif self.path=="/api/show": #ollama compatible
+        elif clean_path=="/api/show": #ollama compatible
             response_body = (json.dumps({"parameters":"temperature 1.0","license":"Ollama Emulation. Running on KoboldCpp","modelfile":"KoboldCpp","capabilities":["completion"],"modified_at":"2025-01-01T01:00:00.0000000+00:00","details":{},"model_info":{}}).encode())
 
-        elif self.path=="/mcp": #simple mcp proxy
+        elif clean_path=="/mcp": #simple mcp proxy
             if not self.secure_endpoint():
                 return
             try:
@@ -6434,7 +6436,7 @@ Change Mode<br>
                 response_code = 400
                 response_body = (json.dumps({"error": {"code": -32700, "message": "Parse error"}}).encode())
 
-        elif self.path=="/api/extra/shutdown":
+        elif clean_path=="/api/extra/shutdown":
             # if args.singleinstance:
             client_ip = self.client_address[0]
             is_local = client_ip in ('127.0.0.1', '::1', 'localhost')
@@ -6515,7 +6517,7 @@ Change Mode<br>
             use_jinja = args.jinja
             global_memory["last_active_timestamp"] = datetime.now()
             global_memory["triggered_sleeping"] = False
-            if self.path.endswith('/api/admin/check_state'):
+            if clean_path.endswith('/api/admin/check_state'):
                 if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                     cur_states = []
                     for sl in range(savestate_limit): #0,1,2,3
@@ -6527,7 +6529,7 @@ Change Mode<br>
                     response_body = (json.dumps({"success": True, "old_states":cur_states, "new_state_size":newstate, "new_tokens":newtokencnt}).encode())
                 else:
                     response_body = (json.dumps({"success": False, "old_states":[], "new_state_size":0, "new_tokens":0}).encode())
-            elif self.path.endswith('/api/admin/load_state'):
+            elif clean_path.endswith('/api/admin/load_state'):
                 if global_memory and savestate_limit>0 and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                     targetslot = 0
                     try:
@@ -6542,7 +6544,7 @@ Change Mode<br>
                     response_body = (json.dumps({"success": result, "new_tokens":tokencnt}).encode())
                 else:
                     response_body = (json.dumps({"success": False, "new_tokens":0}).encode())
-            elif self.path.endswith('/api/admin/save_state'):
+            elif clean_path.endswith('/api/admin/save_state'):
                 if global_memory and savestate_limit>0 and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                     targetslot = 0
                     try:
@@ -6557,30 +6559,30 @@ Change Mode<br>
                     response_body = (json.dumps({"success": (result>0), "new_state_size":result, "new_tokens":tokencnt}).encode())
                 else:
                     response_body = (json.dumps({"success": False, "new_state_size":0, "new_tokens":0}).encode())
-            elif self.path.endswith('/api/admin/clear_state'):
+            elif clean_path.endswith('/api/admin/clear_state'):
                 if global_memory and savestate_limit>0 and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                     result = handle.clear_state_kv()
                     response_body = (json.dumps({"success": result}).encode())
                 else:
                     response_body = (json.dumps({"success": False}).encode())
-            elif self.path.startswith('/api/upload/image') or self.path.startswith("/upload/image"): #comfyui compatible
+            elif clean_path.startswith('/api/upload/image') or clean_path.startswith("/upload/image"): #comfyui compatible
                 lastuploadedcomfyimg = b''
                 formdata = self.extract_formdata_from_file_upload(body)
                 if "file" in formdata and formdata["file"]:
                     lastuploadedcomfyimg = formdata["file"]
                 response_body = (json.dumps({"name": "kcpp_img2img.jpg", "subfolder": "", "type": "input"}).encode())
-            elif self.path.endswith('/request'):
+            elif clean_path.endswith('/request'):
                 api_format = 1
-            elif self.path.endswith(('/api/v1/generate', '/api/latest/generate')):
+            elif clean_path.endswith(('/api/v1/generate', '/api/latest/generate')):
                 api_format = 2
-            elif self.path.endswith('/api/extra/generate/stream'):
+            elif clean_path.endswith('/api/extra/generate/stream'):
                 api_format = 2
                 sse_stream_flag = True
-            elif self.path.endswith('/v1/completions') or self.path.endswith('/v1/completion') or self.path=='/completions':
+            elif clean_path.endswith('/v1/completions') or clean_path.endswith('/v1/completion') or clean_path=='/completions':
                 api_format = 3
-            elif self.path.endswith('/v1/chat/completions') or self.path=='/chat/completions':
+            elif clean_path.endswith('/v1/chat/completions') or clean_path=='/chat/completions':
                 api_format = 4
-            elif self.path.endswith('/sdapi/v1/interrogate'):
+            elif clean_path.endswith('/sdapi/v1/interrogate'):
                 mmprojOverride = False
                 if autoswapmode and mmprojName is not None:
                     mmprojOverride = True
@@ -6593,31 +6595,31 @@ Change Mode<br>
                         }}).encode())
                     return
                 api_format = 5
-            elif self.path.endswith('/api/generate'): #ollama
+            elif clean_path.endswith('/api/generate'): #ollama
                 api_format = 6
-            elif self.path.endswith('/api/chat'): #ollama
+            elif clean_path.endswith('/api/chat'): #ollama
                 api_format = 7
-            elif self.path.endswith('/v1/responses') or self.path=='/responses': #oai-responses
+            elif clean_path.endswith('/v1/responses') or clean_path=='/responses': #oai-responses
                 api_format = 8
-            elif self.path.endswith('/v1/messages') or self.path=='/messages': #anthropic
+            elif clean_path.endswith('/v1/messages') or clean_path=='/messages': #anthropic
                 api_format = 9
-            elif self.path.endswith('/sdapi/v1/extra-single-image') or self.path.endswith('/sdapi/v1/upscale'):
+            elif clean_path.endswith('/sdapi/v1/extra-single-image') or clean_path.endswith('/sdapi/v1/upscale'):
                 is_img_upscale = True
-            elif self.path=="/prompt" or self.path=="/images/generations" or self.path.endswith('/v1/images/generations') or self.path.endswith('/sdapi/v1/txt2img') or self.path.endswith('/sdapi/v1/img2img'):
+            elif clean_path=="/prompt" or clean_path=="/images/generations" or clean_path.endswith('/v1/images/generations') or clean_path.endswith('/sdapi/v1/txt2img') or clean_path.endswith('/sdapi/v1/img2img'):
                 is_imggen = True
-                if self.path=="/prompt":
+                if clean_path=="/prompt":
                     is_comfyui_imggen = True
-                elif self.path.endswith('/v1/images/generations') or self.path=="/images/generations":
+                elif clean_path.endswith('/v1/images/generations') or clean_path=="/images/generations":
                     is_oai_imggen = True
-            elif self.path.endswith('/api/extra/transcribe') or self.path.endswith('/v1/audio/transcriptions') or self.path=="/audio/transcriptions":
+            elif clean_path.endswith('/api/extra/transcribe') or clean_path.endswith('/v1/audio/transcriptions') or clean_path=="/audio/transcriptions":
                 is_transcribe = True
-            elif self.path.endswith('/api/extra/tts') or self.path.endswith('/v1/audio/speech') or self.path=="/audio/speech" or self.path.endswith('/tts_to_audio'):
+            elif clean_path.endswith('/api/extra/tts') or clean_path.endswith('/v1/audio/speech') or clean_path=="/audio/speech" or clean_path.endswith('/tts_to_audio'):
                 is_tts = True
-            elif self.path.endswith('/api/extra/embeddings') or self.path.endswith('/v1/embeddings'):
+            elif clean_path.endswith('/api/extra/embeddings') or clean_path.endswith('/v1/embeddings'):
                 is_embeddings = True
-            elif self.path.endswith('/api/extra/music/prepare'):
+            elif clean_path.endswith('/api/extra/music/prepare'):
                 is_music_codes = True
-            elif self.path.endswith('/api/extra/music/generate'):
+            elif clean_path.endswith('/api/extra/music/generate'):
                 is_music_audio = True
 
             if response_body is not None:
@@ -6629,7 +6631,7 @@ Change Mode<br>
                 global last_req_time
                 last_req_time = time.time()
 
-                if not is_imggen and not is_img_upscale and not self.path.endswith('/tts_to_audio') and api_format!=5:
+                if not is_imggen and not is_img_upscale and not clean_path.endswith('/tts_to_audio') and api_format!=5:
                     if not self.secure_endpoint():
                         return
 
