@@ -3700,7 +3700,9 @@ def normalize_anthropic_tools_input(tools): #Convert Anthropic-format tool defin
                 "function": {"name": tool["name"], "description": tool.get("description", ""), "parameters": params}
             })
             continue
-        normalized.append(tool) # Unknown format — pass through unchanged so nothing is silently dropped
+        # Unknown format, drop the tool
+        print(f"Dropped unsupported tool: {tool}")
+        # normalized.append(tool)
     return normalized
 
 def normalize_tool_call_resp(obj): # Normalize various tool call formats to OpenAI format
@@ -4390,55 +4392,144 @@ ws ::= | " " | "\n" [ \t]{0,20}
             if isinstance(sys_prompt, list): # Handle array-style system prompts
                 sys_prompt = "".join([s.get("text","") for s in sys_prompt if s.get("type") == "text"])
             messages.insert(0, {"role": "system", "content": sys_prompt})
-        # Normalize Anthropic multimodal content blocks to OAI-compatible format
+        # Normalize Anthropic multimodal content blocks to OAI-compatible format.
+        # This is a two-pass process:
+        #   Pass 1: For each message, normalize individual content block types (image/audio/document)
+        #           and convert assistant tool_use blocks into OAI-style tool_calls.
+        #   Pass 2: Expand user messages that contain tool_result blocks into separate role="tool"
+        #           messages so the OAI chat path (format 4) can handle them correctly.
+
+        def normalize_anthropic_content_block(item):
+            """Convert a single Anthropic content block into its OAI-compatible equivalent(s).
+            Returns a list of OAI content block dicts (usually one, but may be empty)."""
+            item_type = item.get("type", "")
+            if item_type == "text":
+                return [item]  # already OAI-compatible
+            elif item_type == "image":
+                source = item.get("source", {})
+                src_type = source.get("type", "")
+                if src_type == "base64":
+                    media_type = source.get("media_type", "image/jpeg")
+                    data = source.get("data", "")
+                    url = f"data:{media_type};base64,{data}"
+                    return [{"type": "image_url", "image_url": {"url": url}}]
+                elif src_type == "url":
+                    url = source.get("url", "")
+                    return [{"type": "image_url", "image_url": {"url": url}}]
+                else:
+                    return [{"type": "text", "text": "(Unsupported image source type)"}]
+            elif item_type == "audio":
+                source = item.get("source", {})
+                src_type = source.get("type", "")
+                if src_type == "base64":
+                    media_type = source.get("media_type", "audio/wav")
+                    data = source.get("data", "")
+                    fmt = media_type.split("/")[-1] if "/" in media_type else media_type
+                    return [{"type": "input_audio", "input_audio": {"data": data, "format": fmt}}]
+                else:
+                    return [{"type": "text", "text": "(Unsupported audio source type)"}]
+            elif item_type == "document":
+                source = item.get("source", {})
+                doc_text = source.get("text", "") or source.get("data", "")
+                if doc_text:
+                    return [{"type": "text", "text": doc_text}]
+                else:
+                    return [{"type": "text", "text": "(Attached Unknown Document)"}]
+            else:
+                return [item]  # pass through unknown types (including tool_use, tool_result - handled below)
+
+        def normalize_tool_result_content(tr_content):
+            """Flatten the content of a tool_result block into an OAI-compatible content list.
+            tr_content may be a plain string, a list of Anthropic content blocks, or None."""
+            if tr_content is None:
+                return []
+            if isinstance(tr_content, str):
+                return [{"type": "text", "text": tr_content}]
+            if isinstance(tr_content, list):
+                result = []
+                for block in tr_content:
+                    if isinstance(block, str):
+                        result.append({"type": "text", "text": block})
+                    elif isinstance(block, dict):
+                        result.extend(normalize_anthropic_content_block(block))
+                return result
+            return [{"type": "text", "text": str(tr_content)}]
+
+        # Pass 1: normalize content blocks per message; lift tool_use into tool_calls on assistant turns
         for msg in messages:
             content = msg.get("content")
-            if isinstance(content, list):
+            if not isinstance(content, list):
+                continue
+            role = msg.get("role", "")
+            if role == "assistant":
+                # Separate tool_use blocks from text/media blocks
+                tool_calls = []
                 normalized_content = []
                 for item in content:
-                    item_type = item.get("type", "")
-                    if item_type == "text":
-                        normalized_content.append(item)  # already OAI-compatible
-                    elif item_type == "image":
-                        source = item.get("source", {})
-                        src_type = source.get("type", "")
-                        if src_type == "base64":
-                            media_type = source.get("media_type", "image/jpeg")
-                            data = source.get("data", "")
-                            url = f"data:{media_type};base64,{data}"
-                            normalized_content.append({"type": "image_url", "image_url": {"url": url}})
-                        elif src_type == "url":
-                            url = source.get("url", "")
-                            normalized_content.append({"type": "image_url", "image_url": {"url": url}})
-                        else:
-                            normalized_content.append({"type": "text", "text": "(Unsupported image source type)"})
-                    elif item_type == "audio":
-                        source = item.get("source", {})
-                        src_type = source.get("type", "")
-                        if src_type == "base64":
-                            media_type = source.get("media_type", "audio/wav")
-                            data = source.get("data", "")
-                            fmt = media_type.split("/")[-1] if "/" in media_type else media_type
-                            normalized_content.append({"type": "input_audio", "input_audio": {"data": data, "format": fmt}})
-                        else:
-                            normalized_content.append({"type": "text", "text": "(Unsupported audio source type)"})
-                    elif item_type == "document":
-                        # Extract plain text from document blocks if available
-                        source = item.get("source", {})
-                        doc_text = source.get("text", "") or source.get("data", "")
-                        if doc_text:
-                            normalized_content.append({"type": "text", "text": doc_text})
-                        else:
-                            normalized_content.append({"type": "text", "text": "(Attached Unknown Document)"})
-                    elif item_type == "tool_result":
-                        # Pass through tool_result blocks for multi-turn tool conversations
-                        normalized_content.append(item)
-                    elif item_type == "tool_use":
-                        # Pass through tool_use blocks for multi-turn conversations
-                        normalized_content.append(item)
+                    if item.get("type") == "tool_use":
+                        # Convert Anthropic tool_use → OAI tool_calls entry
+                        raw_input = item.get("input", {})
+                        tool_calls.append({
+                            "id": item.get("id", f"toolu_{id(item)}"),
+                            "type": "function",
+                            "function": {
+                                "name": item.get("name", ""),
+                                "arguments": json.dumps(raw_input) if isinstance(raw_input, dict) else str(raw_input)
+                            }
+                        })
                     else:
-                        normalized_content.append(item)  # pass through unknown types unchanged
+                        normalized_content.extend(normalize_anthropic_content_block(item))
+                # Flatten normalized_content to a plain string if all text, else keep as list
+                if all(b.get("type") == "text" for b in normalized_content):
+                    msg["content"] = "".join(b.get("text", "") for b in normalized_content)
+                else:
+                    msg["content"] = normalized_content if normalized_content else None
+                if tool_calls:
+                    msg["tool_calls"] = tool_calls
+            else:
+                # For user/system/tool messages: normalize individual blocks but leave tool_result for pass 2
+                normalized_content = []
+                for item in content:
+                    if item.get("type") == "tool_result":
+                        normalized_content.append(item)  # handled in pass 2
+                    else:
+                        normalized_content.extend(normalize_anthropic_content_block(item))
                 msg["content"] = normalized_content
+
+        # Pass 2: expand user messages that carry tool_result blocks into separate role="tool" messages.
+        # Anthropic puts tool_result blocks inside a user message; OAI expects them as role="tool" messages.
+        expanded_messages = []
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content")
+            if role == "user" and isinstance(content, list):
+                tool_result_items = [item for item in content if isinstance(item, dict) and item.get("type") == "tool_result"]
+                other_items = [item for item in content if not (isinstance(item, dict) and item.get("type") == "tool_result")]
+                # Emit one role="tool" message per tool_result block
+                for tr in tool_result_items:
+                    tr_content_blocks = normalize_tool_result_content(tr.get("content"))
+                    # Flatten to string if all-text for maximum compatibility with the OAI path
+                    if all(b.get("type") == "text" for b in tr_content_blocks):
+                        tr_content_str = "".join(b.get("text", "") for b in tr_content_blocks)
+                    else:
+                        tr_content_str = tr_content_blocks  # keep as list so image/audio blocks survive sweep_media
+                    expanded_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tr.get("tool_use_id", ""),
+                        "content": tr_content_str
+                    })
+                # If any non-tool_result content remains, keep the user message
+                if other_items:
+                    # Flatten all-text content to string
+                    if all(isinstance(b, dict) and b.get("type") == "text" for b in other_items):
+                        msg["content"] = "".join(b.get("text", "") for b in other_items)
+                    else:
+                        msg["content"] = other_items
+                    expanded_messages.append(msg)
+                # If it was purely tool_result blocks, drop the now-empty user wrapper
+            else:
+                expanded_messages.append(msg)
+        messages = expanded_messages
         genparams["messages"] = messages
         # Normalize Anthropic-format tool definitions to OpenAI format before delegating
         if genparams.get("tools"):
