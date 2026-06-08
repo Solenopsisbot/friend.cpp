@@ -2051,7 +2051,7 @@ def generate(genparams, stream_flag=False):
     audio = genparams.get('audio', [])
     max_context_length = tryparseint(genparams.get('max_context_length', maxctx),maxctx)
     max_length = tryparseint(genparams.get('max_length', args.defaultgenamt),args.defaultgenamt)
-    temperature = tryparsefloat(genparams.get('temperature', adapter_obj.get("temperature", 0.75)),0.75)
+    temperature = tryparsefloat(genparams.get('temperature', adapter_obj.get("temperature", 0.7)),0.7)
     top_k = tryparseint(genparams.get('top_k', adapter_obj.get("top_k", 100)),100)
     top_a = tryparsefloat(genparams.get('top_a', 0.0),0.0)
     top_p = tryparsefloat(genparams.get('top_p', adapter_obj.get("top_p", 0.92)),0.92)
@@ -4338,7 +4338,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
         if "num_ctx" in ollamaopts:
             genparams["max_context_length"] = ollamaopts.get('num_ctx', maxctx)
         if "temperature" in ollamaopts:
-            genparams["temperature"] = ollamaopts.get('temperature', 0.75)
+            genparams["temperature"] = ollamaopts.get('temperature', 0.7)
         if "top_k" in ollamaopts:
             genparams["top_k"] = ollamaopts.get('top_k', 100)
         if "top_p" in ollamaopts:
@@ -5715,7 +5715,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         chatmsg = str(parsed_dict['chatmsg'][0]) if 'chatmsg' in parsed_dict else ""
         imgprompt = str(parsed_dict['imgprompt'][0]) if 'imgprompt' in parsed_dict else ""
         max_length = int(parsed_dict['max_length'][0]) if 'max_length' in parsed_dict else 100
-        temperature = float(parsed_dict['temperature'][0]) if 'temperature' in parsed_dict else 0.75
+        temperature = float(parsed_dict['temperature'][0]) if 'temperature' in parsed_dict else 0.7
         top_k = int(parsed_dict['top_k'][0]) if 'top_k' in parsed_dict else 100
         top_p = float(parsed_dict['top_p'][0]) if 'top_p' in parsed_dict else 0.9
         rep_pen = float(parsed_dict['rep_pen'][0]) if 'rep_pen' in parsed_dict else 1.0
@@ -6084,7 +6084,7 @@ Change Mode<br>
         elif clean_path.endswith('/v1/audio/voices') or clean_path=='/audio/voices':
             response_body = (json.dumps({"status":"ok","voices":voicelist}).encode()) #some random voices for them to enjoy
         elif clean_path.endswith('/get_tts_settings'): #xtts compatible
-            response_body = (json.dumps({"temperature":0.75,"speed":1,"length_penalty":1,"repetition_penalty":1,"top_p":1,"top_k":4,"enable_text_splitting":True,"stream_chunk_size":100}).encode()) #some random voices for them to enjoy
+            response_body = (json.dumps({"temperature":0.7,"speed":1,"length_penalty":1,"repetition_penalty":1,"top_p":1,"top_k":4,"enable_text_splitting":True,"stream_chunk_size":100}).encode()) #some random voices for them to enjoy
 
         elif clean_path.endswith('/api/tags') or clean_path.endswith('/api/ps'): #ollama compatible
             modelNameToReturn = friendlymodelname
