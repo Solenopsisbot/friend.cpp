@@ -4390,6 +4390,55 @@ ws ::= | " " | "\n" [ \t]{0,20}
             if isinstance(sys_prompt, list): # Handle array-style system prompts
                 sys_prompt = "".join([s.get("text","") for s in sys_prompt if s.get("type") == "text"])
             messages.insert(0, {"role": "system", "content": sys_prompt})
+        # Normalize Anthropic multimodal content blocks to OAI-compatible format
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                normalized_content = []
+                for item in content:
+                    item_type = item.get("type", "")
+                    if item_type == "text":
+                        normalized_content.append(item)  # already OAI-compatible
+                    elif item_type == "image":
+                        source = item.get("source", {})
+                        src_type = source.get("type", "")
+                        if src_type == "base64":
+                            media_type = source.get("media_type", "image/jpeg")
+                            data = source.get("data", "")
+                            url = f"data:{media_type};base64,{data}"
+                            normalized_content.append({"type": "image_url", "image_url": {"url": url}})
+                        elif src_type == "url":
+                            url = source.get("url", "")
+                            normalized_content.append({"type": "image_url", "image_url": {"url": url}})
+                        else:
+                            normalized_content.append({"type": "text", "text": "(Unsupported image source type)"})
+                    elif item_type == "audio":
+                        source = item.get("source", {})
+                        src_type = source.get("type", "")
+                        if src_type == "base64":
+                            media_type = source.get("media_type", "audio/wav")
+                            data = source.get("data", "")
+                            fmt = media_type.split("/")[-1] if "/" in media_type else media_type
+                            normalized_content.append({"type": "input_audio", "input_audio": {"data": data, "format": fmt}})
+                        else:
+                            normalized_content.append({"type": "text", "text": "(Unsupported audio source type)"})
+                    elif item_type == "document":
+                        # Extract plain text from document blocks if available
+                        source = item.get("source", {})
+                        doc_text = source.get("text", "") or source.get("data", "")
+                        if doc_text:
+                            normalized_content.append({"type": "text", "text": doc_text})
+                        else:
+                            normalized_content.append({"type": "text", "text": "(Attached Unknown Document)"})
+                    elif item_type == "tool_result":
+                        # Pass through tool_result blocks for multi-turn tool conversations
+                        normalized_content.append(item)
+                    elif item_type == "tool_use":
+                        # Pass through tool_use blocks for multi-turn conversations
+                        normalized_content.append(item)
+                    else:
+                        normalized_content.append(item)  # pass through unknown types unchanged
+                msg["content"] = normalized_content
         genparams["messages"] = messages
         # Normalize Anthropic-format tool definitions to OpenAI format before delegating
         if genparams.get("tools"):
