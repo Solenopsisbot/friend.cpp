@@ -2054,7 +2054,7 @@ def generate(genparams, stream_flag=False):
     temperature = tryparsefloat(genparams.get('temperature', adapter_obj.get("temperature", 0.7)),0.7)
     top_k = tryparseint(genparams.get('top_k', adapter_obj.get("top_k", 100)),100)
     top_a = tryparsefloat(genparams.get('top_a', 0.0),0.0)
-    top_p = tryparsefloat(genparams.get('top_p', adapter_obj.get("top_p", 0.92)),0.92)
+    top_p = tryparsefloat(genparams.get('top_p', adapter_obj.get("top_p", 0.9)),0.9)
     min_p = tryparsefloat(genparams.get('min_p', adapter_obj.get("min_p", 0.0)),0.0)
     typical_p = tryparsefloat(genparams.get('typical', 1.0),1.0)
     tfs = tryparsefloat(genparams.get('tfs', 1.0),1.0)
@@ -4342,7 +4342,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
         if "top_k" in ollamaopts:
             genparams["top_k"] = ollamaopts.get('top_k', 100)
         if "top_p" in ollamaopts:
-            genparams["top_p"] = ollamaopts.get('top_p', 0.92)
+            genparams["top_p"] = ollamaopts.get('top_p', 0.9)
         if "seed" in ollamaopts:
             genparams["sampler_seed"] = tryparseint(ollamaopts.get('seed', -1),-1)
         if "stop" in ollamaopts:
@@ -4999,7 +4999,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             "prompt_cache_key": None,
             "max_tool_calls": None,
             "store": False,
-            "top_p": genparams.get("top_p", 0.92),
+            "top_p": genparams.get("top_p", 0.9),
             "max_output_tokens":genparams.get("max_length", None),
             "presence_penalty": genparams.get("presence_penalty", 0),
             "frequency_penalty": genparams.get("frequency_penalty", 0),
@@ -11860,7 +11860,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 if not lastuserinput:
                     continue
                 lastturns.append({"role":"user","content":lastuserinput})
-                payload = {"messages":lastturns,"rep_pen":1.07,"temperature":0.8}
+                payload = {"messages":lastturns}
                 payload = transform_genparams(payload, 4, False) #to chat completions
                 if args.debugmode < 1:
                     suppress_stdout()
@@ -11886,8 +11886,6 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             if args.prompt:
                 benchprompt = args.prompt
                 benchtopk = 100
-                benchreppen = 1.07
-                benchtemp = 0.8
                 if not args.benchmark:
                     benchbaneos = False
             if args.benchmark:
