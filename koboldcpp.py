@@ -7918,6 +7918,7 @@ def show_gui():
     jinja_tools_var = ctk.IntVar(value=0)
     jinja_kwargs_var = ctk.StringVar()
     jinja_think_var = ctk.StringVar(value="default")
+    think_effort_var = ctk.StringVar(value="default")
     moeexperts_var = ctk.StringVar(value=str(-1))
     moecpu_var = ctk.StringVar(value=str(0))
     defaultgenamt_var = ctk.StringVar(value=str(default_genlen))
@@ -8717,13 +8718,33 @@ def show_gui():
                 jinja_think_var.set("true")
             elif curr["enable_thinking"] is False:
                 jinja_think_var.set("false")
+    def togglethinkeffort(a,b,c):
+        curr = parse_json_object(gen_defaults_var.get(),"tempthink")
+        curr = (curr if curr else {})
+        changed = False
+        if think_effort_var.get()!="default":
+            curr["reasoning_effort"] = think_effort_var.get()
+            changed = True
+        elif "reasoning_effort" in curr:
+            del curr["reasoning_effort"]
+            changed = True
+        if changed:
+            gen_defaults_var.set(json.dumps(curr) if curr else "")
+    def updategendefaults(a,b,c):
+        curr = parse_json_object(gen_defaults_var.get(),"tempthink",True)
+        curr = (curr if curr else {})
+        if "reasoning_effort" in curr and curr["reasoning_effort"]:
+            think_effort_var.set(curr["reasoning_effort"])
     makecheckbox(context_tab, "Use Jinja", jinja_var, row=45, command=togglejinja, tooltiptxt="Enables using jinja chat template formatting for chat completions endpoint. Other endpoints are unaffected.")
     jinjatoolsbox = makecheckbox(context_tab, "Jinja for Tools", jinja_tools_var, row=45 ,padx=(140), tooltiptxt="Allows jinja even with tool calls. If unchecked, jinja will be disabled when tools are used.")
     jinja_think_choices = ['default', 'true', 'false']
     jinjathinkbox, jinjathinklbl = makelabelcombobox(context_tab, "Jinja Thinking:", jinja_think_var, 45, command=togglejinjathink,labelpadx=(280), padx=370, width=100, tooltiptxt="Tries to enable or disable thinking in Jinja mode. This is a shortcut to setting Jinja Kwargs directly.", values=jinja_think_choices)
-    jinjakwargsbox,jinjakwargsboxlbl = makelabelentry(context_tab, "Jinja Kwargs:", jinja_kwargs_var, row=47, width=200, padx=(100), singleline=True, tooltip='Set additiona fields for Jinja JSON template parser, must be a valid json object.\nSpecified as JSON fields: {"KEY1":"VALUE1", "KEY2":"VALUE2"...}')
+    jinjakwargsbox,jinjakwargsboxlbl = makelabelentry(context_tab, "Jinja Kwargs:", jinja_kwargs_var, row=47, width=160, labelpadx=(210), padx=(300), singleline=True, tooltip='Set additiona fields for Jinja JSON template parser, must be a valid json object.\nSpecified as JSON fields: {"KEY1":"VALUE1", "KEY2":"VALUE2"...}')
+    think_effort_choices = ['default', 'high', 'medium', 'low', 'minimal', 'none']
+    makelabelcombobox(context_tab, "Think Effort:", think_effort_var, 47, command=togglethinkeffort, padx=84, width=100, tooltiptxt="Set the default thinking effort, can be overridden by the API.", values=think_effort_choices)
     jinja_var.trace_add("write", togglejinja)
     jinja_kwargs_var.trace_add("write", updatejinjathinktoggle)
+    gen_defaults_var.trace_add("write", updategendefaults)
     makelabelentry(context_tab, "MoE Experts:", moeexperts_var, row=55, padx=(86), singleline=True, tooltip="Override number of MoE experts.")
     moecpu_box,moecpu_box_lbl = makelabelentry(context_tab, "MoE CPU Layers:", moecpu_var, row=55, padx=(334), singleline=True, tooltip="Force Mixture of Experts (MoE) weights of the first N layers to the CPU.\nSetting it higher than GPU layers has no effect.", labelpadx=(230))
     makelabelentry(context_tab, "Override KV:", override_kv_var, row=57, padx=(86), singleline=True, width=130, tooltip="Override metadata value by key. Separate multiple values with commas. Format is name=type:value. Types: int, float, bool, str")
@@ -9057,6 +9078,7 @@ def show_gui():
     togglejinja(1,1,1)
     toggleadmin(1,1,1)
     updatejinjathinktoggle(1,1,1)
+    updategendefaults(1,1,1)
     togglerpcmode(1,1,1)
     global runmode_untouched
     runmode_untouched = True
@@ -9459,6 +9481,7 @@ def show_gui():
         jinja_var.set(mydict["jinja"] if ("jinja" in mydict) else 0)
         jinja_tools_var.set(mydict["jinja_tools"] if ("jinja_tools" in mydict) else 0)
         jinja_think_var.set("default")
+        think_effort_var.set("default")
         jinja_kwargs = (mydict["jinja_kwargs"] if ("jinja_kwargs" in mydict and mydict["jinja_kwargs"]) else "")
         if isinstance(jinja_kwargs, type({})):
             jinja_kwargs = json.dumps(jinja_kwargs)
