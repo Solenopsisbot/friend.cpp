@@ -121,7 +121,6 @@ static llama_context * guidance_ctx = nullptr; //for classifier free guidance, w
 static mtmd_context * mtmd_ctx = nullptr; //for multimodal media
 static std::vector<media_object> media_objects;
 static std::vector<int> last_media_mem; //for storing dummy tokens that will be consumed by mtmd
-static int last_media_pos_count = 0;
 static std::string media_composite_image_signature = ""; //for identifying when the media changes, we need to invalidate the cache
 static int current_media_identifier = MEDIA_TOKEN_IDENTIFIER_A;
 static int vision_max_res = 2048;
@@ -4464,7 +4463,6 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
         int introsize = media_intro.size();
         int outrosize = media_outro.size();
         last_media_mem.clear();
-        last_media_pos_count = 0;
 
         for(int i=0;i<media_objects.size();++i)
         {
@@ -4494,7 +4492,6 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
             }
 
             int mediatokensneeded = 0;
-            int mediaposneeded = 0;
             const int boundarytokensneeded = media_objects[i].chunk_start_seq.size() + media_objects[i].chunk_end_seq.size();
             for(size_t j=0;j<chunks.size();++j)
             {
@@ -4502,40 +4499,31 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
                 media_chunk chunk;
                 chunk.is_audio = media_objects[i].is_audio;
                 chunk.mtmd_chunk = mtmd_input_chunk_copy(mtmdchunk);
-                chunk.clp_image_tokens = mtmd_input_chunk_get_n_tokens(mtmdchunk);
-                chunk.clp_image_positions = mtmd_input_chunk_get_n_pos(mtmdchunk);
+                chunk.clp_image_tokens = mtmd_input_chunk_get_n_pos(mtmdchunk);
                 mediatokensneeded += chunk.clp_image_tokens;
-                mediaposneeded += chunk.clp_image_positions;
                 media_objects[i].mediachunks.push_back(chunk);
             }
+            mediatokensneeded += boundarytokensneeded;
             if(debugmode==1 && !is_quiet)
             {
-                printf("\nMTMD Media %i used Tokens: %d, Positions: %d, Boundary Tokens: %d",i,mediatokensneeded,mediaposneeded,boundarytokensneeded);
+                printf("\nMTMD Media %i used Tokens: %d",i,mediatokensneeded);
             }
-            int mediactxneeded = std::max(mediatokensneeded, mediaposneeded) + boundarytokensneeded;
-            if(i==0)
+            if(mediatokensneeded>0 && mediatokensneeded < nctx)
             {
-                mediactxneeded += introsize + outrosize;
-            }
-            if(mediatokensneeded>0 && mediactxneeded < nctx)
-            {
-                int tokcnt = mediatokensneeded + boundarytokensneeded;
-                int poscnt = mediaposneeded + boundarytokensneeded;
+                int tokcnt = mediatokensneeded;
                 if(i==0)
                 {
                     tokcnt += introsize + outrosize;
-                    poscnt += introsize + outrosize;
                 }
                 for(int n=0;n<tokcnt;++n)
                 {
                     last_media_mem.push_back(current_media_identifier);
                 }
-                last_media_pos_count += poscnt;
             }
             else
             {
                 media_composite_image_signature = ""; //force invalidate
-                printf("\nWarning: Media excluded - Context size too low or not enough mtmd tokens! (needed %d tokens, %d positions, %d boundary tokens)\nMedia will be IGNORED! You probably want to relaunch with a larger context size!\n",mediatokensneeded,mediaposneeded,boundarytokensneeded);
+                printf("\nWarning: Media excluded - Context size too low or not enough mtmd tokens! (needed %d)\nMedia will be IGNORED! You probably want to relaunch with a larger context size!\n",mediatokensneeded);
             }
         }
     }
@@ -4970,7 +4958,6 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     if(media_composite_image_signature=="")
     {
         last_media_mem.clear();
-        last_media_pos_count = 0;
     }
     if(media_data_changed)
     {
@@ -5001,8 +4988,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     if(last_media_mem.size()>0) //stick the media placeholders before the added mem
     {
-        int media_context_size = std::max((int)last_media_mem.size(), last_media_pos_count);
-        if(media_context_size + kcpp_data->n_predict + 4 > nctx)
+        if(last_media_mem.size() + kcpp_data->n_predict + 4 > nctx)
         {
             printf("\nWarning: Too many multimodal tokens, max context exceeded! They will be ignored!\n");
         }

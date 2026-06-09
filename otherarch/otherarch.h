@@ -514,7 +514,6 @@ struct media_chunk
     bool is_audio = false; //if true its audio, otherwise its vision
     void * mtmd_chunk = nullptr; // mtmd_input_chunk, owned by this chunk
     int32_t clp_image_tokens = 0; //holds number of tokens used in this chunk
-    int32_t clp_image_positions = 0; //holds number of KV positions used in this chunk
     int32_t nx = 0; //only used for 2d roped images
     int32_t ny = 0;
 };
