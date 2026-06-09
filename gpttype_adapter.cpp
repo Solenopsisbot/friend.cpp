@@ -49,6 +49,8 @@
 #include "mpt_v3.cpp"
 #include "tools/mtmd/mtmd.h"
 #include "tools/mtmd/mtmd-helper.h"
+#include "vendor/stb/stb_image.h"
+#include "otherarch/sdcpp/thirdparty/stb_image_resize.h"
 #include "common/common.h"
 #include "ggml-rpc.h"
 
@@ -119,8 +121,10 @@ static llama_context * guidance_ctx = nullptr; //for classifier free guidance, w
 static mtmd_context * mtmd_ctx = nullptr; //for multimodal media
 static std::vector<media_object> media_objects;
 static std::vector<int> last_media_mem; //for storing dummy tokens that will be consumed by mtmd
+static int last_media_pos_count = 0;
 static std::string media_composite_image_signature = ""; //for identifying when the media changes, we need to invalidate the cache
 static int current_media_identifier = MEDIA_TOKEN_IDENTIFIER_A;
+static int vision_max_res = 2048;
 static bool use_mrope = false;
 
 static kcpp_params * kcpp_data = nullptr;
@@ -2003,7 +2007,7 @@ static bool kcpp_eval_media(llama_context * ctx_llama, const media_chunk & media
             *n_past,
             0,
             n_batch,
-            true,
+            false,
             &new_n_past);
         if (result != 0) {
             fprintf(stderr, "\n%s : failed to eval mtmd media chunk, status %d\n", __func__, result);
@@ -2323,6 +2327,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     }
     kcpp_data->vision_min_tokens = inputs.visionmintokens;
     kcpp_data->vision_max_tokens = inputs.visionmaxtokens;
+    vision_max_res = inputs.visionmaxres;
     if(isGguf && kcpp_pipeline_parallelism)
     {
         //double the logical batch, while keeping the physical batch the same, pipeline parallel set GGML_SCHED_MAX_COPIES to 2
@@ -4388,6 +4393,92 @@ int GetThreadsToUse(bool blasmode)
     return kcpp_data->n_threads;
 }
 
+static mtmd_bitmap * kcpp_mtmd_bitmap_init_image_from_buf(const unsigned char * buf, size_t len, int maxdims)
+{
+    int nx = 0;
+    int ny = 0;
+    int nc = 0;
+    uint8_t * data = stbi_load_from_memory(buf, (int)len, &nx, &ny, &nc, 3);
+    if(data == nullptr)
+    {
+        printf("\nError: MTMD image failed to decode bytes.");
+        return nullptr;
+    }
+
+    if(maxdims > 0 && (nx > maxdims || ny > maxdims))
+    {
+        const float aspect_ratio = static_cast<float>(nx) / ny;
+        int new_width = nx;
+        int new_height = ny;
+        if(aspect_ratio > 1.0f)
+        {
+            new_width = maxdims;
+            new_height = std::max(1, static_cast<int>(maxdims / aspect_ratio));
+        }
+        else
+        {
+            new_height = maxdims;
+            new_width = std::max(1, static_cast<int>(maxdims * aspect_ratio));
+        }
+
+        printf("\nImage requires resizing: original size %d x %d scaling to max %d px", nx, ny, maxdims);
+        uint8_t * resized_image = (uint8_t *)malloc((size_t)new_width * new_height * 3);
+        if(resized_image != nullptr && stbir_resize_uint8(data, nx, ny, 0, resized_image, new_width, new_height, 0, 3))
+        {
+            stbi_image_free(data);
+            data = resized_image;
+            nx = new_width;
+            ny = new_height;
+            printf("\nResized to clamped to %d x %d", nx, ny);
+        }
+        else
+        {
+            printf("\nWarning: MTMD image resize failed, using original image.");
+            free(resized_image);
+        }
+    }
+
+    const float maxaspect = 4.0f;
+    const float aspect_ratio = static_cast<float>(nx) / ny;
+    int out_width = nx;
+    int out_height = ny;
+    bool need_letterbox = false;
+    if(aspect_ratio > maxaspect)
+    {
+        out_height = std::max(1, static_cast<int>(nx / maxaspect));
+        need_letterbox = true;
+    }
+    else if(aspect_ratio < 1.0f / maxaspect)
+    {
+        out_width = std::max(1, static_cast<int>(ny / maxaspect));
+        need_letterbox = true;
+    }
+
+    mtmd_bitmap * bitmap = nullptr;
+    if(need_letterbox)
+    {
+        printf("\nImage requires letterboxing: %d x %d changed to %d x %d", nx, ny, out_width, out_height);
+        std::vector<uint8_t> letterboxed((size_t)out_width * out_height * 3, 0);
+        int offset_x = (out_width - nx) / 2;
+        int offset_y = (out_height - ny) / 2;
+        for(int y = 0; y < ny; ++y)
+        {
+            memcpy(
+                letterboxed.data() + ((y + offset_y) * out_width + offset_x) * 3,
+                data + y * nx * 3,
+                (size_t)nx * 3);
+        }
+        bitmap = mtmd_bitmap_init(out_width, out_height, letterboxed.data());
+    }
+    else
+    {
+        bitmap = mtmd_bitmap_init(nx, ny, data);
+    }
+
+    stbi_image_free(data);
+    return bitmap;
+}
+
 //this function prepares the mtmd chunks for media. it's only needed when media changes
 static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_intro, const std::vector<int> & media_outro)
 {
@@ -4396,12 +4487,15 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
         int introsize = media_intro.size();
         int outrosize = media_outro.size();
         last_media_mem.clear();
+        last_media_pos_count = 0;
 
         for(int i=0;i<media_objects.size();++i)
         {
             std::string media_obj = media_objects[i].b64data;
             const std::vector<uint8_t> media_data_buffer = kcpp_base64_decode(media_obj);
-            mtmd::bitmap bitmap(mtmd_helper_bitmap_init_from_buf(mtmd_ctx, media_data_buffer.data(), media_data_buffer.size()));
+            mtmd::bitmap bitmap(media_objects[i].is_audio
+                ? mtmd_helper_bitmap_init_from_buf(mtmd_ctx, media_data_buffer.data(), media_data_buffer.size())
+                : kcpp_mtmd_bitmap_init_image_from_buf(media_data_buffer.data(), media_data_buffer.size(), vision_max_res));
             if(!bitmap.ptr)
             {
                 printf("\nError: MTMD media %d failed to load!",i);
@@ -4423,6 +4517,8 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
             }
 
             int mediatokensneeded = 0;
+            int mediaposneeded = 0;
+            const int boundarytokensneeded = media_objects[i].chunk_start_seq.size() + media_objects[i].chunk_end_seq.size();
             for(size_t j=0;j<chunks.size();++j)
             {
                 const mtmd_input_chunk * mtmdchunk = chunks[j];
@@ -4430,29 +4526,39 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
                 chunk.is_audio = media_objects[i].is_audio;
                 chunk.mtmd_chunk = mtmd_input_chunk_copy(mtmdchunk);
                 chunk.clp_image_tokens = mtmd_input_chunk_get_n_tokens(mtmdchunk);
+                chunk.clp_image_positions = mtmd_input_chunk_get_n_pos(mtmdchunk);
                 mediatokensneeded += chunk.clp_image_tokens;
+                mediaposneeded += chunk.clp_image_positions;
                 media_objects[i].mediachunks.push_back(chunk);
             }
             if(debugmode==1 && !is_quiet)
             {
-                printf("\nMTMD Media %i used Tokens: %d",i,mediatokensneeded);
+                printf("\nMTMD Media %i used Tokens: %d, Positions: %d, Boundary Tokens: %d",i,mediatokensneeded,mediaposneeded,boundarytokensneeded);
             }
-            if(mediatokensneeded>0 && mediatokensneeded < nctx)
+            int mediactxneeded = std::max(mediatokensneeded, mediaposneeded) + boundarytokensneeded;
+            if(i==0)
             {
-                int tokcnt = mediatokensneeded;
+                mediactxneeded += introsize + outrosize;
+            }
+            if(mediatokensneeded>0 && mediactxneeded < nctx)
+            {
+                int tokcnt = mediatokensneeded + boundarytokensneeded;
+                int poscnt = mediaposneeded + boundarytokensneeded;
                 if(i==0)
                 {
                     tokcnt += introsize + outrosize;
+                    poscnt += introsize + outrosize;
                 }
                 for(int n=0;n<tokcnt;++n)
                 {
                     last_media_mem.push_back(current_media_identifier);
                 }
+                last_media_pos_count += poscnt;
             }
             else
             {
                 media_composite_image_signature = ""; //force invalidate
-                printf("\nWarning: Media excluded - Context size too low or not enough mtmd tokens! (needed %d)\nMedia will be IGNORED! You probably want to relaunch with a larger context size!\n",mediatokensneeded);
+                printf("\nWarning: Media excluded - Context size too low or not enough mtmd tokens! (needed %d tokens, %d positions, %d boundary tokens)\nMedia will be IGNORED! You probably want to relaunch with a larger context size!\n",mediatokensneeded,mediaposneeded,boundarytokensneeded);
             }
         }
     }
@@ -4644,6 +4750,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     std::vector<int> media_intro; //added before media list
     std::vector<int> media_outro; //added before media list
     std::string intro = "\nAttached Media:\n";
+    if(mtmd_ctx && kcpp_mtmd_is_gemma4uv(mtmd_ctx)) //ugly fix for gemma4uv vision coherency
+    {
+        intro = "\n<|channel><channel|>" + intro;
+    }
     TokenizeString(intro, media_intro, file_format, true);
 
     //clear previous run media memory, just-in-time free
@@ -4678,6 +4788,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             media_object lv;
             lv.b64data = item;
             lv.is_audio = false;
+            TokenizeString("\n\n", lv.chunk_end_seq, file_format, false);
             media_objects.push_back(lv);
             new_media_composite += item;
         }
@@ -4690,6 +4801,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             media_object lv;
             lv.b64data = item;
             lv.is_audio = true;
+            TokenizeString("\n\n", lv.chunk_end_seq, file_format, false);
             media_objects.push_back(lv);
             new_media_composite += item;
         }
@@ -4886,6 +4998,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     if(media_composite_image_signature=="")
     {
         last_media_mem.clear();
+        last_media_pos_count = 0;
     }
     if(media_data_changed)
     {
@@ -4916,7 +5029,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
     if(last_media_mem.size()>0) //stick the media placeholders before the added mem
     {
-        if(last_media_mem.size() + kcpp_data->n_predict + 4 > nctx)
+        int media_context_size = std::max((int)last_media_mem.size(), last_media_pos_count);
+        if(media_context_size + kcpp_data->n_predict + 4 > nctx)
         {
             printf("\nWarning: Too many multimodal tokens, max context exceeded! They will be ignored!\n");
         }

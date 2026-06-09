@@ -254,6 +254,9 @@ struct mtmd_caps {
 MTMD_API struct mtmd_caps mtmd_get_cap_from_file(const char * mmproj_fname);
 
 /////////////////////////////////////////
+//kcpp addons
+MTMD_API bool kcpp_mtmd_is_gemma4uv(mtmd_context * ctx);
+/////////////////////////////////////////
 
 // test function, to be used in test-mtmd-c-api.c
 MTMD_API mtmd_input_chunks * mtmd_test_create_input_chunks(void);

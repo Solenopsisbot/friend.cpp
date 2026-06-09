@@ -1511,6 +1511,18 @@ struct mtmd_caps mtmd_get_cap_from_file(const char * fname) {
     }
 }
 
+//kcpp addons start
+bool kcpp_mtmd_is_gemma4uv(mtmd_context * ctx)
+{
+    if(ctx)
+    {
+        auto proj_type = ctx->proj_type_v();
+        return (proj_type==PROJECTOR_TYPE_GEMMA4UV);
+    }
+    return false;
+}
+//kcpp addons end
+
 //
 // Debugging API (NOT intended for public use)
 //
