@@ -463,8 +463,10 @@ add_library(common2
             common/speculative.h
             common/sampling.cpp
             common/sampling.h
-            tools/mtmd/llava.cpp
-            tools/mtmd/llava.h
+            tools/mtmd/mtmd.cpp
+            tools/mtmd/mtmd.h
+            tools/mtmd/mtmd-helper.cpp
+            tools/mtmd/mtmd-helper.h
             tools/mtmd/clip.cpp
             tools/mtmd/clip.h
             src/unicode.h
