@@ -2013,6 +2013,28 @@ static bool kcpp_eval_media(llama_context * ctx_llama, const media_chunk & media
     return false;
 }
 
+static bool mtmd_text_chunk_has_invalid_tokens(const mtmd_input_chunk * mtmdchunk)
+{
+    if(mtmd_input_chunk_get_type(mtmdchunk) != MTMD_INPUT_CHUNK_TYPE_TEXT)
+    {
+        return false;
+    }
+    size_t n_tokens = 0;
+    const llama_token * tokens = mtmd_input_chunk_get_tokens_text(mtmdchunk, &n_tokens);
+    if(tokens == nullptr && n_tokens > 0)
+    {
+        return true;
+    }
+    for(size_t i = 0; i < n_tokens; ++i)
+    {
+        if(tokens[i] < 0 || tokens[i] >= n_vocab)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 //given an old GGUF context and a new context that has some middle portion removed,
 //find and remove the middle portion from the old context from the KV. Does not fast forward after this destructive action
 //returns true if contextshift is doable, executes it if dryrun is false
@@ -4492,17 +4514,55 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
             }
 
             int mediatokensneeded = 0;
-            const int boundarytokensneeded = media_objects[i].chunk_start_seq.size() + media_objects[i].chunk_end_seq.size();
+            bool seen_media_embedding = false;
+            bool used_fallback_boundary_tokens = false;
+            std::vector<int> fallback_start_seq;
+            std::vector<int> fallback_end_seq;
             for(size_t j=0;j<chunks.size();++j)
             {
                 const mtmd_input_chunk * mtmdchunk = chunks[j];
+                if(mtmd_text_chunk_has_invalid_tokens(mtmdchunk))
+                {
+                    std::vector<int> fallback_tokens;
+                    TokenizeString(seen_media_embedding ? "</media>" : "<media>", fallback_tokens, file_format, false);
+                    if(fallback_tokens.size() > 0)
+                    {
+                        if(seen_media_embedding)
+                        {
+                            fallback_end_seq.insert(fallback_end_seq.end(), fallback_tokens.begin(), fallback_tokens.end());
+                        }
+                        else
+                        {
+                            fallback_start_seq.insert(fallback_start_seq.end(), fallback_tokens.begin(), fallback_tokens.end());
+                        }
+                    }
+                    used_fallback_boundary_tokens = true;
+                    continue;
+                }
                 media_chunk chunk;
                 chunk.is_audio = media_objects[i].is_audio;
                 chunk.mtmd_chunk = mtmd_input_chunk_copy(mtmdchunk);
                 chunk.clp_image_tokens = mtmd_input_chunk_get_n_pos(mtmdchunk);
                 mediatokensneeded += chunk.clp_image_tokens;
                 media_objects[i].mediachunks.push_back(chunk);
+                if(mtmd_input_chunk_get_type(mtmdchunk) != MTMD_INPUT_CHUNK_TYPE_TEXT)
+                {
+                    seen_media_embedding = true;
+                }
             }
+            if(fallback_start_seq.size() > 0)
+            {
+                media_objects[i].chunk_start_seq.insert(media_objects[i].chunk_start_seq.end(), fallback_start_seq.begin(), fallback_start_seq.end());
+            }
+            if(fallback_end_seq.size() > 0)
+            {
+                media_objects[i].chunk_end_seq.insert(media_objects[i].chunk_end_seq.begin(), fallback_end_seq.begin(), fallback_end_seq.end());
+            }
+            if(used_fallback_boundary_tokens)
+            {
+                printf("\nWarning: MTMD media %d produced invalid model-specific boundary tokens. Falling back to generic <media> and </media> marker text.", i);
+            }
+            const int boundarytokensneeded = media_objects[i].chunk_start_seq.size() + media_objects[i].chunk_end_seq.size();
             mediatokensneeded += boundarytokensneeded;
             if(debugmode==1 && !is_quiet)
             {
