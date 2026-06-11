@@ -529,9 +529,11 @@ struct media_object
 struct speculative_draft_result
 {
     std::vector<int32_t> draftids;
+    std::vector<int32_t> verify_tokens;
     std::vector<float *> actual_logits;
     bool draft_success = false;
     int drafted_amount = 0;
+    int verify_n_past = 0;
 };
 
 struct savestate_data

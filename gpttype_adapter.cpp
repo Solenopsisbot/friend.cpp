@@ -119,6 +119,8 @@ static llama_context * llama_ctx_v4 = nullptr;
 static llama_context * draft_ctx = nullptr; //will remain null if speculative is unused
 static common_speculative * draft_spec = nullptr; // llama.cpp speculative state, used for MTP draft heads
 static bool draft_is_mtp = false;
+static bool mtp_uses_spec_checkpoint = false;
+static common_prompt_checkpoint mtp_spec_ckpt;
 static llama_context * guidance_ctx = nullptr; //for classifier free guidance, will be null if unused
 
 static mtmd_context * mtmd_ctx = nullptr; //for multimodal media
@@ -657,6 +659,60 @@ const char * kcpp_print_system_info(void) {
     return s.c_str();
 }
 
+static bool mtp_speculative_state_setup(llama_context * main_ctx, const llama_context_params & mtp_ctx_params, int draft_gpulayers)
+{
+    common_params_speculative spec_params;
+    spec_params.types = { COMMON_SPECULATIVE_TYPE_DRAFT_MTP };
+    spec_params.draft.ctx_tgt = main_ctx;
+    spec_params.draft.ctx_dft = draft_ctx;
+    spec_params.draft.n_max = speculative_chunk_amt;
+    spec_params.draft.n_min = 0;
+    spec_params.draft.p_min = 0.0f;
+    spec_params.draft.backend_sampling = false;
+    spec_params.draft.n_gpu_layers = draft_gpulayers;
+    spec_params.draft.cache_type_k = mtp_ctx_params.type_k;
+    spec_params.draft.cache_type_v = mtp_ctx_params.type_v;
+
+    draft_spec = common_speculative_init(spec_params, 1);
+    if(draft_spec == nullptr)
+    {
+        printf("Error: failed to initialize MTP speculative decoding state.\n");
+        llama_free(draft_ctx);
+        draft_ctx = nullptr;
+        draft_is_mtp = false;
+        return false;
+    }
+    return true;
+}
+
+static void mtp_decoding_setup(llama_model * main_model, llama_context * main_ctx, const llama_context_params & base_ctx_params)
+{
+    if(main_model == nullptr || main_model->hparams.n_layer_nextn <= 0)
+    {
+        printf("Warning: --usemtp was enabled, but this model does not expose built-in MTP layers. MTP will not be used.\n");
+        draft_is_mtp = false;
+        return;
+    }
+
+    llama_context_params mtp_ctx_params = base_ctx_params;
+    mtp_ctx_params.ctx_type = LLAMA_CONTEXT_TYPE_MTP;
+    mtp_ctx_params.ctx_other = main_ctx;
+    mtp_ctx_params.n_rs_seq = 0;
+    mtp_ctx_params.n_outputs_max = 1;
+
+    printf("\nAttempting to create built-in MTP context from the main model.\n");
+    draft_ctx = llama_init_from_model(main_model, mtp_ctx_params);
+    if(draft_ctx == nullptr)
+    {
+        printf("Error: failed to create built-in MTP context. MTP will not be used!\n");
+        draft_is_mtp = false;
+        return;
+    }
+
+    draft_is_mtp = true;
+    mtp_speculative_state_setup(main_ctx, mtp_ctx_params, 0);
+}
+
 //loads a model for speculative decoding.
 static void speculative_decoding_setup(std::string spec_model_filename, llama_context * main_ctx, const llama_model_params & base_model_params, const llama_context_params & base_ctx_params, int base_n_vocab, const float * draft_gpusplit, int draft_gpulayers)
 {
@@ -755,25 +811,7 @@ static void speculative_decoding_setup(std::string spec_model_filename, llama_co
 
         if(draft_ctx && draft_is_mtp)
         {
-            common_params_speculative spec_params;
-            spec_params.types = { COMMON_SPECULATIVE_TYPE_DRAFT_MTP };
-            spec_params.draft.ctx_tgt = main_ctx;
-            spec_params.draft.ctx_dft = draft_ctx;
-            spec_params.draft.n_max = speculative_chunk_amt;
-            spec_params.draft.n_min = 0;
-            spec_params.draft.p_min = 0.0f;
-            spec_params.draft.backend_sampling = false;
-            spec_params.draft.n_gpu_layers = draft_gpulayers;
-            spec_params.draft.cache_type_k = draft_ctx_params.type_k;
-            spec_params.draft.cache_type_v = draft_ctx_params.type_v;
-            draft_spec = common_speculative_init(spec_params, 1);
-            if(draft_spec == nullptr)
-            {
-                printf("Error: failed to initialize MTP speculative decoding state.\n");
-                llama_free(draft_ctx);
-                draft_ctx = nullptr;
-                draft_is_mtp = false;
-            }
+            mtp_speculative_state_setup(main_ctx, draft_ctx_params, draft_gpulayers);
         }
     }
 }
@@ -783,6 +821,10 @@ static int32_t kcpp_decode_main_and_mtp_spec(llama_context * main_ctx, llama_bat
     const int32_t decode_status = llama_decode(main_ctx, batch);
     if(decode_status == 0 && draft_spec && draft_is_mtp)
     {
+        if(draft_ctx && llama_get_ctx_other(draft_ctx) != main_ctx && batch.n_tokens > 0 && batch.n_seq_id[0] > 0)
+        {
+            llama_memory_seq_rm(llama_get_memory(draft_ctx), batch.seq_id[0][0], batch.pos[0], -1);
+        }
         if(!common_speculative_process(draft_spec, batch))
         {
             printf("\nERROR: MTP speculative state update failed!\n");
@@ -886,6 +928,22 @@ static speculative_draft_result speculative_decoding_eval_mtp_chunk(llama_contex
     for(size_t i = 0; i + 1 < drafted_ids.size(); ++i)
     {
         real_embd.push_back(drafted_ids[i]);
+    }
+
+    results.verify_tokens.assign(real_embd.begin(), real_embd.end());
+    results.verify_n_past = n_past;
+
+    if(mtp_uses_spec_checkpoint)
+    {
+        mtp_spec_ckpt.clear();
+        mtp_spec_ckpt.update_pos(n_past,
+            llama_memory_seq_pos_min(llama_get_memory(main_ctx), 0),
+            llama_memory_seq_pos_max(llama_get_memory(main_ctx), 0));
+        mtp_spec_ckpt.update_tgt(main_ctx, 0, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+        if(draft_ctx)
+        {
+            mtp_spec_ckpt.update_dft(draft_ctx, 0, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+        }
     }
 
     kcpp_embd_batch batch = kcpp_embd_batch(real_embd, n_past, use_mrope, true);
@@ -2458,6 +2516,8 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     }
     draft_ctx = nullptr;
     draft_is_mtp = false;
+    mtp_uses_spec_checkpoint = false;
+    mtp_spec_ckpt.clear();
     guidance_ctx = nullptr;
     if(mtmd_ctx)
     {
@@ -3075,17 +3135,36 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         const llama_vocab * tmpvocab = llama_model_get_vocab(llamamodel);
         n_vocab = llama_vocab_n_tokens(tmpvocab);
 
-        if(draftmodel_filename !="" && file_format==FileFormat::GGUF_GENERIC)
+        if((draftmodel_filename != "" || inputs.use_mtp) && file_format==FileFormat::GGUF_GENERIC)
         {
             if(mtmd_ctx!=nullptr)
             {
-                printf("Error: Speculative decoding cannot be used with multimodal projectors!\n");
+                printf("Error: Speculative decoding and MTP cannot be used with multimodal projectors!\n");
             }
             else
             {
-                printf("\nAttempting to load draft model for speculative decoding. It will be fully offloaded if possible. Vocab must match the main model.\n");
                 speculative_chunk_amt = inputs.draft_amount;
-                speculative_decoding_setup(draftmodel_filename, llama_ctx_v4, model_params, llama_ctx_params, n_vocab, inputs.draft_gpusplit, inputs.draft_gpulayers);
+                if(draftmodel_filename != "")
+                {
+                    if(inputs.use_mtp)
+                    {
+                        printf("\nBoth --draftmodel and --usemtp were provided. The draft model will be used for speculative decoding.\n");
+                    }
+                    printf("\nAttempting to load draft model for speculative decoding. It will be fully offloaded if possible. Vocab must match the main model.\n");
+                    speculative_decoding_setup(draftmodel_filename, llama_ctx_v4, model_params, llama_ctx_params, n_vocab, inputs.draft_gpusplit, inputs.draft_gpulayers);
+                }
+                else
+                {
+                    mtp_decoding_setup(llamamodel, llama_ctx_v4, llama_ctx_params);
+                }
+            }
+        }
+        if(draft_is_mtp && draft_spec)
+        {
+            mtp_uses_spec_checkpoint = common_context_can_seq_rm(llama_ctx_v4) == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+            if(mtp_uses_spec_checkpoint)
+            {
+                printf("\nMTP speculative decoding will use checkpoints for draft mismatch recovery.\n");
             }
         }
 
@@ -5862,6 +5941,11 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             if (!startedsampling)
             {
                 startedsampling = true;
+                if(draft_is_mtp && draft_spec)
+                {
+                    llama_tokens prompt_tokens(current_context_tokens.begin(), current_context_tokens.end());
+                    common_speculative_begin(draft_spec, 0, prompt_tokens);
+                }
                 process_time = timer_check();
                 timer_start();
                 if(allow_regular_prints)
@@ -6226,13 +6310,48 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 logits_sampled += 1;
             }
 
+            bool mtp_recovered_from_checkpoint = false;
+            if(draft_used && draft_is_mtp && abort_draft && mtp_uses_spec_checkpoint && !mtp_spec_ckpt.empty())
+            {
+                const size_t replay_count = std::min(draft_results.verify_tokens.size(), (size_t) draft_accepted_this_round + 1);
+
+                mtp_spec_ckpt.load_tgt(llama_ctx_v4, 0, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                if(draft_ctx)
+                {
+                    mtp_spec_ckpt.load_dft(draft_ctx, 0, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                }
+
+                if(replay_count > 0)
+                {
+                    std::vector<int32_t> replay_tokens(
+                        draft_results.verify_tokens.begin(),
+                        draft_results.verify_tokens.begin() + replay_count);
+                    kcpp_embd_batch replay_batch = kcpp_embd_batch(replay_tokens, draft_results.verify_n_past, use_mrope, true);
+                    const int32_t replay_status = kcpp_decode_main_and_mtp_spec(llama_ctx_v4, replay_batch.batch);
+                    if(replay_status != 0)
+                    {
+                        printf("\nERROR: MTP speculative checkpoint replay failed! (code:%d)\n", replay_status);
+                        output.text = nullptr;
+                        output.status = 0;
+                        output.prompt_tokens = output.completion_tokens = 0;
+                        last_stop_reason = stop_reason::ERROR_ENCOUNTERED;
+                        output.stopreason = last_stop_reason;
+                        generation_finished = true;
+                        return output;
+                    }
+                    n_past = draft_results.verify_n_past + replay_tokens.size();
+                }
+
+                mtp_recovered_from_checkpoint = true;
+            }
+
             if(draft_used && draft_is_mtp && draft_spec)
             {
                 common_speculative_accept(draft_spec, 0, draft_accepted_this_round);
             }
 
             //if we have somehow skipped ahead (e.g drafting), ensure that all tokens after npast are purged
-            if (file_format == FileFormat::GGUF_GENERIC && draft_used)
+            if (file_format == FileFormat::GGUF_GENERIC && draft_used && !mtp_recovered_from_checkpoint)
             {
                 llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), 0, n_past, -1);
                 if (draft_ctx) {
