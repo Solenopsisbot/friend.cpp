@@ -5546,9 +5546,11 @@ static vk_device ggml_vk_get_device(size_t idx) {
                        !getenv("GGML_VK_DISABLE_BFLOAT16")) {
                 bfloat16_support = true;
 #endif
+#ifndef NO_VULKAN_EXTENSIONS
             } else if (strcmp("VK_VALVE_shader_mixed_float_dot_product", properties.extensionName) == 0 &&
                        !getenv("GGML_VK_DISABLE_DOT2")) {
                 dot2_f16_support = true;
+#endif
             } else if (strcmp("VK_KHR_pipeline_executable_properties", properties.extensionName) == 0) {
                 pipeline_executable_properties_support = true;
             } else if (strcmp("VK_EXT_memory_priority", properties.extensionName) == 0 &&
@@ -6352,9 +6354,11 @@ static void ggml_vk_print_gpu_info(size_t idx) {
                     !getenv("GGML_VK_DISABLE_BFLOAT16")) {
             bfloat16_support = true;
 #endif
+#ifndef NO_VULKAN_EXTENSIONS
         } else if (strcmp("VK_VALVE_shader_mixed_float_dot_product", properties.extensionName) == 0 &&
                     !getenv("GGML_VK_DISABLE_DOT2")) {
             dot2_f16_support = true;
+#endif
         }
     }
 

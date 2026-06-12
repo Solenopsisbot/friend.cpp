@@ -797,11 +797,11 @@ qwen3tts: otherarch/qwen3tts/q3ttsmain.cpp otherarch/qwen3tts/qwen3_tts.cpp othe
 rpcserver: tools/rpc/rpc-server.cpp common/arg.cpp common/chat.cpp common/preset.cpp common/download.cpp build-info.h ggml_v4_vulkan.o ggml-cpu.o ggml-ops.o ggml-vec.o ggml-binops.o ggml-unops.o llama.o console.o clip_vulkan.o mtmd.o mtmd-helper.o mtmd-image.o ggml-backend.o ggml-backend-meta.o ggml-backend-reg_vulkan.o ggml-vulkan.o ggml-vulkan-shaders.o ggml-repack.o $(OBJS_FULL) $(OBJS) lib/vulkan-1.lib
 	$(CXX) $(CXXFLAGS) -DGGML_USE_VULKAN -DSD_USE_VULKAN $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 
-ggml/src/ggml-vulkan-shaders.cpp:
+ggml/src/ggml-vulkan-shaders.cpp: ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 ifdef VULKAN_BUILD
 	@$(MAKE) vulkan-shaders-gen
 endif
-ggml/src/ggml-vulkan-shaders-noext.cpp:
+ggml/src/ggml-vulkan-shaders-noext.cpp: ggml/src/ggml-vulkan/vulkan-shaders/vulkan-shaders-gen.cpp
 ifdef VULKAN_BUILD
 	@$(MAKE) vulkan-shaders-gen-noext
 endif

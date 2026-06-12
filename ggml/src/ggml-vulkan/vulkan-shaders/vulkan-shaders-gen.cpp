@@ -427,6 +427,15 @@ void string_to_spv(std::string name, const std::string& source, const std::map<s
     name = name + (f16acc ? "_f16acc" : "") + (coopmat ? "_cm1" : "") + (coopmat2 ? "_cm2" : (fp16 ? "" : "_fp32")) + suffix;
     std::string out_path = join_paths(output_dir, name + ".spv");
 
+#ifdef NO_VULKAN_EXTENSIONS
+    if (name.find("_dot2") != std::string::npos) {
+        write_binary_file(out_path, std::string(1, '\0'));
+        std::lock_guard<std::mutex> guard(lock);
+        shader_fnames.push_back(std::make_pair(name, out_path));
+        return;
+    }
+#endif
+
     // if (input_filepath == "") {
     //     // No input source to compile, only generate header for all shaders
     //     shader_fnames.push_back(std::pair(name, out_path));
