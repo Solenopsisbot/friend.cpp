@@ -2482,7 +2482,7 @@ def sd_load_model(model_filename,vae_filename,t5xxl_filename,clip1_filename,clip
     inputs.photomaker_filename = photomaker_filename.encode("UTF-8")
     inputs.upscaler_filename = upscaler_filename.encode("UTF-8")
     inputs.max_vram = (args.sdvramlimit/1024.0) if args.sdvramlimit > 0 else 0
-    inputs.stream_layers = (inputs.max_vram != 0)
+    inputs.stream_layers = False
 
     lora_filenames, lora_multipliers = prepare_initial_lora_multipliers()
     inputs.lora_len = len(lora_filenames)
