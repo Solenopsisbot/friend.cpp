@@ -4,7 +4,7 @@
 .PHONY: finishedmsg
 
 default: koboldcpp_default koboldcpp_failsafe koboldcpp_noavx2 koboldcpp_vulkan_failsafe koboldcpp_cublas koboldcpp_hipblas koboldcpp_vulkan koboldcpp_vulkan_noavx2 finishedmsg
-tools: quantize_gpt2 quantize_gptj quantize_gguf quantize_neox quantize_mpt ttsmain whispermain sdmain gguf-split llamaserver llamaservervk
+tools: quantize_gpt2 quantize_gptj quantize_gguf quantize_neox quantize_mpt ttsmain whispermain sdmain gguf-split
 
 ifndef UNAME_S
 UNAME_S := $(shell uname -s)
