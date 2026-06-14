@@ -5600,7 +5600,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 handle.batch_generate_abort(batch_request_id)
             else:
                 handle.abort_generate()
-            await asyncio.sleep(0.2) #short delay
+            await asyncio.sleep(0.1) #short delay
         finally:
             if batch_request_id >= 0:
                 handle.batch_generate_release(batch_request_id)
@@ -5610,7 +5610,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         # flush buffers, sleep a bit to make sure all data sent, and then force close the connection
         self.wfile.flush()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
         self.close_connection = True
         await asyncio.sleep(0.05)
 
@@ -5660,7 +5660,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             print("An ongoing connection was aborted or interrupted!")
             print(cae)
             handle.abort_generate()
-            await asyncio.sleep(0.2) #short delay
+            await asyncio.sleep(0.1) #short delay
         except Exception as e:
             print(e)
         finally:
