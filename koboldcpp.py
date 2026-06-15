@@ -194,6 +194,7 @@ tool_call_pairs = [ #third element is optional str to match in chat template bef
     ("<|end|><|start|>assistant<|channel|>commentary to=", "", None, False), #gpt-oss
     ("<|tool_call_start|>", "<|tool_call_end|>", "CONTINUE_FINAL_MESSAGE_TAG", True), #lfm2.5
     ("<tool_calls>", "</tool_calls>", "[BEGIN FINAL RESPONSE]", True), #apriel
+    ("<|START_ACTION|>", "<|END_ACTION|>", "<|START_OF_TURN_TOKEN|>", True), #cohere
 ]
 deprecated_keys = {
     "hordeconfig",
@@ -3578,20 +3579,46 @@ def toolcall_to_normalized_json(text,start_tag,end_tag,required_match_txt): #con
         except Exception:
             return text
 
+    def parse_cohere2moe(text: str) -> str:
+        text = text.strip()
+        try:
+            calls = json.loads(text)
+        except Exception:
+            return text
+        if isinstance(calls, dict):
+            calls = [calls]
+        if not isinstance(calls, list):
+            return text
+        results = []
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            fn_name = call.get("tool_name") or call.get("name")
+            args = call.get("parameters", call.get("arguments", {}))
+            if not fn_name:
+                continue
+            results.append({"name": fn_name,"arguments": args if isinstance(args, dict) else {}})
+        if not results:
+            return text
+        return json.dumps(results) if len(results) > 1 else json.dumps(results[0])
+
     # gemma4 takes precedence, since it can contain valid json fragments
     if end_tag=="<tool_call|>":
         return parse_gemma4(text)
+
+    if start_tag=="<|tool_call_start|>" and end_tag=="<|tool_call_end|>" and cached_chat_template and (required_match_txt is None or required_match_txt in cached_chat_template):
+        return parse_lfm25(text)
+
+    if start_tag=="<|START_ACTION|>" and end_tag=="<|END_ACTION|>" and cached_chat_template and (required_match_txt is None or required_match_txt in cached_chat_template):
+        return parse_cohere2moe(text)
+
+    if start_tag=="<tool_calls>" and end_tag=="</tool_calls>" and cached_chat_template and (required_match_txt is None or required_match_txt in cached_chat_template):
+        return extract_json_from_string(text, True) #apriel is json
 
     #if we are already valid JSON, return
     check_ok = extract_json_from_string(text, True)
     if check_ok and len(check_ok)>0:
         return text #is valid JSON or parsable
-
-    if start_tag=="<|tool_call_start|>" and end_tag=="<|tool_call_end|>" and cached_chat_template and (required_match_txt is None or required_match_txt in cached_chat_template):
-        return parse_lfm25(text)
-
-    if start_tag=="<tool_calls>" and end_tag=="</tool_calls>" and cached_chat_template and (required_match_txt is None or required_match_txt in cached_chat_template):
-        return extract_json_from_string(text, True) #apriel is json
 
     if "<arg_key>" in text and "<arg_value>" in text: # handle glm with args
         return parse_glm(text)
@@ -3655,14 +3682,14 @@ def format_jinja(messages_orig, tools, chat_template_kwargs=None):
             print(f"Warning: Jinja template raised an exception: {msg}")
             return ""
         global cached_chat_template
-        from jinja2.ext import Extension
+        from jinja2.ext import Extension, loopcontrols
         class IgnoreGenerationTags(Extension):
             tags = {"generation"}
             def parse(self, parser):
                 parser.stream.skip(1)
                 return parser.parse_statements( ("name:endgeneration",), drop_needle=True)
         from jinja2.sandbox import ImmutableSandboxedEnvironment
-        jinja_env = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True,  extensions=[IgnoreGenerationTags])
+        jinja_env = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True,  extensions=[IgnoreGenerationTags,loopcontrols])
         # sanitize messages to remove none types
         messages = json.loads(json.dumps(messages_orig))
         for m in messages:
