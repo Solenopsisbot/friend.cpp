@@ -568,15 +568,24 @@ class StdoutRedirector:
         self.terminal.flush()
 
 class MCPStdioClient:
-    def resolve_command(self, command):
+    def resolve_command(self, command, cwd=None):
         resolved = shutil.which(command)
         if resolved:
             return resolved
+        if cwd and isinstance(command, str) and not os.path.isabs(command):
+            if os.path.dirname(command):
+                relative_cmd = os.path.abspath(os.path.join(cwd, command))
+                if os.path.exists(relative_cmd):
+                    return relative_cmd
+            else:
+                resolved = shutil.which(command, path=cwd)
+                if resolved:
+                    return resolved
         return command # fallback
 
     def __init__(self,command,largs,env=None,cwd=None):
         if isinstance(command, str):
-            command = self.resolve_command(command)
+            command = self.resolve_command(command, cwd)
             cmd = [command]
         else:
             cmd = list(command)
@@ -10494,6 +10503,7 @@ def load_mcp_async(args):
     if not filepath.lower().endswith(".json"):
         filepath += ".json"
         args.mcpfile += ".json"
+    mcp_config_dir = os.path.dirname(filepath) or os.getcwd()
     try:
         print(f"MCP start loading json file at '{filepath}'...")
         with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
@@ -10517,7 +10527,7 @@ def load_mcp_async(args):
                     if mcpcmd and not mcpurl:
                         mcpargs = cfg.get("args", [])
                         mcpenv = cfg.get("env", {})
-                        client = MCPStdioClient(command=mcpcmd,largs=mcpargs,env=mcpenv)
+                        client = MCPStdioClient(command=mcpcmd,largs=mcpargs,env=mcpenv,cwd=mcp_config_dir)
                     elif mcpurl:
                         mcp_ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36'
                         headers = cfg.get("headers", {})
