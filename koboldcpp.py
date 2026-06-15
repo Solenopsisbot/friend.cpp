@@ -2817,8 +2817,8 @@ def sd_generate(genparams):
 
     swap_refimg = (True if tryparseint(genparams.get("send_as_refimg", 0),0) else False)
     reverse_refimg = (True if tryparseint(genparams.get("reverse_refimg", 0),0) else False)
-    if len(extra_images_arr)==0 and swap_refimg and init_images and init_images!="" and not mask:
-        extra_images_arr = [init_images]
+    if swap_refimg and init_images and init_images != "" and not mask:
+        extra_images_arr = [init_images] + extra_images_arr
         init_images = ""
 
     inputs = sd_generation_inputs()
