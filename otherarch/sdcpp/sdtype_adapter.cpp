@@ -124,8 +124,6 @@ struct SDParams {
     bool diffusion_conv_direct    = false;
     bool vae_conv_direct          = false;
 
-    bool chroma_use_dit_mask     = true;
-
     LoraMap lora_map;
     bool lora_dynamic = false;
 
@@ -481,17 +479,12 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     params.diffusion_flash_attn = sd_params->diffusion_flash_attn;
     params.diffusion_conv_direct = sd_params->diffusion_conv_direct;
     params.vae_conv_direct = sd_params->vae_conv_direct;
-    params.chroma_use_dit_mask = sd_params->chroma_use_dit_mask;
+    params.chroma_use_dit_mask = true;
     params.max_vram = inputs.max_vram;
     params.stream_layers = inputs.stream_layers;
     params.enable_mmap = inputs.use_mmap;
-    // the _cpu flags are only used if the backend string is empty, but
-    // we always set both for consistency
-    params.offload_params_to_cpu = inputs.offload_cpu;
     params.params_backend = inputs.offload_cpu ? "CPU" : "";
-    params.keep_vae_on_cpu = (inputs.kcpp_vae_device <= -2);
     backends += get_device_override(inputs.kcpp_vae_device, "VAE");
-    params.keep_clip_on_cpu = (inputs.kcpp_clip_device <= -2);
     backends += get_device_override(inputs.kcpp_clip_device, "CLIP");
     if (backends.rfind(",", 0) == 0) {
         backends = "auto" + backends;
@@ -504,11 +497,6 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
     // also switches flash attn for the vae and conditioner
     params.flash_attn = params.diffusion_flash_attn;
-
-    if (params.chroma_use_dit_mask && params.diffusion_flash_attn) {
-        // note we don't know yet if it's a Chroma model
-        params.chroma_use_dit_mask = false;
-    }
 
     if(inputs.debugmode==1)
     {
@@ -528,14 +516,6 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     }
 
     auto info = get_model_info(sd_ctx);
-
-    if (!sd_is_quiet) {
-        if (info.is_chroma && sd_params->diffusion_flash_attn && sd_params->chroma_use_dit_mask)
-        {
-            printf("Chroma: flash attention is on, disabling DiT mask (this will lower image quality)\n");
-            // disabled before loading
-        }
-    }
 
     if (info.is_wan || info.is_ltx)
     {
@@ -559,7 +539,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     if (upscaler_filename!="") {
         const int upscale_tile_size = 128;
         upscaler_ctx = new_upscaler_ctx(upscaler_filename.c_str(),
-                                        params.offload_params_to_cpu,
+                                        inputs.offload_cpu,
                                         params.diffusion_conv_direct,
                                         params.n_threads,
                                         upscale_tile_size,
