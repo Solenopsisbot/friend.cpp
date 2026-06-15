@@ -50,7 +50,7 @@ audio_max = 16
 bias_min_value = -100.0
 bias_max_value = 100.0
 logprobs_max = 10
-default_draft_amount = 8
+default_draft_amount = 4
 default_ttsmaxlen = 4096
 default_embeddingsmaxctx = 4096
 default_visionmaxres = 1024
@@ -1947,7 +1947,7 @@ def load_model(model_filename):
     if args.lora:
         inputs.lora_filename = args.lora[0].encode("UTF-8")
 
-    inputs.draftmodel_filename = args.draftmodel.encode("UTF-8") if args.draftmodel else "".encode("UTF-8")
+    inputs.draftmodel_filename = args.draftmodel.encode("UTF-8") if (args.draftmodel and args.draftamount>0) else "".encode("UTF-8")
     inputs.draft_amount = args.draftamount
     inputs.draft_gpulayers = args.draftgpulayers
     for n in range(tensor_split_max):
