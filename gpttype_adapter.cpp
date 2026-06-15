@@ -53,6 +53,7 @@
 #include "vendor/stb/stb_image.h"
 #include "otherarch/sdcpp/thirdparty/stb_image_resize.h"
 #include "common/common.h"
+#include "common/fit.h"
 #include "ggml-rpc.h"
 
 #if defined(GGML_USE_HIP)
@@ -464,6 +465,171 @@ void print_fitted_params(const llama_model_params & mparams, const llama_context
         std::cout << mparams.tensor_buft_overrides[itbo].pattern << "=" << ggml_backend_buft_name(mparams.tensor_buft_overrides[itbo].buft);
     }
     std::cout << "\n";
+}
+
+static size_t estimate_draft_autofit_tax_mb(
+    const std::string & main_model_filename,
+    const std::string & spec_model_filename,
+    const llama_model_params & base_model_params,
+    const llama_context_params & base_ctx_params,
+    const float * draft_gpusplit,
+    int draft_gpulayers,
+    bool use_mtp)
+{
+    const bool has_draft_model = spec_model_filename != "";
+    if(!has_draft_model && !use_mtp)
+    {
+        return 0;
+    }
+
+    llama_model_params draft_model_params = llama_model_default_params();
+    llama_context_params draft_ctx_params = llama_context_default_params();
+
+    draft_model_params.use_mmap = base_model_params.use_mmap;
+    draft_model_params.use_mlock = base_model_params.use_mlock;
+    draft_model_params.use_direct_io = base_model_params.use_direct_io;
+    draft_model_params.n_gpu_layers = has_draft_model ? draft_gpulayers : 0;
+    draft_model_params.devices = base_model_params.devices;
+    draft_model_params.main_gpu = base_model_params.main_gpu;
+    draft_model_params.split_mode = llama_split_mode::LLAMA_SPLIT_MODE_LAYER;
+
+    draft_ctx_params.n_ctx = base_ctx_params.n_ctx;
+    draft_ctx_params.offload_kqv = base_ctx_params.offload_kqv;
+    draft_ctx_params.kv_unified = base_ctx_params.kv_unified;
+    draft_ctx_params.n_batch = base_ctx_params.n_batch;
+    draft_ctx_params.n_ubatch = base_ctx_params.n_ubatch;
+    draft_ctx_params.n_threads = base_ctx_params.n_threads;
+    draft_ctx_params.n_threads_batch = base_ctx_params.n_threads_batch;
+    draft_ctx_params.flash_attn_type = base_ctx_params.flash_attn_type;
+    draft_ctx_params.type_k = base_ctx_params.type_k;
+    draft_ctx_params.type_v = base_ctx_params.type_v;
+    draft_ctx_params.swa_full = base_ctx_params.swa_full;
+    draft_ctx_params.n_rs_seq = 0;
+
+    #if defined(GGML_USE_CUDA) || defined(GGML_USE_VULKAN)
+    bool ts_all_zero = true;
+    for (int i = 0; i < tensor_split_max; ++i) {
+        if (draft_gpusplit[i] != 0.0f) {
+            ts_all_zero = false;
+            break;
+        }
+    }
+    if(!ts_all_zero)
+    {
+        draft_model_params.tensor_split = draft_gpusplit;
+    }
+    #endif
+
+    const char * estimate_model_path = has_draft_model ? spec_model_filename.c_str() : main_model_filename.c_str();
+    bool measure_model_bytes = true;
+    bool draft_is_mtp_estimate = !has_draft_model && use_mtp;
+
+    //mute logs for the fitting stuff first
+    auto oldverbosity = common_log_get_verbosity_thold();
+    ggml_log_callback currlogger;
+    void * curruserdat;
+    llama_log_get(&currlogger, &curruserdat);
+    llama_log_set(log_callback_off, nullptr);
+    common_log_set_verbosity_thold(GGML_LOG_LEVEL_NONE);
+    bool logs_muted = true;
+
+    if(has_draft_model)
+    {
+        llama_model_params draft_probe_params = draft_model_params;
+        draft_probe_params.no_alloc = true;
+        draft_probe_params.use_mmap = false;
+        draft_probe_params.use_mlock = false;
+
+        llama_model * draft_probe = llama_model_load_from_file(spec_model_filename.c_str(), draft_probe_params);
+        if(draft_probe != nullptr)
+        {
+            draft_is_mtp_estimate = draft_probe->hparams.n_layer_nextn > 0;
+            llama_model_free(draft_probe);
+        }
+    }
+
+    llama_model * ctx_other_model = nullptr;
+    llama_context * ctx_other = nullptr;
+    auto free_ctx_other = [&]() {
+        if(ctx_other != nullptr)
+        {
+            llama_free(ctx_other);
+            ctx_other = nullptr;
+        }
+        if(ctx_other_model != nullptr)
+        {
+            llama_model_free(ctx_other_model);
+            ctx_other_model = nullptr;
+        }
+
+        if(logs_muted)
+        {
+            logs_muted = false;
+            llama_log_set(currlogger, curruserdat);
+            common_log_set_verbosity_thold(oldverbosity);
+        }
+    };
+
+    if(has_draft_model)
+    {
+        llama_model_params ctx_other_model_params = base_model_params;
+        ctx_other_model_params.no_alloc = true;
+        ctx_other_model_params.use_mmap = false;
+        ctx_other_model_params.use_mlock = false;
+
+        ctx_other_model = llama_model_load_from_file(main_model_filename.c_str(), ctx_other_model_params);
+        if(ctx_other_model != nullptr)
+        {
+            ctx_other = llama_init_from_model(ctx_other_model, base_ctx_params);
+            if(ctx_other != nullptr)
+            {
+                draft_ctx_params.ctx_other = ctx_other;
+            }
+            else
+            {
+                llama_model_free(ctx_other_model);
+                ctx_other_model = nullptr;
+            }
+        }
+    }
+
+    if(draft_is_mtp_estimate)
+    {
+        draft_ctx_params.ctx_type = LLAMA_CONTEXT_TYPE_MTP;
+        draft_ctx_params.n_rs_seq = speculative_chunk_amt;
+        measure_model_bytes = has_draft_model;
+    }
+
+    std::vector<ggml_backend_dev_t> devs;
+    uint32_t hp_ngl = 0;
+    uint32_t hp_n_ctx_train = 0;
+    uint32_t hp_n_expert = 0;
+    common_device_memory_data_vec dmd;
+    try
+    {
+        dmd = common_get_device_memory_data(
+            estimate_model_path,
+            &draft_model_params,
+            &draft_ctx_params,
+            devs,
+            hp_ngl,
+            hp_n_ctx_train,
+            hp_n_expert,
+            GGML_LOG_LEVEL_ERROR);
+    }
+    catch(...)
+    {
+        free_ctx_other();
+        throw;
+    }
+    free_ctx_other();
+
+    size_t total_bytes = 0;
+    for(size_t i = 0; i < devs.size() && i < dmd.size(); ++i)
+    {
+        total_bytes += (measure_model_bytes ? dmd[i].model : 0) + dmd[i].context + dmd[i].compute;
+    }
+    return (total_bytes + 1024*1024 - 1) / (1024*1024);
 }
 
 // Find tokens that completely contain `str`, either as a single token, or as a sequence of tokens.
@@ -2960,6 +3126,29 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
 
             common_params temp_params;
             size_t taxmb = inputs.autofit_tax_mb + totalmmprojtax;
+            if(file_format==FileFormat::GGUF_GENERIC && (draftmodel_filename != "" || inputs.use_mtp))
+            {
+                try
+                {
+                    size_t drafttax = estimate_draft_autofit_tax_mb(
+                        kcpp_data->model_filename,
+                        draftmodel_filename,
+                        model_params,
+                        llama_ctx_params,
+                        inputs.draft_gpusplit,
+                        inputs.draft_gpulayers,
+                        inputs.use_mtp);
+                    if(drafttax > 0)
+                    {
+                        taxmb += drafttax;
+                        printf("\nDraft Autofit Usage: %zu MB", drafttax);
+                    }
+                }
+                catch(const std::exception & e)
+                {
+                    printf("\nWarning: failed to estimate draft model autofit usage: %s\n", e.what());
+                }
+            }
             printf("\nAttempting to use llama.cpp's automating fitting code. This will override all your layer configs, may or may not work!\n");
             //zero out any customizations made
             tenos.clear();
