@@ -185,14 +185,15 @@ thinkformats = [{"start":"<|channel|>analysis<|message|>","end":"<|start|>assist
                 {"start":"<|START_THINKING|>","end":"<|END_THINKING|>"},
                 {"start":"<|channel>thought","end":"<channel|>"}]
 tool_call_pairs = [ #third element is optional str to match in chat template before we use this pair, fourth element is whether its stream-handleable
-    ("<tool_call>", "</tool_call>", None, True),
-    ("<seed:tool_call>", "</seed:tool_call>", None, True),
-    ("<|tool_call_begin|>", "<|tool_call_end|>", None, True),
-    ("<｜tool▁call▁begin｜>", "<｜tool▁call▁end｜>", None, True),
-    ("<minimax:tool_call>", "</minimax:tool_call>", None, True),
-    ("<|tool_call>", "<tool_call|>", None, True),
-    ("<|end|><|start|>assistant<|channel|>commentary to=", "", None, False),
-    ("<|tool_call_start|>", "<|tool_call_end|>", None, True),
+    ("<tool_call>", "</tool_call>", None, True), #qwen, glm
+    ("<seed:tool_call>", "</seed:tool_call>", None, True), #seed oss
+    ("<|tool_call_begin|>", "<|tool_call_end|>", None, True), #kimi
+    ("<｜tool▁call▁begin｜>", "<｜tool▁call▁end｜>", None, True), #deepseek
+    ("<minimax:tool_call>", "</minimax:tool_call>", None, True), #minimax
+    ("<|tool_call>", "<tool_call|>", None, True), #gemma4
+    ("<|end|><|start|>assistant<|channel|>commentary to=", "", None, False), #gpt-oss
+    ("<|tool_call_start|>", "<|tool_call_end|>", "CONTINUE_FINAL_MESSAGE_TAG", True), #lfm2.5
+    ("<tool_calls>", "</tool_calls>", "[BEGIN FINAL RESPONSE]", True), #apriel
 ]
 deprecated_keys = {
     "hordeconfig",
@@ -3442,7 +3443,7 @@ def coerce_tool_argtypes(tool_calls: list, tool_list: list) -> list:
 
     return result
 
-def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats into standard tool call json
+def toolcall_to_normalized_json(text,start_tag,end_tag,required_match_txt): #convert weird formats into standard tool call json
     global cached_chat_template
     text = text.strip()
     def parse_qwen35(text: str) -> str:
@@ -3586,8 +3587,11 @@ def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats 
     if check_ok and len(check_ok)>0:
         return text #is valid JSON or parsable
 
-    if start_tag=="<|tool_call_start|>" and end_tag=="<|tool_call_end|>" and cached_chat_template and "CONTINUE_FINAL_MESSAGE_TAG" in cached_chat_template:
+    if start_tag=="<|tool_call_start|>" and end_tag=="<|tool_call_end|>" and cached_chat_template and (required_match_txt is None or required_match_txt in cached_chat_template):
         return parse_lfm25(text)
+
+    if start_tag=="<tool_calls>" and end_tag=="</tool_calls>" and cached_chat_template and (required_match_txt is None or required_match_txt in cached_chat_template):
+        return extract_json_from_string(text, True) #apriel is json
 
     if "<arg_key>" in text and "<arg_value>" in text: # handle glm with args
         return parse_glm(text)
@@ -3631,7 +3635,7 @@ def repack_toolcall_tags(text: str, original_tools:list):
         if matches:
             found = True
             for match in matches:
-                normalizedtc = toolcall_to_normalized_json(match.strip(),start,end)
+                normalizedtc = toolcall_to_normalized_json(match.strip(),start,end,required_match_txt)
                 sub_tool_calls = extract_json_from_string(normalizedtc)
                 tool_calls.extend(sub_tool_calls)
             break
