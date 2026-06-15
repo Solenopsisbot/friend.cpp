@@ -5429,6 +5429,11 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 end = "</seed:think>";
                 budget_exceeded = "\n(Reasoning budget exceeded)\n<seed:cot_budget_reflect>The current thinking budget is 0, so I will directly start answering the question.</seed:cot_budget_reflect>\nTime to respond now.\n</seed:think>";
                 break;
+            case llm_arch::LLM_ARCH_COHERE2MOE:
+                start = "<|START_THINKING|>";
+                end = "<|END_THINKING|>";
+                 budget_exceeded = "\n(Reasoning budget exceeded)\nTime to respond now.\n<|END_THINKING|>";
+                break;
             default:
                 break;
         }
