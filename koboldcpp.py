@@ -182,15 +182,17 @@ default_rpc_port = 5551
 thinkformats = [{"start":"<|channel|>analysis<|message|>","end":"<|start|>assistant<|channel|>final<|message|>"},
                 {"start":"<think>","end":"</think>"},
                 {"start":"<seed:think>","end":"</seed:think>"},
+                {"start":"<|START_THINKING|>","end":"<|END_THINKING|>"},
                 {"start":"<|channel>thought","end":"<channel|>"}]
-tool_call_pairs = [ #third element is whether its stream-handleable
-    ("<tool_call>", "</tool_call>", True),
-    ("<seed:tool_call>", "</seed:tool_call>", True),
-    ("<|tool_call_begin|>", "<|tool_call_end|>", True),
-    ("<｜tool▁call▁begin｜>", "<｜tool▁call▁end｜>", True),
-    ("<minimax:tool_call>", "</minimax:tool_call>", True),
-    ("<|tool_call>", "<tool_call|>", True),
-    ("<|end|><|start|>assistant<|channel|>commentary to=", "", False),
+tool_call_pairs = [ #third element is optional str to match in chat template before we use this pair, fourth element is whether its stream-handleable
+    ("<tool_call>", "</tool_call>", None, True),
+    ("<seed:tool_call>", "</seed:tool_call>", None, True),
+    ("<|tool_call_begin|>", "<|tool_call_end|>", None, True),
+    ("<｜tool▁call▁begin｜>", "<｜tool▁call▁end｜>", None, True),
+    ("<minimax:tool_call>", "</minimax:tool_call>", None, True),
+    ("<|tool_call>", "<tool_call|>", None, True),
+    ("<|end|><|start|>assistant<|channel|>commentary to=", "", None, False),
+    ("<|tool_call_start|>", "<|tool_call_end|>", None, True),
 ]
 deprecated_keys = {
     "hordeconfig",
@@ -3441,6 +3443,7 @@ def coerce_tool_argtypes(tool_calls: list, tool_list: list) -> list:
     return result
 
 def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats into standard tool call json
+    global cached_chat_template
     text = text.strip()
     def parse_qwen35(text: str) -> str:
         fn_match = re.search(r"<function=(.*?)>", text)
@@ -3552,6 +3555,28 @@ def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats 
             return text
         return json.dumps({"name": fn_name, "arguments": args})
 
+    def parse_lfm25(text: str) -> str:
+        text = text.replace('<|tool_call_start|>', '')
+        text = text.replace('<|tool_call_end|>', '')
+        text = text.strip()
+        try:
+            import ast
+            node = ast.parse(text, mode="eval").body
+            calls = node.elts if isinstance(node, ast.List) else [node]
+            results = []
+            for call in calls:
+                if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name):
+                    return text
+                args = {
+                    kw.arg: ast.literal_eval(kw.value)
+                    for kw in call.keywords
+                    if kw.arg is not None
+                }
+                results.append({"name": call.func.id, "arguments": args})
+            return json.dumps(results if len(results) > 1 else results[0])
+        except Exception:
+            return text
+
     # gemma4 takes precedence, since it can contain valid json fragments
     if end_tag=="<tool_call|>":
         return parse_gemma4(text)
@@ -3560,6 +3585,9 @@ def toolcall_to_normalized_json(text,start_tag,end_tag): #convert weird formats 
     check_ok = extract_json_from_string(text, True)
     if check_ok and len(check_ok)>0:
         return text #is valid JSON or parsable
+
+    if start_tag=="<|tool_call_start|>" and end_tag=="<|tool_call_end|>" and cached_chat_template and "CONTINUE_FINAL_MESSAGE_TAG" in cached_chat_template:
+        return parse_lfm25(text)
 
     if "<arg_key>" in text and "<arg_value>" in text: # handle glm with args
         return parse_glm(text)
@@ -3591,7 +3619,9 @@ def repack_toolcall_tags(text: str, original_tools:list):
         text = re.sub(pattern, '', text, flags=re.DOTALL)
     text = text.strip()
     found = False
-    for start, end, streamhandled in tool_call_pairs:
+    for start, end, required_match_txt, streamhandled in tool_call_pairs:
+        if required_match_txt and cached_chat_template and required_match_txt not in cached_chat_template:
+            continue
         pattern=""
         if end:
             pattern = re.escape(start) + r"(.*?)" + re.escape(end)
@@ -3621,8 +3651,14 @@ def format_jinja(messages_orig, tools, chat_template_kwargs=None):
             print(f"Warning: Jinja template raised an exception: {msg}")
             return ""
         global cached_chat_template
+        from jinja2.ext import Extension
+        class IgnoreGenerationTags(Extension):
+            tags = {"generation"}
+            def parse(self, parser):
+                parser.stream.skip(1)
+                return parser.parse_statements( ("name:endgeneration",), drop_needle=True)
         from jinja2.sandbox import ImmutableSandboxedEnvironment
-        jinja_env = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True)
+        jinja_env = ImmutableSandboxedEnvironment(trim_blocks=True, lstrip_blocks=True,  extensions=[IgnoreGenerationTags])
         # sanitize messages to remove none types
         messages = json.loads(json.dumps(messages_orig))
         for m in messages:
@@ -5245,7 +5281,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         # if tools, do not send anything else - OAI tool calls will be handled with fakestreaming!
         # only exception is if we know the exact toolcall tag to segment!
         tool_segment_tag = ""
-        for start, end, streamhandled in tool_call_pairs:
+        for start, end, required_match_txt, streamhandled in tool_call_pairs:
+            if required_match_txt and cached_chat_template and required_match_txt not in cached_chat_template:
+                continue
             if streamhandled and cached_chat_template and start in cached_chat_template:
                 tool_segment_tag = start
                 break

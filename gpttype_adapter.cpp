@@ -5410,28 +5410,37 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     std::string chat_template = "";
     if (file_format == FileFormat::GGUF_GENERIC) {
         chat_template = gpttype_get_chat_template();
-        if (file_format_meta.model_architecture == llm_arch::LLM_ARCH_GEMMA4) {
-            TokenizeString("<|channel>thought",thinking_start_sequence,file_format,false);
-            TokenizeString("<channel|>",thinking_end_sequence,file_format,false);
-            TokenizeString("\n(Reasoning Budget Exceeded)\n<channel|>",thinking_end_phrase_toksleft,file_format,false);
-            //sanity check, start is 2 tokens and end is 1
-            if(thinking_start_sequence.size()!=2 || thinking_end_sequence.size()!=1)
-            {
-                thinking_start_sequence.clear();
-                thinking_end_sequence.clear();
-                thinking_end_phrase_toksleft.clear();
-            }
-        } else {
-            TokenizeString("<think>",thinking_start_sequence,file_format,false);
-            TokenizeString("</think>",thinking_end_sequence,file_format,false);
-            TokenizeString("\n(Reasoning Budget Exceeded)\n</think>",thinking_end_phrase_toksleft,file_format,false);
-            //sanity check, start is 1 tokens and end is 1
-            if(thinking_start_sequence.size()!=1 || thinking_end_sequence.size()!=1)
-            {
-                thinking_start_sequence.clear();
-                thinking_end_sequence.clear();
-                thinking_end_phrase_toksleft.clear();
-            }
+
+        std::string start = "<think>";
+        std::string end = "</think>";
+        std::string  budget_exceeded = "\n(Reasoning budget exceeded)\nTime to respond now.\n</think>";
+        size_t expected_start_tokens = 1;
+        size_t expected_end_tokens = 1;
+
+        switch (file_format_meta.model_architecture) {
+            case llm_arch::LLM_ARCH_GEMMA4:
+                start = "<|channel>thought";
+                end = "<channel|>";
+                budget_exceeded = "\n(Reasoning budget exceeded)\nTime to respond now.\n<channel|>";
+                expected_start_tokens = 2;
+                break;
+            case llm_arch::LLM_ARCH_SEED_OSS:
+                start = "<seed:think>";
+                end = "</seed:think>";
+                budget_exceeded = "\n(Reasoning budget exceeded)\n<seed:cot_budget_reflect>The current thinking budget is 0, so I will directly start answering the question.</seed:cot_budget_reflect>\nTime to respond now.\n</seed:think>";
+                break;
+            default:
+                break;
+        }
+
+        TokenizeString(start, thinking_start_sequence, file_format, false);
+        TokenizeString(end, thinking_end_sequence, file_format, false);
+        TokenizeString(budget_exceeded, thinking_end_phrase_toksleft, file_format, false);
+        if (thinking_start_sequence.size() != expected_start_tokens || thinking_end_sequence.size() != expected_end_tokens)
+        {
+            thinking_start_sequence.clear();
+            thinking_end_sequence.clear();
+            thinking_end_phrase_toksleft.clear();
         }
     }
 
