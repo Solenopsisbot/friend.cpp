@@ -43,7 +43,7 @@ jobs:
         id: test
         run: |
           wget https://huggingface.co/concedo/koboldcpp/resolve/main/baby_llama.gguf
-          dist/koboldcpp-mac-arm64 --model baby_llama.gguf --gpulayers 99 --benchmark --prompt 'Hi, my name is'
+          dist/koboldcpp-mac-arm64 --model baby_llama.gguf --gpulayers 99 --benchmark --prompt 'Once upon a'
 
       - name: Save artifact
         uses: actions/upload-artifact@v6
