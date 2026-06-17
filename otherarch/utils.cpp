@@ -949,6 +949,55 @@ bool kcpp_decode_audio_from_buf(const unsigned char * buf_in, size_t len, int ta
     return true;
 }
 
+bool kcpp_decode_audio_file_from_buf(const unsigned char * buf_in, size_t len, int & sample_rate, int & channels, std::vector<float> & pcmf32_interleaved) {
+    sample_rate = 0;
+    channels = 0;
+    pcmf32_interleaved.clear();
+
+    if (!buf_is_audio_file((const char *)buf_in, len))
+    {
+        return false;
+    }
+
+    ma_result result;
+    ma_decoder_config decoder_config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    ma_decoder decoder;
+
+    result = ma_decoder_init_memory(buf_in, len, &decoder_config, &decoder);
+    if (result != MA_SUCCESS) {
+        return false;
+    }
+
+    ma_uint32 decoded_channels = 0;
+    ma_uint32 decoded_sample_rate = 0;
+    result = ma_decoder_get_data_format(&decoder, nullptr, &decoded_channels, &decoded_sample_rate, nullptr, 0);
+    if (result != MA_SUCCESS || decoded_channels == 0 || decoded_sample_rate == 0) {
+        ma_decoder_uninit(&decoder);
+        return false;
+    }
+
+    ma_uint64 frame_count;
+    ma_uint64 frames_read;
+    result = ma_decoder_get_length_in_pcm_frames(&decoder, &frame_count);
+    if (result != MA_SUCCESS) {
+        ma_decoder_uninit(&decoder);
+        return false;
+    }
+
+    pcmf32_interleaved.resize(static_cast<size_t>(frame_count) * static_cast<size_t>(decoded_channels));
+    result = ma_decoder_read_pcm_frames(&decoder, pcmf32_interleaved.data(), frame_count, &frames_read);
+    ma_decoder_uninit(&decoder);
+    if (result != MA_SUCCESS) {
+        pcmf32_interleaved.clear();
+        return false;
+    }
+
+    pcmf32_interleaved.resize(static_cast<size_t>(frames_read) * static_cast<size_t>(decoded_channels));
+    sample_rate = static_cast<int>(decoded_sample_rate);
+    channels = static_cast<int>(decoded_channels);
+    return !pcmf32_interleaved.empty();
+}
+
 //this version is specifically required for ace-step
 bool kcpp_decode_audio_to_f32_stereo_48k(const uint8_t * data, size_t data_size, std::vector<float> & pcm, int & T_audio) {
     ma_result result;

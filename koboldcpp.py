@@ -412,6 +412,7 @@ class sd_generation_inputs(ctypes.Structure):
                 ("negative_prompt", ctypes.c_char_p),
                 ("init_images", ctypes.c_char_p),
                 ("mask", ctypes.c_char_p),
+                ("audio_data", ctypes.c_char_p),
                 ("extra_images_len", ctypes.c_int),
                 ("extra_images", ctypes.POINTER(ctypes.c_char_p)),
                 ("reverse_refimg", ctypes.c_bool),
@@ -1111,7 +1112,7 @@ def is_incomplete_utf8_sequence(byte_seq): #note, this will only flag INCOMPLETE
 def strip_base64_prefix(encoded_data):
     if not encoded_data:
         return ""
-    if encoded_data.startswith("data:image"):
+    if encoded_data.startswith("data:image") or encoded_data.startswith("data:audio"):
         encoded_data = encoded_data.split(',', 1)[-1]
     return encoded_data
 
@@ -2814,6 +2815,11 @@ def sd_generate(genparams):
     extra_images_arr = genparams.get("extra_images", [])
     extra_images_arr = ([] if not extra_images_arr else extra_images_arr)
     extra_images_arr = [img for img in extra_images_arr if img not in (None, "")]
+
+    audio_data = next((img for img in extra_images_arr if img.startswith("data:audio")), None)
+    extra_images_arr = [img for img in extra_images_arr if not img.startswith("data:audio")]
+    audio_data = strip_base64_prefix(audio_data)
+
     extra_images_arr = extra_images_arr[:extra_images_max]
     lora_filenames, lora_multipliers = prepare_lora_multipliers(genparams.get("lora", []))
 
@@ -2840,6 +2846,7 @@ def sd_generate(genparams):
     inputs.negative_prompt = negative_prompt.encode("UTF-8")
     inputs.init_images = init_images.encode("UTF-8")
     inputs.mask = "".encode("UTF-8") if not mask else mask.encode("UTF-8")
+    inputs.audio_data = "".encode("UTF-8") if not audio_data else audio_data.encode("UTF-8")
     inputs.extra_images_len = len(extra_images_arr)
     inputs.extra_images = (ctypes.c_char_p * inputs.extra_images_len)()
     for n, estr in enumerate(extra_images_arr):

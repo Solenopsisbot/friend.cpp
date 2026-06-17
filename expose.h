@@ -223,6 +223,7 @@ struct sd_generation_inputs
     const char * negative_prompt = nullptr;
     const char * init_images = "";
     const char * mask = "";
+    const char * audio_data = "";
     const int extra_images_len = 0;
     const char ** extra_images = nullptr;
     const bool reverse_refimg = false;

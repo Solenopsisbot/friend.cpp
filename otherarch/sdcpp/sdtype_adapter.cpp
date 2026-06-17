@@ -939,6 +939,37 @@ static std::string raw_image_to_png_base64(const sd_image_t& img, std::string pa
     return result;
 }
 
+static sd_audio_t load_audio_from_b64(const std::string& b64audio) {
+    sd_audio_t audio = {0, 0, 0, nullptr};
+    if (b64audio.empty()) {
+        return audio;
+    }
+
+    std::vector<uint8_t> audio_data = kcpp_base64_decode(b64audio);
+    std::vector<float> decoded_samples;
+    int sample_rate = 0;
+    int channels = 0;
+    if (!kcpp_decode_audio_file_from_buf(audio_data.data(), audio_data.size(), sample_rate, channels, decoded_samples)) {
+        printf("KCPP SD: failed to decode input audio\n");
+        return audio;
+    }
+
+    uint64_t sample_count = static_cast<uint64_t>(decoded_samples.size() / static_cast<size_t>(channels));
+    size_t float_count = decoded_samples.size();
+    float* samples = (float*)malloc(float_count * sizeof(float));
+    if (samples == nullptr || sample_count == 0) {
+        free(samples);
+        return audio;
+    }
+
+    std::memcpy(samples, decoded_samples.data(), float_count * sizeof(float));
+    audio.sample_rate = static_cast<uint32_t>(sample_rate);
+    audio.channels = static_cast<uint32_t>(channels);
+    audio.sample_count = sample_count;
+    audio.data = samples;
+    return audio;
+}
+
 bool supports_reference_images(kcpp_sd::model_info info)
 {
     bool supported = (info.is_wan || info.is_ltx || info.is_qwenimg || info.is_flux2 || info.is_kontext || photomaker_enabled);
@@ -955,6 +986,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
     std::string img2img_data = std::string(inputs.init_images);
     std::string img2img_mask = std::string(inputs.mask);
+    std::string input_audio_data = std::string(inputs.audio_data ? inputs.audio_data : "");
     std::vector<std::string> extra_image_data;
     for(int i=0;i<inputs.extra_images_len;++i)
     {
@@ -1283,6 +1315,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
      //special case, is img2img and denoise strength is 0 and steps is 1, do a passthru
     bool is_passthrough = (sd_params->sample_steps<=1 && sd_params->strength<=0 && is_img2img && vid_req_frames<=1 && extra_image_data.size()==0);
     sd_audio_t* generated_audio = nullptr;
+    sd_audio_t input_audio = {0, 0, 0, nullptr};
 
     if(is_vid_model)
     {
@@ -1302,6 +1335,13 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         vid_gen_params.video_frames = vid_req_frames;
         vid_gen_params.fps = vid_fps;
         vid_gen_params.vae_tiling_params = params.vae_tiling_params;
+        if (!input_audio_data.empty()) {
+            input_audio = load_audio_from_b64(input_audio_data);
+            if (input_audio.data == nullptr) {
+                return sd_generation.error("KCPP SD: load audio from base64 failed!");
+            }
+            vid_gen_params.input_audio = &input_audio;
+        }
         if (wan_imgs.size() > 0) {
             if (wan_imgs.size() >= 2) {
                 vid_gen_params.init_image = wan_imgs[0];
@@ -1327,6 +1367,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             << "\nFRAMES:"   << vid_gen_params.video_frames
             << "\nCTRL_FRM:" << vid_gen_params.control_frames_size
             << "\nINIT_IMGS:" << wan_imgs.size()
+            << "\nINPUT_AUDIO:" << (vid_gen_params.input_audio ? "true" : "false")
             << "\n\n";
             printf("%s", ss.str().c_str());
         }
@@ -1429,6 +1470,10 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     }
 
     if (!is_passthrough && results == NULL) {
+        if (input_audio.data) {
+            free(input_audio.data);
+            input_audio.data = nullptr;
+        }
         return sd_generation.error("KCPP SD generate failed!");
     }
 
@@ -1575,6 +1620,10 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     if (generated_audio) {
         free_sd_audio(generated_audio);
         generated_audio = nullptr;
+    }
+    if (input_audio.data) {
+        free(input_audio.data);
+        input_audio.data = nullptr;
     }
 
     free(results);
