@@ -495,8 +495,9 @@ add_library(sdtype_adapter
             otherarch/sdcpp/src/core/ggml_graph_cut.cpp
             otherarch/sdcpp/src/core/ggml_graph_cut.h
             otherarch/sdcpp/examples/cli/image_metadata.cpp
-            otherarch/sdcpp/src/core/layer_registry.cpp
-            otherarch/sdcpp/src/core/layer_registry.h
+            otherarch/sdcpp/src/model_manager.cpp
+            otherarch/sdcpp/src/model_manager.h
+            otherarch/sdcpp/src/extensions/pulid_extension.cpp
             otherarch/sdcpp/src/model_loader.cpp
             otherarch/sdcpp/src/extensions/photomaker_extension.cpp
             otherarch/sdcpp/src/runtime/sample-cache.cpp
