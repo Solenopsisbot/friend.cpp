@@ -412,8 +412,10 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     } else if (inputs.use_mmap) {
         printf("Using mmap for I/O\n");
     }
+    std::string max_vram;
     if(inputs.max_vram != 0.f) {
         printf("Using max VRAM = %0.2f GB\n", inputs.max_vram);
+        max_vram = std::to_string(inputs.max_vram);
     }
     if(inputs.quant > 0)
     {
@@ -470,8 +472,6 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     params.taesd_path = sd_params->taesd_path.c_str();
     params.photo_maker_path = sd_params->stacked_id_embeddings_path.c_str();
 
-    params.vae_decode_only = false;
-    params.free_params_immediately = false;
     params.rng_type = CUDA_RNG;
 
     params.n_threads = sd_params->n_threads;
@@ -480,7 +480,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     params.diffusion_conv_direct = sd_params->diffusion_conv_direct;
     params.vae_conv_direct = sd_params->vae_conv_direct;
     params.chroma_use_dit_mask = true;
-    params.max_vram = inputs.max_vram;
+    params.max_vram = max_vram.c_str();
     params.stream_layers = inputs.stream_layers;
     params.enable_mmap = inputs.use_mmap;
     params.params_backend = inputs.offload_cpu ? "CPU" : "";
@@ -539,7 +539,6 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     if (upscaler_filename!="") {
         const int upscale_tile_size = 128;
         upscaler_ctx = new_upscaler_ctx(upscaler_filename.c_str(),
-                                        inputs.offload_cpu,
                                         params.diffusion_conv_direct,
                                         params.n_threads,
                                         upscale_tile_size,
