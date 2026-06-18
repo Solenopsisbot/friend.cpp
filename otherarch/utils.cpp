@@ -627,6 +627,66 @@ std::string save_stereo_wav16_base64(const std::vector<float> & raw_audio, int T
     return kcpp_base64_encode(wav_data);
 }
 
+std::string save_mono_mp3_base64(const std::vector<float> & raw_audio, int sample_rate) {
+    std::vector<float> limited_audio = raw_audio;
+    float peak = 0.0f;
+    for (float s : limited_audio) {
+        peak = std::max(peak, std::fabs(s));
+    }
+    if (peak > 1e-6f) {
+        const float target_amp = 0.89125094f; // -1.0 dBFS
+        const float gain = peak > target_amp ? target_amp / peak : 1.0f;
+        for (float & s : limited_audio) {
+            s = std::max(-target_amp, std::min(target_amp, s * gain));
+        }
+    }
+
+    const float * enc_audio = limited_audio.data();
+    int enc_T  = (int) limited_audio.size();
+    int enc_sr = sample_rate;
+    std::vector<float> resampled;
+
+    if (sample_rate != 32000 && sample_rate != 44100 && sample_rate != 48000) {
+        resampled = resample_wav(1, limited_audio, sample_rate, 44100);
+        enc_audio = resampled.data();
+        enc_sr    = 44100;
+        enc_T     = (int) resampled.size();
+    }
+
+    if (enc_T <= 0) {
+        return "";
+    }
+
+    mp3enc_t * enc = mp3enc_init(enc_sr, 1, 128);
+    if (!enc) {
+        fprintf(stderr, "[Audio] mp3enc_init failed\n");
+        return "";
+    }
+
+    std::string mp3_data;
+    mp3_data.reserve(enc_T / 4);
+    int chunk_size = enc_sr;
+    std::vector<float> buf((size_t) chunk_size);
+
+    for (int pos = 0; pos < enc_T; pos += chunk_size) {
+        int n = (pos + chunk_size <= enc_T) ? chunk_size : (enc_T - pos);
+        memcpy(buf.data(), enc_audio + pos, (size_t) n * sizeof(float));
+        int out_size = 0;
+        const uint8_t * mp3 = mp3enc_encode(enc, buf.data(), n, &out_size);
+        if (out_size > 0) {
+            mp3_data.append((const char *) mp3, out_size);
+        }
+    }
+
+    int flush_size = 0;
+    const uint8_t * flush_data = mp3enc_flush(enc, &flush_size);
+    if (flush_size > 0) {
+        mp3_data.append((const char *) flush_data, flush_size);
+    }
+    mp3enc_free(enc);
+    return kcpp_base64_encode(mp3_data);
+}
+
 std::string save_stereo_mp3_base64(const std::vector<float> & raw_audio,int T_audio,int sample_rate) {
     const float * enc_audio = raw_audio.data();
     int enc_T  = T_audio;

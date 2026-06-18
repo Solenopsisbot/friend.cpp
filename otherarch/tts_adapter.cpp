@@ -498,11 +498,7 @@ static std::string save_tts_audio_base64(const std::vector<float> & audio, int s
         return save_wav16_base64(audio, sample_rate);
     }
 
-    std::vector<float> stereo_audio;
-    stereo_audio.reserve(audio.size() * 2);
-    stereo_audio.insert(stereo_audio.end(), audio.begin(), audio.end());
-    stereo_audio.insert(stereo_audio.end(), audio.begin(), audio.end());
-    return save_stereo_mp3_base64(stereo_audio, (int) audio.size(), sample_rate);
+    return save_mono_mp3_base64(audio, sample_rate);
 }
 
 //ttscpp specific
