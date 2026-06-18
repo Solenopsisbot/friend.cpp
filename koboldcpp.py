@@ -8652,7 +8652,8 @@ def show_gui():
         "Remote Tunnel": [remotetunnel_var,  "Creates a trycloudflare tunnel.\nAllows you to access koboldcpp from other devices over an internet URL."],
         "Use FlashAttention": [flashattention_var, "Enable flash attention for GGUF models."],
         "Force AutoFit": [autofit_var, "Automatically attempt to fit the model in the best possible way. Overrides everything else.\nNot recommended for multi model setups. Experimental."],
-        "Quiet Mode": [quietmode, "Prevents all generation related terminal output from being displayed."]
+        "Quiet Mode": [quietmode, "Prevents all generation related terminal output from being displayed."],
+        "Use Jinja": [jinja_var, "Enables using jinja chat template formatting for chat completions endpoint. Other endpoints are unaffected."]
     }
 
     for idx, (name, properties) in enumerate(quick_boxes.items()):
