@@ -498,7 +498,8 @@ class tts_generation_inputs(ctypes.Structure):
                 ("custom_speaker_text", ctypes.c_char_p),
                 ("custom_speaker_data", ctypes.c_char_p),
                 ("reference_audio", ctypes.c_char_p),
-                ("speaker_instruction", ctypes.c_char_p)]
+                ("speaker_instruction", ctypes.c_char_p),
+                ("use_mp3", ctypes.c_bool)]
 
 class tts_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2999,6 +3000,7 @@ def tts_generate(genparams):
     if not genparams.get("instruction", ""):
         prompt, ttsinstruction = tts_extract_instruction(prompt)
     inputs.speaker_instruction = ttsinstruction.encode("UTF-8")
+    inputs.use_mp3 = genparams.get("use_mp3", False)
     inputs.prompt = prompt.encode("UTF-8")
     inputs.speaker_seed = voice
     aseed = -1
