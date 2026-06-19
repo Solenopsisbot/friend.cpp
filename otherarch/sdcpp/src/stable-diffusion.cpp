@@ -397,6 +397,7 @@ public:
         std::string taesd_path_fixed      = SAFE_STR(sd_ctx_params->taesd_path);
         std::string embed_connector_fixed = SAFE_STR(sd_ctx_params->embeddings_connectors_path);
         std::string vae_path_fixed        = SAFE_STR(sd_ctx_params->vae_path);
+        std::string uncond_fixed          = SAFE_STR(sd_ctx_params->uncond_diffusion_model_path);
 
         model_manager = std::make_shared<ModelManager>();
         model_manager->set_n_threads(n_threads);
@@ -486,7 +487,8 @@ public:
         bool is_longcat = sd_version_is_longcat(tempver);
         bool is_lens = sd_version_is_lens(tempver);
         bool is_ltx = sd_version_is_ltxav(tempver);
-        bool conditioner_is_llm = (is_qwenimg || iszimg || isflux2 || is_ovis || is_anima || is_ernie || is_longcat || is_lens || is_ltx);
+        bool is_ideogram = sd_version_is_ideogram4(tempver);
+        bool conditioner_is_llm = (is_qwenimg || iszimg || isflux2 || is_ovis || is_anima || is_ernie || is_longcat || is_lens || is_ltx || is_ideogram);
 
         //kcpp qol fallback: if a llm was loaded as t5 by mistake
         if(conditioner_is_llm && t5_path_fixed!="")
@@ -545,6 +547,11 @@ public:
             else if(is_ltx)
             {
                 embed_connector_fixed = clipg_path_fixed;
+                clipg_path_fixed = "";
+            }
+            else if(is_ideogram)
+            {
+                uncond_fixed = clipg_path_fixed;
                 clipg_path_fixed = "";
             }
         }
@@ -632,15 +639,16 @@ public:
             }
         }
 
-        sd_ctx_params->clip_g_path                = clipg_path_fixed.c_str();
-        sd_ctx_params->clip_l_path                = clipl_path_fixed.c_str();
-        sd_ctx_params->clip_vision_path           = clip_vision_fixed.c_str();
-        sd_ctx_params->llm_path                   = llm_path_fixed.c_str();
-        sd_ctx_params->llm_vision_path            = llm_vision_path_fixed.c_str();
-        sd_ctx_params->t5xxl_path                 = t5_path_fixed.c_str();
-        sd_ctx_params->taesd_path                 = taesd_path_fixed.c_str();
-        sd_ctx_params->embeddings_connectors_path = embed_connector_fixed.c_str();
-        sd_ctx_params->vae_path                   = vae_path_fixed.c_str();
+        sd_ctx_params->clip_g_path                 = clipg_path_fixed.c_str();
+        sd_ctx_params->clip_l_path                 = clipl_path_fixed.c_str();
+        sd_ctx_params->clip_vision_path            = clip_vision_fixed.c_str();
+        sd_ctx_params->llm_path                    = llm_path_fixed.c_str();
+        sd_ctx_params->llm_vision_path             = llm_vision_path_fixed.c_str();
+        sd_ctx_params->t5xxl_path                  = t5_path_fixed.c_str();
+        sd_ctx_params->taesd_path                  = taesd_path_fixed.c_str();
+        sd_ctx_params->embeddings_connectors_path  = embed_connector_fixed.c_str();
+        sd_ctx_params->vae_path                    = vae_path_fixed.c_str();
+        sd_ctx_params->uncond_diffusion_model_path = uncond_fixed.c_str();
         //debug print
         // printf("\n\nclip_g: %s\nclip_l: %s\nclip_vision: %s\nllm: %s\nllm_vision: %s\nt5xxl: %s\ntaesd: %s\n",
         // sd_ctx_params->clip_g_path, sd_ctx_params->clip_l_path, sd_ctx_params->clip_vision_path,
