@@ -7725,7 +7725,7 @@ def save_config_dict(filename, savdict, template):
         filenamestr += ".kcpps"
     if not filenamestr.endswith(".kcppt") and template:
         filenamestr += ".kcppt"
-    do_not_save = {'analyze', 'config', 'exportconfig', 'exporttemplate', 'testmemory', 'unpack', 'version'}
+    do_not_save = {'allow_config_onready', 'analyze', 'config', 'exportconfig', 'exporttemplate', 'testmemory', 'unpack', 'version'}
     filtered = {k: v for k, v in savdict.items() if k not in do_not_save}
     if 'gendefaults' in filtered:
         gendefaults = parse_json_object(filtered['gendefaults'], 'gendefaults')
@@ -10313,8 +10313,11 @@ def reload_from_new_args(newargs):
     try:
         args.istemplate = False
         newargs = convert_invalid_args(newargs)
+        protected_args = ["remotetunnel","showgui","port","host","port_param","admin","adminpassword","password","adminunloadtimeout","routermode","admindir","ssl","nocertify","benchmark","prompt","config","baseconfig","downloaddir","rpcmode","rpchost","rpcport","rpcdevice","allow_config_onready"]
         for key, value in newargs.items(): #do not overwrite certain values
-            if key not in ["remotetunnel","showgui","port","host","port_param","admin","adminpassword","password","adminunloadtimeout","routermode","admindir","ssl","nocertify","benchmark","prompt","config","baseconfig","downloaddir","onready","rpcmode","rpchost","rpcport","rpcdevice"]:
+            if key == "onready" and getattr(args, "allow_config_onready", False):
+                setattr(args, key, value)
+            elif key not in protected_args and key != "onready":
                 setattr(args, key, value)
         setattr(args,"showgui",False)
         setattr(args,"benchmark",False)
@@ -10344,8 +10347,10 @@ def load_config_cli(filename):
     with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
         config = json.load(f)
         config = convert_invalid_args(config)
-        if "onready" in config:
+        if "onready" in config and not getattr(args, "allow_config_onready", False):
             config["onready"] = "" #do not allow onready commands from config
+        if "allow_config_onready" in config:
+            del config["allow_config_onready"] #do not allow configs to opt into onready commands
         args.istemplate = False
         raw_args = (sys.argv[1:]) #a lousy hack to allow for overriding kcpps
         # special: overriding model applies to model_param too
@@ -12197,6 +12202,7 @@ if __name__ == '__main__':
     advparser.add_argument("--noshift","--no-context-shift", help="If set, do not attempt to Trim and Shift the GGUF context.", action='store_true')
     advparser.add_argument("--noswa","--swa-full", help="If set, uses full-size SWA KV Cache. Otherwise, SWA will be enabled automatically on models that support it. SWA saves memory but cannot be used with context shifting.", action='store_true')
     advparser.add_argument("--onready", help="An optional shell command to execute after the model has been loaded.", metavar=('[shell command]'), type=str, default="")
+    advparser.add_argument("--allow-config-onready", help="Allow .kcpps config files loaded after launch to set --onready commands. Only use with trusted configs.", action='store_true')
     advparser.add_argument("--overridekv","--override-kv", metavar=('[name=type:value]'), help="Override metadata value by key. Separate multiple values with commas. Format is name=type:value. Types: int, float, bool, str", default="")
     advparser.add_argument("--overridenativecontext", help="Overrides the native trained context of the loaded model with a custom value to be used for Rope scaling.",metavar=('[trained context]'), type=int, default=0)
     advparser.add_argument("--overridetensors","--override-tensor","-ot", metavar=('[tensor name pattern=buffer type]'), help="Override selected backend for specific tensors matching tensor_name_regex_pattern=buffer_type, same as in llama.cpp.", default="")
