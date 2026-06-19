@@ -1117,6 +1117,18 @@ def strip_base64_prefix(encoded_data):
         encoded_data = encoded_data.split(',', 1)[-1]
     return encoded_data
 
+def get_audio_response_format(genparams, audio_data):
+    if audio_data.startswith(b"ID3") or audio_data[:2] == b"\xff\xfb" or audio_data[:2] == b"\xff\xf3" or audio_data[:2] == b"\xff\xf2":
+        return "mp3", "audio/mpeg"
+    if audio_data.startswith(b"RIFF") and audio_data[8:12] == b"WAVE":
+        return "wav", "audio/wav"
+    use_mp3 = genparams.get("use_mp3", False)
+    if isinstance(use_mp3, str):
+        use_mp3 = use_mp3.lower() in ("1", "true", "yes", "on")
+    if genparams.get("response_format") == "mp3" or use_mp3:
+        return "mp3", "audio/mpeg"
+    return "wav", "audio/wav"
+
 def fix_unquoted_keys(s: str) -> str:
     """
     Fix JSON with unquoted keys by only quoting identifiers that appear
@@ -7379,14 +7391,15 @@ Change Mode<br>
                 elif is_tts:
                     try:
                         gendat = tts_generate(genparams)
-                        wav_data = b''
+                        audio_data = b''
                         if gendat:
-                            wav_data = base64.b64decode(gendat) # Decode the Base64 string into binary data
+                            audio_data = base64.b64decode(gendat) # Decode the Base64 string into binary data
+                        audio_ext, audio_content_type = get_audio_response_format(genparams, audio_data)
                         self.send_response(200)
-                        self.send_header('content-length', str(len(wav_data)))  # Set content length
-                        self.send_header('Content-Disposition', 'attachment; filename="output.wav"')
-                        self.end_headers(content_type='audio/wav')
-                        self.wfile.write(wav_data) # Write the binary WAV data to the response
+                        self.send_header('content-length', str(len(audio_data)))  # Set content length
+                        self.send_header('Content-Disposition', f'attachment; filename="output.{audio_ext}"')
+                        self.end_headers(content_type=audio_content_type)
+                        self.wfile.write(audio_data) # Write the binary audio data to the response
                     except Exception as ex:
                         utfprint(ex,1)
                         print("TTS: The response could not be sent, maybe connection was terminated?")
@@ -7436,14 +7449,15 @@ Change Mode<br>
                 elif is_music_audio:
                     try:
                         gendat = music_generate_audio(genparams)
-                        wav_data = b''
+                        audio_data = b''
                         if gendat:
-                            wav_data = base64.b64decode(gendat) # Decode the Base64 string into binary data
+                            audio_data = base64.b64decode(gendat) # Decode the Base64 string into binary data
+                        audio_ext, audio_content_type = get_audio_response_format(genparams, audio_data)
                         self.send_response(200)
-                        self.send_header('content-length', str(len(wav_data)))  # Set content length
-                        self.send_header('Content-Disposition', 'attachment; filename="output.wav"')
-                        self.end_headers(content_type='audio/wav')
-                        self.wfile.write(wav_data) # Write the binary WAV data to the response
+                        self.send_header('content-length', str(len(audio_data)))  # Set content length
+                        self.send_header('Content-Disposition', f'attachment; filename="output.{audio_ext}"')
+                        self.end_headers(content_type=audio_content_type)
+                        self.wfile.write(audio_data) # Write the binary audio data to the response
                     except Exception as ex:
                         utfprint(ex,1)
                         print("Music Gen Audio: The response could not be sent, maybe connection was terminated?")
