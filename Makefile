@@ -71,8 +71,8 @@ CXXFLAGS += -DGGML_USE_LLAMAFILE
 endif
 
 #lets try enabling everything
-CFLAGS   += -pthread -Wno-deprecated -Wno-deprecated-declarations -Wno-unused-variable
-CXXFLAGS += -pthread -Wno-multichar -Wno-write-strings -Wno-deprecated -Wno-deprecated-declarations -Wno-unused-variable
+CFLAGS   += -pthread -Wno-deprecated -Wno-deprecated-declarations -Wno-unused-variable -Wno-unused-value
+CXXFLAGS += -pthread -Wno-multichar -Wno-write-strings -Wno-deprecated -Wno-deprecated-declarations -Wno-unused-variable -Wno-unused-value
 
 LDFLAGS  =
 
