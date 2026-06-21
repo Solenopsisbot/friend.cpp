@@ -893,7 +893,7 @@ static void mtp_decoding_setup(llama_model * main_model, llama_context * main_ct
     }
 
     draft_is_mtp = true;
-    speculative_state_setup(main_ctx, mtp_ctx_params, -1, COMMON_SPECULATIVE_TYPE_DRAFT_MTP);
+    speculative_state_setup(main_ctx, mtp_ctx_params, -2, COMMON_SPECULATIVE_TYPE_DRAFT_MTP);
 }
 
 //loads a model for speculative decoding.
