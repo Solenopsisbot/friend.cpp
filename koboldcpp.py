@@ -6122,11 +6122,11 @@ Change Mode<br>
             if autoswapmode and textName is not None:
                 modelNameToReturn = textName
 
-            mlist = [{"id":modelNameToReturn,"object":"model","created":int(time.time()),"owned_by":"koboldcpp","permission":[],"root":"koboldcpp"}]
+            mlist = [{"id":modelNameToReturn,"object":"model","created":int(time.time()),"owned_by":"koboldcpp","status":{"value":"loaded"},"permission":[],"root":"koboldcpp"}]
             if args.routermode:
                 alist = get_current_admindir_list()
                 for itm in alist:
-                    mlist.append({"id":itm,"object":"model","created":int(time.time()),"owned_by":"koboldcpp","permission":[],"root":"koboldcpp"})
+                    mlist.append({"id":itm,"object":"model","created":int(time.time()),"owned_by":"koboldcpp","status":{"value":"loaded"},"permission":[],"root":"koboldcpp"})
             response_body = (json.dumps({"object":"list","data":mlist}).encode())
 
         elif clean_path.endswith('/sdapi/v1/loras'):
@@ -6263,7 +6263,7 @@ Change Mode<br>
             mmprojOverride = False
             if autoswapmode and mmprojName is not None:
                 mmprojOverride = True
-            response_body = (json.dumps({
+            props_obj = {
                 "chat_template": cached_chat_template,
                 "id": 0,
 		        "id_task": -1,
@@ -6277,7 +6277,10 @@ Change Mode<br>
                 "default_generation_settings": {
                     "n_ctx": maxctx,
                 },
-            }).encode())
+            }
+            if args.routermode:
+                props_obj["role"] = "router"
+            response_body = (json.dumps(props_obj).encode())
 
         elif clean_path=="/slots":
             self.send_response(501)
