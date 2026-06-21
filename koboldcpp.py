@@ -5988,6 +5988,13 @@ Change Mode<br>
             return None
 
         clean_path = clean_path.rstrip('/')
+        if clean_path=="/mcp":
+            self.send_response(405)
+            self.send_header('allow', 'POST')
+            self.send_header('content-length', '0')
+            self.end_headers(content_type='application/json')
+            return
+
         response_body = None
         content_type = 'application/json'
         content_encoding = None
@@ -6726,13 +6733,18 @@ Change Mode<br>
                 return
             try:
                 tempbody = json.loads(body)
+                request_id = tempbody.get("id", None)
                 method = tempbody.get("method","")
-                if method == "initialize":
+                if request_id is None: # notifications do not get a JSON-RPC response
+                    response_code = 202
+                    response_body = b''
+                elif method == "initialize":
+                    requested_version = tempbody.get("params", {}).get("protocolVersion", "2024-11-05")
                     reply = {
                         "jsonrpc": "2.0",
-                        "id": random.randint(100000, 999999),
+                        "id": request_id,
                         "result": {
-                            "protocolVersion": "2024-11-05",
+                            "protocolVersion": requested_version if requested_version else "2024-11-05",
                             "capabilities": {"tools": {"listChanged": False}},
                             "serverInfo": {"name": "mcp-koboldcpp", "version": "1.0.0"},
                         },
@@ -6741,7 +6753,7 @@ Change Mode<br>
                 elif method == "tools/list":
                     reply = {
                         "jsonrpc": "2.0",
-                        "id": random.randint(100000, 999999),
+                        "id": request_id,
                         "result": {"tools": []},
                     }
                     with mcp_lock:
@@ -6765,14 +6777,13 @@ Change Mode<br>
                                     response_body = (json.dumps(mcpresp).encode())
                                     break
                     if not foundtool:
-                        response_code = 400
-                        response_body = (json.dumps({"error": {"code": -32700, "message": "Tool not found"}}).encode())
-                else: #probably a notify, send empty response
-                    response_body = (json.dumps({}).encode())
+                        response_body = (json.dumps({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32602, "message": "Tool not found"}}).encode())
+                else:
+                    response_body = (json.dumps({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": "Method not found"}}).encode())
             except Exception as e:
                 print(f"MCP Call Error: {e}")
                 response_code = 400
-                response_body = (json.dumps({"error": {"code": -32700, "message": "Parse error"}}).encode())
+                response_body = (json.dumps({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}).encode())
 
         elif clean_path=="/api/extra/shutdown":
             # if args.singleinstance:
