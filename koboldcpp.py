@@ -2190,6 +2190,9 @@ def generate(genparams, stream_flag=False):
     else:
         pass #unrestricted
 
+    if reasoning_budget==-1 and genparams.get('thinking_budget_tokens',-1)!=-1: #lcpp compat thinking budget
+        reasoning_budget = genparams.get('thinking_budget_tokens',-1)
+
     inputs.max_context_length = max_context_length   # this will resize the context buffer if changed
     inputs.max_length = max_length
     inputs.temperature = temperature
