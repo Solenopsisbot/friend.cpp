@@ -3358,25 +3358,24 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         {
             if(mtmd_ctx!=nullptr)
             {
-                printf("Error: Speculative decoding and MTP cannot be used with multimodal projectors!\n");
+                printf("Warning: Speculative decoding and MTP cannot be used with multimodal projectors! Payloads containing vision/audio will not use MTP or drafting\n");
+            }
+
+            speculative_chunk_amt = inputs.draft_amount;
+            if(draftmodel_filename != "")
+            {
+                if(inputs.use_mtp)
+                {
+                    printf("\nBoth --draftmodel and --usemtp were provided. The draft model will be used for speculative decoding.\n");
+                }
+                printf("\nAttempting to load draft model for speculative decoding. It will be fully offloaded if possible. Vocab must match the main model.\n");
+                speculative_decoding_setup(draftmodel_filename, llama_ctx_v4, model_params, llama_ctx_params, n_vocab, inputs.draft_gpusplit, inputs.draft_gpulayers);
             }
             else
             {
-                speculative_chunk_amt = inputs.draft_amount;
-                if(draftmodel_filename != "")
-                {
-                    if(inputs.use_mtp)
-                    {
-                        printf("\nBoth --draftmodel and --usemtp were provided. The draft model will be used for speculative decoding.\n");
-                    }
-                    printf("\nAttempting to load draft model for speculative decoding. It will be fully offloaded if possible. Vocab must match the main model.\n");
-                    speculative_decoding_setup(draftmodel_filename, llama_ctx_v4, model_params, llama_ctx_params, n_vocab, inputs.draft_gpusplit, inputs.draft_gpulayers);
-                }
-                else
-                {
-                    mtp_decoding_setup(llamamodel, llama_ctx_v4, llama_ctx_params);
-                }
+                mtp_decoding_setup(llamamodel, llama_ctx_v4, llama_ctx_params);
             }
+
         }
         if(draft_is_mtp && draft_spec)
         {
