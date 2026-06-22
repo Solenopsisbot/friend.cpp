@@ -71,7 +71,7 @@ std::string executable_path = "";
 std::string lora_filename = "";
 std::string mmproj_filename = "";
 std::string draftmodel_filename = "";
-int speculative_chunk_amt = 8; //do it in chunks of this many tokens
+int speculative_chunk_amt = 4; //do it in chunks of this many tokens
 bool generation_finished;
 bool audio_multimodal_supported = false;
 bool vision_multimodal_supported = false;
