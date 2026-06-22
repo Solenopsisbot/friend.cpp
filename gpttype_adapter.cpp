@@ -6995,6 +6995,12 @@ bool gpttype_load_state_kv(int slot)
         if (savestates[slot].current_savestate_buffer.empty()) {
             return false;
         }
+        if(draft_ctx && savestates[slot].current_draft_savestate_size>0)
+        {
+            llama_memory_clear(llama_get_memory(draft_ctx),true);
+            auto res2 = llama_state_set_data(draft_ctx, savestates[slot].current_draft_savestate_buffer.data(), savestates[slot].current_draft_savestate_size);
+            printf("\nKV Load DraftSaveState %d: Restored KV with %zu tokens.\n", slot,current_context_tokens.size());
+        }
         llama_memory_clear(llama_get_memory(llama_ctx_v4),true);
         auto res = llama_state_set_data(llama_ctx_v4, savestates[slot].current_savestate_buffer.data(), savestates[slot].current_savestate_size);
         if(res > 0)
@@ -7002,12 +7008,6 @@ bool gpttype_load_state_kv(int slot)
             current_context_tokens = savestates[slot].savestate_context_tokens;
             loaded_latest_logits = savestates[slot].latest_logits;
             printf("\nKV Load SaveState %d: Restored KV with %zu tokens.\n", slot,current_context_tokens.size());
-            if(draft_ctx && savestates[slot].current_draft_savestate_size>0)
-            {
-                llama_memory_clear(llama_get_memory(draft_ctx),true);
-                auto res2 = llama_state_set_data(draft_ctx, savestates[slot].current_draft_savestate_buffer.data(), savestates[slot].current_draft_savestate_size);
-                printf("\nKV Load DraftSaveState %d: Restored KV with %zu tokens.\n", slot,current_context_tokens.size());
-            }
             touch_slot(slot);
         }
         return (res > 0);
