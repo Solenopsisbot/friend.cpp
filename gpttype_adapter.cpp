@@ -1055,9 +1055,9 @@ static speculative_draft_result speculative_decoding_eval_chunk(llama_context * 
     }
 
     std::vector<llama_token> real_embd;
-    real_embd.reserve(drafted_ids.size());
+    real_embd.reserve(drafted_ids.size() + 1);
     real_embd.push_back(embd[0]);
-    for(size_t i = 0; i + 1 < drafted_ids.size(); ++i)
+    for(size_t i = 0; i < drafted_ids.size(); ++i)
     {
         real_embd.push_back(drafted_ids[i]);
     }
@@ -1090,6 +1090,9 @@ static speculative_draft_result speculative_decoding_eval_chunk(llama_context * 
     for(size_t i = 0; i < drafted_ids.size(); ++i)
     {
         results.draftids.push_back(drafted_ids[i]);
+    }
+    for(size_t i = 0; i < real_embd.size(); ++i)
+    {
         results.actual_logits.push_back(llama_get_logits_ith(main_ctx, (int32_t)i));
     }
     results.draft_success = true;
@@ -3358,7 +3361,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         {
             if(mtmd_ctx!=nullptr)
             {
-                printf("Warning: Speculative decoding and MTP cannot be used with multimodal projectors! Payloads containing vision/audio will not use MTP or drafting\n");
+                printf("Warning: Speculative decoding and MTP may not work well with multimodal projectors!\n");
             }
 
             speculative_chunk_amt = inputs.draft_amount;
@@ -6270,7 +6273,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             int draft_accepted_this_round = 0;
             if(draft_used)
             {
-                logits_to_sample = draft_results.drafted_amount;
+                logits_to_sample = draft_results.drafted_amount + 1;
             }
             while(logits_sampled<logits_to_sample && remaining_tokens>0 && !abort_draft && !early_abort)
             {
@@ -6396,20 +6399,28 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 
                 if(draft_used)
                 {
-                    int32_t draftedid = draft_results.draftids[logits_sampled];
-                    if(debugmode==1 && !is_quiet)
+                    if(logits_sampled < draft_results.drafted_amount)
                     {
-                        std::string drafttok = FileFormatTokenizeID(draftedid, file_format, true);
-                        std::string realtok = FileFormatTokenizeID(id, file_format, true);
-                        printf("(Draft %d/%d): Predicted=%d (%s), Actual=%d (%s) [%s]\n",(logits_sampled+1),logits_to_sample,draftedid,drafttok.c_str(),id,realtok.c_str(),(draftedid==id?"PASS":"FAIL"));
+                        int32_t draftedid = draft_results.draftids[logits_sampled];
+                        if(debugmode==1 && !is_quiet)
+                        {
+                            std::string drafttok = FileFormatTokenizeID(draftedid, file_format, true);
+                            std::string realtok = FileFormatTokenizeID(id, file_format, true);
+                            printf("(Draft %d/%d): Predicted=%d (%s), Actual=%d (%s) [%s]\n",(logits_sampled+1),draft_results.drafted_amount,draftedid,drafttok.c_str(),id,realtok.c_str(),(draftedid==id?"PASS":"FAIL"));
+                        }
+                        if(draftedid!=id) //draft mismatch, abort
+                        {
+                            draft_failures += 1;
+                            abort_draft = true;
+                        } else {
+                            draft_successes += 1;
+                            draft_accepted_this_round += 1;
+                        }
                     }
-                    if(draftedid!=id) //draft mismatch, abort
+                    else if(debugmode==1 && !is_quiet)
                     {
-                        draft_failures += 1;
-                        abort_draft = true;
-                    } else {
-                        draft_successes += 1;
-                        draft_accepted_this_round += 1;
+                        std::string realtok = FileFormatTokenizeID(id, file_format, true);
+                        printf("(Draft Bonus): Actual=%d (%s)\n",id,realtok.c_str());
                     }
                 }
 
