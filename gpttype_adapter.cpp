@@ -2929,6 +2929,11 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
 
         llama_ctx_params.offload_kqv = !inputs.low_vram;
         llama_ctx_params.kv_unified = true;
+        if((inputs.use_mtp || draftmodel_filename != "") && inputs.draft_amount > 0)
+        {
+            // Match llama-server's target rollback slots for speculative verification.
+            llama_ctx_params.n_rs_seq = inputs.draft_amount;
+        }
         model_params.use_mmap = inputs.use_mmap;
         model_params.use_mlock = inputs.use_mlock;
         model_params.use_direct_io = false; //no direct io for now until stable
