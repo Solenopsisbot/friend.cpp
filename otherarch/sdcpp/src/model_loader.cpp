@@ -481,6 +481,10 @@ SDVersion ModelLoader::get_sd_version() {
         if (tensor_storage.name.find("embed_image_indicator.weight") != std::string::npos) {
             return VERSION_IDEOGRAM4;
         }
+        if (tensor_storage.name.find("model.diffusion_model.txtfusion.projector.weight") != std::string::npos ||
+            tensor_storage.name.find("model.diffusion_model.text_fusion.projector.weight") != std::string::npos) {
+            return VERSION_KREA2;
+        }
         if (tensor_storage.name.find("model.diffusion_model.nerf_final_layer_conv.") != std::string::npos) {
             return VERSION_CHROMA_RADIANCE;
         }
@@ -512,6 +516,9 @@ SDVersion ModelLoader::get_sd_version() {
         }
         if (tensor_storage.name.find("model.diffusion_model.cap_embedder.0.weight") != std::string::npos) {
             return VERSION_Z_IMAGE;
+        }
+        if (tensor_storage.name.find("double_stream_layers.0.img_instruct_attn.processor.img_to_q.weight") != std::string::npos) {
+            return VERSION_BOOGU_IMAGE;
         }
         if (tensor_storage.name.find("model.diffusion_model.layers.0.adaLN_sa_ln.weight") != std::string::npos) {
             return VERSION_ERNIE_IMAGE;

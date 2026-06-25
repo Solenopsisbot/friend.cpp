@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <regex>
@@ -260,8 +261,15 @@ bool parse_options(int argc, const char** argv, const std::vector<ArgOptions>& o
                         invalid_arg = true;
                         return;
                     }
-                    *option.target = argv_to_utf8(i, argv);
-                    found_arg      = true;
+                    if (option.concat && !option.target->empty()) {
+                        if (option.concat > 0 && option.concat <= 0xff) {
+                            *option.target += static_cast<char>(option.concat);
+                        }
+                        *option.target += argv_to_utf8(i, argv);
+                    } else {
+                        *option.target = argv_to_utf8(i, argv);
+                    }
+                    found_arg = true;
                 }))
                 break;
 
@@ -324,120 +332,151 @@ ArgOptions SDContextParams::get_options() {
         {"-m",
          "--model",
          "path to full model",
+         0,
          &model_path},
         {"",
          "--clip_l",
-         "path to the clip-l text encoder", &clip_l_path},
+         "path to the clip-l text encoder",
+         0,
+         &clip_l_path},
         {"", "--clip_g",
          "path to the clip-g text encoder",
+         0,
          &clip_g_path},
         {"",
          "--clip_vision",
          "path to the clip-vision encoder",
+         0,
          &clip_vision_path},
         {"",
          "--t5xxl",
          "path to the t5xxl text encoder",
+         0,
          &t5xxl_path},
         {"",
          "--llm",
          "path to the llm text encoder. For example: (qwenvl2.5 for qwen-image, mistral-small3.2 for flux2, ...)",
+         0,
          &llm_path},
         {"",
          "--llm_vision",
          "path to the llm vit",
+         0,
          &llm_vision_path},
         {"",
          "--qwen2vl",
          "alias of --llm. Deprecated.",
+         0,
          &llm_path},
         {"",
          "--qwen2vl_vision",
          "alias of --llm_vision. Deprecated.",
+         0,
          &llm_vision_path},
         {"",
          "--diffusion-model",
          "path to the standalone diffusion model",
+         0,
          &diffusion_model_path},
         {"",
          "--high-noise-diffusion-model",
          "path to the standalone high noise diffusion model",
+         0,
          &high_noise_diffusion_model_path},
         {"",
          "--uncond-diffusion-model",
          "path to the standalone unconditional diffusion model, currently used by Ideogram4 CFG",
+         0,
          &uncond_diffusion_model_path},
         {"",
          "--embeddings-connectors",
          "path to LTXAV embeddings connectors",
+         0,
          &embeddings_connectors_path},
         {"",
          "--vae",
          "path to standalone vae model",
+         0,
          &vae_path},
         {"",
          "--vae-format",
          "VAE latent format override: auto, flux, sd3, or flux2 (default: auto)",
+         0,
          &vae_format},
         {"",
          "--audio-vae",
          "path to standalone LTX audio vae model",
+         0,
          &audio_vae_path},
         {"",
          "--taesd",
          "path to taesd. Using Tiny AutoEncoder for fast decoding (low quality)",
+         0,
          &taesd_path},
         {"",
          "--tae",
          "alias of --taesd",
+         0,
          &taesd_path},
         {"",
          "--control-net",
          "path to control net model",
+         0,
          &control_net_path},
         {"",
          "--embd-dir",
          "embeddings directory",
+         0,
          &embedding_dir},
         {"",
          "--lora-model-dir",
          "lora model directory",
+         0,
          &lora_model_dir},
         {"",
          "--hires-upscalers-dir",
          "highres fix upscaler model directory",
+         0,
          &hires_upscalers_dir},
         {"",
          "--tensor-type-rules",
          "weight type per tensor pattern (example: \"^vae\\.=f16,model\\.=q8_0\")",
+         (int)',',
          &tensor_type_rules},
         {"",
          "--photo-maker",
          "path to PHOTOMAKER model",
+         0,
          &photo_maker_path},
         {"",
          "--pulid-weights",
          "path to PuLID Flux weights",
+         0,
          &pulid_weights_path},
         {"",
          "--upscale-model",
          "path to esrgan model.",
+         0,
          &esrgan_path},
         {"",
          "--backend",
          "runtime backend assignment, e.g. cpu or clip=cpu,vae=cuda0,diffusion=vulkan0",
+         (int)',',
          &backend},
         {"",
          "--params-backend",
          "parameter backend assignment, e.g. disk, cpu, or diffusion=disk,clip=cpu",
+         (int)',',
          &params_backend},
         {"",
          "--rpc-servers",
          "comma-separated list of RPC servers to connect to for offloading, in the format host:port, e.g. localhost:50052,192.168.1.3:50052",
+         (int)',',
          &rpc_servers},
         {"",
          "--max-vram",
          "maximum VRAM budget in GiB for graph-cut segmented execution. Accepts a single value or assignments by backend/device, e.g. 6 or cuda0=6,vulkan0=4. 0 disables graph splitting; a negative value auto-detects free VRAM, sparing the specified value",
+         0,
          &max_vram},
     };
 
@@ -458,6 +497,10 @@ ArgOptions SDContextParams::get_options() {
          "--stream-layers",
          "enable residency+prefetch streaming on top of --max-vram (no effect without --max-vram; defaults to false)",
          true, &stream_layers},
+        {"",
+         "--eager-load",
+         "load all params into the params backend at model-load time instead of lazily on first use (defaults to false)",
+         true, &eager_load},
         {"",
          "--force-sdxl-vae-conv-scale",
          "force use of conv scale on sdxl vae",
@@ -761,6 +804,7 @@ std::string SDContextParams::to_string() const {
         << "  offload_params_to_cpu: " << (offload_params_to_cpu ? "true" : "false") << ",\n"
         << "  max_vram: \"" << max_vram << "\",\n"
         << "  stream_layers: " << (stream_layers ? "true" : "false") << ",\n"
+        << "  eager_load: " << (eager_load ? "true" : "false") << ",\n"
         << "  backend: \"" << backend << "\",\n"
         << "  params_backend: \"" << params_backend << "\",\n"
         << "  enable_mmap: " << (enable_mmap ? "true" : "false") << ",\n"
@@ -840,6 +884,7 @@ sd_ctx_params_t SDContextParams::to_sd_ctx_params_t(bool taesd_preview) {
     sd_ctx_params.vae_format                      = str_to_vae_format(vae_format);
     sd_ctx_params.max_vram                        = max_vram.c_str();
     sd_ctx_params.stream_layers                   = stream_layers;
+    sd_ctx_params.eager_load                      = eager_load;
     sd_ctx_params.backend                         = effective_backend.c_str();
     sd_ctx_params.params_backend                  = effective_params_backend.c_str();
     sd_ctx_params.rpc_servers                     = rpc_servers.c_str();
@@ -857,58 +902,71 @@ ArgOptions SDGenerationParams::get_options() {
         {"-p",
          "--prompt",
          "the prompt to render",
+         0,
          &prompt},
         {"-n",
          "--negative-prompt",
          "the negative prompt (default: \"\")",
+         0,
          &negative_prompt},
         {"-i",
          "--init-img",
          "path to the init image",
+         0,
          &init_image_path},
         {"",
          "--end-img",
          "path to the end image, required by flf2v",
+         0,
          &end_image_path},
         {"",
          "--mask",
          "path to the mask image",
+         0,
          &mask_image_path},
         {"",
          "--control-image",
          "path to control image, control net",
+         0,
          &control_image_path},
         {"",
          "--control-video",
          "path to control video frames, It must be a directory path. The video frames inside should be stored as images in "
          "lexicographical (character) order. For example, if the control video path is `frames`, the directory contain images "
          "such as 00.png, 01.png, ... etc.",
+         0,
          &control_video_path},
         {"",
          "--pm-id-images-dir",
          "path to PHOTOMAKER input id images dir",
+         0,
          &pm_id_images_dir},
         {"",
          "--pm-id-embed-path",
          "path to PHOTOMAKER v2 id embed",
+         0,
          &pm_id_embed_path},
         {"",
          "--pulid-id-embedding",
          "path to PuLID id embedding",
+         0,
          &pulid_id_embedding_path},
         {"",
          "--hires-upscaler",
          "highres fix upscaler, Lanczos, Nearest, Latent, Latent (nearest), Latent (nearest-exact), "
          "Latent (antialiased), Latent (bicubic), Latent (bicubic antialiased), or a model name "
          "under --hires-upscalers-dir (default: Latent)",
+         0,
          &hires_upscaler},
         {"",
          "--extra-sample-args",
-         "extra sampler/scheduler/guidance args, key=value list. APG supports apg_eta, apg_momentum, apg_norm_threshold, apg_norm_threshold_smoothing; SLG supports slg_uncond; lcm supports noise_clip_std, noise_scale_start, noise_scale_end; ltx2 supports max_shift, base_shift, stretch, terminal; euler_ge supports gamma",
+         "extra sampler/scheduler/guidance args, key=value list. CFG supports guidance_schedule; APG supports apg_eta, apg_momentum, apg_norm_threshold, apg_norm_threshold_smoothing; SLG supports slg_uncond; lcm supports noise_clip_std, noise_scale_start, noise_scale_end; ltx2 supports max_shift, base_shift, stretch, terminal; euler_ge supports gamma;; logit_normal supports mu, std, logsnr_min, logsnr_max, resolution_aware",
+         (int)',',
          &extra_sample_args},
         {"",
          "--extra-tiling-args",
          "extra VAE tiling args, key=value list. LTX video VAE supports temporal_tile_frames (default: 4), temporal_tile_overlap (default: 1)",
+         (int)',',
          &extra_tiling_args},
     };
 
@@ -1364,6 +1422,42 @@ ArgOptions SDGenerationParams::get_options() {
         return 1;
     };
 
+    auto on_prompt_file_arg = [&](int argc, const char** argv, int index) {
+        if (++index >= argc) {
+            return -1;
+        }
+        const char* arg = argv[index];
+        std::ifstream f(arg, std::ios::binary);
+        try {
+            prompt = std::string(std::istreambuf_iterator<char>{f}, {});
+        } catch (const std::ios_base::failure&) {
+            f.setstate(std::ios_base::failbit);
+        }
+        if (f.fail()) {
+            LOG_ERROR("error: failed to read prompt file '%s'\n", arg);
+            return -1;
+        }
+        return 1;
+    };
+
+    auto on_negative_prompt_file_arg = [&](int argc, const char** argv, int index) {
+        if (++index >= argc) {
+            return -1;
+        }
+        const char* arg = argv[index];
+        std::ifstream f(arg, std::ios::binary);
+        try {
+            negative_prompt = std::string(std::istreambuf_iterator<char>{f}, {});
+        } catch (const std::ios_base::failure&) {
+            f.setstate(std::ios_base::failbit);
+        }
+        if (f.fail()) {
+            LOG_ERROR("error: failed to read negative prompt file '%s'\n", arg);
+            return -1;
+        }
+        return 1;
+    };
+
     options.manual_options = {
         {"-s",
          "--seed",
@@ -1381,7 +1475,7 @@ ArgOptions SDGenerationParams::get_options() {
          on_high_noise_sample_method_arg},
         {"",
          "--scheduler",
-         "denoiser sigma scheduler, one of [discrete, karras, exponential, ays, gits, smoothstep, sgm_uniform, simple, kl_optimal, lcm, bong_tangent, ltx2], default: model-specific",
+         "denoiser sigma scheduler, one of [discrete, karras, exponential, ays, gits, smoothstep, sgm_uniform, simple, kl_optimal, lcm, bong_tangent, ltx2, logit_normal], default: model-specific",
          on_scheduler_arg},
         {"",
          "--sigmas",
@@ -1427,6 +1521,14 @@ ArgOptions SDGenerationParams::get_options() {
          "--vae-relative-tile-size",
          "relative tile size for vae tiling, format [X]x[Y], in fraction of image size if < 1, in number of tiles per dim if >=1 (overrides --vae-tile-size)",
          on_relative_tile_size_arg},
+        {"",
+         "--prompt-file",
+         "path to the file containing the prompt to render",
+         on_prompt_file_arg},
+        {"",
+         "--negative-prompt-file",
+         "path to the file containing the negative prompt",
+         on_negative_prompt_file_arg},
 
     };
 

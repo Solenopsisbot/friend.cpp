@@ -22,11 +22,13 @@
 #include "extensions/generation_extension.h"
 #include "model/adapter/lora.hpp"
 #include "model/diffusion/anima.hpp"
+#include "model/diffusion/boogu.hpp"
 #include "model/diffusion/control.hpp"
 #include "model/diffusion/ernie_image.hpp"
 #include "model/diffusion/flux.hpp"
 #include "model/diffusion/hidream_o1.hpp"
 #include "model/diffusion/ideogram4.hpp"
+#include "model/diffusion/krea2.hpp"
 #include "model/diffusion/lens.hpp"
 #include "model/diffusion/ltxv.hpp"
 #include "model/diffusion/mmdit.hpp"
@@ -89,12 +91,14 @@ const char* model_version_to_str[] = {
     "LTXAV",
     "HiDream O1",
     "Z-Image",
+    "Boogu Image",
     "Ovis Image",
     "Ernie Image",
     "Lens",
     "Longcat-Image",
     "PiD",
     "Ideogram 4",
+    "Krea2",
     "ESRGAN",
 };
 
@@ -126,7 +130,8 @@ static bool sd_version_supports_ref_latent_img_cfg(SDVersion version) {
            sd_version_is_flux2(version) ||
            sd_version_is_qwen_image(version) ||
            sd_version_is_longcat(version) ||
-           sd_version_is_z_image(version);
+           sd_version_is_z_image(version) ||
+           sd_version_is_boogu_image(version);
 }
 
 static bool sd_version_supports_img_cfg(SDVersion version, bool has_ref_images) {
@@ -200,6 +205,7 @@ public:
     bool enable_mmap                     = false;
     sd::ggml_graph_cut::MaxVramAssignment max_vram_assignment;
     bool stream_layers = false;
+    bool eager_load    = false;
     std::string backend_spec;
     std::string params_backend_spec;
 
@@ -346,6 +352,7 @@ public:
         n_threads           = sd_ctx_params->n_threads;
         enable_mmap         = sd_ctx_params->enable_mmap;
         stream_layers       = sd_ctx_params->stream_layers;
+        eager_load          = sd_ctx_params->eager_load;
         backend_spec        = SAFE_STR(sd_ctx_params->backend);
         params_backend_spec = SAFE_STR(sd_ctx_params->params_backend);
         max_vram_assignment.reset(0.f);
@@ -488,7 +495,10 @@ public:
         bool is_lens = sd_version_is_lens(tempver);
         bool is_ltx = sd_version_is_ltxav(tempver);
         bool is_ideogram = sd_version_is_ideogram4(tempver);
-        bool conditioner_is_llm = (is_qwenimg || iszimg || isflux2 || is_ovis || is_anima || is_ernie || is_longcat || is_lens || is_ltx || is_ideogram);
+        bool is_boogu = sd_version_is_boogu_image(tempver);
+        bool is_krea2 = sd_version_is_krea2(tempver);
+        bool conditioner_is_llm = (is_qwenimg || iszimg || isflux2 || is_ovis || is_anima || is_ernie || is_longcat || is_lens || is_ltx || is_ideogram || is_boogu || is_krea2);
+        bool has_llm_vision = (is_qwenimg || is_longcat || is_boogu);
 
         //kcpp qol fallback: if a llm was loaded as t5 by mistake
         if(conditioner_is_llm && t5_path_fixed!="")
@@ -539,7 +549,7 @@ public:
                 clip_vision_fixed = clipg_path_fixed;
                 clipg_path_fixed = "";
             }
-            else if(is_qwenimg && llm_vision_path_fixed=="")
+            else if(has_llm_vision && llm_vision_path_fixed=="")
             {
                 llm_vision_path_fixed = clipg_path_fixed;
                 clipg_path_fixed = "";
@@ -581,7 +591,7 @@ public:
             {
                 to_replace = "taesd_xl.embd";
             }
-            else if(sd_version_is_flux(tempver)||sd_version_is_z_image(tempver)||tempver == VERSION_OVIS_IMAGE||is_longcat)
+            else if(sd_version_uses_flux_vae(tempver))
             {
                 to_replace = "taesd_f.embd";
             }
@@ -593,7 +603,7 @@ public:
             {
                 to_replace = "taesd_f2.embd";
             }
-            else if(is_wan21||is_qwenimg||sd_version_is_anima(tempver))
+            else if(is_wan21||is_qwenimg||is_anima||is_krea2)
             {
                 to_replace = "taesd_w21.embd";
             }
@@ -762,9 +772,7 @@ public:
         auto& tensor_storage_map = model_loader.get_tensor_storage_map();
 
         LOG_INFO("Version: %s ", model_version_to_str[version]);
-        ggml_type wtype               = (int)sd_ctx_params->wtype < std::min<int>(SD_TYPE_COUNT, GGML_TYPE_COUNT)
-                                            ? (ggml_type)sd_ctx_params->wtype
-                                            : GGML_TYPE_COUNT;
+        ggml_type wtype               = sd_type_to_ggml_type(sd_ctx_params->wtype);
         std::string tensor_type_rules = SAFE_STR(sd_ctx_params->tensor_type_rules);
         //kcpp: patch hidream to fix broken images on vulkan https://github.com/leejet/stable-diffusion.cpp/issues/1496
         if(version == VERSION_HIDREAM_O1 && tensor_type_rules.size()==0)
@@ -774,7 +782,6 @@ public:
         if (wtype != GGML_TYPE_COUNT || tensor_type_rules.size() > 0) {
             model_loader.set_wtype_override(wtype, tensor_type_rules);
         }
-        model_loader.process_model_files(enable_mmap, true);
 
         std::map<ggml_type, uint32_t> wtype_stat                 = model_loader.get_wtype_stat();
         std::map<ggml_type, uint32_t> conditioner_wtype_stat     = model_loader.get_conditioner_wtype_stat();
@@ -828,9 +835,12 @@ public:
             apply_lora_immediately = false;
         }
 
+        bool needs_writable_mmap = enable_mmap && apply_lora_immediately;
+        model_manager->set_writable_mmap(needs_writable_mmap);
         if (enable_mmap && apply_lora_immediately) {
             LOG_WARN("in mode 'immediately', LoRAs will cause extra memory usage with mmap");
         }
+        model_loader.process_model_files(enable_mmap, needs_writable_mmap);
         load_alphas_cumprod(model_loader);
 
         size_t text_encoder_params_mem_size = 0;
@@ -885,6 +895,17 @@ public:
                                                                                tensor_storage_map,
                                                                                "model.diffusion_model",
                                                                                model_manager);
+            } else if (sd_version_is_krea2(version)) {
+                cond_stage_model = std::make_shared<LLMEmbedder>(backend_for(SDBackendModule::TE),
+                                                                 tensor_storage_map,
+                                                                 version,
+                                                                 "",
+                                                                 false,
+                                                                 model_manager);
+                diffusion_model  = std::make_shared<Krea2::Krea2Runner>(backend_for(SDBackendModule::DIFFUSION),
+                                                                       tensor_storage_map,
+                                                                       "model.diffusion_model",
+                                                                       model_manager);
             } else if (sd_version_is_flux(version)) {
                 bool is_chroma = false;
                 for (auto pair : tensor_storage_map) {
@@ -1031,6 +1052,18 @@ public:
                                                                          "model.diffusion_model",
                                                                          version,
                                                                          model_manager);
+            } else if (sd_version_is_boogu_image(version)) {
+                cond_stage_model = std::make_shared<LLMEmbedder>(backend_for(SDBackendModule::TE),
+                                                                 tensor_storage_map,
+                                                                 version,
+                                                                 "",
+                                                                 true,
+                                                                 model_manager);
+                diffusion_model  = std::make_shared<Boogu::BooguImageRunner>(backend_for(SDBackendModule::DIFFUSION),
+                                                                            tensor_storage_map,
+                                                                            "model.diffusion_model",
+                                                                            version,
+                                                                            model_manager);
             } else if (sd_version_is_ernie_image(version)) {
                 cond_stage_model = std::make_shared<LLMEmbedder>(backend_for(SDBackendModule::TE),
                                                                  tensor_storage_map,
@@ -1109,6 +1142,7 @@ public:
             auto create_tae = [&](bool decode_only) -> std::shared_ptr<VAE> {
                 if (sd_version_is_wan(version) ||
                     sd_version_is_qwen_image(version) ||
+                    sd_version_is_krea2(version) ||
                     sd_version_is_anima(version) ||
                     sd_version_is_ltxav(version)) {
                     return std::make_shared<TinyVideoAutoEncoder>(backend_for(SDBackendModule::VAE),
@@ -1149,6 +1183,7 @@ public:
                                                          model_manager);
                 } else if (sd_version_is_wan(version) ||
                            sd_version_is_qwen_image(version) ||
+                           sd_version_is_krea2(version) ||
                            sd_version_is_anima(version)) {
                     return std::make_shared<WAN::WanVAERunner>(backend_for(SDBackendModule::VAE),
                                                                tensor_storage_map,
@@ -1385,7 +1420,15 @@ public:
             return false;
         }
 
-        LOG_DEBUG("model metadata validated; weights will be prepared lazily");
+        if (eager_load) {
+            if (!model_manager->load_all_params_eagerly()) {
+                LOG_ERROR("model params eager load failed");
+                return false;
+            }
+            LOG_DEBUG("model metadata validated; weights pre-loaded to params backend");
+        } else {
+            LOG_DEBUG("model metadata validated; weights will be prepared lazily");
+        }
 
         {
             size_t total_params_ram_size  = 0;
@@ -1467,6 +1510,7 @@ public:
                            sd_version_is_anima(version) ||
                            sd_version_is_ernie_image(version) ||
                            sd_version_is_z_image(version) ||
+                           sd_version_is_boogu_image(version) ||
                            sd_version_is_pid(version) ||
                            sd_version_is_ideogram4(version)) {
                     pred_type = FLOW_PRED;
@@ -1478,13 +1522,16 @@ public:
                         default_flow_shift = 1.5f;
                     } else if (sd_version_is_ideogram4(version)) {
                         default_flow_shift = 1.0f;
+                    } else if (sd_version_is_boogu_image(version)) {
+                        default_flow_shift = 3.16f;
                     } else {
                         default_flow_shift = 3.f;
                     }
                 } else if (sd_version_is_flux(version) ||
                            sd_version_is_longcat(version) ||
                            sd_version_is_lens(version) ||
-                           sd_version_is_ltxav(version)) {
+                           sd_version_is_ltxav(version) ||
+                           sd_version_is_krea2(version)) {
                     pred_type = FLUX_FLOW_PRED;
 
                     default_flow_shift = 1.0f;  // TODO: validate
@@ -1500,6 +1547,8 @@ public:
                         default_flow_shift = 1.83f;
                     } else if (sd_version_is_ltxav(version)) {
                         default_flow_shift = 2.37f;
+                    } else if (sd_version_is_krea2(version)) {
+                        default_flow_shift = 1.15f;
                     }
                 } else if (sd_version_is_flux2(version)) {
                     pred_type = FLUX2_FLOW_PRED;
@@ -1957,10 +2006,10 @@ public:
                 if (sd_version_is_sd3(version)) {
                     latent_rgb_proj = sd3_latent_rgb_proj;
                     latent_rgb_bias = sd3_latent_rgb_bias;
-                } else if (sd_version_is_flux(version) || sd_version_is_z_image(version) || sd_version_is_longcat(version)) {
+                } else if (sd_version_uses_flux_vae(version)) {
                     latent_rgb_proj = flux_latent_rgb_proj;
                     latent_rgb_bias = flux_latent_rgb_bias;
-                } else if (sd_version_is_wan(version) || sd_version_is_qwen_image(version) || sd_version_is_anima(version)) {
+                } else if (sd_version_is_wan(version) || sd_version_is_qwen_image(version) || sd_version_is_anima(version) || sd_version_is_krea2(version)) {
                     latent_rgb_proj = wan_21_latent_rgb_proj;
                     latent_rgb_bias = wan_21_latent_rgb_bias;
                 } else {
@@ -2050,6 +2099,9 @@ public:
             return std::vector<float>{(float)shifted_t};
         }
         if (sd_version_is_anima(version)) {
+            return std::vector<float>{t / static_cast<float>(TIMESTEPS)};
+        }
+        if (sd_version_is_boogu_image(version)) {
             return std::vector<float>{t / static_cast<float>(TIMESTEPS)};
         }
         if (version == VERSION_HIDREAM_O1) {
@@ -2176,6 +2228,32 @@ public:
         float img_cfg_scale = guidance.img_cfg;
         float slg_scale     = guidance.slg.scale;
         bool slg_uncond     = sd::guidance::parse_skip_layer_guidance_uncond_arg(extra_sample_args);
+
+        std::vector<float> guidance_schedule = sd::guidance::parse_guidance_schedule(extra_sample_args);
+        if (!guidance_schedule.empty() && guidance_schedule.size() != sigmas.size() - 1) {
+            if (guidance_schedule.size() > sigmas.size()) {
+                LOG_WARN("guidance_schedule length (%zu) is greater than number of steps (%zu)", guidance_schedule.size(), sigmas.size() - 1);
+                LOG_WARN("truncating guidance_schedule to match step count");
+                guidance_schedule.resize(sigmas.size() - 1);
+            } else {
+                LOG_INFO("padding guidance_schedule with cfg_scale");
+                while (guidance_schedule.size() < sigmas.size() - 1) {
+                    guidance_schedule.push_back(cfg_scale);
+                }
+            }
+        }
+
+        if (!guidance_schedule.empty()) {
+            std::string schedule_str = "[";
+            for (size_t i = 0; i < guidance_schedule.size(); ++i) {
+                schedule_str += std::to_string(guidance_schedule[i]);
+                if (i < guidance_schedule.size() - 1) {
+                    schedule_str += ", ";
+                }
+            }
+            schedule_str += "]";
+            LOG_DEBUG("using guidance schedule: %s", schedule_str.c_str());
+        }
 
         sd_sample::SampleCacheRuntime cache_runtime = sd_sample::init_sample_cache_runtime(version,
                                                                                            cache_params,
@@ -2417,7 +2495,7 @@ public:
             guidance_input.pred_uncond     = uncond_out.empty() ? nullptr : &uncond_out;
             guidance_input.pred_img_uncond = img_uncond_out.empty() ? nullptr : &img_uncond_out;
 
-            sd::guidance::GuiderOutput guided = primary_guidance.forward(guidance_input, {});
+            sd::guidance::GuiderOutput guided = guidance_schedule.empty() ? primary_guidance.forward(guidance_input, {}) : primary_guidance.forward(guidance_input, {}, guidance_schedule[guidance_schedule.size() - 1 - step]);
             if (guided.pred.empty()) {
                 return {};
             }
@@ -2759,6 +2837,7 @@ const char* scheduler_to_str[] = {
     "lcm",
     "bong_tangent",
     "ltx2",
+    "logit_normal",
 };
 
 const char* sd_scheduler_name(enum scheduler_t scheduler) {
@@ -2958,6 +3037,7 @@ void sd_ctx_params_init(sd_ctx_params_t* sd_ctx_params) {
     sd_ctx_params->lora_apply_mode      = LORA_APPLY_AUTO;
     sd_ctx_params->max_vram             = nullptr;
     sd_ctx_params->stream_layers        = false;
+    sd_ctx_params->eager_load           = false;
     sd_ctx_params->enable_mmap          = false;
     sd_ctx_params->diffusion_flash_attn = false;
     sd_ctx_params->circular_x           = false;
@@ -3004,6 +3084,7 @@ char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params) {
              "prediction: %s\n"
              "max_vram: %s\n"
              "stream_layers: %s\n"
+             "eager_load: %s\n"
              "backend: %s\n"
              "params_backend: %s\n"
              "flash_attn: %s\n"
@@ -3039,6 +3120,7 @@ char* sd_ctx_params_to_str(const sd_ctx_params_t* sd_ctx_params) {
              sd_prediction_name(sd_ctx_params->prediction),
              SAFE_STR(sd_ctx_params->max_vram),
              BOOL_STR(sd_ctx_params->stream_layers),
+             BOOL_STR(sd_ctx_params->eager_load),
              SAFE_STR(sd_ctx_params->backend),
              SAFE_STR(sd_ctx_params->params_backend),
              BOOL_STR(sd_ctx_params->flash_attn),
@@ -3430,6 +3512,8 @@ enum scheduler_t sd_get_default_scheduler(const sd_ctx_t* sd_ctx, enum sample_me
         return SIMPLE_SCHEDULER;
     } else if (sd_ctx != nullptr && sd_ctx->sd != nullptr && sd_version_is_ltxav(sd_ctx->sd->version)) {
         return LTX2_SCHEDULER;
+    } else if(sd_ctx != nullptr && sd_ctx->sd != nullptr && sd_version_is_ideogram4(sd_ctx->sd->version)) {
+        return LOGIT_NORMAL_SCHEDULER;
     }
     return DISCRETE_SCHEDULER;
 }
@@ -6057,9 +6141,6 @@ SD_API void free_sd_images(sd_image_t* result_images, int num_images) {
 
 namespace kcpp_sd {
 
-    static_assert((int)SD_TYPE_COUNT == (int)GGML_TYPE_COUNT,
-            "inconsistency between SD_TYPE_COUNT and GGML_TYPE_COUNT");
-
     int get_loaded_sd_version(sd_ctx_t* ctx) {
         return ctx->sd->version;
     }
@@ -6094,6 +6175,8 @@ namespace kcpp_sd {
         res.is_sd2 = (loadedsdver == SDVersion::VERSION_SD2);
         res.is_sdxl = sd_version_is_sdxl((SDVersion)loadedsdver);
         res.is_ltx = sd_version_is_ltxav((SDVersion)loadedsdver);
+        res.is_boogu = sd_version_is_boogu_image((SDVersion)loadedsdver);
+        res.supports_ref_image = sd_version_supports_ref_latent_img_cfg((SDVersion)loadedsdver);
         res.vae_scale_factor = ctx->sd->get_vae_scale_factor();
         res.spatial_multiple = get_spatial_multiple(ctx);
         return res;
