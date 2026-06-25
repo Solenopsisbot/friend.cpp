@@ -36,6 +36,7 @@
 #include "llama_v2.cpp"
 #include "llama_v3.cpp"
 #include "src/llama.cpp"
+#include "common/chat.cpp"
 #include "gptj_v1.cpp"
 #include "gptj_v2.cpp"
 #include "gptj_v3.cpp"
@@ -4723,6 +4724,95 @@ std::string gpttype_get_chat_template()
     std::vector<char> model_template(res + 1, 0);
     llama_model_meta_val_str(llama_get_model(llama_ctx_v4), template_key.c_str(), model_template.data(), model_template.size());
     return std::string(model_template.data(), model_template.size() - 1);
+}
+
+std::string gpttype_parse_chat_tool_calls(const std::string & generated_text,
+                                          const std::string & tools_json,
+                                          const std::string & chat_template,
+                                          const std::string & chat_template_kwargs_json,
+                                          const std::string & tool_choice,
+                                          bool parallel_tool_calls,
+                                          bool is_partial)
+{
+    try
+    {
+        if(generated_text.empty() || tools_json.empty())
+        {
+            return "";
+        }
+
+        json tools = json::parse(tools_json);
+        if(!tools.is_array() || tools.empty())
+        {
+            return "";
+        }
+
+        std::string tmpl_src = chat_template.empty() ? gpttype_get_chat_template() : chat_template;
+        if(tmpl_src.empty())
+        {
+            return "";
+        }
+
+        auto tmpls = common_chat_templates_init(nullptr, tmpl_src);
+
+        common_chat_msg msg;
+        msg.role = "user";
+        msg.content = "tool parser warmup";
+
+        common_chat_templates_inputs inputs;
+        inputs.use_jinja = true;
+        inputs.messages = { msg };
+        inputs.tools = common_chat_tools_parse_oaicompat(tools);
+        inputs.tool_choice = common_chat_tool_choice_parse_oaicompat(tool_choice.empty() ? "auto" : tool_choice);
+        inputs.parallel_tool_calls = parallel_tool_calls;
+        inputs.add_generation_prompt = true;
+
+        if(!chat_template_kwargs_json.empty())
+        {
+            json kwargs = json::parse(chat_template_kwargs_json);
+            if(kwargs.is_object())
+            {
+                for(const auto & item : kwargs.items())
+                {
+                    inputs.chat_template_kwargs[item.key()] = item.value().dump();
+                }
+            }
+        }
+
+        common_chat_params chat_params = common_chat_templates_apply(tmpls.get(), inputs);
+        if(chat_params.parser.empty())
+        {
+            return "";
+        }
+
+        common_chat_parser_params parser_params(chat_params);
+        parser_params.parse_tool_calls = true;
+        parser_params.parser.load(chat_params.parser);
+
+        common_chat_msg parsed = common_chat_parse(generated_text, is_partial, parser_params);
+        if(parsed.tool_calls.empty())
+        {
+            return "";
+        }
+
+        json tool_calls = parsed.to_json_oaicompat().value("tool_calls", json::array());
+        return tool_calls.dump();
+    }
+    catch(const std::exception & e)
+    {
+        if(debugmode == 1 && !is_quiet)
+        {
+            printf("\nNative tool parser failed: %s\n", e.what());
+        }
+    }
+    catch(...)
+    {
+        if(debugmode == 1 && !is_quiet)
+        {
+            printf("\nNative tool parser failed with unknown error.\n");
+        }
+    }
+    return "";
 }
 
 std::vector<int> gpttype_get_token_arr(const std::string & input, bool addbos)

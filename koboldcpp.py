@@ -968,6 +968,9 @@ def init_library():
     handle.token_count.restype = token_count_outputs
     handle.get_pending_output.restype = ctypes.c_char_p
     handle.get_chat_template.restype = ctypes.c_char_p
+    handle.parse_chat_tool_calls.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_bool, ctypes.c_bool]
+    handle.parse_chat_tool_calls.restype = ctypes.c_char_p
+
     handle.calc_new_state_kv.restype = ctypes.c_size_t
     handle.calc_new_state_tokencount.restype = ctypes.c_size_t
     handle.calc_old_state_kv.argtypes = [ctypes.c_int]
@@ -3667,6 +3670,47 @@ def toolcall_to_normalized_json(text,start_tag,end_tag,required_match_txt): #con
 
     return text #fallback
 
+def native_parse_toolcall_tags(text: str, genparams: dict) -> list:
+    global cached_chat_template, cached_jinja_kwargs
+    if not text or not genparams.get('using_openai_tools', False):
+        return []
+    tools = genparams.get('tools', [])
+    if not tools:
+        return []
+    try:
+        kwargs = dict(cached_jinja_kwargs or {})
+        user_kwargs = genparams.get("chat_template_kwargs")
+        if isinstance(user_kwargs, dict):
+            kwargs.update(user_kwargs)
+        if "reasoning_effort" in genparams and genparams["reasoning_effort"] is not None:
+            kwargs["reasoning_effort"] = genparams["reasoning_effort"]
+
+        tool_choice = genparams.get("tool_choice", "auto")
+        if isinstance(tool_choice, dict):
+            tool_choice = "required"
+        elif tool_choice is None:
+            tool_choice = "auto"
+        else:
+            tool_choice = str(tool_choice)
+
+        raw = handle.parse_chat_tool_calls(
+            text.encode("UTF-8"),
+            json.dumps(tools).encode("UTF-8"),
+            (cached_chat_template or "").encode("UTF-8"),
+            json.dumps(kwargs).encode("UTF-8"),
+            tool_choice.encode("UTF-8"),
+            True,
+            False)
+        if not raw:
+            return []
+        parsed = json.loads(ctypes.string_at(raw).decode("UTF-8", "ignore"))
+        if not isinstance(parsed, list):
+            return []
+        parsed = [normalize_tool_call_resp(obj) for obj in parsed if isinstance(obj, dict)]
+        return coerce_tool_argtypes(parsed, tools)
+    except Exception:
+        return []
+
 def repack_toolcall_tags(text: str, original_tools:list):
     global thinkformats, tool_call_pairs
     tool_calls = []
@@ -5168,8 +5212,11 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         if api_format == 4 or api_format == 2 or api_format == 8 or api_format == 9:
             using_openai_tools = genparams.get('using_openai_tools', False)
             if using_openai_tools:
-                # first, check and potentially segment multiple tags for multi-tool calls
-                tool_calls = repack_toolcall_tags(recvtxt,genparams.get('tools', []))
+                # first, let llama.cpp's chat parser handle known template-specific tool formats
+                tool_calls = native_parse_toolcall_tags(recvtxt, genparams)
+                # fallback: check and potentially segment multiple tags for multi-tool calls
+                if not tool_calls:
+                    tool_calls = repack_toolcall_tags(recvtxt,genparams.get('tools', []))
                 if tool_calls and len(tool_calls)>0:
                     flat = []
                     for obj in tool_calls:
