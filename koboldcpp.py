@@ -2801,7 +2801,7 @@ def sd_generate(genparams):
     negative_prompt = genparams.get("negative_prompt", "")
     def build_prompt(prompt, forced):
         # truncate before the forced prompt to ensure it can't be "pushed away" by long inputs
-        prompt = prompt.encode('utf-8')[:2048].decode("UTF-8", errors='ignore')
+        prompt = prompt.encode('utf-8')[:3000].decode("UTF-8", errors='ignore') #for now, limit sd image gen prompts to 3000 chars
         return ", ".join([prompt, forced])
     prompt = build_prompt(prompt, forced_posprompt)
     negative_prompt = build_prompt(negative_prompt, forced_negprompt)
