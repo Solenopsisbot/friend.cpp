@@ -10541,10 +10541,10 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
             a2cexe = os.path.join(basepath, "aria2c-win.exe")
             if os.path.exists(a2cexe):  # on windows try using embedded aria2c
                 rc = subprocess.run([
-                        a2cexe, "-x", "16", "-s", "16",
-                        "--summary-interval=15", "--console-log-level=error", "--log-level=error",
+                        a2cexe, "-x", "8", "-s", "8",
+                        "--summary-interval=10", "--console-log-level=error", "--log-level=error",
                         "--download-result=default", "--continue=true", "--allow-overwrite=true",
-                        "--file-allocation=none", "--max-tries=3",
+                        "--file-allocation=none", "--max-tries=3", "--retry-wait=5",
                         "-d", out_dir, "-o", out_name, input_url
                     ], capture_output=capture_output, text=True, check=True, encoding='utf-8')
                 dl_success = (rc.returncode == 0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
@@ -10554,10 +10554,10 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
     try:
         if not dl_success and shutil.which("aria2c") is not None:
             rc = subprocess.run([
-                    "aria2c", "-x", "16", "-s", "16",
-                    "--summary-interval=15", "--console-log-level=error", "--log-level=error",
-                    "--download-result=default", "--allow-overwrite=true",
-                    "--file-allocation=none", "--max-tries=3",
+                    "aria2c", "-x", "8", "-s", "8",
+                    "--summary-interval=10", "--console-log-level=error", "--log-level=error",
+                    "--download-result=default", "--continue=true", "--allow-overwrite=true",
+                    "--file-allocation=none", "--max-tries=3", "--retry-wait=5",
                     "-d", out_dir, "-o", out_name, input_url
                 ], capture_output=capture_output, text=True, check=True, encoding='utf-8')
             dl_success = (rc.returncode == 0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
