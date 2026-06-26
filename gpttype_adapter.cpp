@@ -5347,7 +5347,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     {
         intro = "\n<|channel><channel|>" + intro;
     }
-    TokenizeString(intro, media_intro, file_format, true);
+    TokenizeString(intro, media_intro, file_format, add_bos_token);
 
     //clear previous run media memory, just-in-time free
     for(int i=0;i<media_objects.size();++i)
