@@ -10501,6 +10501,27 @@ def sanitize_string(input_string):
     sanitized_string = re.sub( r'[^\w\d\.\-_]', '', input_string)
     return sanitized_string
 
+def resolve_huggingface_xet_url(input_url):
+    if "https://huggingface.co/" not in input_url or "/resolve/" not in input_url:
+        return input_url
+    try:
+        req = urllib.request.Request(input_url, headers={'User-Agent': 'Mozilla/5.0'}, method="HEAD")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            resolved_url = response.geturl()
+    except Exception:
+        try:
+            req = urllib.request.Request(input_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as response:
+                resolved_url = response.geturl()
+        except Exception as e:
+            print(f"Could not pre-resolve Hugging Face URL, using original URL: {e}")
+            return input_url
+    # resolved_host = urllib.parse.urlparse(resolved_url).netloc.lower()
+    if ("xet-bridge" in resolved_url) and resolved_url != input_url:
+        print(f"Resolved Hugging Face xet URL to {resolved_url}", flush=True)
+        return resolved_url
+    return input_url
+
 def downloader_internal(input_url, output_filename, capture_output, min_file_size=64): # 64 bytes required by default
     download_dir_path = args.downloaddir
     if "https://huggingface.co/" in input_url and "/blob/main/" in input_url:
@@ -10535,6 +10556,7 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
     dl_success = False
     out_dir = os.path.dirname(os.path.abspath(output_filename)) or os.getcwd()
     out_name = os.path.basename(output_filename)
+    download_url = resolve_huggingface_xet_url(input_url)
     aria2_candidates = []
     if os.name == 'nt':
         basepath = os.path.abspath(os.path.dirname(__file__))
@@ -10548,7 +10570,7 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
         "--summary-interval=10", "--console-log-level=error", "--log-level=error",
         "--download-result=default", "--continue=true", "--allow-overwrite=true",
         "--file-allocation=none", "--max-tries=3", "--retry-wait=5",
-        "-d", out_dir, "-o", out_name, input_url
+        "-d", out_dir, "-o", out_name, download_url
     ]
     for aria2_exe, aria2_name in aria2_candidates:
         if dl_success:
@@ -10562,7 +10584,7 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
 
     try:
         if not dl_success and shutil.which("curl") is not None:
-            rc = subprocess.run(["curl", "-fLo", output_filename, input_url],
+            rc = subprocess.run(["curl", "-fLo", output_filename, download_url],
                 capture_output=capture_output, text=True, check=True, encoding="utf-8")
             dl_success = (rc.returncode == 0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
     except subprocess.CalledProcessError as e:
@@ -10570,7 +10592,7 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
 
     try:
         if not dl_success and shutil.which("wget") is not None:
-            rc = subprocess.run(["wget", "-O", output_filename, input_url],
+            rc = subprocess.run(["wget", "-O", output_filename, download_url],
                 capture_output=capture_output, text=True, check=True, encoding="utf-8")
             dl_success = (rc.returncode == 0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
     except subprocess.CalledProcessError as e:
