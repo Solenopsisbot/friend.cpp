@@ -10535,34 +10535,30 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
     dl_success = False
     out_dir = os.path.dirname(os.path.abspath(output_filename)) or os.getcwd()
     out_name = os.path.basename(output_filename)
-    try:
-        if os.name == 'nt':
-            basepath = os.path.abspath(os.path.dirname(__file__))
-            a2cexe = os.path.join(basepath, "aria2c-win.exe")
-            if os.path.exists(a2cexe):  # on windows try using embedded aria2c
-                rc = subprocess.run([
-                        a2cexe, "-x", "8", "-s", "8",
-                        "--summary-interval=10", "--console-log-level=error", "--log-level=error",
-                        "--download-result=default", "--continue=true", "--allow-overwrite=true",
-                        "--file-allocation=none", "--max-tries=3", "--retry-wait=5",
-                        "-d", out_dir, "-o", out_name, input_url
-                    ], capture_output=capture_output, text=True, check=True, encoding='utf-8')
-                dl_success = (rc.returncode == 0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
-    except subprocess.CalledProcessError as e:
-        print(f"aria2c-win failed: {e}")
-
-    try:
-        if not dl_success and shutil.which("aria2c") is not None:
-            rc = subprocess.run([
-                    "aria2c", "-x", "8", "-s", "8",
-                    "--summary-interval=10", "--console-log-level=error", "--log-level=error",
-                    "--download-result=default", "--continue=true", "--allow-overwrite=true",
-                    "--file-allocation=none", "--max-tries=3", "--retry-wait=5",
-                    "-d", out_dir, "-o", out_name, input_url
-                ], capture_output=capture_output, text=True, check=True, encoding='utf-8')
+    aria2_candidates = []
+    if os.name == 'nt':
+        basepath = os.path.abspath(os.path.dirname(__file__))
+        a2cexe = os.path.join(basepath, "aria2c-win.exe")
+        if os.path.exists(a2cexe):  # on windows try using embedded aria2c
+            aria2_candidates.append((a2cexe, "aria2c-win"))
+    if shutil.which("aria2c") is not None:
+        aria2_candidates.append(("aria2c", "aria2c"))
+    aria2_args = [
+        "-x", "8", "-s", "8",
+        "--summary-interval=10", "--console-log-level=error", "--log-level=error",
+        "--download-result=default", "--continue=true", "--allow-overwrite=true",
+        "--file-allocation=none", "--max-tries=3", "--retry-wait=5",
+        "-d", out_dir, "-o", out_name, input_url
+    ]
+    for aria2_exe, aria2_name in aria2_candidates:
+        if dl_success:
+            break
+        try:
+            rc = subprocess.run([aria2_exe, *aria2_args],
+                capture_output=capture_output, text=True, check=True, encoding='utf-8')
             dl_success = (rc.returncode == 0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
-    except subprocess.CalledProcessError as e:
-        print(f"aria2c failed: {e}")
+        except subprocess.CalledProcessError as e:
+            print(f"{aria2_name} failed: {e}")
 
     try:
         if not dl_success and shutil.which("curl") is not None:
