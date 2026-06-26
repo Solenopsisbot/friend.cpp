@@ -10518,7 +10518,7 @@ def resolve_huggingface_xet_url(input_url):
             return input_url
     # resolved_host = urllib.parse.urlparse(resolved_url).netloc.lower()
     if ("xet-bridge" in resolved_url) and resolved_url != input_url:
-        print(f"Resolved Hugging Face xet URL to {resolved_url}", flush=True)
+        utfprint(f"Resolved Hugging Face xet URL to {resolved_url}", 0)
         return resolved_url
     return input_url
 
@@ -10566,7 +10566,7 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
     if shutil.which("aria2c") is not None:
         aria2_candidates.append(("aria2c", "aria2c"))
     aria2_args = [
-        "-x", "8", "-s", "8",
+        "-x", "16", "-s", "16",
         "--summary-interval=10", "--console-log-level=error", "--log-level=error",
         "--download-result=default", "--continue=true", "--allow-overwrite=true",
         "--file-allocation=none", "--max-tries=3", "--retry-wait=5",
