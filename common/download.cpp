@@ -1018,10 +1018,10 @@ bool common_download_remove(const std::string & hf_repo_with_tag) {
 //     throw std::runtime_error("download functionality is not enabled in this build");
 // }
 
-common_download_model_result common_download_model(const common_params_model  & model,
-                                                   const common_download_opts & opts) {
-    throw std::runtime_error("download functionality is not enabled in this build");
-}
+// common_download_model_result common_download_model(const common_params_model  & model,
+//                                                    const common_download_opts & opts) {
+//     throw std::runtime_error("download functionality is not enabled in this build");
+// }
 
 std::string common_docker_resolve_model(const std::string &) {
     throw std::runtime_error("download functionality is not enabled in this build");
