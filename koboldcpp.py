@@ -78,7 +78,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.116"
+KcppVersion = "1.116.1"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_base_config":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "base_config":"", "swapReqType": None, "autoswapmode": False}
@@ -10502,19 +10502,32 @@ def sanitize_string(input_string):
     return sanitized_string
 
 def resolve_huggingface_xet_url(input_url):
+    global nocertify
     if "https://huggingface.co/" not in input_url or "/resolve/" not in input_url:
         return input_url
-    try:
+
+    ssl_cert_dir = os.environ.get('SSL_CERT_DIR')
+    if not ssl_cert_dir and not nocertify and os.name != 'nt':
+        os.environ['SSL_CERT_DIR'] = '/etc/ssl/certs'
+
+    def resolve_with_context(ssl_context=None):
         req = urllib.request.Request(input_url, headers={'User-Agent': 'Mozilla/5.0'}, method="HEAD")
-        with urllib.request.urlopen(req, timeout=10) as response:
-            resolved_url = response.geturl()
-    except Exception:
         try:
+            with urllib.request.urlopen(req, timeout=10, context=ssl_context) as response:
+                return response.geturl()
+        except Exception:
             req = urllib.request.Request(input_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=10) as response:
-                resolved_url = response.geturl()
+            with urllib.request.urlopen(req, timeout=10, context=ssl_context) as response:
+                return response.geturl()
+
+    try:
+        resolved_url = resolve_with_context()
+    except Exception as first_error:
+        try:
+            import ssl
+            resolved_url = resolve_with_context(ssl._create_unverified_context())
         except Exception as e:
-            print(f"Could not pre-resolve Hugging Face URL, using original URL: {e}")
+            print(f"Could not pre-resolve Hugging Face URL, using original URL: {first_error}; {e}")
             return input_url
     # resolved_host = urllib.parse.urlparse(resolved_url).netloc.lower()
     if ("xet-bridge" in resolved_url) and resolved_url != input_url:
