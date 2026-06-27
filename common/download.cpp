@@ -21,9 +21,7 @@
 #include <thread>
 #include <vector>
 
-#if defined(LLAMA_USE_HTTPLIB)
 #include "http.h"
-#endif
 
 #ifndef __EMSCRIPTEN__
 #ifdef __linux__
@@ -117,7 +115,6 @@ std::pair<std::string, std::string> common_download_split_repo_tag(const std::st
     return {hf_repo, tag};
 }
 
-#if defined(LLAMA_USE_HTTPLIB)
 class ProgressBar : public common_download_callback {
     static inline std::mutex mutex;
     static inline std::map<const ProgressBar *, int> lines;
@@ -926,7 +923,6 @@ std::vector<common_cached_model_info> common_list_cached_models() {
     return result;
 }
 
-
 bool common_download_remove(const std::string & hf_repo_with_tag) {
     namespace fs = std::filesystem;
 
@@ -1010,81 +1006,3 @@ bool common_download_remove(const std::string & hf_repo_with_tag) {
 
     return true;
 }
-
-
-#else
-
-// common_hf_file_res common_get_hf_file(const std::string &, const std::string &, bool, const common_header_list &) {
-//     throw std::runtime_error("download functionality is not enabled in this build");
-// }
-
-// common_download_model_result common_download_model(const common_params_model  & model,
-//                                                    const common_download_opts & opts) {
-//     throw std::runtime_error("download functionality is not enabled in this build");
-// }
-
-std::string common_docker_resolve_model(const std::string &) {
-    throw std::runtime_error("download functionality is not enabled in this build");
-}
-
-int common_download_file_single(const std::string & url,
-                                const std::string & path,
-                                const common_download_opts & opts,
-                                bool skip_etag) {
-    throw std::runtime_error("download functionality is not enabled in this build");
-}
-
-std::pair<long, std::vector<char>> common_remote_get_content(const std::string          & url,
-                                                             const common_remote_params & params) {
-    throw std::runtime_error("download functionality is not enabled in this build");
-}
-
-struct gguf_split_info {
-    std::string prefix; // tag included
-    std::string tag;
-    int index;
-    int count;
-};
-static gguf_split_info get_gguf_split_info(const std::string & path) {
-    static const std::regex re_split("^(.+)-([0-9]{5})-of-([0-9]{5})$", std::regex::icase);
-    static const std::regex re_tag("[-.]([A-Z0-9_]+)$", std::regex::icase);
-    std::smatch m;
-
-    std::string prefix = path;
-    string_remove_suffix(prefix, ".gguf");
-
-    int index = 1;
-    int count = 1;
-
-    if (std::regex_match(prefix, m, re_split)) {
-        index = std::stoi(m[2].str());
-        count = std::stoi(m[3].str());
-        prefix = m[1].str();
-    }
-
-    std::string tag;
-    if (std::regex_search(prefix, m, re_tag)) {
-        tag = m[1].str();
-        for (char & c : tag) {
-            c = std::toupper((unsigned char)c);
-        }
-    }
-
-    return {std::move(prefix), std::move(tag), index, count};
-}
-
-std::vector<common_cached_model_info> common_list_cached_models() {
-    std::vector<common_cached_model_info> result;
-    return result;
-}
-
-
-bool common_download_remove(const std::string & hf_repo_with_tag) {
-    return true;
-}
-
-
-#endif // defined(LLAMA_USE_HTTPLIB)
-
-
-
