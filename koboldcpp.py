@@ -5205,6 +5205,25 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             global last_non_horde_req_time
             last_non_horde_req_time = time.time()
 
+        #handle potential think tags, but only chat completions will return them. the others just drop them
+        reasoningtxt = ""
+        if api_format==4 or api_format==8 or api_format==9: #chat completions, responses and anthropic messages, but only chat has reasoning returned
+            if recvtxt:
+                for pair in thinkformats:
+                    starter = pair['start']
+                    ender = pair['end']
+                    start_idx = recvtxt.find(starter)
+                    end_idx = recvtxt.find(ender, start_idx + len(starter))
+                    if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
+                        reasoningtxt = recvtxt[start_idx + len(starter):end_idx]
+                        recvtxt = recvtxt[:start_idx] + recvtxt[end_idx + len(ender):]
+                        break
+                    elif starter not in recvtxt and ender in recvtxt:
+                        parts = recvtxt.split(ender, 1)
+                        reasoningtxt = parts[0]
+                        recvtxt = parts[1]
+                        break
+
         utfprint("\nOutput: " + recvtxt,1)
 
         #tool calls resolution
@@ -5237,25 +5256,6 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         modelNameToReturn = friendlymodelname
         if autoswapmode and textName is not None:
             modelNameToReturn = textName
-
-        #handle potential think tags, but only chat completions will return them. the others just drop them
-        reasoningtxt = ""
-        if api_format==4 or api_format==8 or api_format==9: #chat completions, responses and anthropic messages, but only chat has reasoning returned
-            if recvtxt:
-                for pair in thinkformats:
-                    starter = pair['start']
-                    ender = pair['end']
-                    start_idx = recvtxt.find(starter)
-                    end_idx = recvtxt.find(ender, start_idx + len(starter))
-                    if start_idx != -1 and end_idx != -1 and start_idx < end_idx:
-                        reasoningtxt = recvtxt[start_idx + len(starter):end_idx]
-                        recvtxt = recvtxt[:start_idx] + recvtxt[end_idx + len(ender):]
-                        break
-                    elif starter not in recvtxt and ender in recvtxt:
-                        parts = recvtxt.split(ender, 1)
-                        reasoningtxt = parts[0]
-                        recvtxt = parts[1]
-                        break
         if api_format == 1:
             res = {"data": {"seqs": [recvtxt]}}
         elif api_format == 3:
