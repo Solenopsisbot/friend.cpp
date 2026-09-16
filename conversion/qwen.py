@@ -782,10 +782,13 @@ class DFlyModel(DFlashModel):
                 "(the reference checkpoint's is 5712926)."
             )
 
-        if int(hp.get("target_hidden_size", hp["hidden_size"])) != int(hp["hidden_size"]):
+        # an omitted target_hidden_size would default to the draft width and compare equal to itself,
+        # so prefer the target model's own hidden_size whenever it is readable
+        target_hidden = real.get("hidden_size", hp.get("target_hidden_size", hp["hidden_size"]))
+        if int(target_hidden) != int(hp["hidden_size"]):
             raise ValueError(
-                "DFly residual fusion requires target_hidden_size == hidden_size, got "
-                f"{hp.get('target_hidden_size')} vs {hp['hidden_size']}."
+                "DFly residual fusion requires the target hidden_size to equal the drafter's, got "
+                f"{target_hidden} vs {hp['hidden_size']}."
             )
 
         if hp.get("markov_rank") or hp.get("enable_confidence_head"):

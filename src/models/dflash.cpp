@@ -20,11 +20,8 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
     // [n_embd, n_layer] per token instead of a single [n_embd] row. Detected from the fusion
     // tensor rather than a KV so a DFly export cannot load as plain DFlash.
     if (ml.get_tensor_meta("layer_fusion")) {
-        // Both ends of the round-trip must widen: the encoder emits n_layer contexts
-        // (n_embd_out) and the decoder's embd batch consumes them (n_embd_inp). Setting only
-        // the former is not enough -- a dflash draft context is not MTP-typed, so
-        // llama_context::decode sizes an embd batch from n_embd_inp(), and leaving that at
-        // n_embd hands the graph one layer's context and n_layer-1 layers of junk.
+        // both ends must widen: a dflash draft context is not MTP-typed, so it sizes its embd batch
+        // from n_embd_inp, and setting only n_embd_out gives the graph one layer's context plus junk
         hparams.n_embd_out_impl = hparams.n_layer() * hparams.n_embd;
         hparams.n_embd_inp_impl = hparams.n_layer() * hparams.n_embd;
         LLAMA_LOG_INFO("%s: DFly per-layer context fusion (n_layer = %u, n_embd_out = %u)\n",
