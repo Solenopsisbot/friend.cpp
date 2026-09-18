@@ -448,7 +448,7 @@ jobs:
         run: |
           # Full self-contained bundle (CPU backends + Vulkan), not just the ggml-vulkan.dll
           # add-on, so users can download this one zip and run without merging with the CPU zip.
-          cmake -S . -B build -DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DGGML_OPENMP=OFF -DLLAMA_BUILD_BORINGSSL=ON
+          cmake -S . -B build -DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON -DGGML_OPENMP=OFF -DLLAMA_BUILD_BORINGSSL=ON ${{ env.CMAKE_ARGS }}
           cmake --build build --config Release
 
       - name: Determine tag name

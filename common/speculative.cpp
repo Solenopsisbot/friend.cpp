@@ -307,8 +307,11 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
             correction_rows   = (int32_t) keep;
             correction_prefix = true;
         }
-        for (auto item : { std::make_pair("DSPARK_FORWARD_ROWS", &draft_rows),
-                           std::make_pair("DSPARK_CORRECTION_ROWS", &correction_rows) }) {
+        const std::pair<const char *, int32_t *> row_options[] = {
+            { "DSPARK_FORWARD_ROWS", &draft_rows },
+            { "DSPARK_CORRECTION_ROWS", &correction_rows },
+        };
+        for (const auto & item : row_options) {
             if (const char * value = std::getenv(item.first)) {
                 char *     end  = nullptr;
                 const long rows = std::strtol(value, &end, 10);
