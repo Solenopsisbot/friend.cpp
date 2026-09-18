@@ -129,6 +129,13 @@ class Keys:
         MOE_EVERY_N_LAYERS                = "{arch}.moe_every_n_layers"
         MOE_LATENT_SIZE                   = "{arch}.moe_latent_size"
         NEXTN_PREDICT_LAYERS              = "{arch}.nextn_predict_layers"
+        # dspark drafter (block-diffusion EAGLE-style speculative decoder)
+        DSPARK_BLOCK_SIZE                 = "{arch}.dspark.block_size"
+        DSPARK_MASK_TOKEN_ID              = "{arch}.dspark.mask_token_id"
+        DSPARK_TARGET_LAYERS              = "{arch}.dspark.target_layers"
+        DSPARK_MARKOV_RANK                = "{arch}.dspark.markov_rank"
+        DSPARK_CONFIDENCE_HEAD            = "{arch}.dspark.confidence_head"
+        DSPARK_CONFIDENCE_WITH_MARKOV     = "{arch}.dspark.confidence_head_with_markov"
         NUM_DEEPSTACK_LAYERS              = "{arch}.n_deepstack_layers"
         DEEPSTACK_MAPPING                 = "{arch}.deepstack_mapping"
         POOLING_TYPE                      = "{arch}.pooling_type"
@@ -494,6 +501,7 @@ class MODEL_ARCH(IntEnum):
     QWEN3VLMOE       = auto()
     QWEN35           = auto()
     QWEN35MOE        = auto()
+    DSPARK           = auto()
     PHI2             = auto()
     PHI3             = auto()
     PHIMOE           = auto()
@@ -1143,6 +1151,12 @@ class MODEL_TENSOR(IntEnum):
     FC                     = auto()  # feature fusion layer
     D2T                    = auto()  # draft to target vocabulary mapping
     # dspark
+    # dspark drafter
+    DSPARK_FC              = auto()
+    DSPARK_HIDDEN_NORM     = auto()
+    DSPARK_MARKOV_HEAD_A   = auto()
+    DSPARK_MARKOV_HEAD_B   = auto()
+    DSPARK_CONFIDENCE_HEAD = auto()
     DSPARK_MARKOV_W1       = auto()  # markov head: prev-token embed
     DSPARK_MARKOV_W2       = auto()  # markov head: bias projection
     DSPARK_CONF_PROJ       = auto()  # confidence head
@@ -1217,6 +1231,7 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
     MODEL_ARCH.QWEN3VLMOE:       "qwen3vlmoe",
     MODEL_ARCH.QWEN35:           "qwen35",
     MODEL_ARCH.QWEN35MOE:        "qwen35moe",
+    MODEL_ARCH.DSPARK:           "dspark",
     MODEL_ARCH.PHI2:             "phi2",
     MODEL_ARCH.PHI3:             "phi3",
     MODEL_ARCH.PHIMOE:           "phimoe",
@@ -1892,6 +1907,12 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.NEXTN_SHARED_HEAD_HEAD:    "blk.{bid}.nextn.shared_head_head",
     MODEL_TENSOR.NEXTN_SHARED_HEAD_NORM:    "blk.{bid}.nextn.shared_head_norm",
     MODEL_TENSOR.FC:                        "fc",
+    # dspark drafter
+    MODEL_TENSOR.DSPARK_FC:                 "dspark.fc",
+    MODEL_TENSOR.DSPARK_HIDDEN_NORM:        "dspark.hidden_norm",
+    MODEL_TENSOR.DSPARK_MARKOV_HEAD_A:      "dspark.markov_head_a",
+    MODEL_TENSOR.DSPARK_MARKOV_HEAD_B:      "dspark.markov_head_b",
+    MODEL_TENSOR.DSPARK_CONFIDENCE_HEAD:    "dspark.confidence_head",
     MODEL_TENSOR.DSPARK_MARKOV_W1:          "markov_w1",
     MODEL_TENSOR.DSPARK_MARKOV_W2:          "markov_w2",
     MODEL_TENSOR.DSPARK_CONF_PROJ:          "conf_proj",
@@ -2756,6 +2777,30 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.NEXTN_HNORM,
         MODEL_TENSOR.NEXTN_SHARED_HEAD_HEAD,
         MODEL_TENSOR.NEXTN_SHARED_HEAD_NORM,
+    ],
+    MODEL_ARCH.DSPARK: [
+        # dspark drafter: feature-reuse projection + small transformer trunk +
+        # lm head + two aux heads. Decoder blocks reuse the standard ATTN_*/FFN_*
+        # names. The forward graph is NOT built yet (scaffolding only).
+        MODEL_TENSOR.TOKEN_EMBD,
+        MODEL_TENSOR.DSPARK_FC,
+        MODEL_TENSOR.DSPARK_HIDDEN_NORM,
+        MODEL_TENSOR.ATTN_NORM,
+        MODEL_TENSOR.ATTN_Q,
+        MODEL_TENSOR.ATTN_K,
+        MODEL_TENSOR.ATTN_V,
+        MODEL_TENSOR.ATTN_OUT,
+        MODEL_TENSOR.ATTN_Q_NORM,
+        MODEL_TENSOR.ATTN_K_NORM,
+        MODEL_TENSOR.FFN_NORM,
+        MODEL_TENSOR.FFN_GATE,
+        MODEL_TENSOR.FFN_DOWN,
+        MODEL_TENSOR.FFN_UP,
+        MODEL_TENSOR.OUTPUT_NORM,
+        MODEL_TENSOR.OUTPUT,
+        MODEL_TENSOR.DSPARK_MARKOV_HEAD_A,
+        MODEL_TENSOR.DSPARK_MARKOV_HEAD_B,
+        MODEL_TENSOR.DSPARK_CONFIDENCE_HEAD,
     ],
     MODEL_ARCH.QWEN35MOE: [
         MODEL_TENSOR.TOKEN_EMBD,

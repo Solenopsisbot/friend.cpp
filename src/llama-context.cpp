@@ -2,18 +2,18 @@
 
 #include "ggml.h"
 #include "llama-arch.h"
+#include "llama-batch.h"
+#include "llama-ext.h"
 #include "llama-graph.h"
 #include "llama-impl.h"
-#include "llama-batch.h"
 #include "llama-io.h"
-#include "llama-kv-cache.h"
-#include "llama-memory.h"
 #include "llama-kv-cache-iswa.h"
-#include "llama-memory-hybrid.h"
+#include "llama-kv-cache.h"
 #include "llama-memory-hybrid-iswa.h"
+#include "llama-memory-hybrid.h"
+#include "llama-memory.h"
 #include "llama-mmap.h"
 #include "llama-model.h"
-#include "llama-ext.h"
 #include "llama-sampler.h"
 #include "llama.h"
 
@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 
@@ -1083,6 +1084,41 @@ float * llama_context::get_embeddings_layer_inp(uint32_t lid) {
     return embd_layer_inp[lid].data;
 }
 
+uint32_t llama_context::get_n_capture() const {
+    return cparams.n_capture_layers;
+}
+
+float * llama_context::get_embeddings_capture() {
+    output_reorder();
+
+    return embd_capture.data;
+}
+
+float * llama_context::get_embeddings_capture_ith(int32_t i) {
+    output_reorder();
+
+    try {
+        if (embd_capture.data == nullptr) {
+            throw std::runtime_error("no capture embeddings");
+        }
+
+        const uint32_t n_cap  = cparams.n_capture_layers;
+        const uint32_t n_embd = model.hparams.n_embd;
+        const uint32_t row    = n_cap * n_embd;  // width of one concatenated row
+
+        // capture rows always follow the masked (output-row) layout, mirroring the
+        // pre-norm masked path: the buffer holds one row per output position.
+        const int64_t j = output_resolve_row(i);
+        if (j < 0 || (size_t) (j + 1) * row > embd_capture.size) {
+            throw std::runtime_error(format("out of range [0, %zu)", embd_capture.size / row));
+        }
+        return embd_capture.data + (size_t) j * row;
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: invalid capture embeddings id %d, reason: %s\n", __func__, i, err.what());
+        return nullptr;
+    }
+}
+
 llama_token llama_context::get_sampled_token_ith(int32_t idx) {
     output_reorder();
 
@@ -1283,6 +1319,71 @@ void llama_context::set_embeddings_layer_inp(uint32_t lid, bool enable) {
 
 void llama_context::set_nextn_layer_offset(int32_t offset) {
     cparams.nextn_layer_offset = offset;
+}
+
+void llama_context::set_capture_layers(const std::vector<int32_t> & layer_ids) {
+    // reset
+    cparams.embeddings_capture = false;
+    cparams.n_capture_layers   = 0;
+    cparams.capture_layer_idx  = {};
+
+    // enabling/disabling capture adds/removes the t_h_capture node from the
+    // graph (see llm_graph_result::set_outputs()), so the scheduler's
+    // backend-assignment table -- built against whatever topology was live
+    // at the last reserve -- must be re-derived before the next decode.
+    // Without this, ggml_backend_sched_get_tensor_backend() on the newly
+    // introduced t_h_capture tensor correctly reports "unknown" (nullptr),
+    // since the scheduler never split a graph that contained it.
+    sched_need_reserve = true;
+
+    if (layer_ids.empty()) {
+        return;
+    }
+
+    const int32_t n_layer = (int32_t) model.hparams.n_layer();
+    uint32_t      n       = 0;
+    for (int32_t il : layer_ids) {
+        if (il < 0 || il >= n_layer || il >= LLAMA_MAX_LAYERS) {
+            LLAMA_LOG_ERROR("%s: capture layer %d out of range [0, %d)\n", __func__, il, n_layer);
+            continue;
+        }
+        cparams.capture_layer_idx[n++] = il;
+    }
+
+    cparams.n_capture_layers        = n;
+    cparams.embeddings_capture      = n > 0;
+    // capture rows reuse the masked output-row layout; force masked extraction on.
+    cparams.embeddings_nextn_masked = true;
+}
+
+void llama_context::set_dspark_ctx(const float * feat, int64_t n_ctx_rows, int64_t n_embd_cap, const int32_t * pos) {
+    if (n_ctx_rows <= 0 || n_embd_cap <= 0 || feat == nullptr) {
+        // reset: no staged context (e.g. before the very first drafter round,
+        // where the whole prompt still needs to go through as context on the
+        // first call, or between unrelated decodes).
+        dspark_ctx.n_ctx_rows = 0;
+        dspark_ctx.n_embd_cap = 0;
+        dspark_ctx.v_ctx_feat.clear();
+        dspark_ctx.v_ctx_pos.clear();
+        return;
+    }
+
+    dspark_ctx.n_ctx_rows = n_ctx_rows;
+    dspark_ctx.n_embd_cap = n_embd_cap;
+
+    dspark_ctx.v_ctx_feat.assign(feat, feat + (size_t) n_ctx_rows * (size_t) n_embd_cap);
+
+    dspark_ctx.v_ctx_pos.resize((size_t) n_ctx_rows);
+    if (pos != nullptr) {
+        std::copy(pos, pos + n_ctx_rows, dspark_ctx.v_ctx_pos.begin());
+    } else {
+        // caller didn't supply explicit positions: assume a contiguous run
+        // ending just before the current staged sequence length. this is a
+        // convenience default; callers doing real multi-round decoding should
+        // pass explicit positions since the growing-cache bookkeeping (Phase 2)
+        // owns the authoritative position numbering.
+        std::iota(dspark_ctx.v_ctx_pos.begin(), dspark_ctx.v_ctx_pos.end(), 0);
+    }
 }
 
 void llama_context::set_causal_attn(bool value) {
@@ -1655,6 +1756,19 @@ int llama_context::encode(const llama_batch & batch_inp) {
         ggml_backend_tensor_get_async(backend_h, t_h_nextn, embd_nextn.data, 0, n_tokens*n_embd*sizeof(float));
     }
 
+    // extract multi-layer capture embeddings (concatenated per position).
+    // single bulk copy: t_h_capture is already [n_capture * n_embd, n_tokens].
+    if (embd_capture.data && cparams.n_capture_layers > 0 && cparams.pooling_type == LLAMA_POOLING_TYPE_NONE) {
+        ggml_tensor * t_cap = res->get_h_capture();
+        if (t_cap) {
+            ggml_backend_t backend_c = ggml_backend_sched_get_tensor_backend(sched.get(), t_cap);
+            GGML_ASSERT(backend_c != nullptr);
+            const uint32_t row = cparams.n_capture_layers * hparams.n_embd;
+            GGML_ASSERT(n_tokens * (int64_t) row <= (int64_t) embd_capture.size);
+            ggml_backend_tensor_get_async(backend_c, t_cap, embd_capture.data, 0, n_tokens * row * sizeof(float));
+        }
+    }
+
     // TODO: hacky solution
     if (model.arch == LLM_ARCH_T5 && t_embd) {
         //cross.t_embd = t_embd;
@@ -1963,6 +2077,22 @@ int llama_context::decode(const llama_batch & batch_inp) {
             t_embd = res->get_embd_pooled();
         }
 
+        // extract multi-layer capture embeddings, concatenated per output position.
+        // capture always uses the masked (output-row) layout, so t_h_capture is
+        // [n_capture * n_embd, n_outputs]; copy in one shot per ubatch.
+        if (embd_capture.data && cparams.n_capture_layers > 0 && n_outputs > 0 &&
+            cparams.pooling_type == LLAMA_POOLING_TYPE_NONE) {
+            ggml_tensor * t_cap = res->get_h_capture();
+            if (t_cap) {
+                ggml_backend_t backend_c = ggml_backend_sched_get_tensor_backend(sched.get(), t_cap);
+                GGML_ASSERT(backend_c != nullptr);
+                const uint32_t row              = cparams.n_capture_layers * hparams.n_embd;
+                float *        embd_capture_out = embd_capture.data + (size_t) n_outputs_prev * row;
+                GGML_ASSERT((n_outputs_prev + n_outputs) * (int64_t) row <= (int64_t) embd_capture.size);
+                ggml_backend_tensor_get_async(backend_c, t_cap, embd_capture_out, 0, n_outputs * row * sizeof(float));
+            }
+        }
+
         // extract logits
         if (logits.data && t_logits && n_outputs > 0 && needs_raw_logits(ubatch, sampling.samplers)) {
             ggml_backend_t backend_res = ggml_backend_sched_get_tensor_backend(sched.get(), t_logits);
@@ -2147,6 +2277,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
     bool has_logits     = true;
     bool has_embd       = cparams.embeddings;
     bool has_embd_nextn = cparams.embeddings_nextn;
+    bool has_embd_capture = cparams.n_capture_layers > 0;
 
     // TODO: hacky enc-dec support
     if (model.arch == LLM_ARCH_T5) {
@@ -2187,9 +2318,11 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
     }
 
     const size_t prev_size = buf_output ? ggml_backend_buffer_get_size(buf_output.get()) : 0;
-    const size_t new_size  =
-        (logits.size + embd.size + embd_nextn.size + embd_layer_inp_float_count + backend_float_count) * sizeof(float) +
-        (                                                                         backend_token_count) * sizeof(llama_token);
+    embd_capture.size      = has_embd_capture ? (size_t) cparams.n_capture_layers * hparams.n_embd * n_outputs_max : 0;
+    const size_t new_size  = (logits.size + embd.size + embd_nextn.size + embd_capture.size +
+                              embd_layer_inp_float_count + backend_float_count) *
+                                 sizeof(float) +
+                             (backend_token_count) * sizeof(llama_token);
 
     // alloc only when more than the current capacity is required
     // TODO: also consider shrinking the buffer
@@ -2206,6 +2339,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
             logits.data = nullptr;
             embd.data = nullptr;
             embd_nextn.data = nullptr;
+            embd_capture.data = nullptr;
             for (auto & layer_inp : embd_layer_inp) {
                 layer_inp = {nullptr, 0};
             }
@@ -2248,6 +2382,10 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
             embd_layer_inp[il] = buffer_view<float>{nullptr, 0};
         }
     }
+
+    embd_capture = has_embd_capture ? buffer_view<float>{ (float *) (base + offset), embd_capture.size } :
+                                      buffer_view<float>{ nullptr, 0 };
+    offset += embd_capture.size * sizeof(float);
 
     if (has_sampling) {
         sampling.logits = {(float *) (base + offset), (size_t)(n_vocab*n_outputs_max)};
@@ -2344,6 +2482,12 @@ void llama_context::output_reorder() {
             }
         }
 
+        if (embd_capture.size > 0) {
+            const uint64_t row = (uint64_t) cparams.n_capture_layers * n_embd;
+            for (uint64_t k = 0; k < row; k++) {
+                std::swap(embd_capture.data[i0 * row + k], embd_capture.data[i1 * row + k]);
+            }
+        }
         if (embd_nextn.size > 0) {
             for (uint64_t k = 0; k < n_embd_out; k++) {
                 std::swap(embd_nextn.data[i0*n_embd_out + k], embd_nextn.data[i1*n_embd_out + k]);
@@ -2565,23 +2709,24 @@ llm_graph_params llama_context::graph_params(
             const llama_memory_context_i * mctx,
                           llm_graph_type   gtype) const {
     return {
-        /*.arch        =*/ model.arch,
-        /*.hparams     =*/ model.hparams,
-        /*.cparams     =*/ cparams,
-        /*.ubatch      =*/ ubatch,
-        /*.gtype       =*/ gtype,
-        /*.sched       =*/ sched.get(),
-        /*.backend_cpu =*/ backend_cpu,
-        /*.cvec        =*/ cvec.get(),
-        /*.loras       =*/ loras.get(),
-        /*.mctx        =*/ mctx,
-        /*.cross       =*/ &cross,
-        /*.hadamard_rotations =*/ &model.hadamard_rotations,
-        /*.hadamard_inverses  =*/ &model.hadamard_inverses,
-        /*.samplers    =*/ sampling.samplers,
-        /*.n_outputs   =*/ n_outputs,
-        /*.cb          =*/ graph_get_cb(),
-        /*.res         =*/ res,
+        /*.arch        =*/model.arch,
+        /*.hparams     =*/model.hparams,
+        /*.cparams     =*/cparams,
+        /*.ubatch      =*/ubatch,
+        /*.gtype       =*/gtype,
+        /*.sched       =*/sched.get(),
+        /*.backend_cpu =*/backend_cpu,
+        /*.cvec        =*/cvec.get(),
+        /*.loras       =*/loras.get(),
+        /*.mctx        =*/mctx,
+        /*.cross       =*/&cross,
+        /*.dspark_ctx  =*/&dspark_ctx,
+        /*.hadamard_rotations =*/&model.hadamard_rotations,
+        /*.hadamard_inverses  =*/&model.hadamard_inverses,
+        /*.samplers    =*/sampling.samplers,
+        /*.n_outputs   =*/n_outputs,
+        /*.cb          =*/graph_get_cb(),
+        /*.res         =*/res,
     };
 }
 
@@ -3927,6 +4072,41 @@ float * llama_get_embeddings_layer_inp(llama_context * ctx, uint32_t lid) {
     ctx->synchronize();
 
     return ctx->get_embeddings_layer_inp(lid);
+}
+
+// multi-layer hidden-state tap C API (staging) -------------------------------
+
+void llama_set_capture_layers(llama_context * ctx, const int32_t * layer_ids, size_t n_layers) {
+    std::vector<int32_t> ids;
+    ids.reserve(n_layers);
+    for (size_t i = 0; i < n_layers; ++i) {
+        ids.push_back(layer_ids[i]);
+    }
+    ctx->set_capture_layers(ids);
+}
+
+uint32_t llama_get_n_capture(llama_context * ctx) {
+    return ctx->get_n_capture();
+}
+
+float * llama_get_embeddings_capture(llama_context * ctx) {
+    ctx->synchronize();
+    return ctx->get_embeddings_capture();
+}
+
+float * llama_get_embeddings_capture_ith(llama_context * ctx, int32_t i) {
+    ctx->synchronize();
+    return ctx->get_embeddings_capture_ith(i);
+}
+
+// dspark drafter target-context staging C API --------------------------------
+
+void llama_set_dspark_ctx(llama_context * ctx,
+                          const float *   feat,
+                          int64_t         n_ctx_rows,
+                          int64_t         n_embd_cap,
+                          const int32_t * pos) {
+    ctx->set_dspark_ctx(feat, n_ctx_rows, n_embd_cap, pos);
 }
 
 bool llama_set_sampler(llama_context * ctx, llama_seq_id seq_id, llama_sampler * smpl) {

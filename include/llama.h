@@ -308,6 +308,10 @@ extern "C" {
     };
 
     struct llama_model_params {
+        // Opt-in DSpark head borrowing. Caller guarantees the bound target and keeps it alive
+        // until the drafter and all drafter contexts are destroyed. No head weights are copied.
+        const struct llama_model * dspark_head_source;
+
         // NULL-terminated list of devices to use for offloading (if NULL, all available devices are used)
         ggml_backend_dev_t * devices;
 

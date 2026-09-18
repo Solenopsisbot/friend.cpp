@@ -66,6 +66,37 @@ static bool can_reuse_kq_mask(
 
 // impl
 
+void llm_graph_input_dspark_ctx::set_input(const llama_ubatch * ubatch) {
+    if (correction_prefix_rows > 0) {
+        if (!ctx_feat || !dctx || dctx->n_ctx_rows != ctx_feat->ne[1]) {
+            throw std::runtime_error("DSpark correction prefix requires staged context inputs");
+        }
+        for (int64_t row = 0; row < ubatch->n_tokens; ++row) {
+            const bool expected = row >= dctx->n_ctx_rows && row < dctx->n_ctx_rows + correction_prefix_rows;
+            if (!ubatch->output || (ubatch->output[row] != 0) != expected) {
+                throw std::runtime_error("DSpark correction prefix requires matching output rows");
+            }
+        }
+    }
+    if (reuse_mask_id >= 0) {
+        if (!ubatch->token || !dctx || dctx->n_ctx_rows != ctx_feat->ne[1]) {
+            throw std::runtime_error("DSpark mask reuse requires staged token inputs");
+        }
+        for (int64_t i = dctx->n_ctx_rows + 1; i < ubatch->n_tokens; ++i) {
+            if (ubatch->token[i] != reuse_mask_id) {
+                throw std::runtime_error("DSpark mask reuse requires an anchor followed by MASK tokens");
+            }
+        }
+    }
+    // ignores ubatch entirely (like llm_graph_input_cross_embd): the context
+    // feature row count (n_ctx_rows) is independent of the current ubatch's
+    // token count and comes purely from the staged llama_dspark_ctx.
+    if (ctx_feat && dctx && !dctx->v_ctx_feat.empty()) {
+        GGML_ASSERT((int64_t) dctx->v_ctx_feat.size() == ggml_nelements(ctx_feat));
+        ggml_backend_tensor_set(ctx_feat, dctx->v_ctx_feat.data(), 0, ggml_nbytes(ctx_feat));
+    }
+}
+
 void llm_graph_input_dspark_logsnr::set_input(const llama_ubatch * ubatch) {
     // v_feat was precomputed at graph-build time and does not depend on the ubatch
     GGML_UNUSED(ubatch);
@@ -1316,11 +1347,13 @@ void llm_graph_result::reset() {
     t_embd        = nullptr;
     t_embd_pooled = nullptr;
     t_h_nextn     = nullptr;
+    t_h_capture   = nullptr;
 
     t_layer_inp.resize(LLAMA_MAX_LAYERS + 1);
     std::fill(t_layer_inp.begin(), t_layer_inp.end(), nullptr);
 
     t_sampled.clear();
+    t_dspark_greedy.clear();
     t_sampled_probs.clear();
     t_sampled_logits.clear();
     t_candidates.clear();
@@ -1358,6 +1391,9 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
     }
     if (t_embd_pooled != nullptr) {
         ggml_set_output(t_embd_pooled);
+    }
+    if (t_h_capture != nullptr) {
+        ggml_set_output(t_h_capture);
     }
     if (t_h_nextn != nullptr) {
         ggml_set_output(t_h_nextn);
@@ -1443,51 +1479,52 @@ void llm_graph_result::set_params(const llm_graph_params & params) {
 //
 
 llm_graph_context::llm_graph_context(const llm_graph_params & params) :
-    arch             (params.arch),
-    hparams          (params.hparams),
-    cparams          (params.cparams),
-    ubatch           (params.ubatch),
-    n_embd           (hparams.n_embd),
-    n_layer          (hparams.n_layer()),
-    n_layer_nextn    (hparams.n_layer_nextn),
-    n_rot            (hparams.n_rot()),
-    n_ctx            (cparams.n_ctx),
-    n_head           (hparams.n_head()),
-    n_head_kv        (hparams.n_head_kv()),
-    n_embd_head_k    (hparams.n_embd_head_k()),
-    n_embd_k_gqa     (hparams.n_embd_k_gqa()),
-    n_embd_head_v    (hparams.n_embd_head_v()),
-    n_embd_v_gqa     (hparams.n_embd_v_gqa()),
-    n_expert         (hparams.n_expert),
-    n_expert_used    (cparams.warmup ? hparams.n_expert : hparams.n_expert_used),
-    freq_base        (cparams.rope_freq_base),
-    freq_scale       (cparams.rope_freq_scale),
-    ext_factor       (cparams.yarn_ext_factor),
-    attn_factor      (cparams.yarn_attn_factor),
-    beta_fast        (cparams.yarn_beta_fast),
-    beta_slow        (cparams.yarn_beta_slow),
-    norm_eps         (hparams.f_norm_eps),
-    norm_rms_eps     (hparams.f_norm_rms_eps),
-    n_tokens         (ubatch.n_tokens),
-    n_outputs        (params.n_outputs),
-    n_ctx_orig       (cparams.n_ctx_orig_yarn),
-    pooling_type     (cparams.pooling_type),
-    rope_type        (hparams.rope_type),
-    sched            (params.sched),
-    backend_cpu      (params.backend_cpu),
-    cvec             (params.cvec),
-    loras            (params.loras),
-    mctx             (params.mctx),
-    cross            (params.cross),
+    arch(params.arch),
+    hparams(params.hparams),
+    cparams(params.cparams),
+    ubatch(params.ubatch),
+    n_embd(hparams.n_embd),
+    n_layer(hparams.n_layer()),
+    n_layer_nextn(hparams.n_layer_nextn),
+    n_rot(hparams.n_rot()),
+    n_ctx(cparams.n_ctx),
+    n_head(hparams.n_head()),
+    n_head_kv(hparams.n_head_kv()),
+    n_embd_head_k(hparams.n_embd_head_k()),
+    n_embd_k_gqa(hparams.n_embd_k_gqa()),
+    n_embd_head_v(hparams.n_embd_head_v()),
+    n_embd_v_gqa(hparams.n_embd_v_gqa()),
+    n_expert(hparams.n_expert),
+    n_expert_used(cparams.warmup ? hparams.n_expert : hparams.n_expert_used),
+    freq_base(cparams.rope_freq_base),
+    freq_scale(cparams.rope_freq_scale),
+    ext_factor(cparams.yarn_ext_factor),
+    attn_factor(cparams.yarn_attn_factor),
+    beta_fast(cparams.yarn_beta_fast),
+    beta_slow(cparams.yarn_beta_slow),
+    norm_eps(hparams.f_norm_eps),
+    norm_rms_eps(hparams.f_norm_rms_eps),
+    n_tokens(ubatch.n_tokens),
+    n_outputs(params.n_outputs),
+    n_ctx_orig(cparams.n_ctx_orig_yarn),
+    pooling_type(cparams.pooling_type),
+    rope_type(hparams.rope_type),
+    sched(params.sched),
+    backend_cpu(params.backend_cpu),
+    cvec(params.cvec),
+    loras(params.loras),
+    mctx(params.mctx),
+    cross(params.cross),
+    dspark_ctx(params.dspark_ctx),
     hadamard_rotations(params.hadamard_rotations),
-    hadamard_inverses (params.hadamard_inverses),
-    samplers         (params.samplers),
-    cb_func          (params.cb),
-    res              (params.res),
-    ctx0             (res->get_ctx()),
-    gf               (res->get_gf()) {
-        res->set_params(params);
-    }
+    hadamard_inverses(params.hadamard_inverses),
+    samplers(params.samplers),
+    cb_func(params.cb),
+    res(params.res),
+    ctx0(res->get_ctx()),
+    gf(res->get_gf()) {
+    res->set_params(params);
+}
 
 void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
     if (cb_func) {
@@ -3862,7 +3899,10 @@ void llm_graph_context::build_sampling() const {
 
     // add a dummy row to keep the single-output graph static regardless of active samplers
     // multi-output graphs can still vary with the number of output rows
-    ggml_tensor * logits_t = ggml_pad(ctx0, res->t_logits, 0, 1, 0, 0);
+    // DSpark reserve graphs can expose fewer draft rows than the output budget.
+    const int64_t pad_rows =
+        res->t_dspark_greedy.empty() ? 1 : std::max<int64_t>(1, int64_t(n_rows) - res->t_logits->ne[1]);
+    ggml_tensor * logits_t = ggml_pad(ctx0, res->t_logits, 0, pad_rows, 0, 0);
 
     for (const auto & entry : samplers) {
         if (entry.second->iface->backend_reset) {
@@ -3879,6 +3919,15 @@ void llm_graph_context::build_sampling() const {
         const bool active = it != sampling_rows.end();
         const auto & rows = active ? it->second : dummy_row;
         const int i_out   = active ? 1          : 0;
+
+        if (active && res->t_dspark_greedy.size() == n_rows && llama_sampler_chain_n(sampler) == 1 &&
+            std::strcmp(llama_sampler_name(llama_sampler_chain_get(sampler, 0)), "greedy") == 0) {
+            for (uint32_t row : rows) {
+                res->t_sampled[row] = res->t_dspark_greedy[row];
+                ggml_build_forward_expand(gf, res->t_sampled[row]);
+            }
+            continue;
+        }
 
         for (uint32_t i = 0; i < rows.size(); ++i) {
             ggml_tensor * logits_seq = ggml_view_1d(ctx0, logits_t, logits_t->ne[0], rows[i] * logits_t->nb[1]);
