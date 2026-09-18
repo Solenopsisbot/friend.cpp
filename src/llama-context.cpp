@@ -1772,7 +1772,7 @@ int llama_context::encode(const llama_batch & batch_inp) {
         GGML_ASSERT(backend_c != nullptr);
         const uint32_t row = cparams.n_capture_layers * hparams.n_embd;
         GGML_ASSERT(n_tokens * (int64_t) row <= (int64_t) embd_capture.size);
-        ggml_backend_tensor_get_async(backend_c, t_cap, embd_capture.data, 0, n_tokens * row * sizeof(float));
+        ggml_backend_tensor_get_async(backend_c, t_cap, embd_capture.data, 0, (size_t) n_tokens * row * sizeof(float));
     }
 
     // TODO: hacky solution
@@ -2098,7 +2098,8 @@ int llama_context::decode(const llama_batch & batch_inp) {
             const uint32_t row              = cparams.n_capture_layers * hparams.n_embd;
             float *        embd_capture_out = embd_capture.data + (size_t) n_outputs_prev * row;
             GGML_ASSERT((n_outputs_prev + n_outputs) * (int64_t) row <= (int64_t) embd_capture.size);
-            ggml_backend_tensor_get_async(backend_c, t_cap, embd_capture_out, 0, n_outputs * row * sizeof(float));
+            ggml_backend_tensor_get_async(backend_c, t_cap, embd_capture_out, 0,
+                                          (size_t) n_outputs * row * sizeof(float));
         }
 
         // extract logits
