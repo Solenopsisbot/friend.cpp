@@ -367,7 +367,8 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
                     "CUDA Markov requested without a legacy Markov head; graph-corrected drafters use their own path");
             }
 #ifdef LLAMA_DSPARK_MARKOV_CUDA
-            markov_cuda.reset(dspark_markov_cuda_init(markov_w1.data(), markov_w2.data(), n_vocab, markov_rank));
+            markov_cuda.reset(
+                dspark_markov_cuda_init(markov_w1.data(), markov_w2.data(), n_vocab, markov_rank, mask_token_id));
             if (!markov_cuda) {
                 throw std::runtime_error("CUDA Markov initialization failed; refusing CPU fallback");
             }
@@ -768,7 +769,7 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
 
                 const float * base_logits = logits_base + (size_t) k * n_vocab;
 
-                llama_token best_id = 0;
+                llama_token best_id = mask_token_id == 0 ? 1 : 0;
                 float       best_v  = -std::numeric_limits<float>::infinity();
 
                 if (has_markov) {
@@ -778,6 +779,9 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
                                 (int) markov_rank, emb, 1, 0.0f, markov_bias.data(), 1);
 
                     for (int64_t v = 0; v < n_vocab; ++v) {
+                        if (v == mask_token_id) {
+                            continue;
+                        }
                         const float logit = base_logits[v] + markov_bias[(size_t) v];
                         if (logit > best_v) {
                             best_v  = logit;
@@ -786,6 +790,9 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
                     }
 #else
                     for (int64_t v = 0; v < n_vocab; ++v) {
+                        if (v == mask_token_id) {
+                            continue;
+                        }
                         const float * w2row = markov_w2.data() + (size_t) v * (size_t) markov_rank;
                         float         bias  = 0.0f;
                         for (int64_t r = 0; r < markov_rank; ++r) {
@@ -800,6 +807,9 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
 #endif
                 } else {
                     for (int64_t v = 0; v < n_vocab; ++v) {
+                        if (v == mask_token_id) {
+                            continue;
+                        }
                         if (base_logits[v] > best_v) {
                             best_v  = base_logits[v];
                             best_id = (llama_token) v;

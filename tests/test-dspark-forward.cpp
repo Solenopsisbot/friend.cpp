@@ -18,6 +18,7 @@
 //   float32[block_size * vocab_size]  ref_logits          (row-major)
 
 #include "../src/llama-ext.h"
+#include "../src/llama-graph.h"
 #include "../src/llama-model.h"
 #include "common.h"
 #include "ggml-backend.h"
@@ -873,6 +874,34 @@ struct scoped_test_env {
 };
 
 static int run_prefix_ab(const std::string & model_path, const char * backend = nullptr) {
+    llama_dspark_ctx staged;
+    staged.n_ctx_rows = 6;
+    staged.n_embd_cap = 32;
+    llm_graph_params previous{};
+    previous.dspark_ctx         = &staged;
+    previous.dspark_has_context = true;
+    previous.dspark_ctx_rows    = staged.n_ctx_rows;
+    previous.dspark_ctx_width   = staged.n_embd_cap;
+    auto next                   = previous;
+    if (!previous.allow_reuse(next)) {
+        fail("identical graph params did not reuse");
+    }
+    staged.n_ctx_rows    = 7;
+    next.dspark_ctx_rows = staged.n_ctx_rows;
+    if (previous.allow_reuse(next)) {
+        fail("mutable context row count reused stale topology");
+    }
+    next                    = previous;
+    next.dspark_has_context = false;
+    if (previous.allow_reuse(next)) {
+        fail("context presence change reused stale topology");
+    }
+    next                  = previous;
+    next.dspark_ctx_width = 64;
+    if (previous.allow_reuse(next)) {
+        fail("context width change reused stale topology");
+    }
+    printf("Graph reuse shape contracts PASSED\n");
     scoped_test_env environment({ "LLAMA_DSPARK_CORRECTION_PREFIX", "LLAMA_DSPARK_GREEDY_IDS",
                                   "LLAMA_DSPARK_REUSE_MASK", "DSPARK_HEAD_TOP_K", "DSPARK_FORWARD_ROWS",
                                   "DSPARK_CORRECTION_ROWS" });
@@ -895,6 +924,28 @@ static int run_prefix_ab(const std::string & model_path, const char * backend = 
     auto * model = llama_model_load_from_file(model_path.c_str(), mp);
     if (!model) {
         fail("prefix model load failed");
+    }
+    {
+        auto *        ctx     = make_ctx(model, 16);
+        const int32_t valid[] = { 0 };
+        llama_set_capture_layers(ctx, valid, 1);
+        for (const std::vector<int32_t> & invalid : {
+                 std::vector<int32_t>{ 0, -1                                 },
+                 std::vector<int32_t>{ 0, (int32_t) model->hparams.n_layer() },
+                 std::vector<int32_t>(LLAMA_MAX_LAYERS + 1, 0)
+        }) {
+            bool rejected = false;
+            try {
+                llama_set_capture_layers(ctx, invalid.data(), invalid.size());
+            } catch (const std::invalid_argument &) {
+                rejected = true;
+            }
+            if (!rejected || llama_get_n_capture(ctx) != 1) {
+                fail("invalid capture list was accepted or changed the previous registration");
+            }
+        }
+        llama_free(ctx);
+        printf("Capture registration contracts PASSED: 3 invalid lists rejected atomically\n");
     }
     const auto        meta = read_dspark_meta(model);
     llama_dspark_meta contract;
@@ -934,7 +985,7 @@ static int run_prefix_ab(const std::string & model_path, const char * backend = 
             }
         }
         llama_free(baseline);
-        for (int keep : { 1, 2, 4, 8 }) {
+        for (int keep : { 1, 2, 3, 4, 6, 8 }) {
             if (keep > meta.block_size) {
                 continue;
             }

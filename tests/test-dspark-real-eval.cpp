@@ -557,7 +557,18 @@ int main(int argc, char ** argv) {
         const double ar_tok_per_sec = ar_n_predicted / ar_seconds;
 
         if (oracle_rows) {
-            std::swap(ctx_tgt, ctx_ar);
+            const char * same_path_env = std::getenv("DSPARK_ORACLE_SAME_PATH");
+            const char * kld_env       = std::getenv("DSPARK_ORACLE_KLD");
+            for (const char * value : { same_path_env, kld_env }) {
+                if (value && std::strcmp(value, "0") && std::strcmp(value, "1")) {
+                    fail("oracle diagnostic flags must be 0 or 1");
+                }
+            }
+            const bool same_path   = same_path_env && std::strcmp(same_path_env, "1") == 0;
+            const bool measure_kld = kld_env && std::strcmp(kld_env, "1") == 0;
+            if (!same_path) {
+                std::swap(ctx_tgt, ctx_ar);
+            }
             llama_set_capture_layers(ctx_tgt, nullptr, 0);
             // Teacher force the AR stream. No drafter, rejection, or partial rollback runs here.
             if (!llama_memory_seq_rm(llama_get_memory(ctx_tgt), seq_id, 0, -1)) {
@@ -572,6 +583,8 @@ int main(int argc, char ** argv) {
             prefill(split_prefill ? prompt_tgt : inp, false);
             size_t     mismatches = 0;
             float      max_abs    = 0.0f;
+            double     kld_sum = 0.0, kld_max = 0.0;
+            size_t     kld_count  = 0;
             const auto compare    = [&](size_t output_index, int row) {
                 const float * logits    = llama_get_logits_ith(ctx_tgt, row);
                 const auto &  reference = ar_logits[output_index];
@@ -581,6 +594,33 @@ int main(int argc, char ** argv) {
                         fail("oracle non-finite logit");
                     }
                     max_abs = std::max(max_abs, std::abs(logits[v] - reference[v]));
+                }
+                if (measure_kld) {
+                    const double ref_max  = *std::max_element(reference.begin(), reference.end());
+                    const double test_max = logits[top];
+                    double       ref_sum = 0.0, test_sum = 0.0, weighted_delta = 0.0;
+                    for (int v = 0; v < n_vocab; ++v) {
+                        const double weight = std::exp((double) reference[v] - ref_max);
+                        ref_sum += weight;
+                        test_sum += std::exp((double) logits[v] - test_max);
+                        weighted_delta += weight * ((double) reference[v] - logits[v]);
+                    }
+                    double kld = weighted_delta / ref_sum + std::log(test_sum / ref_sum) + test_max - ref_max;
+                    if (!std::isfinite(kld) || kld < -1e-10) {
+                        fail("invalid oracle KLD");
+                    }
+                    kld = std::max(0.0, kld);
+                    kld_sum += kld;
+                    kld_max = std::max(kld_max, kld);
+                    ++kld_count;
+                    if (top != ar_tokens[output_index]) {
+                        fprintf(stderr,
+                                "ORACLE probabilities: prompt=%zu token=%zu kld=%.12g p_ref_ar=%.9g p_ref_other=%.9g "
+                                "p_test_ar=%.9g p_test_other=%.9g\n",
+                                pi, output_index, kld, std::exp(reference[ar_tokens[output_index]] - ref_max) / ref_sum,
+                                std::exp(reference[top] - ref_max) / ref_sum,
+                                std::exp(logits[ar_tokens[output_index]] - test_max) / test_sum, 1.0 / test_sum);
+                    }
                 }
                 if (top != ar_tokens[output_index]) {
                     ++mismatches;
@@ -630,6 +670,15 @@ int main(int argc, char ** argv) {
             }
             fprintf(stderr, "ORACLE summary: prompt=%zu rows=%d tokens=%zu mismatches=%zu max_abs_logit=%g\n", pi,
                     oracle_rows, ar_tokens.size(), mismatches, max_abs);
+            if (measure_kld) {
+                fprintf(stderr,
+                        "ORACLE KLD: prompt=%zu rows=%d split_prefill=%d same_path=%d count=%zu mean=%.12g max=%.12g\n",
+                        pi, oracle_rows, (int) split_prefill, (int) same_path, kld_count,
+                        kld_count ? kld_sum / kld_count : 0.0, kld_max);
+            }
+            if (same_path) {
+                std::swap(ctx_tgt, ctx_ar);
+            }
             oracle_mismatches += mismatches;
             continue;  // Diagnostic timings include logit copies and are not benchmarks.
         }

@@ -25,7 +25,11 @@ struct dspark_markov_cuda;
 // layout) to device buffers and allocate the per-round scratch. Returns
 // nullptr on any failure (no device, allocation failure, bad dims).
 // The explicit CUDA runtime path treats failure as fatal, without CPU fallback.
-dspark_markov_cuda * dspark_markov_cuda_init(const float * w1, const float * w2, int64_t n_vocab, int64_t markov_rank);
+dspark_markov_cuda * dspark_markov_cuda_init(const float * w1,
+                                             const float * w2,
+                                             int64_t       n_vocab,
+                                             int64_t       markov_rank,
+                                             int32_t       mask_token_id);
 
 void dspark_markov_cuda_free(dspark_markov_cuda * ctx);
 

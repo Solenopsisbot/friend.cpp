@@ -139,4 +139,4 @@ class DSparkModel(TextModel):
 
         # per-layer decoder tensors fall through to the standard mapping. The base
         # class resolves layers.{bid}.<attn/mlp...> to blk.{bid}.<gguf name>.
-        return [(self.map_tensor_name(name), data_torch)]
+        return [(self.map_tensor_name(n), data_torch)]

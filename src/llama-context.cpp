@@ -1322,6 +1322,15 @@ void llama_context::set_nextn_layer_offset(int32_t offset) {
 }
 
 void llama_context::set_capture_layers(const std::vector<int32_t> & layer_ids) {
+    const int32_t n_layer = (int32_t) model.hparams.n_layer();
+    if (layer_ids.size() > LLAMA_MAX_LAYERS) {
+        throw std::invalid_argument("Too many capture layers");
+    }
+    for (int32_t il : layer_ids) {
+        if (il < 0 || il >= n_layer || il >= LLAMA_MAX_LAYERS) {
+            throw std::invalid_argument("Capture layer index out of range");
+        }
+    }
     // reset
     cparams.embeddings_capture = false;
     cparams.n_capture_layers   = 0;
@@ -1340,13 +1349,8 @@ void llama_context::set_capture_layers(const std::vector<int32_t> & layer_ids) {
         return;
     }
 
-    const int32_t n_layer = (int32_t) model.hparams.n_layer();
-    uint32_t      n       = 0;
+    uint32_t n = 0;
     for (int32_t il : layer_ids) {
-        if (il < 0 || il >= n_layer || il >= LLAMA_MAX_LAYERS) {
-            LLAMA_LOG_ERROR("%s: capture layer %d out of range [0, %d)\n", __func__, il, n_layer);
-            continue;
-        }
         cparams.capture_layer_idx[n++] = il;
     }
 
@@ -2725,6 +2729,9 @@ llm_graph_params llama_context::graph_params(
         /*.mctx        =*/mctx,
         /*.cross       =*/&cross,
         /*.dspark_ctx  =*/&dspark_ctx,
+        /*.dspark_has_context =*/!dspark_ctx.v_ctx_feat.empty(),
+        /*.dspark_ctx_rows =*/dspark_ctx.n_ctx_rows,
+        /*.dspark_ctx_width =*/dspark_ctx.n_embd_cap,
         /*.hadamard_rotations =*/&model.hadamard_rotations,
         /*.hadamard_inverses  =*/&model.hadamard_inverses,
         /*.samplers    =*/sampling.samplers,

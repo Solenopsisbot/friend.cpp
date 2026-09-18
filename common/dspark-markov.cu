@@ -31,6 +31,7 @@
 struct dspark_markov_cuda {
     int64_t n_vocab = 0;
     int64_t rank    = 0;
+    int32_t mask_token_id = -1;
 
     float * d_w1 = nullptr;  // [n_vocab * rank]
     float * d_w2 = nullptr;  // [n_vocab * rank]
@@ -64,6 +65,7 @@ __global__ void dspark_gemv_argmax_partial(const float * __restrict__ w1,
                                            const int32_t * __restrict__ prev,
                                            int64_t n_vocab,
                                            int     rank,
+                                           int32_t mask_token_id,
                                            int64_t k,
                                            float * __restrict__ part_val,
                                            int32_t * __restrict__ part_idx,
@@ -83,11 +85,17 @@ __global__ void dspark_gemv_argmax_partial(const float * __restrict__ w1,
     const int64_t base_off = k * n_vocab;
 
     float   bestv = -CUDART_INF_F;
-    int32_t besti = 0;
+    int32_t besti = INT32_MAX;
 
     const int64_t gw     = (int64_t) blockIdx.x * DSPARK_WARPS_PER_BLOCK + wid;
     const int64_t stride = (int64_t) gridDim.x * DSPARK_WARPS_PER_BLOCK;
     for (int64_t v = gw; v < n_vocab; v += stride) {
+        if (v == mask_token_id) {
+            if (lane == 0 && scores) {
+                scores[v] = -CUDART_INF_F;
+            }
+            continue;
+        }
         const float * w2row = w2 + v * (int64_t) rank;
         float         acc   = 0.0f;
         for (int r = lane; r < rank; r += DSPARK_WARP) {
@@ -104,7 +112,7 @@ __global__ void dspark_gemv_argmax_partial(const float * __restrict__ w1,
             }
             // strict >: rows are visited in increasing v, so the lowest index
             // wins ties (same as the host scalar/BLAS argmax).
-            if (logit > bestv) {
+            if (logit > bestv || (logit == bestv && v < besti)) {
                 bestv = logit;
                 besti = (int32_t) v;
             }
@@ -276,9 +284,14 @@ static bool dspark_markov_ensure_capacity(dspark_markov_cuda * ctx, int64_t rows
     return true;
 }
 
-dspark_markov_cuda * dspark_markov_cuda_init(const float * w1, const float * w2, int64_t n_vocab, int64_t markov_rank) {
-    if (w1 == nullptr || w2 == nullptr || n_vocab <= 0 || n_vocab > INT32_MAX || markov_rank <= 0 ||
-        markov_rank > INT32_MAX || (uint64_t) n_vocab > SIZE_MAX / sizeof(float) / (uint64_t) markov_rank) {
+dspark_markov_cuda * dspark_markov_cuda_init(const float * w1,
+                                             const float * w2,
+                                             int64_t       n_vocab,
+                                             int64_t       markov_rank,
+                                             int32_t       mask_token_id) {
+    if (w1 == nullptr || w2 == nullptr || n_vocab <= 1 || mask_token_id < 0 || mask_token_id >= n_vocab ||
+        n_vocab > INT32_MAX || markov_rank <= 0 || markov_rank > INT32_MAX ||
+        (uint64_t) n_vocab > SIZE_MAX / sizeof(float) / (uint64_t) markov_rank) {
         return nullptr;
     }
 
@@ -291,6 +304,7 @@ dspark_markov_cuda * dspark_markov_cuda_init(const float * w1, const float * w2,
     dspark_markov_cuda * ctx = new dspark_markov_cuda();
     ctx->n_vocab             = n_vocab;
     ctx->rank                = markov_rank;
+    ctx->mask_token_id       = mask_token_id;
 
     const size_t nbytes = (size_t) n_vocab * (size_t) markov_rank * sizeof(float);
 
@@ -410,8 +424,8 @@ static bool dspark_markov_cuda_run(dspark_markov_cuda * ctx,
     const size_t shmem = (size_t) R * sizeof(float);
     for (int32_t k = 0; k < n_use; ++k) {
         dspark_gemv_argmax_partial<<<DSPARK_NBLOCKS, DSPARK_BLK_THREADS, shmem, ctx->stream>>>(
-            ctx->d_w1, ctx->d_w2, ctx->d_base, ctx->d_prev, V, R, (int64_t) k, ctx->d_part_val, ctx->d_part_idx,
-            costs ? ctx->d_scores : nullptr);
+            ctx->d_w1, ctx->d_w2, ctx->d_base, ctx->d_prev, V, R, ctx->mask_token_id, (int64_t) k, ctx->d_part_val,
+            ctx->d_part_idx, costs ? ctx->d_scores : nullptr);
         dspark_argmax_final<<<1, DSPARK_BLK_THREADS, 0, ctx->stream>>>(ctx->d_part_val, ctx->d_part_idx, DSPARK_NBLOCKS,
                                                                        (int64_t) k, ctx->d_out, ctx->d_prev);
         if (costs) {
