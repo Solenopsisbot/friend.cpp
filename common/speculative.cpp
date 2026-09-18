@@ -321,7 +321,7 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
         if (correction_rows > draft_rows) {
             throw std::runtime_error("DSpark correction rows exceed forward rows");
         }
-        LOG_INF("dspark: trained_block=%d forward_rows=%d correction_rows=%d\n", block_size, draft_rows,
+        LOG_INF("dspark: full_block=%d forward_rows=%d correction_rows=%d\n", block_size, draft_rows,
                 correction_rows);
         if (n_vocab > std::numeric_limits<int>::max()) {
             throw std::runtime_error("dspark: vocab size exceeds cblas integer range");

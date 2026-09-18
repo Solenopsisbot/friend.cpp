@@ -268,7 +268,7 @@ llama_model_dspark::graph::graph(const llama_model & model, const llm_graph_para
         const float   min_snr     = hparams.dspark_min_log_snr;
         const float   max_snr     = hparams.dspark_max_log_snr;
         const int64_t bsz         = hparams.dspark_block_size > 0 ? hparams.dspark_block_size : n_draft;
-        // Opt-in until trained-weight parity and backend-specific timing pass.
+        // Opt-in until real-weight parity and backend-specific timing pass.
         const char *  compact_env = std::getenv("LLAMA_DSPARK_SNR_TWO_ROWS");
         const bool    compact_snr = compact_env && std::strcmp(compact_env, "1") == 0 && n_draft > 2 && n_draft <= bsz;
         const int64_t snr_rows    = compact_snr ? 2 : n_draft;
