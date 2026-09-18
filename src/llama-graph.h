@@ -107,6 +107,16 @@ struct llama_cross {
     std::vector<std::set<llama_seq_id>> seq_ids_enc;
 };
 
+struct llama_dspark_ctx {
+    int64_t n_embd_cap = 0;  // n_capture_layers * n_embd (raw tap width, pre dspark.fc)
+    int64_t n_ctx_rows = 0;  // number of staged context rows for the next decode call
+
+    // [n_ctx_rows * n_embd_cap], row-major: row i is position ctx_pos[i]'s
+    // concatenated multi-layer tap feature (e.g. from llama_get_embeddings_capture_ith
+    // on the target's context, one row per accepted-since-last-round token).
+    std::vector<float>   v_ctx_feat;
+    std::vector<int32_t> v_ctx_pos;  // [n_ctx_rows], absolute position id per context row
+};
 struct llm_graph_params;
 
 //
@@ -145,6 +155,20 @@ using llm_graph_input_ptr = std::unique_ptr<llm_graph_input_i>;
 // positions at min_log_snr) and its featurization are a pure function of
 // n_tokens/block_drafts/min_log_snr/max_log_snr, all known at graph-build time.
 // The caller precomputes the whole [128, n_tokens] matrix and this just stages it.
+class llm_graph_input_dspark_ctx : public llm_graph_input_i {
+  public:
+    llm_graph_input_dspark_ctx(const llama_dspark_ctx * dctx) : dctx(dctx) {}
+
+    virtual ~llm_graph_input_dspark_ctx() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    ggml_tensor * ctx_feat = nullptr;  // F32 [n_embd_cap, n_ctx_rows]
+
+    const llama_dspark_ctx * dctx;
+    int32_t                  reuse_mask_id          = -1;
+    int64_t                  correction_prefix_rows = 0;
+};
 class llm_graph_input_dspark_logsnr : public llm_graph_input_i {
 public:
     llm_graph_input_dspark_logsnr(std::vector<float> feat) : v_feat(std::move(feat)) {}
@@ -833,6 +857,10 @@ struct llm_graph_params {
     const llama_adapter_loras    * loras;
     const llama_memory_context_i * mctx;
     const llama_cross            * cross;
+    const llama_dspark_ctx *         dspark_ctx;
+    bool                             dspark_has_context;
+    int64_t                          dspark_ctx_rows;
+    int64_t                          dspark_ctx_width;
     const llama_hadamard_rotations * hadamard_rotations;
     const llama_hadamard_rotations * hadamard_inverses;
 
@@ -893,6 +921,12 @@ struct llm_graph_params {
             return false;
         }
 
+        if ((dspark_ctx == nullptr) != (other.dspark_ctx == nullptr) ||
+            dspark_has_context != other.dspark_has_context || dspark_ctx_rows != other.dspark_ctx_rows ||
+            dspark_ctx_width != other.dspark_ctx_width) {
+            return false;
+        }
+
         if (n_outputs != other.n_outputs) {
             return false;
         }
@@ -916,6 +950,10 @@ struct llm_graph_params {
         }
 
         // TODO: https://github.com/ggml-org/llama.cpp/pull/24340#discussion_r3448035248
+        if (cparams.n_capture_layers != other.cparams.n_capture_layers ||
+            cparams.capture_layer_idx != other.cparams.capture_layer_idx) {
+            return false;
+        }
         if (cparams.nextn_layer_offset != other.cparams.nextn_layer_offset) {
             return false;
         }
@@ -953,6 +991,10 @@ public:
 
     ggml_tensor * get_layer_inp(int il) const { return t_layer_inp[il]; }
 
+    // multi-layer hidden-state tap: the per-layer outputs concatenated along dim0
+    // into a single [n_capture * n_embd, n_outputs] tensor, in capture order.
+    ggml_tensor * get_h_capture() const { return t_h_capture; }
+
     ggml_cgraph  * get_gf()  const { return gf; }
     ggml_context * get_ctx() const { return ctx_compute.get(); }
 
@@ -984,11 +1026,15 @@ public:
     ggml_tensor * t_logits      = nullptr;
     ggml_tensor * t_embd        = nullptr;
     ggml_tensor * t_embd_pooled = nullptr;
+    // [n_capture * n_embd, n_outputs] concatenated multi-layer hidden states, set
+    // by the per-model graph builder when cparams.n_capture_layers > 0.
+    ggml_tensor * t_h_capture   = nullptr;
     ggml_tensor * t_h_nextn     = nullptr; // [n_embd, n_outputs] hidden state before final output norm
 
     std::vector<ggml_tensor *> t_layer_inp;
 
     std::vector<ggml_tensor *> t_sampled;
+    std::vector<ggml_tensor *> t_dspark_greedy;
     std::vector<ggml_tensor *> t_sampled_probs;
     std::vector<ggml_tensor *> t_sampled_logits;
     std::vector<ggml_tensor *> t_candidates;
@@ -1075,6 +1121,10 @@ struct llm_graph_context {
     const llama_adapter_loras    * loras;
     const llama_memory_context_i * mctx;
     const llama_cross            * cross;
+    const llama_dspark_ctx *         dspark_ctx;
+    bool                             dspark_has_context;
+    int64_t                          dspark_ctx_rows;
+    int64_t                          dspark_ctx_width;
     const llama_hadamard_rotations * hadamard_rotations;
     const llama_hadamard_rotations * hadamard_inverses;
 

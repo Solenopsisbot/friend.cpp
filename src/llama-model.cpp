@@ -335,6 +335,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_kimi_k3(params);
         case LLM_ARCH_STEP35:
             return new llama_model_step35(params);
+        case LLM_ARCH_DSPARK:
+            return new llama_model_dspark(params);
         default:
             throw std::runtime_error(std::string("unsupported model architecture: '") + llm_arch_name(arch) + "'");
     }
@@ -1266,6 +1268,7 @@ void llama_model_base::load_hparams(llama_model_loader & ml) {
             case LLM_ARCH_QWEN35:
             case LLM_ARCH_QWEN35MOE:
             case LLM_ARCH_QWEN3NEXT:
+            case LLM_ARCH_DSPARK:
                 break;
             default:
                 throw std::runtime_error(format(
@@ -1305,7 +1308,7 @@ void llama_model_base::load_hparams(llama_model_loader & ml) {
         };
 
         for (const auto & weight_name : weight_names) {
-            if (!is_foldable_weight(weight_name)) {
+            if (!is_foldable_weight(weight_name) || (arch == LLM_ARCH_DSPARK && weight_name != "output.weight")) {
                 throw std::runtime_error(format(
                     "prism.hadamard: weight '%s' is not on a verified Hadamard-aware matmul path", weight_name.c_str()));
             }
@@ -1321,7 +1324,7 @@ void llama_model_base::load_hparams(llama_model_loader & ml) {
         for (const auto & name : inverse_names) {
             // the graph applies the inverse only to the token-embedding lookup; any
             // other latent table would load and silently stay rotated
-            if (name != "token_embd.weight") {
+            if (name != "token_embd.weight" || arch == LLM_ARCH_DSPARK) {
                 throw std::runtime_error(format(
                     "prism.hadamard: weight '%s' is not a verified inverse-after-lookup table", name.c_str()));
             }
@@ -1512,6 +1515,9 @@ void llama_model_base::load_vocab(llama_model_loader & ml) {
 }
 
 bool llama_model_base::load_tensors(llama_model_loader & ml) {
+    if (params.dspark_head_source && arch != LLM_ARCH_DSPARK) {
+        throw std::runtime_error("Shared target head is supported only for DSpark");
+    }
     const auto & split_mode   = params.split_mode;
     const bool use_mlock      = params.load_mode == LLAMA_LOAD_MODE_MLOCK || params.load_mode == LLAMA_LOAD_MODE_MMAP_MLOCK;
     const auto & tensor_split = params.tensor_split;
@@ -1800,6 +1806,10 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         for (auto * cur = ggml_get_first_tensor(ctx_ptr.get()); cur != NULL; cur = ggml_get_next_tensor(ctx_ptr.get(), cur)) {
             tensors_by_name.emplace_back(ggml_get_name(cur), cur);
         }
+    }
+
+    if (arch == LLM_ARCH_DSPARK && params.dspark_head_source) {
+        tensors_by_name.emplace_back("output.weight", output);
     }
 
     ml.init_mappings(true, use_mlock ? &pimpl->mlock_mmaps : nullptr);
@@ -2926,22 +2936,23 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
 
 llama_model_params llama_model_default_params() {
     llama_model_params result = {
-        /*.devices                     =*/ nullptr,
-        /*.tensor_buft_overrides       =*/ nullptr,
-        /*.n_gpu_layers                =*/ -1,
-        /*.split_mode                  =*/ LLAMA_SPLIT_MODE_LAYER,
-        /*.load_mode                   =*/ LLAMA_LOAD_MODE_AUTO,
-        /*.main_gpu                    =*/ 0,
-        /*.tensor_split                =*/ nullptr,
-        /*.progress_callback           =*/ nullptr,
-        /*.progress_callback_user_data =*/ nullptr,
-        /*.kv_overrides                =*/ nullptr,
-        /*.vocab_only                  =*/ false,
-        /*.check_tensors               =*/ false,
-        /*.use_extra_bufts             =*/ true,
-        /*.no_host                     =*/ false,
-        /*.no_alloc                    =*/ false,
-        /*.load_mtp                    =*/ false,
+        /*.dspark_head_source          =*/nullptr,
+        /*.devices                     =*/nullptr,
+        /*.tensor_buft_overrides       =*/nullptr,
+        /*.n_gpu_layers                =*/-1,
+        /*.split_mode                  =*/LLAMA_SPLIT_MODE_LAYER,
+        /*.load_mode                   =*/LLAMA_LOAD_MODE_AUTO,
+        /*.main_gpu                    =*/0,
+        /*.tensor_split                =*/nullptr,
+        /*.progress_callback           =*/nullptr,
+        /*.progress_callback_user_data =*/nullptr,
+        /*.kv_overrides                =*/nullptr,
+        /*.vocab_only                  =*/false,
+        /*.check_tensors               =*/false,
+        /*.use_extra_bufts             =*/true,
+        /*.no_host                     =*/false,
+        /*.no_alloc                    =*/false,
+        /*.load_mtp                    =*/false,
     };
 
     return result;
@@ -3193,6 +3204,10 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_QWEN35MOE:
         case LLM_ARCH_QWEN3TTS:
             return LLAMA_ROPE_TYPE_IMROPE;
+        // dspark's own trunk is a plain dense Qwen3-style stack (standard
+        // rotate-half/NEOX RoPE), independent of the target's RoPE family --
+        case LLM_ARCH_DSPARK:
+            return LLAMA_ROPE_TYPE_NEOX;
 
         case LLM_ARCH_GLM4:
             return model->hparams.use_mrope() ? LLAMA_ROPE_TYPE_MROPE : LLAMA_ROPE_TYPE_NORM;
@@ -3356,6 +3371,91 @@ ggml_backend_dev_t llama_model_get_device(const struct llama_model * model, int 
         return nullptr;
     }
     return model->devices[i].dev;
+}
+
+bool llama_model_dspark_get_meta(const llama_model * model, llama_dspark_meta * out) {
+    if (model == nullptr || out == nullptr) {
+        return false;
+    }
+
+    const auto & hp = model->hparams;
+    if (hp.dspark_block_size == 0) {
+        return false;  // not a dspark model
+    }
+
+    // dspark ships no tokenizer (converter calls _set_vocab_none(): it ties to
+    // the TARGET model's vocab), so the real vocab width only exists as
+    // token_embd.weight's own shape -- mirrors src/models/dspark.cpp's
+    // load_arch_tensors and tests/test-dspark-forward.cpp's n_vocab_from_model.
+    const ggml_tensor * tok_embd = model->get_tensor("token_embd.weight");
+    if (tok_embd == nullptr) {
+        return false;
+    }
+
+    out->n_embd          = hp.n_embd;
+    out->n_vocab         = tok_embd->ne[1];
+    out->n_capture       = hp.n_dspark_target_layers;
+    out->n_embd_cap      = out->n_capture * out->n_embd;
+    out->block_size      = (int32_t) hp.dspark_block_size;
+    out->mask_token_id   = (int32_t) hp.dspark_mask_token_id;
+    out->markov_rank     = hp.dspark_markov_rank;
+    out->graph_corrected = hp.dspark_hidden_correction;
+
+    return true;
+}
+
+bool llama_model_dspark_get_markov(const llama_model * model, std::vector<float> & w1, std::vector<float> & w2) {
+    if (model == nullptr || model->hparams.dspark_markov_rank == 0) {
+        return false;
+    }
+
+    const ggml_tensor * a = model->dspark_markov_head_a;
+    const ggml_tensor * b = model->dspark_markov_head_b;
+    if (a == nullptr || b == nullptr) {
+        return false;
+    }
+
+    GGML_ASSERT(a->ne[0] == b->ne[0] && a->ne[1] == b->ne[1] && "dspark: markov_head_a/b shape mismatch");
+
+    auto copy_to_f32 = [](const ggml_tensor * t, std::vector<float> & out) -> bool {
+        const int64_t n = ggml_nelements(t);
+        out.resize((size_t) n);
+
+        switch (t->type) {
+            case GGML_TYPE_F32:
+                ggml_backend_tensor_get(t, out.data(), 0, (size_t) n * sizeof(float));
+                return true;
+            case GGML_TYPE_F16:
+                {
+                    std::vector<ggml_fp16_t> tmp((size_t) n);
+                    ggml_backend_tensor_get(t, tmp.data(), 0, (size_t) n * sizeof(ggml_fp16_t));
+                    ggml_fp16_to_fp32_row(tmp.data(), out.data(), n);
+                    return true;
+                }
+            case GGML_TYPE_BF16:
+                {
+                    std::vector<ggml_bf16_t> tmp((size_t) n);
+                    ggml_backend_tensor_get(t, tmp.data(), 0, (size_t) n * sizeof(ggml_bf16_t));
+                    ggml_bf16_to_fp32_row(tmp.data(), out.data(), n);
+                    return true;
+                }
+            default:
+                {
+                    const auto * traits = ggml_get_type_traits(t->type);
+                    if (!ggml_is_quantized(t->type) || traits == nullptr || traits->to_float == nullptr) {
+                        LLAMA_LOG_ERROR("%s: unsupported markov head tensor type %s\n", __func__,
+                                        ggml_type_name(t->type));
+                        return false;
+                    }
+                    std::vector<uint8_t> raw(ggml_nbytes(t));
+                    ggml_backend_tensor_get(t, raw.data(), 0, raw.size());
+                    traits->to_float(raw.data(), out.data(), n);
+                    return true;
+                }
+        }
+    };
+
+    return copy_to_f32(a, w1) && copy_to_f32(b, w2);
 }
 
 //
