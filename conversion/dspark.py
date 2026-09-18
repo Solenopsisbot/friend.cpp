@@ -51,7 +51,7 @@ class DSparkModel(TextModel):
         "markov_head.prev_embed": gguf.TENSOR_NAMES[gguf.MODEL_TENSOR.DSPARK_MARKOV_HEAD_A],
         "markov_head.markov_w2": gguf.TENSOR_NAMES[gguf.MODEL_TENSOR.DSPARK_MARKOV_HEAD_B],
         "confidence_head.proj":  gguf.TENSOR_NAMES[gguf.MODEL_TENSOR.DSPARK_CONFIDENCE_HEAD],
-        # legacy EasyDeL aliases (kept so older exports still convert):
+        # legacy aliases (kept so older exports still convert):
         "markov_head.down":      gguf.TENSOR_NAMES[gguf.MODEL_TENSOR.DSPARK_MARKOV_HEAD_A],
         "markov_head.up":        gguf.TENSOR_NAMES[gguf.MODEL_TENSOR.DSPARK_MARKOV_HEAD_B],
         "confidence_head":       gguf.TENSOR_NAMES[gguf.MODEL_TENSOR.DSPARK_CONFIDENCE_HEAD],
@@ -78,7 +78,7 @@ class DSparkModel(TextModel):
             self.gguf_writer.add_float32("dspark.dspark.max_log_snr", float(hp["max_log_snr"]))
 
         # dspark drafter trunk is a small transformer; block_count is its depth.
-        # (EasyDeL exports this under "num_hidden_layers"; TextModel already wired
+        # (exports carry this as "num_hidden_layers"; TextModel already wired
         # block_count from that, so nothing extra needed here.)
 
         block_size = int(hp.get("block_size", 7))
