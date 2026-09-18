@@ -497,7 +497,7 @@ static void build_dspark_markov_head(llm_graph_context & g, const llama_model & 
 // DSpark Markov head.
 //
 // Reference: _DflyDraftSampler.__call__ + DFlyHiddenStatesCorrection.forward.
-static void build_dfly_correction_head(llm_graph_context & g, const llama_model & model, ggml_tensor * tokens,
+static void build_dfly_correction_head(llm_graph_context & g, const llama_model & model,
         ggml_tensor * inp_embd_raw) {
     ggml_context * ctx0 = g.ctx0;
     auto         & res  = g.res;
@@ -909,7 +909,7 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
     // LLAMA_DFLY_NO_CHAIN drops the correction, for A/B measurement only: DFly's acceptance
     // depends on it, so a run without it is not a meaningful DFly configuration.
     if (model.dfly_hc_down && getenv("LLAMA_DFLY_NO_CHAIN") == nullptr) {
-        build_dfly_correction_head(*this, model, inp_tokens, inp_embd_raw);
+        build_dfly_correction_head(*this, model, inp_embd_raw);
     }
 }
 

@@ -627,7 +627,8 @@ jobs:
             -DGPU_TARGETS="${{ matrix.gpu_targets }}" `
             -DGGML_HIP_ROCWMMA_FATTN=ON `
             -DGGML_HIP=ON `
-            -DLLAMA_BUILD_BORINGSSL=ON
+            -DLLAMA_BUILD_BORINGSSL=ON `
+            ${{ env.CMAKE_ARGS }}
           # Full self-contained bundle (CPU backend + HIP), not just the ggml-hip.dll add-on.
           cmake --build build -j ${env:NUMBER_OF_PROCESSORS}
           md "build\bin\rocblas\library\"
@@ -694,7 +695,8 @@ jobs:
             -DGGML_NATIVE=OFF \
             -DGGML_CPU_ALL_VARIANTS=ON \
             -DGGML_OPENMP=OFF \
-            -DLLAMA_BUILD_BORINGSSL=ON
+            -DLLAMA_BUILD_BORINGSSL=ON \
+            ${{ env.CMAKE_ARGS }}
           cmake --build build --config Release -j $(nproc)
 
       - name: Determine tag name
