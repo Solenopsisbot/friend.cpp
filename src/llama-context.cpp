@@ -1760,13 +1760,15 @@ int llama_context::encode(const llama_batch & batch_inp) {
     // single bulk copy: t_h_capture is already [n_capture * n_embd, n_tokens].
     if (embd_capture.data && cparams.n_capture_layers > 0 && cparams.pooling_type == LLAMA_POOLING_TYPE_NONE) {
         ggml_tensor * t_cap = res->get_h_capture();
-        if (t_cap) {
-            ggml_backend_t backend_c = ggml_backend_sched_get_tensor_backend(sched.get(), t_cap);
-            GGML_ASSERT(backend_c != nullptr);
-            const uint32_t row = cparams.n_capture_layers * hparams.n_embd;
-            GGML_ASSERT(n_tokens * (int64_t) row <= (int64_t) embd_capture.size);
-            ggml_backend_tensor_get_async(backend_c, t_cap, embd_capture.data, 0, n_tokens * row * sizeof(float));
+        if (!t_cap) {
+            LLAMA_LOG_ERROR("%s: target graph did not produce requested capture layers\n", __func__);
+            return -1;
         }
+        ggml_backend_t backend_c = ggml_backend_sched_get_tensor_backend(sched.get(), t_cap);
+        GGML_ASSERT(backend_c != nullptr);
+        const uint32_t row = cparams.n_capture_layers * hparams.n_embd;
+        GGML_ASSERT(n_tokens * (int64_t) row <= (int64_t) embd_capture.size);
+        ggml_backend_tensor_get_async(backend_c, t_cap, embd_capture.data, 0, n_tokens * row * sizeof(float));
     }
 
     // TODO: hacky solution
@@ -2083,14 +2085,16 @@ int llama_context::decode(const llama_batch & batch_inp) {
         if (embd_capture.data && cparams.n_capture_layers > 0 && n_outputs > 0 &&
             cparams.pooling_type == LLAMA_POOLING_TYPE_NONE) {
             ggml_tensor * t_cap = res->get_h_capture();
-            if (t_cap) {
-                ggml_backend_t backend_c = ggml_backend_sched_get_tensor_backend(sched.get(), t_cap);
-                GGML_ASSERT(backend_c != nullptr);
-                const uint32_t row              = cparams.n_capture_layers * hparams.n_embd;
-                float *        embd_capture_out = embd_capture.data + (size_t) n_outputs_prev * row;
-                GGML_ASSERT((n_outputs_prev + n_outputs) * (int64_t) row <= (int64_t) embd_capture.size);
-                ggml_backend_tensor_get_async(backend_c, t_cap, embd_capture_out, 0, n_outputs * row * sizeof(float));
+            if (!t_cap) {
+                LLAMA_LOG_ERROR("%s: target graph did not produce requested capture layers\n", __func__);
+                return -1;
             }
+            ggml_backend_t backend_c = ggml_backend_sched_get_tensor_backend(sched.get(), t_cap);
+            GGML_ASSERT(backend_c != nullptr);
+            const uint32_t row              = cparams.n_capture_layers * hparams.n_embd;
+            float *        embd_capture_out = embd_capture.data + (size_t) n_outputs_prev * row;
+            GGML_ASSERT((n_outputs_prev + n_outputs) * (int64_t) row <= (int64_t) embd_capture.size);
+            ggml_backend_tensor_get_async(backend_c, t_cap, embd_capture_out, 0, n_outputs * row * sizeof(float));
         }
 
         // extract logits

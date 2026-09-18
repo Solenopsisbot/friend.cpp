@@ -180,6 +180,10 @@ llama_model_qwen35::graph::graph(const llama_model & model, const llm_graph_para
     ggml_tensor * inp_pos     = build_inp_pos();
     ggml_tensor * inp_out_ids = build_inp_out_ids();
 
+    // multi-layer hidden-state tap: collect the captured layer outputs here in
+    // capture order, then concatenate them along dim0 after the layer loop.
+    std::vector<ggml_tensor *> h_capture(cparams.n_capture_layers, nullptr);
+
     // MTP/NextN layers are loaded as extra decoder blocks but not executed in the main pass.
     for (int il = 0; il < n_layer; ++il) {
         res->t_layer_inp[il] = inpL;
@@ -200,7 +204,7 @@ llama_model_qwen35::graph::graph(const llama_model & model, const llm_graph_para
             cur = build_layer_attn(inp->get_attn(), cur, inp_pos, sections, il);
         }
 
-        if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked) {
+        if (il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked && cparams.n_capture_layers == 0) {
             cur   = ggml_get_rows(ctx0, cur,   inp_out_ids);
             inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
         }
@@ -229,15 +233,50 @@ llama_model_qwen35::graph::graph(const llama_model & model, const llm_graph_para
 
         // Input for next layer
         inpL = cur;
+
+        // multi-layer hidden-state tap: if this layer index is registered for
+        // capture, slice it to the requested output rows (masked layout) and
+        // stash it in the matching capture slot. Slot order == capture order, so
+        // the post-loop concat width is [n_capture * n_embd] in the order the
+        // caller requested, independent of the order layers are visited.
+        for (uint32_t c = 0; c < cparams.n_capture_layers; ++c) {
+            if (cparams.capture_layer_idx[c] == il) {
+                ggml_tensor * cap = cur;
+                if (cparams.embeddings_nextn_masked && inp_out_ids) {
+                    cap = ggml_get_rows(ctx0, cap, inp_out_ids);
+                }
+                cb(cap, "h_capture", il);
+                h_capture[c] = cap;
+            }
+        }
     }
     cur = inpL;
+    // multi-layer hidden-state tap: concatenate captured layers along dim0 into a
+    // single [n_capture * n_embd, n_outputs] tensor for one bulk host copy.
+    if (cparams.n_capture_layers > 0) {
+        ggml_tensor * cap = h_capture[0];
+        GGML_ASSERT(cap && "capture layer 0 was not produced (index out of executed range?)");
+        for (uint32_t c = 1; c < cparams.n_capture_layers; ++c) {
+            GGML_ASSERT(h_capture[c] && "a requested capture layer was not produced");
+            cap = ggml_concat(ctx0, cap, h_capture[c], 0);
+        }
+        cb(cap, "h_capture_cat", -1);
+        res->t_h_capture = cap;
+
+        // The capture concat chain is a side-branch off the per-layer outputs,
+        // not reachable by traversing backward from the logits tensor expanded
+        // below -- without this it's built but never added to gf, so the
+        // scheduler never visits or backend-assigns it (ggml_set_output() alone
+        // marks intent, it doesn't add the node to the graph).
+        ggml_build_forward_expand(gf, cap);
+    }
 
     cur = build_norm(cur, model.output_norm, nullptr, LLM_NORM_RMS, -1);
 
     cb(cur, "h_nextn", -1);
     res->t_h_nextn = cur;
 
-    if (!cparams.embeddings_nextn_masked && inp_out_ids) {
+    if ((!cparams.embeddings_nextn_masked || cparams.n_capture_layers > 0) && inp_out_ids) {
         cur = ggml_get_rows(ctx0, cur, inp_out_ids);
     }
 

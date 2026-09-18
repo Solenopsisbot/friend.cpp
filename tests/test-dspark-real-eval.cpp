@@ -354,9 +354,6 @@ int main(int argc, char ** argv) {
             "llama_memory_hybrid::seq_rm)");
     }
 
-    if (oracle_rows) {
-        fail("standalone AR comparison does not support oracle mode");
-    }
     auto ar_params         = cparams_tgt;
     ar_params.n_rs_seq     = 0;
     llama_context * ctx_ar = llama_init_from_model(model_tgt, ar_params);
@@ -560,6 +557,8 @@ int main(int argc, char ** argv) {
         const double ar_tok_per_sec = ar_n_predicted / ar_seconds;
 
         if (oracle_rows) {
+            std::swap(ctx_tgt, ctx_ar);
+            llama_set_capture_layers(ctx_tgt, nullptr, 0);
             // Teacher force the AR stream. No drafter, rejection, or partial rollback runs here.
             if (!llama_memory_seq_rm(llama_get_memory(ctx_tgt), seq_id, 0, -1)) {
                 fail("oracle reset failed");
