@@ -803,8 +803,9 @@ class DFlyModel(DFlashModel):
             if correction_type != "swiglu":
                 raise ValueError(f"unsupported hidden_correction_type {correction_type!r} (only 'swiglu')")
 
-        # slot 0 of a DFly block is the committed bonus anchor, not a prediction slot
-        self._sample_from_anchor = not bool(hp.get("dspark_bonus_anchor", True))
+        if not bool(hp.get("dspark_bonus_anchor", True)):
+            raise ValueError("DFly requires dspark_bonus_anchor=true; slot 0 is the committed anchor")
+        self._sample_from_anchor = False
 
     def _target_shapes(self) -> dict[str, int]:
         """Shapes read from --target-model-dir, for the keys it declares. Empty when unavailable."""
