@@ -2888,11 +2888,13 @@ static bool ggml_metal_op_mul_mat_lut_params(const ggml_tensor * op, ggml_metal_
     }
 
     // One lane per row and 32*N_SG_LUT rows per threadgroup leave shapes with few rows
-    // (attn_k/v at 1024, the 48-row ssm_alpha/beta, and even ffn_down's 5120 rows over a
-    // 17408-long K) with a handful of threadgroups each walking all of K. Split K across
-    // threadgroups until there are about GGML_METAL_LUT_TGS (default 160) of them, and sum
-    // the partials in a second, deterministic pass.
-    static const int tgs_target = getenv("GGML_METAL_LUT_TGS") ? atoi(getenv("GGML_METAL_LUT_TGS")) : 160;
+    // (ffn_down's 5120 rows over a 17408-long K, the 5120/6144-row attention and ssm
+    // projections) with a handful of threadgroups each walking all of K. Split K across
+    // threadgroups until there are about GGML_METAL_LUT_TGS of them, and sum the partials
+    // in a second, deterministic pass. The default 64 was the best compromise on M5
+    // (5120 x 17408 at 8 columns: unsplit 0.39 ms, split 2-4 ways 0.32-0.33 ms; 48+ row
+    // threadgroups gain nothing from splitting and pay for the reduce pass).
+    static const int tgs_target = getenv("GGML_METAL_LUT_TGS") ? atoi(getenv("GGML_METAL_LUT_TGS")) : 64;
 
     const int nb       = (int) (src0->ne[0]/128);
     const int row_tgs  = (int) ((src0->ne[1] + 32*N_SG_LUT - 1)/(32*N_SG_LUT));
