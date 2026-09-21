@@ -754,6 +754,20 @@ struct llama_model {
     // for keeping track of associated LoRA adapters
     std::unordered_set<llama_adapter_lora *> loras;
 
+    // friend.cpp: hot-swappable LM head (see llama_adapter_head). The base head
+    // pointers are captured on the first swap so they can be restored; head_epoch
+    // is bumped on every swap and folded into graph reuse so a swap forces a rebuild.
+    struct llama_adapter_head * active_head = nullptr;
+    uint64_t head_epoch = 0;
+    struct {
+        bool          saved       = false;
+        ggml_tensor * output      = nullptr;
+        ggml_tensor * output_norm = nullptr;
+        ggml_tensor * output_b    = nullptr;
+        ggml_tensor * output_s    = nullptr;
+        ggml_tensor * output_in_s = nullptr;
+    } head_base;
+
     // statically allocated context for assigning
     struct llama_meta_device_get_split_state_userdata get_split_state_ud;
 

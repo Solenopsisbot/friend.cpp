@@ -498,3 +498,214 @@ const llama_token * llama_adapter_get_alora_invocation_tokens(const llama_adapte
     GGML_ASSERT(adapter);
     return adapter->alora_invocation_tokens.data();
 }
+
+//
+// friend.cpp: llama_adapter_head -- hot-swappable LM heads
+//
+
+// Default (non-extra) buffer type of the device holding `t`. Extra buffer types such as
+// CPU_REPACK only accept the specific quant formats they repack, and a head file may be
+// any type, so heads always go into the plain buffer of the same device.
+static ggml_backend_buffer_type_t llama_head_buft_for(const ggml_tensor * t) {
+    if (t == nullptr || t->buffer == nullptr) {
+        return ggml_backend_cpu_buffer_type();
+    }
+    ggml_backend_buffer_type_t buft = ggml_backend_buffer_get_type(t->buffer);
+    ggml_backend_dev_t dev = ggml_backend_buft_get_device(buft);
+    if (dev == nullptr) {
+        return ggml_backend_cpu_buffer_type();
+    }
+    return ggml_backend_dev_buffer_type(dev);
+}
+
+static void llama_adapter_head_init_impl(llama_model & model, const char * path, llama_adapter_head & head) {
+    LLAMA_LOG_INFO("%s: loading LM head from '%s' ...\n", __func__, path);
+
+    if (model.output == nullptr) {
+        throw std::runtime_error("model has no LM head (output tensor) to swap");
+    }
+
+    // the base head as loaded, even if another head is currently active
+    const ggml_tensor * base_output      = model.head_base.saved ? model.head_base.output      : model.output;
+    const ggml_tensor * base_output_norm = model.head_base.saved ? model.head_base.output_norm : model.output_norm;
+
+    ggml_context * ctx_init;
+    gguf_init_params meta_gguf_params = {
+        /* .no_alloc = */ true,
+        /* .ctx      = */ &ctx_init,
+    };
+    gguf_context_ptr ctx_gguf { gguf_init_from_file(path, meta_gguf_params) };
+    if (!ctx_gguf) {
+        throw std::runtime_error("failed to load head file " + std::string(path));
+    }
+    ggml_context_ptr ctx_meta { ctx_init };
+
+    for (int i = 0; i < gguf_get_n_kv(ctx_gguf.get()); i++) {
+        if (gguf_get_kv_type(ctx_gguf.get(), i) != GGUF_TYPE_ARRAY) {
+            head.gguf_kv.emplace(gguf_get_key(ctx_gguf.get(), i), gguf_kv_to_str(ctx_gguf.get(), i));
+        }
+    }
+    {
+        LLM_KV llm_kv = LLM_KV(LLM_ARCH_UNKNOWN);
+        const auto it = head.gguf_kv.find(llm_kv(LLM_KV_GENERAL_ARCHITECTURE));
+        if (it != head.gguf_kv.end() && llm_arch_from_string(it->second) != model.arch) {
+            throw std::runtime_error("head architecture '" + it->second + "' does not match the model");
+        }
+    }
+
+    const ggml_tensor * src_output      = ggml_get_tensor(ctx_meta.get(), "output.weight");
+    const ggml_tensor * src_output_norm = ggml_get_tensor(ctx_meta.get(), "output_norm.weight");
+    const ggml_tensor * src_output_b    = ggml_get_tensor(ctx_meta.get(), "output.bias");
+    const ggml_tensor * src_output_s    = ggml_get_tensor(ctx_meta.get(), "output.scale");
+    const ggml_tensor * src_output_in_s = ggml_get_tensor(ctx_meta.get(), "output.input_scale");
+
+    if (src_output == nullptr) {
+        throw std::runtime_error("head file has no 'output.weight' tensor");
+    }
+    if (src_output->ne[0] != base_output->ne[0] || src_output->ne[1] != base_output->ne[1]) {
+        throw std::runtime_error(format("head 'output.weight' is [%" PRId64 ", %" PRId64 "], model head is [%" PRId64 ", %" PRId64 "] (wrong base model?)",
+                src_output->ne[0], src_output->ne[1], base_output->ne[0], base_output->ne[1]));
+    }
+    if (src_output_norm && (src_output_norm->ne[0] != src_output->ne[0] || base_output_norm == nullptr)) {
+        throw std::runtime_error("head 'output_norm.weight' does not match the model's output norm");
+    }
+    if (src_output_b && src_output_b->ne[0] != src_output->ne[1]) {
+        throw std::runtime_error("head 'output.bias' does not match n_vocab");
+    }
+
+    // one ggml context per buffer type; the norm may live on a different device than the head
+    std::map<ggml_backend_buffer_type_t, ggml_context *> ctx_map;
+    auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
+        auto it = ctx_map.find(buft);
+        if (it != ctx_map.end()) {
+            return it->second;
+        }
+        ggml_init_params params = {
+            /*.mem_size   =*/ 8*ggml_tensor_overhead(),
+            /*.mem_buffer =*/ NULL,
+            /*.no_alloc   =*/ true,
+        };
+        ggml_context * c = ggml_init(params);
+        if (!c) {
+            throw std::runtime_error("failed to create ggml context for head");
+        }
+        ctx_map[buft] = c;
+        head.ctxs.emplace_back(c);
+        return c;
+    };
+
+    const ggml_backend_buffer_type_t buft_head = llama_head_buft_for(base_output);
+    const ggml_backend_buffer_type_t buft_norm = llama_head_buft_for(base_output_norm);
+
+    std::vector<std::pair<const ggml_tensor *, ggml_tensor *>> to_load;
+    auto dup = [&](const ggml_tensor * src, ggml_backend_buffer_type_t buft) -> ggml_tensor * {
+        if (src == nullptr) {
+            return nullptr;
+        }
+        ggml_tensor * dst = ggml_dup_tensor(ctx_for_buft(buft), src);
+        ggml_set_name(dst, src->name); // keep "output.weight" so name-keyed LoRA deltas still find it
+        to_load.emplace_back(src, dst);
+        return dst;
+    };
+    head.output      = dup(src_output,      buft_head);
+    head.output_norm = dup(src_output_norm, buft_norm);
+    head.output_b    = dup(src_output_b,    buft_head);
+    head.output_s    = dup(src_output_s,    buft_head);
+    head.output_in_s = dup(src_output_in_s, buft_head);
+
+    for (auto & it : ctx_map) {
+        ggml_backend_buffer_ptr buf { ggml_backend_alloc_ctx_tensors_from_buft(it.second, it.first) };
+        if (!buf) {
+            throw std::runtime_error("failed to allocate buffer for head");
+        }
+        LLAMA_LOG_INFO("%s: %10s head buffer size = %8.2f MiB\n", __func__,
+                ggml_backend_buffer_name(buf.get()), ggml_backend_buffer_get_size(buf.get())/1024.0/1024.0);
+        head.bufs.emplace_back(std::move(buf));
+    }
+
+    llama_file file(path, "rb");
+    std::vector<uint8_t> read_buf;
+    for (auto & [src, dst] : to_load) {
+        const size_t offs = gguf_get_data_offset(ctx_gguf.get()) + gguf_get_tensor_offset(ctx_gguf.get(), gguf_find_tensor(ctx_gguf.get(), src->name));
+        const size_t size = ggml_nbytes(src);
+        if (offs + size < offs || offs + size > file.size()) {
+            throw std::runtime_error(format("head tensor '%s' data is not within the file bounds", src->name));
+        }
+        read_buf.resize(size);
+        file.seek(offs, SEEK_SET);
+        file.read_raw(read_buf.data(), size);
+        ggml_backend_tensor_set(dst, read_buf.data(), 0, size);
+    }
+
+    LLAMA_LOG_INFO("%s: loaded head (%s%s%s)\n", __func__, ggml_type_name(head.output->type),
+            head.output_norm ? ", own norm" : "", head.output_b ? ", bias" : "");
+}
+
+llama_adapter_head * llama_adapter_head_init(llama_model * model, const char * path) {
+    auto * head = new llama_adapter_head(model);
+    try {
+        llama_adapter_head_init_impl(*model, path, *head);
+        return head;
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: failed to load head: %s\n", __func__, err.what());
+        delete head;
+    }
+    return nullptr;
+}
+
+void llama_adapter_head_free(llama_adapter_head * head) {
+    if (head == nullptr) {
+        return;
+    }
+    if (head->model && head->model->active_head == head) {
+        llama_model_set_head(head->model, nullptr); // never leave the model pointing at freed tensors
+    }
+    delete head;
+}
+
+int32_t llama_model_set_head(llama_model * model, llama_adapter_head * head) {
+    if (model == nullptr) {
+        return -1;
+    }
+    if (head != nullptr && head->model != model) {
+        LLAMA_LOG_ERROR("%s: head was loaded for a different model\n", __func__);
+        return -1;
+    }
+    if (model->active_head == head) {
+        return 0;
+    }
+
+    auto & base = model->head_base;
+    if (!base.saved) {
+        base.output      = model->output;
+        base.output_norm = model->output_norm;
+        base.output_b    = model->output_b;
+        base.output_s    = model->output_s;
+        base.output_in_s = model->output_in_s;
+        base.saved       = true;
+    }
+
+    if (head == nullptr) {
+        model->output      = base.output;
+        model->output_norm = base.output_norm;
+        model->output_b    = base.output_b;
+        model->output_s    = base.output_s;
+        model->output_in_s = base.output_in_s;
+    } else {
+        // bias and NVFP4 scales belong to the weight they were produced with, so they are
+        // replaced wholesale; the final norm is shared with the trunk unless the head ships one
+        model->output      = head->output;
+        model->output_norm = head->output_norm ? head->output_norm : base.output_norm;
+        model->output_b    = head->output_b;
+        model->output_s    = head->output_s;
+        model->output_in_s = head->output_in_s;
+    }
+
+    model->active_head = head;
+    model->head_epoch++;
+    return 0;
+}
+
+llama_adapter_head * llama_model_get_head(const llama_model * model) {
+    return model ? model->active_head : nullptr;
+}

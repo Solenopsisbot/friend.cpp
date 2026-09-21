@@ -865,6 +865,10 @@ struct llm_graph_params {
     const llama_hadamard_rotations * hadamard_rotations;
     const llama_hadamard_rotations * hadamard_inverses;
 
+    // friend.cpp: bumped whenever the model's LM head is swapped; graphs bake in the
+    // head tensor pointer, so a different epoch must not reuse the previous graph
+    uint64_t head_epoch;
+
     std::map<llama_seq_id, llama_sampler *> samplers;
 
     static bool samplers_equal(
@@ -966,6 +970,7 @@ struct llm_graph_params {
             cparams.causal_attn             == other.cparams.causal_attn             &&
             arch  == other.arch  &&
             gtype == other.gtype &&
+            head_epoch == other.head_epoch &&
             cvec  == other.cvec  &&
             loras == other.loras &&
             cross == other.cross;

@@ -64,6 +64,7 @@
 #include "llama-impl.h"
 #include "llama-ext.h"
 #include "llama-model.h"
+#include "friend/adapters.hpp"
 #include "llama-vocab.h"
 #include "nlohmann/json.hpp"
 
@@ -148,6 +149,38 @@ static bool is_quiet = false;
 static std::vector<gpt_vocab::id> last_n_tokens;
 static std::vector<gpt_vocab::id> current_context_tokens;
 static std::vector<float> loaded_latest_logits; //do not use normally, this is only required when loading state happens and we need to override logits
+static std::string loaded_latest_logits_head_key = ""; //friend.cpp: head that produced loaded_latest_logits
+
+// friend.cpp: adapter profile state for the single-user (seq 0) path.
+// friend_ctx_kv_key is the LoRA+cvec identity the *live* seq-0 KV was computed under;
+// a request with a different identity must not reuse it.
+static friend_adapters::profile friend_active_profile;
+static std::string friend_ctx_kv_key = "";
+static std::string friend_logits_head_key = ""; // head that produced the context's current logits
+
+// Every context that runs on the main model and therefore must see the same adapters:
+// the main context, the CFG guidance context and an MTP draft context (which shares the
+// main model). A draft context on a *separate* draft model is deliberately excluded --
+// the target's LoRAs/vectors don't fit it.
+static std::vector<llama_context *> friend_model_contexts()
+{
+    std::vector<llama_context *> ctxs;
+    if(!llama_ctx_v4)
+    {
+        return ctxs;
+    }
+    ctxs.push_back(llama_ctx_v4);
+    const llama_model * main_model = llama_get_model(llama_ctx_v4);
+    if(guidance_ctx && llama_get_model(guidance_ctx) == main_model)
+    {
+        ctxs.push_back(guidance_ctx);
+    }
+    if(draft_ctx && llama_get_model(draft_ctx) == main_model)
+    {
+        ctxs.push_back(draft_ctx);
+    }
+    return ctxs;
+}
 static size_t mem_per_token = 0;
 static std::vector<float> logits;
 static std::vector<int> smartcontext;
@@ -3819,20 +3852,20 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         }
         llama_attach_threadpool(llama_ctx_v4, threadpool1, threadpool2);
 
-        std::vector<llama_adapter_lora *> loras;
-        std::vector<float> lorascales;
-        if (lora_filename != "")
+        // friend.cpp: LoRA / control-vector / head pools. The legacy --lora file arrives in
+        // the LoRA pool as a default-on entry (scale = --loramult), so old command lines
+        // behave exactly as before; everything else is selectable per request.
+        friend_adapters::free_pools();
+        if (!friend_adapters::load_pools(llamamodel, inputs.friend_lora_pool, inputs.friend_cvec_pool, inputs.friend_head_pool))
         {
-            printf("\nAttempting to apply LORA adapter: %s\n", lora_filename.c_str());
-            auto adapter = llama_adapter_lora_init(llamamodel, lora_filename.c_str());
-            if (adapter == nullptr) {
-                fprintf(stderr, "%s: error: failed to apply lora adapter\n", __func__);
-                return ModelLoadResult::FAIL;
-            }
-
-            loras.push_back(adapter);
-            lorascales.push_back(inputs.lora_multiplier);
-            llama_set_adapters_lora(llama_ctx_v4, loras.data(), loras.size(), lorascales.data());
+            fprintf(stderr, "%s: error: failed to load adapter pools\n", __func__);
+            return ModelLoadResult::FAIL;
+        }
+        friend_active_profile = friend_adapters::default_profile();
+        friend_ctx_kv_key = friend_active_profile.kv_key;
+        if (!friend_adapters::apply(friend_active_profile, friend_model_contexts()))
+        {
+            return ModelLoadResult::FAIL;
         }
 
         if(mmproj_filename != "" && file_format==FileFormat::GGUF_GENERIC)
@@ -4442,6 +4475,11 @@ struct BatchGenerateRequest
     bool render_special = false;
     bool blue_noise = false;
     int rng_type = LLAMA_RNG_TYPE_MT19937;
+    // friend.cpp: adapter profile; adapters are context-wide, so the worker only decodes
+    // requests sharing one profile per llama_decode (see batch_pick_profile_locked)
+    friend_adapters::profile profile;
+    std::string profile_key;
+    uint64_t last_served_round = 0;
     std::vector<llama_token> prompt_tokens;
     int prompt_pos = 0;
     int n_past = 0;
@@ -4474,6 +4512,10 @@ struct BatchGenerateRequest
 };
 
 static std::mutex batch_mutex;
+// friend.cpp: adapter-profile scheduling state for the batch worker (batch_pick_profile_locked)
+static std::string batch_active_profile_key = "";
+static uint64_t batch_round = 0;
+static const uint64_t FRIEND_BATCH_MAX_WAIT_ROUNDS = 8;
 static std::condition_variable batch_cv;
 static std::deque<int> batch_waiting;
 static std::vector<std::unique_ptr<BatchGenerateRequest>> batch_requests;
@@ -4860,6 +4902,7 @@ static bool batch_claim_waiting_locked()
         }
         req->slot = slot;
         req->state = BatchState::PREFILL;
+        req->last_served_round = batch_round; // friend.cpp: starvation clock starts at claim
         batch_touched_since_legacy = true;
         req->start_time = std::chrono::steady_clock::now();
 
@@ -4917,6 +4960,46 @@ static bool batch_claim_waiting_locked()
     return claimed;
 }
 
+// friend.cpp: which adapter profile the next decode serves. Stick with the current
+// profile while it has work (switching costs a scheduler re-reserve), but switch to the
+// most-starved other profile once it has waited FRIEND_BATCH_MAX_WAIT_ROUNDS decodes.
+
+static std::string batch_pick_profile_locked()
+{
+    const BatchGenerateRequest * starving = nullptr;
+    bool current_has_work = false;
+    for(auto & req_ptr : batch_requests)
+    {
+        if(!req_ptr || req_ptr->slot < 0)
+        {
+            continue;
+        }
+        const BatchGenerateRequest & req = *req_ptr;
+        const bool has_work = req.state == BatchState::PREFILL || (req.state == BatchState::GENERATING && req.has_pending);
+        if(!has_work)
+        {
+            continue;
+        }
+        if(req.profile_key == batch_active_profile_key)
+        {
+            current_has_work = true;
+        }
+        else if(!starving || req.last_served_round < starving->last_served_round)
+        {
+            starving = &req;
+        }
+    }
+    if(current_has_work && (!starving || batch_round - starving->last_served_round < FRIEND_BATCH_MAX_WAIT_ROUNDS))
+    {
+        return batch_active_profile_key;
+    }
+    if(starving)
+    {
+        batch_active_profile_key = starving->profile_key;
+    }
+    return batch_active_profile_key;
+}
+
 static void batch_worker_loop()
 {
     const int batch_cap = std::max(1, kcpp_data ? kcpp_data->n_batch : 512);
@@ -4924,6 +5007,8 @@ static void batch_worker_loop()
     while(true)
     {
         std::vector<int> decode_ids;
+        friend_adapters::profile active_profile_copy;
+        const friend_adapters::profile * active_profile = nullptr;
         {
             std::unique_lock<std::mutex> lock(batch_mutex);
             batch_cv.wait_for(lock, std::chrono::milliseconds(5), [](){
@@ -4939,6 +5024,7 @@ static void batch_worker_loop()
             }
             batch_claim_waiting_locked();
             common_batch_clear(batch);
+            const std::string active_key = batch_pick_profile_locked();
             for(auto & req_ptr : batch_requests)
             {
                 if(!req_ptr || !batch_is_live_state(req_ptr->state) || req_ptr->slot < 0 || batch.n_tokens >= batch_cap)
@@ -4953,6 +5039,16 @@ static void batch_worker_loop()
                     batch_finish_request_locked(req, stop_reason::INVALID);
                     continue;
                 }
+                if(req.profile_key != active_key)
+                {
+                    continue; // different adapters: waits for its profile's turn
+                }
+                if(active_profile == nullptr)
+                {
+                    active_profile_copy = req.profile;
+                    active_profile = &active_profile_copy;
+                }
+                req.last_served_round = batch_round;
                 if(req.state == BatchState::PREFILL)
                 {
                     while(req.prompt_pos < (int) req.prompt_tokens.size() && batch.n_tokens < batch_cap)
@@ -4992,9 +5088,20 @@ static void batch_worker_loop()
                     decode_ids.push_back(req_ptr->id);
                 }
             }
+            batch_round++;
         }
 
-        int decode_status = llama_decode(llama_ctx_v4, batch);
+        // friend.cpp: switch adapters only when the profile actually changes; the legacy
+        // path may have applied something else meanwhile, which apply() detects per context
+        int decode_status = 0;
+        if(active_profile && !friend_adapters::apply(*active_profile, friend_model_contexts()))
+        {
+            decode_status = -1;
+        }
+        else
+        {
+            decode_status = llama_decode(llama_ctx_v4, batch);
+        }
         auto decode_finish_time = std::chrono::steady_clock::now();
 
         std::lock_guard<std::mutex> lock(batch_mutex);
@@ -5077,6 +5184,12 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     {
         return -1;
     }
+    friend_adapters::profile profile;
+    std::string profile_err;
+    if(!friend_adapters::parse_profile(inputs.adapter_profile, profile, profile_err))
+    {
+        return -1; // the legacy path reports the error properly
+    }
     std::lock_guard<std::mutex> lock(batch_mutex);
     if(batch_legacy_active || batch_legacy_waiting > 0)
     {
@@ -5102,6 +5215,8 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     req->bypass_eos_token = inputs.bypass_eos_token;
     req->render_special = inputs.render_special;
     req->blue_noise = inputs.blue_noise;
+    req->profile = profile;
+    req->profile_key = profile.kv_key + "|" + profile.head_key;
     req->rng_type = inputs.rng_type;
     req->logit_biases = {};
     for(int i = 0; i < inputs.logit_biases_len; ++i)
@@ -5699,7 +5814,7 @@ static int get_nearby_compatible_smartcache_slot()
     for(int i=0;i<savestate_limit;++i)
     {
         const auto & slot_tokens = savestates[i].savestate_context_tokens;
-        if(slot_tokens.empty() || savestates[i].media_signature!=media_composite_image_signature)
+        if(slot_tokens.empty() || savestates[i].media_signature!=media_composite_image_signature || savestates[i].kv_key!=friend_active_profile.kv_key)
         {
             continue;
         }
@@ -5780,6 +5895,36 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     if(debugmode==1 && file_format == FileFormat::GGUF_GENERIC)
     {
         llama_perf_context_reset(llama_ctx_v4);
+    }
+
+    // friend.cpp: resolve and apply this request's adapter profile before anything touches
+    // the KV cache. Unknown names are rejected up front by koboldcpp.py; this is the backstop.
+    if(file_format == FileFormat::GGUF_GENERIC)
+    {
+        friend_adapters::profile prof;
+        std::string perr;
+        bool ok = friend_adapters::parse_profile(inputs.adapter_profile, prof, perr);
+        if(ok && !friend_adapters::apply(prof, friend_model_contexts()))
+        {
+            ok = false;
+            perr = "could not apply adapter profile";
+        }
+        if(!ok)
+        {
+            printf("\nfriend: rejecting request: %s\n", perr.c_str());
+            output.text = nullptr;
+            output.status = 0;
+            output.prompt_tokens = output.completion_tokens = 0;
+            last_stop_reason = stop_reason::ERROR_ENCOUNTERED;
+            output.stopreason = last_stop_reason;
+            generation_finished = true;
+            return output;
+        }
+        if(debugmode==1 && prof.kv_key + prof.head_key != friend_active_profile.kv_key + friend_active_profile.head_key)
+        {
+            printf("\nfriend: adapter profile -> %s\n", prof.describe().c_str());
+        }
+        friend_active_profile = prof;
     }
 
     showed_rnn_warning = false;
@@ -6371,7 +6516,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                     // {
                     //     printf("%d, ",savestates[i].savestate_context_tokens[x]);
                     // }
-                    if(savestates[i].media_signature!=media_composite_image_signature)
+                    if(savestates[i].media_signature!=media_composite_image_signature || savestates[i].kv_key!=friend_active_profile.kv_key)
                     {
                         target_usable = false;
                     }
@@ -6441,7 +6586,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 for(int i=0;i<savestate_limit;++i)
                 {
                     float similaritybeat = ComputePrefixMatchPercent(savestates[i].savestate_context_tokens,embd_inp);
-                    if(savestates[i].media_signature!=media_composite_image_signature)
+                    if(savestates[i].media_signature!=media_composite_image_signature || savestates[i].kv_key!=friend_active_profile.kv_key)
                     {
                         continue;
                     }
@@ -6491,6 +6636,19 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 }
             }
         }
+    }
+
+    // friend.cpp: KV computed under a different LoRA/steering set is not reusable. SmartCache
+    // above has already had its chance to stash it (tagged with its own key) or to load a
+    // compatible slot; whatever is live now must match the request or be thrown away.
+    if(file_format==FileFormat::GGUF_GENERIC && friend_ctx_kv_key != friend_active_profile.kv_key)
+    {
+        if(!current_context_tokens.empty() && !is_quiet)
+        {
+            printf("\n[Adapter profile changed, reprocessing context: %s]\n", friend_active_profile.describe().c_str());
+        }
+        current_context_tokens.clear();
+        friend_ctx_kv_key = friend_active_profile.kv_key;
     }
 
     if (file_format == FileFormat::RWKV_1 || file_format==FileFormat::RWKV_2 || is_recurrent)
@@ -6955,6 +7113,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 return output;
             }
             firstdecodedone = true;
+            friend_logits_head_key = friend_active_profile.head_key;
         }
 
         n_past += embd.size();
@@ -7700,6 +7859,8 @@ size_t gpttype_save_state_kv(int slot)
             savestates[slot].current_savestate_size   = newsize;
             savestates[slot].savestate_context_tokens = current_context_tokens;
             savestates[slot].media_signature = media_composite_image_signature;
+            savestates[slot].kv_key = friend_ctx_kv_key;
+            savestates[slot].logits_head_key = friend_logits_head_key;
             float * lgptr = (draft_is_mtp ? llama_get_logits_ith(llama_ctx_v4, -1) : llama_get_logits(llama_ctx_v4));
             savestates[slot].latest_logits.assign(lgptr,lgptr+n_vocab);
             int maxedpos = llama_memory_seq_pos_max(llama_get_memory(llama_ctx_v4),0);
@@ -7766,7 +7927,14 @@ bool gpttype_load_state_kv(int slot)
         if(res > 0)
         {
             current_context_tokens = savestates[slot].savestate_context_tokens;
+            friend_ctx_kv_key = savestates[slot].kv_key; // friend.cpp: the restored KV's adapter identity
             loaded_latest_logits = savestates[slot].latest_logits;
+            // friend.cpp: stored logits are only valid for the head that produced them
+            loaded_latest_logits_head_key = savestates[slot].logits_head_key;
+            if(loaded_latest_logits_head_key != friend_active_profile.head_key)
+            {
+                loaded_latest_logits.clear();
+            }
             printf("\nKV Load SaveState %d: Restored KV with %zu tokens.\n", slot,current_context_tokens.size());
             touch_slot(slot);
         }
@@ -7823,7 +7991,7 @@ int get_identical_existing_slot() //returns slot number of slot containing exact
     int currctxsize = current_context_tokens.size();
     for(int i=0;i<savestate_limit;++i)
     {
-        if(savestates[i].savestate_context_tokens.size() == currctxsize && savestates[i].media_signature==media_composite_image_signature)
+        if(savestates[i].savestate_context_tokens.size() == currctxsize && savestates[i].media_signature==media_composite_image_signature && savestates[i].kv_key==friend_ctx_kv_key)
         {
             bool is_identical = true;
             const auto& slot_tokens = savestates[i].savestate_context_tokens;
