@@ -41,7 +41,7 @@ python koboldcpp.py --model model.gguf \
   --cache-dir ./cache \
   --cache-ram 2048 \
   --cache-disk 20480 \
-  --parallelrequests 4 --noshift \
+  --parallelrequests 4 \
   --port 5001
 ```
 
@@ -248,7 +248,7 @@ The intended workflow: take a base model, fine-tune *only* the LM head (and opti
 
 ### Continuous batching
 
-With `--parallelrequests N` (kobold only batches with `--noshift`), requests are grouped by adapter profile per decode step. The worker sticks with a profile while it has work queued for it, then switches to a starved profile after 8 decode rounds.
+With `--parallelrequests N` (which turns context shifting off automatically), requests are grouped by adapter profile per decode step. The worker sticks with a profile while it has work queued for it, then switches to a starved profile after 8 decode rounds.
 
 ### What's been verified
 
@@ -395,6 +395,9 @@ The cache plays well with `--parallelrequests`:
 - On attention models, a new request can share another live or retained sequence's KV cells.
 - On any model, it can restore from the prompt cache if no slot has good overlap.
 - Retained slots are saved into the prompt cache before a single-user request runs, and released under KV memory pressure.
+- On recurrent/hybrid models, batched prefills stop at each planned turn boundary and snapshot it, exactly like single-user mode, so a batched request can resume from another conversation's persona checkpoint.
+
+More requests are batchable than in stock koboldcpp: grammar (except `grammar_retain_state`), DRY, XTC, top-nσ, mirostat 1/2 and dynamic temperature now run in batch mode through llama's samplers. Still single-request only: banned strings (they need kobold's rewind), top-a, TFS, smoothing, adaptive-P, custom sampler orders, reasoning budgets, media, guidance and draft models.
 
 ### Measured performance
 
@@ -403,7 +406,7 @@ On Apple M5, with persona prompts around 1,050-1,100 tokens:
 - Returning to a persona after visiting another: restores 1057 of 1074 tokens, prefill drops from 0.35s to 0.06s.
 - After a full server restart with `--cache-dir`: snapshot restored from disk, same speed.
 - Batched follow-up requests: reuse 1057-1060 tokens from the first request's cached state.
-- Qwen3.5-0.8B (recurrent): restores the 1094-token persona checkpoint correctly.
+- Qwen3.5-0.8B (recurrent): restores the 1094-token persona checkpoint correctly, in single-user and batched mode.
 - Outputs are identical to a cache-disabled run in every tested scenario.
 
 
@@ -417,19 +420,32 @@ PrismML ships standalone DSpark drafters next to their Bonsai models (e.g. `pris
 
 ```bash
 python koboldcpp.py --model Bonsai-27B-Q1_0.gguf \
-  --draftmodel Bonsai-27B-dspark-Q4_1.gguf --draftamount 3
+  --draftmodel Bonsai-27B-dspark-Q4_1.gguf --draftamount 6
 ```
 
 - The drafter reads hidden states from specific target layers, which currently only the Qwen3.5/3.6 family (`qwen35` arch) can provide. Other targets fail at load with a clear error rather than mid-generation.
-- `--draftamount 3` measured best on an M5 (about 1.25x over the target alone at temp 0 and 0.7; 4 barely helped).
+- **The draft length adapts on its own.** `--draftamount` is now the *maximum*: every round friend.cpp picks the length (0 = don't draft) that maximises expected tokens per millisecond, from live measurements of acceptance rate, drafter time and verify time. Fixed drafting is a trap on unpredictable text -- on an M5 with the 27B Q1_0 target (tokens/s, no drafter / fixed 3 / adaptive): counting 22 / 27.6 / 27.5, surreal haiku 16.8 / 10.3 / 19.0, persona chat 19.4 / 11.0 / 21.8. Adaptive never loses to either. `--draft-fixed` restores always-draft-`--draftamount` behaviour; `FRIEND_DEBUG_SPEC=1` prints each round's decision.
 - `LLAMA_DSPARK_SHARED_HEAD=1` makes the drafter borrow the target's LM head (saves ~700 MB).
 - It survives prompt reuse: fast-forward, context shifts, SmartCache slots and the prompt cache all keep the drafter's captured features in step with the target KV, so drafting keeps working on later turns and after switching conversations. Outputs match the target alone.
+
+## Tools for maintaining the fork
+
+### Upstream sync
+
+`tools/friend-sync/sync.sh` merges koboldcpp and PrismML into a dated `sync/<date>` branch, applies the mechanical conflict rules learned from past syncs (keep kobold's deletions of llama.cpp tests/CI/CMake, drop Prism-only tests/tools), stops with notes at the first real conflict (`--continue` after resolving, `--abort` to bail), then checks unity-build coverage, builds, and runs the smoke tests. It never pushes. See `tools/friend-sync/README.md`.
+
+### Smoke tests
+
+`python tools/friend-sync/smoke.py` starts the server against each available test model (Bonsai-1.7B Q1_0, Ternary-Bonsai-1.7B PQ2_0, Qwen3.5-0.8B hybrid) and checks coherence, determinism, blue noise, head swap, steering build, prompt-cache reuse (output must equal a cache-disabled run), GPU-vs-CPU agreement and continuous batching (concurrent must equal serial, through the real batch worker). About a minute; non-zero exit on any failure.
+
+### Sampler lab
+
+`tools/friend-eval/sampler_lab.py --configs FILE.json` runs any number of sampler configurations (a JSON object of `{name: {request fields}}`) on the same prompts and seeds, interleaved, and reports derailment (tail picks, streaks, surprisal burstiness), repetition, diversity and length against a baseline with Welch t-values. `tools/friend-eval/configs/chat_presets.json` is a starting set.
 
 ## Limits and not-yet-verified
 
 A few things to be honest about:
 
-- **CUDA and HIP**: the code compiles targeting them, but nobody has actually built and run it on Nvidia or AMD GPUs yet. Metal + CPU on Apple Silicon is the tested path.
+- **CUDA**: built and tested on a GTX 970 (Maxwell, CUDA 12.9); the Prism CUDA code also compiles for sm_61 through sm_120 but has only *run* on the 970. **HIP** has never been compiled.
 - **Vulkan**: shaders generate, but haven't been tested on real GPU hardware.
-- **Recurrent models in batched mode**: turn-boundary checkpoints (the trick that makes cross-conversation reuse work for recurrent models) are not yet taken during continuous batching. They work fine in single-request mode. In batched mode, recurrent models only snapshot whole prompts, so cross-conversation reuse is limited.
-- **DSpark drafting** is modest on Apple Silicon: verifying a draft on the 27B Q1_0 target costs ~60% of a normal token, so the ceiling is low, and on text the drafter predicts badly it can be slower than no drafter. Only standalone `arch=dspark` was exercised; MTP / DFlash / DSpark-in-DFlash paths are unchanged but untested here.
+- **DSpark drafting** is modest on Apple Silicon: verifying a draft on the 27B Q1_0 target costs ~60% of a normal token, so the ceiling is low (adaptive drafting at least never makes it slower than no drafter). Only standalone `arch=dspark` was exercised; MTP / DFlash / DSpark-in-DFlash paths are unchanged but untested here.
