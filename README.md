@@ -13,11 +13,11 @@ KoboldCpp is an easy-to-use AI text-generation software for GGML and GGUF models
 - Single file executable, with no installation required and no external dependencies
 - Runs on CPU or GPU, supports full or partial offloaded
 - LLM text generation (Supports all GGML and GGUF models, backwards compatibility with ALL past models)
-- Image Generation and Image Editing (Stable Diffusion 1.5, SDXL, SD3, Flux, Qwen Image, Z-Image, Klein)
-- Video Generation (WAN 2.2)
+- Image Generation and Image Editing (Stable Diffusion 1.5, SDXL, SD3, Flux, Qwen Image, Z-Image, Klein, Krea2)
+- Video Generation (WAN 2.2, LTX2.3, Minimax H3)
 - Speech-To-Text (Voice Recognition) via Whisper
 - Text-To-Speech (Voice Generation) via Qwen3TTS, Kokoro, OuteTTS, Parler and Dia
-- Music Generation (Ace Step 1.5)
+- Music Generation (Ace Step 1.5, Ace Step XL)
 - Image Recognition (Multimodal Vision)
 - MCP Server support and tool calling
 - Provides many compatible APIs endpoints for many popular webservices (KoboldCppApi OpenAiApi OllamaApi A1111ForgeApi ComfyUiApi WhisperTranscribeApi XttsApi OpenAiSpeechApi)
@@ -27,6 +27,9 @@ KoboldCpp is an easy-to-use AI text-generation software for GGML and GGUF models
 - Many other features including new samplers, regex support, websearch, RAG via TextDB, image recognition/vision and more.
 - Ready-to-use binaries for Windows, MacOS, Linux. Runs directly with Colab, Docker, also supports other platforms if self-compiled (like  Android (via Termux) and Raspberry PI).
 - [Need help finding a model? Read this!](https://github.com/LostRuins/koboldcpp/wiki#getting-an-ai-model-file)
+
+## Phishing Scam Alert
+- Phishing SCAM Warning: koboldcpp.com is NOT an official site, please help to report it to google for impersonation. You should **ONLY** trust official downloads from the release binaries on the official github at https://github.com/LostRuins/koboldcpp/releases/latest
 
 ## Windows Usage (Precompiled Binary, Recommended)
 - Windows binaries are provided in the form of **koboldcpp.exe**, which is a pyinstaller wrapper containing all necessary files. **[Download the latest koboldcpp.exe release here](https://github.com/LostRuins/koboldcpp/releases/latest)**
@@ -76,7 +79,7 @@ Finally, obtain and load a GGUF model. See [here](#Obtaining-a-GGUF-model)
 - **GPU Acceleration**: If you're on Windows with an Nvidia GPU you can get CUDA support out of the box using the `--usecuda`  flag (Nvidia Only), or `--usevulkan` (Any GPU), make sure you select the correct .exe with CUDA support.
 - **GPU Layer Offloading**: Add `--gpulayers` to offload model layers to the GPU. The more layers you offload to VRAM, the faster generation speed will become. Experiment to determine number of layers to offload, and reduce by a few if you run out of memory.
 - **Increasing Context Size**: Use `--contextsize (number)` to increase context size, allowing the model to read more text. Note that you may also need to increase the max context in the KoboldAI Lite UI as well (click and edit the number text field).
-- **Old CPU Compatibility**: If you are having crashes or issues, you can try running in a non-avx2 compatibility mode by adding the `--noavx2` flag. You can also try reducing your `--blasbatchssize` (set -1 to avoid batching)
+- **Old CPU Compatibility**: If you are having crashes or issues, you can try running in a non-avx2 compatibility mode by adding the `--noavx2` flag. You can also try reducing your `--blasbatchsize` (set -1 to avoid batching)
 
 For more information, be sure to run the program with the `--help` flag, or **[check the wiki](https://github.com/LostRuins/koboldcpp/wiki).**
 
@@ -193,7 +196,6 @@ and it will install everything required. Alternatively, you can download the abo
 - **I try to keep backwards compatibility with ALL past llama.cpp models**. But you are also encouraged to reconvert/update your models if possible for best results.
 - Since v1.75, openblas has been deprecated and removed in favor of the native CPU implementation.
 - Since v1.107, CLBlast has been deprecated and removed in favor of Vulkan.
-- Phishing SCAM Warning: koboldcpp(dot)com is NOT an official site, please help to report it to google for impersonation. You should ONLY trust official downloads from the release binaries on the official github at https://github.com/LostRuins/koboldcpp/releases/latest
 
 ## License
 - The original GGML library, stable-diffusion.cpp and llama.cpp by ggerganov are licensed under the MIT License

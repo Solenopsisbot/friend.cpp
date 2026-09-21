@@ -2,7 +2,8 @@ import {
 	AUDIO_FILE_TYPES,
 	IMAGE_FILE_TYPES,
 	PDF_FILE_TYPES,
-	TEXT_FILE_TYPES
+	TEXT_FILE_TYPES,
+	VIDEO_FILE_TYPES
 } from '$lib/constants';
 import {
 	FileExtensionAudio,
@@ -13,17 +14,24 @@ import {
 	MimeTypeApplication,
 	MimeTypeAudio,
 	MimeTypeImage,
-	MimeTypeText
+	MimeTypeText,
+	MimeTypeVideo
 } from '$lib/enums';
 
+function normalizeMimeType(mimeType: string): string {
+	return mimeType.trim().toLowerCase();
+}
+
 export function getFileTypeCategory(mimeType: string): FileTypeCategory | null {
-	switch (mimeType) {
+	switch (normalizeMimeType(mimeType)) {
 		// Images
 		case MimeTypeImage.JPEG:
 		case MimeTypeImage.PNG:
 		case MimeTypeImage.GIF:
 		case MimeTypeImage.WEBP:
 		case MimeTypeImage.SVG:
+		case MimeTypeImage.HEIC:
+		case MimeTypeImage.HEIF:
 			return FileTypeCategory.IMAGE;
 
 		// Audio
@@ -31,9 +39,19 @@ export function getFileTypeCategory(mimeType: string): FileTypeCategory | null {
 		case MimeTypeAudio.MP3:
 		case MimeTypeAudio.MP4:
 		case MimeTypeAudio.WAV:
+		case MimeTypeAudio.WAVE:
+		case MimeTypeAudio.X_WAV:
+		case MimeTypeAudio.X_WAVE:
+		case MimeTypeAudio.VND_WAVE:
+		case MimeTypeAudio.X_PN_WAV:
 		case MimeTypeAudio.WEBM:
 		case MimeTypeAudio.WEBM_OPUS:
 			return FileTypeCategory.AUDIO;
+
+		// Video
+		case MimeTypeVideo.MP4:
+		case MimeTypeVideo.OGG:
+			return FileTypeCategory.VIDEO;
 
 		// PDF
 		case MimeTypeApplication.PDF:
@@ -102,6 +120,8 @@ export function getFileTypeCategoryByExtension(filename: string): FileTypeCatego
 		case FileExtensionImage.GIF:
 		case FileExtensionImage.WEBP:
 		case FileExtensionImage.SVG:
+		case FileExtensionImage.HEIC:
+		case FileExtensionImage.HEIF:
 			return FileTypeCategory.IMAGE;
 
 		// Audio
@@ -179,6 +199,12 @@ export function getFileTypeByExtension(filename: string): string | null {
 		}
 	}
 
+	for (const [key, type] of Object.entries(VIDEO_FILE_TYPES)) {
+		if ((type.extensions as readonly string[]).includes(extension)) {
+			return `${FileTypeCategory.VIDEO}:${key}`;
+		}
+	}
+
 	for (const [key, type] of Object.entries(PDF_FILE_TYPES)) {
 		if ((type.extensions as readonly string[]).includes(extension)) {
 			return `${FileTypeCategory.PDF}:${key}`;
@@ -198,6 +224,7 @@ export function isFileTypeSupported(filename: string, mimeType?: string): boolea
 	// Images are detected and handled separately for vision models
 	if (mimeType) {
 		const category = getFileTypeCategory(mimeType);
+
 		if (
 			category === FileTypeCategory.IMAGE ||
 			category === FileTypeCategory.AUDIO ||
@@ -209,6 +236,7 @@ export function isFileTypeSupported(filename: string, mimeType?: string): boolea
 
 	// Check extension for known types (especially images without MIME)
 	const extCategory = getFileTypeCategoryByExtension(filename);
+
 	if (
 		extCategory === FileTypeCategory.IMAGE ||
 		extCategory === FileTypeCategory.AUDIO ||

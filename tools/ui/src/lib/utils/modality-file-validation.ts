@@ -3,9 +3,9 @@
  * Ensures only compatible file types are processed based on model capabilities
  */
 
-import { getFileTypeCategory } from '$lib/utils';
 import { FileTypeCategory } from '$lib/enums';
 import type { ModalityCapabilities } from '$lib/types';
+import { getFileTypeCategory } from '$lib/utils';
 
 /**
  * Check if a file type is supported by the given modalities
@@ -45,6 +45,10 @@ export function isFileTypeSupportedByModel(
 			// Audio files require audio support
 			return capabilities.hasAudio;
 
+		case FileTypeCategory.VIDEO:
+			// Video files require video support
+			return capabilities.hasVideo;
+
 		default:
 			// Unknown categories - be conservative and allow
 			return true;
@@ -68,11 +72,11 @@ export function filterFilesByModalities(
 	const supportedFiles: File[] = [];
 	const unsupportedFiles: File[] = [];
 	const modalityReasons: Record<string, string> = {};
-
-	const { hasVision, hasAudio } = capabilities;
+	const { hasAudio, hasVideo, hasVision } = capabilities;
 
 	for (const file of files) {
 		const category = getFileTypeCategory(file.type);
+
 		let isSupported = true;
 		let reason = '';
 
@@ -82,6 +86,7 @@ export function filterFilesByModalities(
 					isSupported = false;
 					reason = 'Images require a vision-capable model';
 				}
+
 				break;
 
 			case FileTypeCategory.AUDIO:
@@ -89,6 +94,15 @@ export function filterFilesByModalities(
 					isSupported = false;
 					reason = 'Audio files require an audio-capable model';
 				}
+
+				break;
+
+			case FileTypeCategory.VIDEO:
+				if (!hasVideo) {
+					isSupported = false;
+					reason = 'Video files require a video-capable model';
+				}
+
 				break;
 
 			case FileTypeCategory.TEXT:
@@ -110,7 +124,7 @@ export function filterFilesByModalities(
 		}
 	}
 
-	return { supportedFiles, unsupportedFiles, modalityReasons };
+	return { modalityReasons, supportedFiles, unsupportedFiles };
 }
 
 /**
@@ -127,31 +141,31 @@ export function generateModalityErrorMessage(
 ): string {
 	if (unsupportedFiles.length === 0) return '';
 
-	const { hasVision, hasAudio } = capabilities;
+	const { hasAudio, hasVideo, hasVision } = capabilities;
 
 	let message = '';
 
 	if (unsupportedFiles.length === 1) {
 		const file = unsupportedFiles[0];
 		const reason = modalityReasons[file.name];
+
 		message = `The file "${file.name}" cannot be uploaded: ${reason}.`;
 	} else {
 		const fileNames = unsupportedFiles.map((f) => f.name).join(', ');
+
 		message = `The following files cannot be uploaded: ${fileNames}.`;
 	}
 
 	// Add helpful information about what is supported
 	const supportedTypes: string[] = ['text files', 'PDFs'];
+
 	if (hasVision) supportedTypes.push('images');
+
 	if (hasAudio) supportedTypes.push('audio files');
+
+	if (hasVideo) supportedTypes.push('video files');
 
 	message += ` This model supports: ${supportedTypes.join(', ')}.`;
 
 	return message;
 }
-
-/**
- * Generate file input accept string based on model modalities
- * @param capabilities - The modality capabilities to check against
- * @returns Accept string for HTML file input element
- */

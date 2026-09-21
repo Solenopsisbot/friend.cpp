@@ -160,3 +160,6 @@ conda/
 
 # Jetbrains idea folder
 .idea/
+
+# friend.cpp: Metal kernel sources copied out by the Makefile at build time
+/kernels/
