@@ -6418,6 +6418,7 @@ static bool friend_cache_capture(const char * label, bool pinned = false)
     {
         return false;
     }
+    const auto t_capture = std::chrono::steady_clock::now(); // friend.cpp: capture latency (blocks generation)
     auto e = std::make_shared<friend_cache::entry>();
     e->tokens.assign(current_context_tokens.begin(), current_context_tokens.begin() + n_kv);
     e->kv_key = friend_ctx_kv_key;
@@ -6462,7 +6463,8 @@ static bool friend_cache_capture(const char * label, bool pinned = false)
     const bool stored = friend_cache::global().insert(e);
     if(stored && !is_quiet)
     {
-        printf("\n[Prompt cache: stored %zu tokens (%zu MiB, %s%s)]\n", n_kv, mb, e->label.c_str(), pinned ? ", pinned" : "");
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_capture).count();
+        printf("\n[Prompt cache: stored %zu tokens (%zu MiB, %s%s, %.0f ms)]\n", n_kv, mb, e->label.c_str(), pinned ? ", pinned" : "", ms);
     }
     return stored;
 }
@@ -6654,12 +6656,14 @@ static void friend_cache_select(const std::vector<int> & embd_inp, bool is_recur
         {
             friend_cache_capture("switch");
         }
+        const auto t_restore = std::chrono::steady_clock::now(); // friend.cpp: restore latency, for tuning the cache
         if(friend_cache_restore(m.e))
         {
             if(!is_quiet)
             {
-                printf("\n[Prompt cache: reusing %zu of %zu prompt tokens from entry %llu%s%s]\n", m.usable, embd_inp.size(),
-                       (unsigned long long) m.e->id, m.e->label.empty() ? "" : ", ", m.e->label.c_str());
+                const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_restore).count();
+                printf("\n[Prompt cache: reusing %zu of %zu prompt tokens from entry %llu%s%s, restored in %.0f ms]\n", m.usable, embd_inp.size(),
+                       (unsigned long long) m.e->id, m.e->label.empty() ? "" : ", ", m.e->label.c_str(), ms);
             }
             return;
         }
