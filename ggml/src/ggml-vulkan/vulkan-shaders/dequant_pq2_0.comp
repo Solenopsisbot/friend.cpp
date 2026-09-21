@@ -1,0 +1,33 @@
+#version 450
+
+// friend.cpp: PQ2_0 (Prism Q2_0 at group 128) -> float dequant. Same work split as dequant_q1_0:
+// 64 invocations cover 4 blocks of 128, each invocation writes 8 consecutive weights (2 bytes of
+// 2-bit codes), so the pipeline's workgroup denominator is 256 * 8 elements.
+
+#include "dequant_head.glsl"
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {block_pq2_0 data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
+
+void main() {
+    const uint i = gl_WorkGroupID.x * 4 + gl_LocalInvocationID.x / 64;
+
+    const uint tid = gl_LocalInvocationID.x % 64;
+    const uint il  = tid / 4;
+    const uint ir  = tid % 4;
+    const uint ib = 4*i + ir;
+    if (ib >= p.nel / QUANT_K_PQ2_0) {
+        return;
+    }
+
+    const uint b_idx = 512*i + QUANT_K_PQ2_0*ir + 8*il;
+
+    const float d = float(data_a[ib].d);
+    const uint bits = uint(data_a[ib].qs[2*il]) | (uint(data_a[ib].qs[2*il + 1]) << 8u);
+
+    [[unroll]] for (uint l = 0; l < 8; ++l) {
+        data_b[b_idx + l] = D_TYPE(d * (float((bits >> (2u*l)) & 3u) - 1.0f));
+    }
+}

@@ -66,6 +66,7 @@ const std::vector<std::string> type_names = {
     "q1_0",
     "ptq1_0",
     "q2_0",
+    "pq2_0", // friend.cpp: Prism Q2_0 at group 128
     "q4_0",
     "q4_1",
     "q5_0",
@@ -269,8 +270,10 @@ bool is_lut_quant(const std::string& type_name) {
 // through the unified MULMAT_QUANT shader. PTQ1_0 (Prism ternary, group 128) lives here: its
 // base-3 trit decode is only implemented in the per-type path of mul_mm_funcs.glsl, and it has
 // no coopmat2 decoder (skipped below; ggml-vulkan falls back to dequant + f16 matmul there).
+// friend.cpp: PQ2_0 (Q2_0 codec at group 128) too -- the unified shader's Q2_0 case hardcodes
+// 64-weight blocks, and a per-type shader keeps that switch untouched.
 bool is_standalone_mm_quant(const std::string& type_name) {
-    return is_lut_quant(type_name) || type_name == "ptq1_0";
+    return is_lut_quant(type_name) || type_name == "ptq1_0" || type_name == "pq2_0";
 }
 
 std::string lut_load_vec_a(const std::string& type_name) {
@@ -636,7 +639,7 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
         // so emitting mul_mm_cm2 for it fails shader compilation and takes the whole
         // Vulkan build down, not just this type. Skip it; it falls back to the scalar and
         // coopmat1 matmul paths, which are the ones implemented and tested.
-        if (coopmat2 && tname == "ptq1_0") {
+        if (coopmat2 && (tname == "ptq1_0" || tname == "pq2_0")) { // friend.cpp: same for PQ2_0
             continue;
         }
 
