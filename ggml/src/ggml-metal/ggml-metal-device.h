@@ -125,6 +125,11 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_sum_rows 
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_cumsum_blk        (ggml_metal_library_t lib, const struct ggml_tensor * op);
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_q1_0_planes         (ggml_metal_library_t lib);
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_q1_0_pc      (ggml_metal_library_t lib, const struct ggml_tensor * op, int nr1);
+// friend.cpp: small-batch Bonsai mat-vec (LUT path for Q1_0/PQ2_0, MC path for PTQ1_0)
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_lut_build  (ggml_metal_library_t lib);
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_lut_reduce (ggml_metal_library_t lib);
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_lut        (ggml_metal_library_t lib, enum ggml_type tsrc0, int nr1, int v);
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_mc         (ggml_metal_library_t lib, const struct ggml_tensor * op, int nr1);
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_cumsum_add        (ggml_metal_library_t lib, const struct ggml_tensor * op);
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tri               (ggml_metal_library_t lib, const struct ggml_tensor * op);
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_soft_max          (ggml_metal_library_t lib, const struct ggml_tensor * op);
