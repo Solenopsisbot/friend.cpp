@@ -292,9 +292,10 @@ Snapshots store one sequence's KV state plus next-token logits, keyed by the exa
 
 ### When snapshots are taken
 
-- When the live context is about to be discarded (switching to a different conversation).
-- After a large prefill (at least `--cache-capture-tokens` new tokens processed).
-- At turn-boundary checkpoints (recurrent models).
+- **In idle time** (default): `--cache-idle-ms` (300) after a generation finishes, if no new request has started, a background thread snapshots the live context. So when you do switch conversations, the old one is already stored and the switch pays nothing for it. It never competes with batched work (it skips if anything batched is live). `--cache-idle-ms 0` turns it off.
+- When the live context is about to be discarded (switching to a different conversation) and wasn't already captured in idle time.
+- After a large prefill (at least `--cache-capture-tokens` new tokens), but only when idle snapshots are off -- otherwise the idle snapshot of prompt + response subsumes it, and skipping it keeps the copy off the request's critical path.
+- At turn-boundary checkpoints (recurrent models, single-user and batched).
 - When explicitly pinned via the API.
 
 Snapshots that are a prefix of a longer snapshot are deduplicated. Eviction is LRU within each tier's budget. Pinned entries are never evicted.

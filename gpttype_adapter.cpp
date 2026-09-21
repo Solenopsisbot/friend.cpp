@@ -174,6 +174,7 @@ static size_t friend_cache_capture_tokens = 512; // snapshot after prefilling at
 // friend.cpp: adaptive speculative draft length (friend/spec_tuner.hpp)
 static friend_spec::tuner friend_tuner;
 static bool friend_draft_adaptive = true;
+static int friend_idle_ms = 300; // friend.cpp: idle-time snapshot delay (see friend_idle_worker), 0 disables
 static int friend_round_k = 0; // draft length chosen for the current round
 static std::string friend_cvec_dir = "";        // where built steering vectors are saved
 static int friend_n_past_after_ff = 0;            // n_past right after cache restore + fast-forward
@@ -3991,6 +3992,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             friend_cache_capture_tokens = (size_t) std::max(1, inputs.friend_cache_capture_tokens);
             friend_cvec_dir = inputs.friend_cvec_dir ? inputs.friend_cvec_dir : "";
             friend_draft_adaptive = !inputs.friend_draft_fixed;
+            friend_idle_ms = std::max(0, inputs.friend_cache_idle_ms);
             if(!kcpp_data->use_fastforward)
             {
                 cc.ram_budget = 0;
@@ -6564,6 +6566,11 @@ static bool friend_cache_capture(const char * label, bool pinned = false)
     e->tokens.assign(current_context_tokens.begin(), current_context_tokens.begin() + n_kv);
     e->kv_key = friend_ctx_kv_key;
     e->media_hash = std::any_of(e->tokens.begin(), e->tokens.end(), [](int32_t t){ return t < 0; }) ? friend_media_hash() : "";
+    // already stored (e.g. by the idle-time capture)? then skip the expensive device copy
+    if(!pinned && friend_cache::global().covers(e->tokens, e->kv_key, e->media_hash, friend_cache_recurrent))
+    {
+        return false;
+    }
     e->exact_only = friend_cache_recurrent;
     e->pinned = pinned;
     e->label = label ? label : "";
@@ -6822,8 +6829,90 @@ static void friend_cache_select(const std::vector<int> & embd_inp, bool is_recur
     }
 }
 
+// --- friend.cpp: idle-time snapshots ----------------------------------------------------
+// Switching conversations used to pay for stashing the old context (a device->host copy of
+// its KV, 100-250 ms on a 1-2k token context) on the *next* request's critical path. Most
+// switches follow some idle time, so after each single-user generation a background thread
+// waits friend_idle_ms of quiet and then snapshots the live context. When the switch does
+// come, friend_cache_capture sees the context is already covered and skips the copy. The
+// thread never competes with batched work: if anything batched is live or waiting, or batching
+// touched the shared context, it skips rather than blocking.
+static std::mutex friend_idle_mu;
+static std::condition_variable friend_idle_cv;
+static uint64_t friend_gen_epoch = 0;   // bumped at the start and end of every generation
+static bool friend_idle_pending = false;
+static std::once_flag friend_idle_once;
+
+static void friend_idle_worker()
+{
+    std::unique_lock<std::mutex> lk(friend_idle_mu);
+    while(true)
+    {
+        friend_idle_cv.wait(lk, []{ return friend_idle_pending; });
+        const uint64_t epoch = friend_gen_epoch;
+        // quiet period: any new generation bumps the epoch and cancels this capture
+        if(friend_idle_cv.wait_for(lk, std::chrono::milliseconds(friend_idle_ms), [&]{ return friend_gen_epoch != epoch; }))
+        {
+            continue; // a generation started; it re-arms us when it finishes
+        }
+        friend_idle_pending = false;
+        lk.unlock();
+        bool acquired = false;
+        {
+            std::lock_guard<std::mutex> blk(batch_mutex);
+            if(!batch_legacy_active && batch_legacy_waiting == 0 && !batch_has_live_locked() && !batch_touched_since_legacy)
+            {
+                batch_legacy_active = true; // excludes single-user and batch decodes while we copy
+                acquired = true;
+            }
+        }
+        if(acquired)
+        {
+            bool still_idle;
+            {
+                std::lock_guard<std::mutex> relock(friend_idle_mu);
+                still_idle = friend_gen_epoch == epoch;
+            }
+            if(still_idle && friend_cache_on && llama_ctx_v4)
+            {
+                friend_cache_capture("idle", false);
+            }
+            std::lock_guard<std::mutex> blk(batch_mutex);
+            batch_legacy_active = false;
+            batch_cv.notify_all();
+        }
+        lk.lock();
+    }
+}
+
+// RAII: marks a single-user generation as running for the idle worker, arms it on the way out
+struct FriendGenMarker
+{
+    FriendGenMarker()
+    {
+        std::lock_guard<std::mutex> lk(friend_idle_mu);
+        ++friend_gen_epoch;
+        friend_idle_pending = false;
+    }
+    ~FriendGenMarker()
+    {
+        if(!friend_cache_on || friend_idle_ms <= 0)
+        {
+            return;
+        }
+        std::call_once(friend_idle_once, []{ std::thread(friend_idle_worker).detach(); });
+        {
+            std::lock_guard<std::mutex> lk(friend_idle_mu);
+            ++friend_gen_epoch;
+            friend_idle_pending = true;
+        }
+        friend_idle_cv.notify_all();
+    }
+};
+
 generation_outputs gpttype_generate(const generation_inputs inputs)
 {
+    FriendGenMarker friend_gen_marker; // friend.cpp: before the guard, so it's destroyed after it
     BatchLegacyGuard batch_legacy_guard;
     generation_outputs output;
 
@@ -8236,8 +8325,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                     {
                         friend_cache_capture(inputs.cache_pin_label, true);
                     }
-                    else if(!is_recurrent && prefilled >= friend_cache_capture_tokens)
+                    else if(!is_recurrent && prefilled >= friend_cache_capture_tokens && friend_idle_ms <= 0)
                     {
+                        // with idle-time snapshots on, this would be redundant: the idle capture of
+                        // prompt+response subsumes it, and a diverging next request stashes it anyway
                         friend_cache_capture("prefill", false);
                     }
                 }

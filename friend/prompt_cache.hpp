@@ -210,6 +210,24 @@ public:
         return best;
     }
 
+    // Is this context already represented? Identical tokens, or -- for truncatable
+    // (attention) models -- a prefix of an existing entry, under the same adapter/media keys.
+    // Lets callers skip the device->host state copy for a snapshot insert() would discard
+    // as redundant anyway. Touches the covering entry so it stays warm.
+    bool covers(const std::vector<int32_t> & tokens, const std::string & kv_key, const std::string & media_hash, bool recurrent) {
+        std::lock_guard<std::mutex> lk(mu);
+        for (auto & e : entries) {
+            if (e->kv_key != kv_key || e->media_hash != media_hash) {
+                continue;
+            }
+            if (e->tokens == tokens || (!recurrent && !e->exact_only && is_prefix(tokens, e->tokens))) {
+                e->last_used = ++clock;
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Insert a snapshot (state.raw / draft.raw set, uncompressed). Deduplicates against
     // entries it subsumes / is subsumed by. Returns false if it was redundant (and was not stored).
     bool insert(entry_ptr n) {

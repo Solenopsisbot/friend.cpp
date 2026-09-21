@@ -369,7 +369,8 @@ class load_model_inputs(ctypes.Structure):
                 ("friend_cache_min_tokens", ctypes.c_int),
                 ("friend_cache_capture_tokens", ctypes.c_int),
                 ("friend_cvec_dir", ctypes.c_char_p),
-                ("friend_draft_fixed", ctypes.c_bool)]
+                ("friend_draft_fixed", ctypes.c_bool),
+                ("friend_cache_idle_ms", ctypes.c_int)]
 
 class generation_inputs(ctypes.Structure):
     _fields_ = [("seed", ctypes.c_int),
@@ -2219,6 +2220,7 @@ def load_model(model_filename):
     inputs.friend_cache_capture_tokens = max(1, int(args.cache_capture_tokens))
     inputs.friend_cvec_dir = (os.path.abspath(args.cvec_dir) if args.cvec_dir else "").encode("UTF-8")
     inputs.friend_draft_fixed = bool(getattr(args, "draft_fixed", False))
+    inputs.friend_cache_idle_ms = max(0, int(getattr(args, "cache_idle_ms", 300)))
 
     inputs.draftmodel_filename = args.draftmodel.encode("UTF-8") if (args.draftmodel and args.draftamount>0) else "".encode("UTF-8")
     inputs.draft_amount = args.draftamount
@@ -13213,6 +13215,7 @@ if __name__ == '__main__':
     advparser.add_argument("--lora-pool", dest="lora_pool", metavar=('NAME=PATH'), nargs='+', help="friend.cpp: preload named LoRA adapters, off by default; a request enables them with \"lora\": {\"NAME\": scale}.")
     advparser.add_argument("--cvec-pool", dest="cvec_pool", metavar=('NAME=PATH'), nargs='+', help="friend.cpp: preload named control (steering) vectors (GGUF, llama.cpp cvec format); a request applies them with \"steer\": {\"NAME\": strength}.")
     advparser.add_argument("--cache-ram", dest="cache_ram", metavar=('[MB]'), type=int, default=2048, help="friend.cpp: RAM budget of the prompt cache in MiB (0 disables it; it then falls back to --smartcache behaviour).")
+    advparser.add_argument("--cache-idle-ms", dest="cache_idle_ms", metavar=('[ms]'), type=int, default=300, help="friend.cpp: after a generation, snapshot the live context into the prompt cache once the server has been idle this long, so a later conversation switch doesn't pay for it (0 disables).")
     advparser.add_argument("--cache-dir", dest="cache_dir", metavar=('[path]'), default="", help="friend.cpp: directory for the prompt cache's disk tier. Entries are written through and survive restarts.")
     advparser.add_argument("--cache-disk", dest="cache_disk", metavar=('[MB]'), type=int, default=20480, help="friend.cpp: disk budget of the prompt cache in MiB.")
     advparser.add_argument("--cache-min-tokens", dest="cache_min_tokens", metavar=('[tokens]'), type=int, default=64, help="friend.cpp: don't cache or reuse prefixes shorter than this.")
