@@ -218,8 +218,13 @@ OBJS_CUDA_TEMP_INST += \
     ggml/src/ggml-cuda/template-instances/fattn-vec-instance-bf16-bf16.o
 
 ifdef LLAMA_CUBLAS
-CUBLAS_FLAGS = -DGGML_USE_CUDA -I/usr/local/cuda/include -I/opt/cuda/include -I$(CUDA_PATH)/targets/x86_64-linux/include
-CUBLASLD_FLAGS = -lcuda -lcublas -lcudart -lcublasLt -lpthread -ldl -lrt -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L$(CUDA_PATH)/targets/x86_64-linux/lib -L$(CUDA_PATH)/lib64/stubs -L/usr/local/cuda/targets/aarch64-linux/lib -L/usr/local/cuda/targets/sbsa-linux/lib -L/usr/lib/wsl/lib
+# friend.cpp: an explicit CUDA_PATH is searched *before* the stock /usr/local/cuda and
+# /opt/cuda locations. Otherwise a system toolkit shadows the one you asked for: e.g. a
+# box with CUDA 13 in /opt/cuda (which dropped Maxwell/Pascal) plus a local 12.x for an
+# sm_52 card silently compiled against 13's headers and linked libcublas.so.13, and
+# cublasCreate then failed at runtime with CUBLAS_STATUS_ARCH_MISMATCH.
+CUBLAS_FLAGS = -DGGML_USE_CUDA $(if $(CUDA_PATH),-I$(CUDA_PATH)/targets/x86_64-linux/include) -I/usr/local/cuda/include -I/opt/cuda/include
+CUBLASLD_FLAGS = -lcuda -lcublas -lcudart -lcublasLt -lpthread -ldl -lrt $(if $(CUDA_PATH),-L$(CUDA_PATH)/targets/x86_64-linux/lib -L$(CUDA_PATH)/lib64/stubs) -L/usr/local/cuda/lib64 -L/opt/cuda/lib64 -L/usr/local/cuda/targets/aarch64-linux/lib -L/usr/local/cuda/targets/sbsa-linux/lib -L/usr/lib/wsl/lib
 CUBLAS_OBJS = ggml-cuda.o ggml_v3-cuda.o ggml_v2-cuda.o ggml_v2-cuda-legacy.o
 CUBLAS_OBJS += $(patsubst %.cu,%.o,$(filter-out ggml/src/ggml-cuda/ggml-cuda.cu, $(wildcard ggml/src/ggml-cuda/*.cu)))
 CUBLAS_OBJS += $(OBJS_CUDA_TEMP_INST)
