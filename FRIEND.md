@@ -298,9 +298,26 @@ Snapshots store one sequence's KV state plus next-token logits, keyed by the exa
 
 Snapshots that are a prefix of a longer snapshot are deduplicated. Eviction is LRU within each tier's budget. Pinned entries are never evicted.
 
+### Compression
+
+Snapshots are compressed losslessly (`friend/state_codec.hpp`): each 4-byte group is split into four byte planes, which lines up the float exponent bytes, then each 4 MiB chunk goes through zstd level 1 with a checksum. A background worker does this after capture, so capturing never waits for it; until the worker gets to a snapshot it sits in RAM uncompressed and isn't charged against the RAM budget. Disk always stores the compressed form. RAM keeps it compressed too when that saves at least 5%. Both budgets count compressed bytes. A restore decompresses on up to 8 threads and is bit-exact. A corrupt chunk fails its checksum, the entry is dropped, and the prompt gets reprocessed.
+
+Measured on M5 (single-thread pack, 8-thread unpack):
+
+| Snapshot | Raw | Stored | Ratio | Pack | Unpack |
+|---|---|---|---|---|---|
+| Bonsai-1.7B, 1522 tokens, f16 KV | 166.5 MiB | 139.0 MiB | 1.20x | ~2.0 GB/s (84 ms) | ~16 GB/s (11 ms) |
+| Qwen3.5-0.8B hybrid, 1525 tokens | 37.2 MiB | 31.6 MiB | 1.18x | ~1.9 GB/s (20 ms) | ~17 GB/s (2 ms) |
+
+Plain zstd without the plane split only reaches 1.07-1.10x. LZ4 gains nothing (<1.01x) because KV bytes have skewed statistics, not repeats. zstd level 3 adds <0.5% ratio at half the speed. f16 KV tops out around 1.25x even in theory (the mantissa bytes carry ~7.8 bits of entropy each), so expect about 17% more snapshots per budget, not 2x. A server-side restore of the Bonsai snapshot takes ~25-35 ms from RAM (8 ms uncompressed) and ~50-120 ms from disk. It saves 0.35-0.45 s of prefill on that model, and far more on bigger ones.
+
+zstd 1.5.7 is vendored as a single file in `vendor/zstd/` (BSD license, `LICENSE` alongside). It was built with `build/single_file_libs/combine.py` from `zstd-in.c`, with the dictionary builder and `ZSTD_MULTITHREAD` removed.
+
 ### Disk tier safety
 
 The disk tier is scoped by a fingerprint of the model file(s) plus the KV cache layout (quantised KV type, flash attention, sliding-window attention mode, MTP). If you change any of those settings, the server won't load incompatible snapshots -- it just starts fresh.
+
+On-disk format v2 stores compressed snapshots. v1 directories (uncompressed) still load and restore as they are, and their entries age out under the disk budget like any others. The loader skips a `.kv` file whose size doesn't match its `.meta`.
 
 ### API
 
@@ -322,6 +339,8 @@ curl http://localhost:5001/api/extra/cache
       "id": 1,
       "tokens": 1057,
       "bytes": 13893632,
+      "ram_bytes": 11583410,
+      "disk_bytes": 11583410,
       "resident": true,
       "on_disk": true,
       "pinned": true,
@@ -332,6 +351,8 @@ curl http://localhost:5001/api/extra/cache
   ]
 }
 ```
+
+Per item, `bytes` is the uncompressed state size. `ram_bytes` and `disk_bytes` are what the entry actually takes in each tier (compressed, or 0 if it isn't in that tier).
 
 **Warm and pin a prompt:**
 
