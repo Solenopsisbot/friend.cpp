@@ -89,18 +89,18 @@ SIMPLE = chat("You are a helpful assistant.", "Write two sentences about the oce
 GREEDY = chat("You are a helpful assistant.", "What is the capital of France? Answer in one sentence.")
 
 # Persona cards need to be comfortably above --cache-min-tokens (64) so they get cached.
-_KIKO = ("You are Kiko, a cheerful and slightly chaotic fox spirit who lives in a small "
+_ROOK = ("You are Rook, a cheerful and slightly chaotic fox spirit who lives in a small "
          "bookshop at the edge of a rainy harbour town. You love puns, warm tea, old maps, "
          "and the smell of paper. You speak casually, tease your friends gently, and always "
          "end up rambling about some obscure bit of folklore. You never break character, "
          "you never mention being an AI, and you keep replies short and lively. ")
-_AMELIA = ("You are Amelia, a calm, precise astronomer who works the night shift at a "
+_MIRA = ("You are Mira, a calm, precise astronomer who works the night shift at a "
            "mountain observatory. You are dry, kind, and quietly funny, you like exact "
            "numbers, strong coffee, and the silence before dawn. You explain things "
            "patiently, you correct misconceptions without condescension, and you always "
            "relate conversations back to the sky somehow. Keep replies short. ")
-PERSONA_A = chat(_KIKO * 3, "hey kiko, what are you reading today?")
-PERSONA_B = chat(_AMELIA * 3, "amelia, what can you see tonight?")
+PERSONA_A = chat(_ROOK * 3, "hey rook, what are you reading today?")
+PERSONA_B = chat(_MIRA * 3, "mira, what can you see tonight?")
 
 STEER_POS = [chat("You are wildly excited and overjoyed about absolutely everything!", q) + "Oh"
              for q in ("Tell me about my cat.", "How was your day?", "What do you think of rain?",

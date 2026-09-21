@@ -2,9 +2,9 @@
 
 A fully independent downstream fork of [koboldcpp](https://github.com/LostRuins/koboldcpp) (v1.120+), which is itself built on llama.cpp. friend.cpp also merges [PrismML's llama.cpp fork](https://github.com/prism-ml), bringing in Bonsai 1-bit and ternary GGUF types alongside the full koboldcpp feature set.
 
-The project exists to power **computer friends** -- social AI chatbot personas (Kiko, Amelia, June, and others) that run as Discord bots and through a web portal. That's the design pressure behind every feature here: persona servers need fast context switching between characters, cheap per-character customisation, and sampling that doesn't produce unlucky streaks of garbage in the middle of a conversation. friend.cpp should also be a perfectly good general-purpose local LLM server for anyone who wants one.
+It's a general-purpose local LLM server first. A lot of the design pressure comes from chat personas -- servers that rotate between many characters need fast context switching, cheap per-character customisation, and sampling that doesn't derail mid-conversation -- but everything here is useful for ordinary serving too.
 
-Maintained by Viola (she/her). Everything friend.cpp adds to the upstream koboldcpp codebase is marked with `friend.cpp:` comments in the source, and new modules live under `friend/` (notably `adapters.hpp` and `prompt_cache.hpp`).
+Maintained by [Solenopsisbot](https://github.com/Solenopsisbot). Everything friend.cpp adds to the upstream koboldcpp codebase is marked with `friend.cpp:` comments in the source, and new modules live under `friend/` (notably `adapters.hpp` and `prompt_cache.hpp`).
 
 
 ## What's in the fork
@@ -37,7 +37,7 @@ This walks through a realistic setup: two character personas sharing a base mode
 
 ```bash
 python koboldcpp.py --model model.gguf \
-  --head-pool kiko=heads/kiko.head.gguf amelia=heads/amelia.head.gguf \
+  --head-pool rook=heads/rook.head.gguf mira=heads/mira.head.gguf \
   --cvec-pool happy=cvecs/happy.gguf anxious=cvecs/anxious.gguf \
   --cache-dir ./cache \
   --cache-ram 2048 \
@@ -52,16 +52,16 @@ Before any users connect, pre-fill and pin each persona's system prompt so the f
 
 ```bash
 curl -s http://localhost:5001/api/extra/cache/warm -d '{
-  "prompt": "<|im_start|>system\nYou are Kiko. [... full persona card ...]\n<|im_end|>",
-  "head": "kiko",
+  "prompt": "<|im_start|>system\nYou are Rook. [... full persona card ...]\n<|im_end|>",
+  "head": "rook",
   "steer": {"happy": 3.0},
-  "cache_pin": "kiko-persona"
+  "cache_pin": "rook-persona"
 }'
 
 curl -s http://localhost:5001/api/extra/cache/warm -d '{
-  "prompt": "<|im_start|>system\nYou are Amelia. [... full persona card ...]\n<|im_end|>",
-  "head": "amelia",
-  "cache_pin": "amelia-persona"
+  "prompt": "<|im_start|>system\nYou are Mira. [... full persona card ...]\n<|im_end|>",
+  "head": "mira",
+  "cache_pin": "mira-persona"
 }'
 ```
 
@@ -71,17 +71,17 @@ curl -s http://localhost:5001/api/extra/cache/warm -d '{
 curl http://localhost:5001/v1/chat/completions -d '{
   "model": "whatever",
   "messages": [
-    {"role": "system", "content": "You are Kiko. [... persona card ...]"},
-    {"role": "user", "content": "hey kiko, how are you?"}
+    {"role": "system", "content": "You are Rook. [... persona card ...]"},
+    {"role": "user", "content": "hey rook, how are you?"}
   ],
-  "head": "kiko",
+  "head": "rook",
   "steer": {"happy": 3.0},
   "temperature": 1.0,
   "blue_noise": true
 }'
 ```
 
-The server will match the system prompt against the pinned cache entry, skip prefilling those ~1000 tokens, apply Kiko's LM head (cache stays valid -- head swaps are nearly free), steer the hidden states toward "happy," and sample with blue-noise anti-correlation. The whole thing takes a fraction of the time a cold start would.
+The server will match the system prompt against the pinned cache entry, skip prefilling those ~1000 tokens, apply Rook's LM head (cache stays valid -- head swaps are nearly free), steer the hidden states toward "happy," and sample with blue-noise anti-correlation. The whole thing takes a fraction of the time a cold start would.
 
 
 ---
@@ -161,16 +161,16 @@ These work on any text generation endpoint, including OpenAI chat completions.
 **LoRA** -- `"lora"`:
 ```jsonc
 // object form: name -> scale
-{"lora": {"kiko": 0.8, "sleepy": 0.3}}
+{"lora": {"rook": 0.8, "sleepy": 0.3}}
 
 // array of names (scale defaults to 1.0)
-{"lora": ["kiko"]}
+{"lora": ["rook"]}
 
 // array of objects
-{"lora": [{"name": "kiko", "scale": 0.8}]}
+{"lora": [{"name": "rook", "scale": 0.8}]}
 
 // single string
-{"lora": "kiko"}
+{"lora": "rook"}
 
 // empty object: turns OFF legacy --lora adapters for this request
 {"lora": {}}
@@ -186,7 +186,7 @@ Strengths are multipliers on each stored direction vector. Multiple vectors are 
 
 **LM head** -- `"head"`:
 ```json
-{"head": "kiko"}
+{"head": "rook"}
 ```
 Swaps the final projection layer for this request.
 
@@ -202,9 +202,9 @@ Returns:
 
 ```json
 {
-  "lora": [{"name": "kiko", "default_scale": 1.0}, ...],
+  "lora": [{"name": "rook", "default_scale": 1.0}, ...],
   "cvec": [{"name": "happy"}, ...],
-  "head": [{"name": "kiko"}, ...]
+  "head": [{"name": "rook"}, ...]
 }
 ```
 
@@ -217,7 +217,7 @@ This matters for performance, so pay attention to it:
 
 ### Building steering vectors
 
-You don't need an external tool: friend.cpp builds control vectors from contrastive examples on the model it already has loaded. Give it prompts where the model *is* the thing (an excited Kiko) and prompts where it isn't (a flat Kiko), ideally in pairs that differ only in that one respect:
+You don't need an external tool: friend.cpp builds control vectors from contrastive examples on the model it already has loaded. Give it prompts where the model *is* the thing (an excited Rook) and prompts where it isn't (a flat Rook), ideally in pairs that differ only in that one respect:
 
 ```bash
 curl -s http://localhost:5001/api/extra/steer/build -d '{
@@ -268,7 +268,7 @@ On by default. Replaces koboldcpp's SmartCache automatic slot switching. (The ad
 
 ### Why it exists
 
-Persona servers constantly rotate between characters. Without caching, every time you switch from Kiko to Amelia and back, you re-prefill the entire persona card -- easily 1000+ tokens. The tiered cache snapshots KV state to RAM and disk so that switching back is nearly instant, and the disk tier survives server restarts.
+Persona servers constantly rotate between characters. Without caching, every time you switch from Rook to Mira and back, you re-prefill the entire persona card -- easily 1000+ tokens. The tiered cache snapshots KV state to RAM and disk so that switching back is nearly instant, and the disk tier survives server restarts.
 
 ### Startup flags
 
@@ -346,7 +346,7 @@ curl http://localhost:5001/api/extra/cache
       "resident": true,
       "on_disk": true,
       "pinned": true,
-      "label": "kiko-persona",
+      "label": "rook-persona",
       "adapters": {},
       "idle": 12.5
     }
@@ -361,8 +361,8 @@ Per item, `bytes` is the uncompressed state size. `ram_bytes` and `disk_bytes` a
 ```bash
 curl http://localhost:5001/api/extra/cache/warm -d '{
   "prompt": "... the full prompt to prefill ...",
-  "head": "kiko",
-  "cache_pin": "kiko-persona"
+  "head": "rook",
+  "cache_pin": "rook-persona"
 }'
 ```
 
@@ -485,6 +485,21 @@ First run (Ternary-Bonsai-1.7B, 8 persona prompts x 6 seeds, baseline T=1.0 + mi
 | blue + XTC + DRY | 1.31 (-5.3) | 0.072 (-4.9) | 0.0005 (-2.6) | 0.967 (+3.9) |
 
 What it supports: blue noise cuts derailing streaks by about a quarter, and even at T=1.2 it stays below plain sampling at T=1.0 -- roughly 0.2 of extra temperature (livelier text) for free. **Caveat:** the tail/surprisal metrics are measured on the *post-sampler* distribution, so samplers that reshape it (XTC removes top choices, which mechanically lowers measured surprisal) move those columns partly by construction. Blue noise only changes the roll, so its rows are clean; the XTC/DRY rows need a judged quality eval before anyone treats them as proof.
+
+### Judged comparison
+
+`tools/friend-eval/judge_lab.py` asks a second model which of two replies is better -- blind, pairwise against the baseline, order randomised, with the judge's probability read from its logprobs. First run: Ternary-Bonsai-1.7B generating, Bonsai-27B Q1_0 judging, 8 persona prompts x 4 seeds (32 judgments per config):
+
+| config | preferred over baseline | 95% CI |
+|---|---|---|
+| blue noise | 0.41 | [0.25, 0.56] |
+| blue noise, T=1.2 | 0.47 | [0.31, 0.63] |
+| dynatemp 0.5 | 0.47 | [0.31, 0.63] |
+| XTC 0.1/0.5 | 0.38 | [0.22, 0.56] |
+| DRY 0.8 | 0.50 | [0.31, 0.66] |
+| blue + XTC + DRY | 0.38 | [0.22, 0.56] |
+
+No configuration beats plain T=1.0 + min_p 0.05 here: every interval includes 0.5. So the mechanical gains above (fewer derailing streaks, less repetition) don't show up as replies this judge prefers. That's evidence *against* over-claiming, not proof any of them is worse -- n=32 is small and a 1-bit judge is weak. Treat blue noise as a safety margin (it makes higher temperatures safer), not as a quality upgrade.
 
 ## Limits and not-yet-verified
 

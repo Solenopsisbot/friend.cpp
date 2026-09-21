@@ -1,8 +1,8 @@
 #pragma once
 // friend.cpp: build steering (control) vectors from contrastive examples.
 //
-// Give it prompts where the model "is" something (positive: an excited Kiko) and prompts
-// where it isn't (negative: a flat Kiko). We run every prompt through the base model,
+// Give it prompts where the model "is" something (positive: an excited Rook) and prompts
+// where it isn't (negative: a flat Rook). We run every prompt through the base model,
 // read the residual stream at the end of each layer (the `l_out-N` graph tensors -- the
 // exact point where llama adds a control vector back in), and per layer take:
 //
