@@ -5340,6 +5340,7 @@ static int batch_seed_slot_locked(BatchGenerateRequest & req, int slot)
 
     const size_t best = std::max({own_len, src_len, m.e ? m.usable : (size_t) 0});
     size_t reused = 0;
+    friend_cache::payload cached; // friend.cpp: uncompressed bytes of the cache entry, if we use one
     if(best > 0 && best == own_len)
     {
         if(recurrent || llama_memory_seq_rm(mem, slot, (llama_pos) own_len, -1))
@@ -5353,10 +5354,10 @@ static int batch_seed_slot_locked(BatchGenerateRequest & req, int slot)
         llama_memory_seq_cp(mem, src_seq, slot, 0, (llama_pos) src_len);
         reused = src_len;
     }
-    else if(best > 0 && m.e && friend_cache::global().ensure_resident(m.e))
+    else if(best > 0 && m.e && friend_cache::global().load(m.e, cached))
     {
         llama_memory_seq_rm(mem, slot, -1, -1);
-        if(llama_state_seq_set_data(llama_ctx_v4, m.e->state.data(), m.e->state.size(), slot) != 0 &&
+        if(llama_state_seq_set_data(llama_ctx_v4, cached.state->data(), cached.state->size(), slot) != 0 &&
            (recurrent || llama_memory_seq_rm(mem, slot, (llama_pos) m.usable, -1)))
         {
             reused = m.usable;
@@ -6427,14 +6428,16 @@ static bool friend_cache_capture(const char * label, bool pinned = false)
     e->pinned = pinned;
     e->label = label ? label : "";
 
+    // friend.cpp: captured uncompressed; the store's worker compresses it in the background
     const size_t sz = llama_state_seq_get_size(llama_ctx_v4, 0);
-    e->state.resize(sz);
-    const size_t got = llama_state_seq_get_data(llama_ctx_v4, e->state.data(), sz, 0);
+    friend_cache::bytes state(sz);
+    const size_t got = llama_state_seq_get_data(llama_ctx_v4, state.data(), sz, 0);
     if(got == 0)
     {
         return false;
     }
-    e->state.resize(got);
+    state.resize(got);
+    e->state.raw = friend_cache::share(std::move(state));
     if(draft_ctx)
     {
         if(draft_is_dspark_standalone && draft_spec)
@@ -6444,9 +6447,10 @@ static bool friend_cache_capture(const char * label, bool pinned = false)
             common_speculative_friend_flush(draft_spec, 0);
         }
         const size_t dsz = llama_state_seq_get_size(draft_ctx, 0);
-        e->draft_state.resize(dsz);
-        const size_t dgot = llama_state_seq_get_data(draft_ctx, e->draft_state.data(), dsz, 0);
-        e->draft_state.resize(dgot);
+        friend_cache::bytes draft(dsz);
+        const size_t dgot = llama_state_seq_get_data(draft_ctx, draft.data(), dsz, 0);
+        draft.resize(dgot);
+        e->draft.raw = friend_cache::share(std::move(draft));
     }
     // next-token logits are only meaningful if the last decode ended exactly at pmax,
     // which holds whenever the snapshot covers everything that is in the KV
@@ -6459,7 +6463,7 @@ static bool friend_cache_capture(const char * label, bool pinned = false)
             e->logits_head_key = friend_logits_head_key;
         }
     }
-    const size_t mb = (e->state.size() + e->draft_state.size()) >> 20;
+    const size_t mb = (e->state.raw->size() + (e->draft.raw ? e->draft.raw->size() : 0)) >> 20;
     const bool stored = friend_cache::global().insert(e);
     if(stored && !is_quiet)
     {
@@ -6487,13 +6491,14 @@ static bool friend_cache_capture_seq(llama_seq_id seq, const std::vector<llama_t
     e->exact_only = friend_cache_recurrent;
     e->label = label;
     const size_t sz = llama_state_seq_get_size(llama_ctx_v4, seq);
-    e->state.resize(sz);
-    const size_t got = llama_state_seq_get_data(llama_ctx_v4, e->state.data(), sz, seq);
+    friend_cache::bytes state(sz);
+    const size_t got = llama_state_seq_get_data(llama_ctx_v4, state.data(), sz, seq);
     if(got == 0)
     {
         return false;
     }
-    e->state.resize(got);
+    state.resize(got);
+    e->state.raw = friend_cache::share(std::move(state));
     const bool stored = friend_cache::global().insert(e);
     if(stored && !is_quiet)
     {
@@ -6506,17 +6511,18 @@ static bool friend_cache_capture_seq(llama_seq_id seq, const std::vector<llama_t
 static bool friend_cache_restore(const friend_cache::entry_ptr & e)
 {
     auto & store = friend_cache::global();
-    if(draft_ctx && e->draft_bytes == 0)
+    if(draft_ctx && e->draft.size == 0)
     {
         return false; // the draft model would be left without the prefix
     }
-    if(!store.ensure_resident(e))
+    friend_cache::payload bytes; // friend.cpp: decompressed (or shared raw) state
+    if(!store.load(e, bytes))
     {
         store.forget(e);
         return false;
     }
     llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), 0, -1, -1);
-    if(llama_state_seq_set_data(llama_ctx_v4, e->state.data(), e->state.size(), 0) == 0)
+    if(llama_state_seq_set_data(llama_ctx_v4, bytes.state->data(), bytes.state->size(), 0) == 0)
     {
         llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), 0, -1, -1);
         current_context_tokens.clear();
@@ -6526,7 +6532,7 @@ static bool friend_cache_restore(const friend_cache::entry_ptr & e)
     if(draft_ctx)
     {
         llama_memory_seq_rm(llama_get_memory(draft_ctx), 0, -1, -1);
-        if(llama_state_seq_set_data(draft_ctx, e->draft_state.data(), e->draft_state.size(), 0) == 0)
+        if(llama_state_seq_set_data(draft_ctx, bytes.draft->data(), bytes.draft->size(), 0) == 0)
         {
             llama_memory_seq_rm(llama_get_memory(draft_ctx), 0, -1, -1);
             llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), 0, -1, -1);
@@ -8990,7 +8996,8 @@ std::string gpttype_friend_cache_list_json()
     for(const auto & it : friend_cache::global().list())
     {
         j["items"].push_back({
-            {"id", it.id}, {"tokens", it.n_tokens}, {"bytes", it.bytes}, {"resident", it.resident},
+            {"id", it.id}, {"tokens", it.n_tokens}, {"bytes", it.bytes}, {"ram_bytes", it.ram}, {"disk_bytes", it.disk},
+            {"resident", it.resident},
             {"on_disk", it.on_disk}, {"pinned", it.pinned}, {"label", it.label}, {"adapters", it.kv_key},
             {"idle", it.age},
         });
