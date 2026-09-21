@@ -54,6 +54,8 @@ models-mnt
 /infill
 /libllama.so
 /llama-bench
+/mv-check
+/test-backend-ops
 /lookahead
 /lookup
 /main
