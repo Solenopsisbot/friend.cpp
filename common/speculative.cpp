@@ -234,6 +234,9 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
     std::vector<float>                                                         markov_w1;
     std::vector<float>                                                         markov_w2;
     std::vector<float>                                                         markov_bias;
+    // friend.cpp: per-vocab-row L2 norms of markov_w2 for the bounded argmax in
+    // draft(); empty when disabled (DSPARK_MARKOV_EXACT_SCAN=1) or no Markov head.
+    std::vector<float>                                                         markov_w2_norm;
     int64_t                                                                    markov_rank = 0;
     bool                                                                       has_markov  = false;
     std::vector<std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)>> graph_samplers;
@@ -352,6 +355,20 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
             throw std::runtime_error("dspark: vocab size exceeds cblas integer range");
         }
         markov_bias.resize((size_t) n_vocab);
+        {
+            const char * exact = std::getenv("DSPARK_MARKOV_EXACT_SCAN");
+            if (has_markov && !(exact && std::strcmp(exact, "1") == 0)) {
+                markov_w2_norm.resize((size_t) n_vocab);
+                for (int64_t v = 0; v < n_vocab; ++v) {
+                    const float * row = markov_w2.data() + (size_t) v * (size_t) markov_rank;
+                    double        acc = 0.0;
+                    for (int64_t r = 0; r < markov_rank; ++r) {
+                        acc += (double) row[r] * row[r];
+                    }
+                    markov_w2_norm[(size_t) v] = (float) std::sqrt(acc);
+                }
+            }
+        }
 
         const char * cuda_mode = std::getenv("LLAMA_DSPARK_MARKOV_CUDA");
         if (const char * value = std::getenv("DSPARK_DCUT_COSTS")) {
@@ -934,7 +951,58 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
                 llama_token best_id = mask_token_id == 0 ? 1 : 0;
                 float       best_v  = -std::numeric_limits<float>::infinity();
 
-                if (has_markov) {
+                if (has_markov && !markov_w2_norm.empty()) {
+                    // friend.cpp: bounded argmax. The full correction is an
+                    // n_vocab x rank gemv per row (~64M MACs, 250MB of fp32 weights
+                    // streamed) -- 15-25ms of a ~35ms draft round on an M5. But we
+                    // only need the argmax of base[v] + <emb, w2[v]>, and by
+                    // Cauchy-Schwarz <emb, w2[v]> <= |emb| * |w2[v]|. Seed with the
+                    // base argmax's exact score, then only compute the dot for rows
+                    // whose upper bound can still beat the best so far. Drafter logits
+                    // are peaked, so that is usually a handful of rows. Same argmax as
+                    // the full scan (lowest index on ties) up to float summation order;
+                    // DSPARK_MARKOV_EXACT_SCAN=1 restores the full scan for A/B.
+                    const float * emb = markov_w1.data() + (size_t) prev_token * (size_t) markov_rank;
+                    float         en  = 0.0f;
+                    for (int64_t r = 0; r < markov_rank; ++r) {
+                        en += emb[r] * emb[r];
+                    }
+                    en = std::sqrt(en);
+
+                    const auto bias_of = [&](int64_t v) {
+                        const float * w2row = markov_w2.data() + (size_t) v * (size_t) markov_rank;
+                        float         bias  = 0.0f;
+                        for (int64_t r = 0; r < markov_rank; ++r) {
+                            bias += emb[r] * w2row[r];
+                        }
+                        return bias;
+                    };
+
+                    int64_t seed = -1;
+                    for (int64_t v = 0; v < n_vocab; ++v) {
+                        if (v != mask_token_id && (seed < 0 || base_logits[v] > base_logits[seed])) {
+                            seed = v;
+                        }
+                    }
+                    best_id = (llama_token) seed;
+                    best_v  = base_logits[seed] + bias_of(seed);
+
+                    for (int64_t v = 0; v < n_vocab; ++v) {
+                        if (v == mask_token_id || v == seed) {
+                            continue;
+                        }
+                        // widened slightly so float rounding in the dot can't prune a winner
+                        const float bound = markov_w2_norm[(size_t) v] * en;
+                        if (base_logits[v] + bound * 1.001f + 1e-5f < best_v) {
+                            continue;
+                        }
+                        const float logit = base_logits[v] + bias_of(v);
+                        if (logit > best_v || (logit == best_v && v < best_id)) {
+                            best_v  = logit;
+                            best_id = (llama_token) v;
+                        }
+                    }
+                } else if (has_markov) {
                     const float * emb = markov_w1.data() + (size_t) prev_token * (size_t) markov_rank;
 #ifdef LLAMA_DSPARK_MARKOV_BLAS
                     cblas_sgemv(CblasRowMajor, CblasNoTrans, (int) n_vocab, (int) markov_rank, 1.0f, markov_w2.data(),
