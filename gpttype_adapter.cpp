@@ -67,6 +67,7 @@
 #include "friend/adapters.hpp"
 #include "friend/prompt_cache.hpp"
 #include "friend/steering.hpp"
+#include "friend/spec_tuner.hpp"
 #include "llama-vocab.h"
 #include "nlohmann/json.hpp"
 
@@ -170,6 +171,10 @@ static std::string friend_logits_head_key = ""; // head that produced the contex
 static bool friend_cache_on = false;        // store configured and fast-forward available
 static bool friend_cache_recurrent = false; // model state can't be truncated: only full-prefix reuse
 static size_t friend_cache_capture_tokens = 512; // snapshot after prefilling at least this many new tokens
+// friend.cpp: adaptive speculative draft length (friend/spec_tuner.hpp)
+static friend_spec::tuner friend_tuner;
+static bool friend_draft_adaptive = true;
+static int friend_round_k = 0; // draft length chosen for the current round
 static std::string friend_cvec_dir = "";        // where built steering vectors are saved
 static int friend_n_past_after_ff = 0;            // n_past right after cache restore + fast-forward
 static std::vector<int> friend_checkpoints;       // absolute positions to snapshot at during this prefill (recurrent)
@@ -958,6 +963,9 @@ const char * kcpp_print_system_info(void) {
 
 static bool speculative_state_setup(llama_context * main_ctx, const llama_context_params & draft_ctx_params, int draft_gpulayers, common_speculative_type type)
 {
+    friend_tuner.reset(speculative_chunk_amt); //friend.cpp: fresh cost/acceptance estimates per draft setup
+    friend_tuner.debug = getenv("FRIEND_DEBUG_SPEC") != nullptr;
+
     common_params_speculative spec_params;
     spec_params.types = { type };
     spec_params.draft.ctx_tgt = main_ctx;
@@ -1309,7 +1317,10 @@ static speculative_draft_result speculative_decoding_eval_chunk(llama_context * 
 
     std::vector<llama_token> drafted_ids;
     llama_tokens prompt_tokens;
-    const int n_draft_max = std::min(speculative_chunk_amt, std::max(0, remaining_tokens - 1));
+    // friend.cpp: the adaptive tuner picks this round's draft length (see friend_round_k)
+    const int n_draft_cap = friend_draft_adaptive ? std::max(1, friend_round_k) : speculative_chunk_amt;
+    const int n_draft_max = std::min(n_draft_cap, std::max(0, remaining_tokens - 1));
+    const auto t_draft0 = std::chrono::steady_clock::now();
     if(n_draft_max <= 0)
     {
         return results;
@@ -1324,6 +1335,7 @@ static speculative_draft_result speculative_decoding_eval_chunk(llama_context * 
     dp.result = &drafted_ids;
 
     common_speculative_draft(draft_spec);
+    results.draft_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_draft0).count();
     if(drafted_ids.empty() && draft_is_dspark_standalone)
     {
         // friend.cpp: dspark declines to draft when its features don't cover the
@@ -1380,7 +1392,10 @@ static speculative_draft_result speculative_decoding_eval_chunk(llama_context * 
     }
 
     kcpp_embd_batch batch = kcpp_embd_batch(real_embd, n_past, use_mrope, true);
+    const auto t_verify0 = std::chrono::steady_clock::now();
     const int32_t decode_status = kcpp_decode_main_and_spec(main_ctx, batch.batch);
+    llama_synchronize(main_ctx); // friend.cpp: time the real compute, not an async launch
+    results.verify_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t_verify0).count();
     if(decode_status != 0)
     {
         kcpp_flush_log_output();
@@ -3975,6 +3990,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             cc.min_tokens  = (size_t) std::max(1, inputs.friend_cache_min_tokens);
             friend_cache_capture_tokens = (size_t) std::max(1, inputs.friend_cache_capture_tokens);
             friend_cvec_dir = inputs.friend_cvec_dir ? inputs.friend_cvec_dir : "";
+            friend_draft_adaptive = !inputs.friend_draft_fixed;
             if(!kcpp_data->use_fastforward)
             {
                 cc.ram_budget = 0;
@@ -4718,10 +4734,27 @@ struct BatchGenerateRequest
     friend_adapters::profile profile;
     std::string profile_key;
     uint64_t last_served_round = 0;
+    // friend.cpp: extra samplers now allowed in batch mode (llama's implementations)
+    std::string grammar;
+    float dry_multiplier = 0.0f;
+    float dry_base = 1.75f;
+    int dry_allowed_length = 2;
+    int dry_penalty_last_n = 0;
+    std::vector<std::string> dry_breakers;
+    float xtc_threshold = 0.0f;
+    float xtc_probability = 0.0f;
+    float nsigma = 0.0f;
+    int mirostat = 0;
+    float mirostat_tau = 5.0f;
+    float mirostat_eta = 0.1f;
+    float dynatemp_range = 0.0f;
+    float dynatemp_exponent = 1.0f;
     std::vector<llama_token> prompt_tokens;
     std::vector<llama_token> kv_tokens; // friend.cpp: token ids in this slot's KV, in position order
     int reused_tokens = 0;              // friend.cpp: prompt tokens that came from a retained slot / cache
     bool capture_after_decode = false;  // friend.cpp: snapshot into the prompt cache once this prefill lands
+    std::vector<int> checkpoints;       // friend.cpp: turn-boundary positions to snapshot at (recurrent models)
+    bool checkpoint_after_decode = false;
     int prompt_pos = 0;
     int n_past = 0;
     bool has_pending = false;
@@ -4837,6 +4870,7 @@ static void batch_invalidate_legacy_context_locked()
 }
 
 static bool friend_cache_capture_seq(llama_seq_id seq, const std::vector<llama_token> & tokens, const std::string & kv_key, const char * label);
+static std::vector<int> friend_plan_checkpoints(const std::vector<int> & embd_inp, int n_past_start);
 
 // friend.cpp: before a single-user generation, park retained batch slots in the prompt cache
 // and release them -- the legacy path may clear the whole KV, which would silently
@@ -4907,19 +4941,26 @@ static bool batch_inputs_eligible(const generation_inputs & inputs)
     {
         return false;
     }
-    if(inputs.grammar && std::string(inputs.grammar).size() > 0)
+    // friend.cpp: grammar, DRY, XTC, top-n-sigma, mirostat and dynatemp run in batch mode
+    // through llama's samplers. Still legacy-only: persistent grammar state across requests,
+    // banned strings (they need kobold's rewind/antislop), and samplers llama doesn't have.
+    if(inputs.grammar && std::string(inputs.grammar).size() > 0 && inputs.grammar_retain_state)
     {
         return false;
     }
-    if(inputs.banned_tokens_len > 0 || inputs.dry_multiplier > 0.0f)
+    if(inputs.banned_tokens_len > 0)
     {
         return false;
     }
-    if(inputs.mirostat != 0 || inputs.xtc_probability > 0.0f || inputs.nsigma > 0.0f || inputs.smoothing_factor > 0.0f || inputs.adaptive_target > 0.0f)
+    if(inputs.smoothing_factor > 0.0f || inputs.adaptive_target > 0.0f)
     {
         return false;
     }
-    if(inputs.top_a > 0.0f || inputs.tfs != 1.0f || inputs.dynatemp_range > 0.0f)
+    if(inputs.top_a > 0.0f || inputs.tfs != 1.0f)
+    {
+        return false;
+    }
+    if(inputs.mirostat != 0 && inputs.mirostat != 1 && inputs.mirostat != 2)
     {
         return false;
     }
@@ -5069,23 +5110,59 @@ static llama_sampler * batch_rep_pen_init(int32_t penalty_last_n, float penalty_
     });
 }
 
+// Per-request sampler chain for the batch worker. Mirrors kobold's default legacy order:
+// grammar constraint, repetition penalties, DRY, logit biases, truncation samplers,
+// temperature (or dynatemp), XTC last, then the draw -- or mirostat instead of truncation.
+// friend.cpp: extended with grammar, DRY, XTC, top-n-sigma, mirostat and dynatemp.
+// NOTE: when a grammar is present it is always chain element 0; the claim step feeds the
+// prompt to every other element (penalty/DRY history) but never to the grammar.
 static llama_sampler * batch_build_sampler(const BatchGenerateRequest & req)
 {
+    const llama_vocab * vocab = llama_model_get_vocab(llama_get_model(llama_ctx_v4));
+    const int32_t n_vocab = llama_vocab_n_tokens(vocab);
+    const uint32_t seed = req.seed < 0 ? LLAMA_DEFAULT_SEED : (uint32_t) req.seed;
     llama_sampler_chain_params params = llama_sampler_chain_default_params();
     llama_sampler * chain = llama_sampler_chain_init(params);
+    if(!req.grammar.empty())
+    {
+        llama_sampler_chain_add(chain, llama_sampler_init_grammar(vocab, req.grammar.c_str(), "root"));
+    }
     llama_sampler_chain_add(chain, batch_rep_pen_init(
         req.rep_pen_range,
         req.rep_pen,
         req.rep_pen_slope,
         req.presence_penalty));
+    if(req.dry_multiplier > 0.0f)
+    {
+        std::vector<const char *> breakers;
+        for(const auto & b : req.dry_breakers) breakers.push_back(b.c_str());
+        llama_sampler_chain_add(chain, llama_sampler_init_dry(vocab,
+            req.dry_multiplier, req.dry_base, req.dry_allowed_length, req.dry_penalty_last_n,
+            breakers.data(), breakers.size()));
+    }
     if(req.logit_biases.size()>0)
     {
-        int32_t n_vocab = llama_vocab_n_tokens(llama_model_get_vocab(llama_get_model(llama_ctx_v4)));
         llama_sampler_chain_add(chain, llama_sampler_init_logit_bias(n_vocab, req.logit_biases.size(), req.logit_biases.data()));
+    }
+    if(req.mirostat == 1 || req.mirostat == 2)
+    {
+        llama_sampler_chain_add(chain, llama_sampler_init_temp(req.temperature > 0.0f ? req.temperature : 1.0f));
+        llama_sampler_chain_add(chain, req.mirostat == 1
+            ? llama_sampler_init_mirostat(n_vocab, seed, req.mirostat_tau, req.mirostat_eta, 100)
+            : llama_sampler_init_mirostat_v2(seed, req.mirostat_tau, req.mirostat_eta));
+        return chain;
     }
     if(req.top_k > 0)
     {
         llama_sampler_chain_add(chain, llama_sampler_init_top_k(req.top_k));
+    }
+    if(req.nsigma > 0.0f)
+    {
+        llama_sampler_chain_add(chain, llama_sampler_init_top_n_sigma(req.nsigma));
+    }
+    if(req.typical_p > 0.0f && req.typical_p < 1.0f)
+    {
+        llama_sampler_chain_add(chain, llama_sampler_init_typical(req.typical_p, 1));
     }
     if(req.top_p > 0.0f && req.top_p < 1.0f)
     {
@@ -5095,14 +5172,15 @@ static llama_sampler * batch_build_sampler(const BatchGenerateRequest & req)
     {
         llama_sampler_chain_add(chain, llama_sampler_init_min_p(req.min_p, 1));
     }
-    if(req.typical_p > 0.0f && req.typical_p < 1.0f)
-    {
-        llama_sampler_chain_add(chain, llama_sampler_init_typical(req.typical_p, 1));
-    }
     if(req.temperature > 0.0f)
     {
-        llama_sampler_chain_add(chain, llama_sampler_init_temp(req.temperature));
-        uint32_t seed = req.seed < 0 ? LLAMA_DEFAULT_SEED : (uint32_t) req.seed;
+        llama_sampler_chain_add(chain, req.dynatemp_range > 0.0f
+            ? llama_sampler_init_temp_ext(req.temperature, req.dynatemp_range, req.dynatemp_exponent)
+            : llama_sampler_init_temp(req.temperature));
+        if(req.xtc_probability > 0.0f)
+        {
+            llama_sampler_chain_add(chain, llama_sampler_init_xtc(req.xtc_probability, req.xtc_threshold, 1, seed));
+        }
         llama_sampler_chain_add(chain, llama_sampler_init_dist_rng(seed, req.blue_noise, (enum llama_rng_type) req.rng_type));
     }
     else
@@ -5426,9 +5504,18 @@ static bool batch_claim_waiting_locked()
 
         req->prompt_token_count = req->prompt_tokens.size();
         req->sampler = batch_build_sampler(*req);
-        for(llama_token token : req->prompt_tokens)
         {
-            llama_sampler_accept(req->sampler, token);
+            // feed the prompt to the history-based samplers, but never to the grammar (it
+            // constrains only what the model generates)
+            const int first = req->grammar.empty() ? 0 : 1;
+            const int n_smpl = llama_sampler_chain_n(req->sampler);
+            for(llama_token token : req->prompt_tokens)
+            {
+                for(int i = first; i < n_smpl; ++i)
+                {
+                    llama_sampler_accept(llama_sampler_chain_get(req->sampler, i), token);
+                }
+            }
         }
         req->has_pending = false;
         req->i_batch = -1;
@@ -5439,6 +5526,13 @@ static bool batch_claim_waiting_locked()
         req->prompt_pos = reuse;
         req->n_past = reuse;
         req->reused_tokens = reuse;
+        req->checkpoints.clear();
+        if(friend_cache_on && friend_cache_recurrent)
+        {
+            // recurrent state only resumes from exact snapshots: checkpoint at turn boundaries
+            const std::vector<int> rest(req->prompt_tokens.begin() + reuse, req->prompt_tokens.end());
+            req->checkpoints = friend_plan_checkpoints(rest, reuse);
+        }
         req->process_start_time = std::chrono::steady_clock::now();
         req->generation_start_time = std::chrono::steady_clock::time_point();
         req->init_time = std::chrono::duration<float>(req->process_start_time - req->start_time).count();
@@ -5539,7 +5633,13 @@ static void batch_worker_loop()
                 req.last_served_round = batch_round;
                 if(req.state == BatchState::PREFILL)
                 {
-                    while(req.prompt_pos < (int) req.prompt_tokens.size() && batch.n_tokens < batch_cap)
+                    // friend.cpp: never pack past the next planned checkpoint in one round
+                    while(!req.checkpoints.empty() && req.checkpoints.front() <= req.prompt_pos)
+                    {
+                        req.checkpoints.erase(req.checkpoints.begin());
+                    }
+                    const int stop_at = req.checkpoints.empty() ? (int) req.prompt_tokens.size() : req.checkpoints.front();
+                    while(req.prompt_pos < stop_at && batch.n_tokens < batch_cap)
                     {
                         bool is_last = req.prompt_pos == (int) req.prompt_tokens.size() - 1;
                         if(is_last)
@@ -5551,6 +5651,11 @@ static void batch_worker_loop()
                         req.kv_tokens.push_back(req.prompt_tokens[req.prompt_pos]);
                         req.prompt_pos++;
                         req.n_past++;
+                    }
+                    if(req.prompt_pos == stop_at && stop_at < (int) req.prompt_tokens.size())
+                    {
+                        req.checkpoint_after_decode = true; // snapshot once this round's decode lands
+                        req.checkpoints.erase(req.checkpoints.begin());
                     }
                     if(req.prompt_pos == (int) req.prompt_tokens.size())
                     {
@@ -5620,6 +5725,14 @@ static void batch_worker_loop()
             continue;
         }
 
+        for(auto & req_ptr : batch_requests)
+        {
+            if(req_ptr && req_ptr->checkpoint_after_decode && req_ptr->slot >= 0)
+            {
+                req_ptr->checkpoint_after_decode = false;
+                friend_cache_capture_seq(req_ptr->slot, req_ptr->kv_tokens, req_ptr->profile.kv_key, "turn");
+            }
+        }
         const llama_vocab * vocab = llama_model_get_vocab(llama_get_model(llama_ctx_v4));
         const std::vector<llama_token> eog_tokens = GetEogIDs(file_format,n_vocab);
         for(int request_id : decode_ids)
@@ -5724,6 +5837,33 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     req->blue_noise = inputs.blue_noise;
     req->profile = profile;
     req->profile_key = profile.kv_key + "|" + profile.head_key;
+    req->grammar = inputs.grammar ? inputs.grammar : "";
+    if(!req->grammar.empty())
+    {
+        // reject unparseable grammars here so the legacy path reports them properly
+        llama_sampler * g = llama_sampler_init_grammar(llama_model_get_vocab(llama_get_model(llama_ctx_v4)), req->grammar.c_str(), "root");
+        if(!g)
+        {
+            return -1;
+        }
+        llama_sampler_free(g);
+    }
+    req->dry_multiplier = inputs.dry_multiplier;
+    req->dry_base = inputs.dry_base;
+    req->dry_allowed_length = inputs.dry_allowed_length;
+    req->dry_penalty_last_n = inputs.dry_penalty_last_n;
+    for(int i = 0; i < inputs.dry_sequence_breakers_len; ++i)
+    {
+        if(inputs.dry_sequence_breakers[i]) req->dry_breakers.emplace_back(inputs.dry_sequence_breakers[i]);
+    }
+    req->xtc_threshold = inputs.xtc_threshold;
+    req->xtc_probability = inputs.xtc_probability;
+    req->nsigma = inputs.nsigma;
+    req->mirostat = inputs.mirostat;
+    req->mirostat_tau = inputs.mirostat_tau;
+    req->mirostat_eta = inputs.mirostat_eta;
+    req->dynatemp_range = inputs.dynatemp_range;
+    req->dynatemp_exponent = inputs.dynatemp_exponent;
     req->rng_type = inputs.rng_type;
     req->logit_biases = {};
     for(int i = 0; i < inputs.logit_biases_len; ++i)
@@ -6724,6 +6864,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         friend_active_profile = prof;
     }
 
+    if(draft_spec && friend_draft_adaptive)
+    {
+        friend_tuner.new_request(); //friend.cpp: different text may draft very differently
+    }
     showed_rnn_warning = false;
     generation_finished = false; // Set current generation status
     {
@@ -7798,7 +7942,11 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                     }
                     guidance_n_past += 1;
                 }
-                if(embd.size()!=1 || draft_ctx==nullptr || draft_spec==nullptr || remaining_tokens<=1 || grammar!=nullptr || startedsampling==false) //for large batch, or if no draft model, PP/TG as usual
+                // friend.cpp: adaptive draft length; k == 0 means this round is a plain decode
+                const bool friend_spec_round = embd.size()==1 && draft_ctx!=nullptr && draft_spec!=nullptr && remaining_tokens>1 && grammar==nullptr && startedsampling;
+                friend_round_k = (friend_spec_round && friend_draft_adaptive) ? friend_tuner.choose() : speculative_chunk_amt;
+                const auto friend_t_plain0 = std::chrono::steady_clock::now();
+                if(embd.size()!=1 || draft_ctx==nullptr || draft_spec==nullptr || remaining_tokens<=1 || grammar!=nullptr || startedsampling==false || friend_round_k==0) //for large batch, or if no draft model, PP/TG as usual
                 {
                     draft_used = false;
                     kcpp_embd_batch batch = kcpp_embd_batch(embd, n_past, use_mrope, draft_is_mtp);
@@ -7912,6 +8060,11 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                         }
                     }
 
+                    if(friend_spec_round && friend_draft_adaptive)
+                    {
+                        llama_synchronize(llama_ctx_v4);
+                        friend_tuner.record_plain(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - friend_t_plain0).count());
+                    }
                 } else { //individual tokens AND speculative is used (generation)
                     draft_used = true;
                     draft_results = speculative_decoding_eval_chunk(llama_ctx_v4, embd, n_past);
@@ -8458,6 +8611,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             if(draft_used && draft_spec)
             {
                 common_speculative_accept(draft_spec, 0, draft_accepted_this_round);
+                if(friend_draft_adaptive && draft_results.drafted_amount > 0)
+                {
+                    friend_tuner.record_draft(draft_results.drafted_amount, draft_accepted_this_round, draft_results.draft_ms, draft_results.verify_ms);
+                }
             }
 
             //if we have somehow skipped ahead (e.g drafting), ensure that all tokens after npast are purged

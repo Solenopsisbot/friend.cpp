@@ -534,6 +534,8 @@ struct speculative_draft_result
     std::vector<int32_t> verify_tokens;
     std::vector<float *> actual_logits;
     bool draft_success = false;
+    double draft_ms = 0.0;  // friend.cpp: timings for the adaptive draft-length tuner
+    double verify_ms = 0.0;
     int drafted_amount = 0;
     int verify_n_past = 0;
 };

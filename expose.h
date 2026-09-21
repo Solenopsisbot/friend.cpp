@@ -104,6 +104,8 @@ struct load_model_inputs
     const int friend_cache_capture_tokens = 512;
     // friend.cpp: where /api/extra/steer/build saves vectors ("" = keep in memory only)
     const char * friend_cvec_dir = nullptr;
+    // friend.cpp: false = adaptive draft length (default), true = always --draftamount
+    const bool friend_draft_fixed = false;
 };
 struct generation_inputs
 {

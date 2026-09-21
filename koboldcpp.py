@@ -368,7 +368,8 @@ class load_model_inputs(ctypes.Structure):
                 ("friend_cache_dir", ctypes.c_char_p),
                 ("friend_cache_min_tokens", ctypes.c_int),
                 ("friend_cache_capture_tokens", ctypes.c_int),
-                ("friend_cvec_dir", ctypes.c_char_p)]
+                ("friend_cvec_dir", ctypes.c_char_p),
+                ("friend_draft_fixed", ctypes.c_bool)]
 
 class generation_inputs(ctypes.Structure):
     _fields_ = [("seed", ctypes.c_int),
@@ -2217,6 +2218,7 @@ def load_model(model_filename):
     inputs.friend_cache_min_tokens = max(1, int(args.cache_min_tokens))
     inputs.friend_cache_capture_tokens = max(1, int(args.cache_capture_tokens))
     inputs.friend_cvec_dir = (os.path.abspath(args.cvec_dir) if args.cvec_dir else "").encode("UTF-8")
+    inputs.friend_draft_fixed = bool(getattr(args, "draft_fixed", False))
 
     inputs.draftmodel_filename = args.draftmodel.encode("UTF-8") if (args.draftmodel and args.draftamount>0) else "".encode("UTF-8")
     inputs.draft_amount = args.draftamount
@@ -2639,16 +2641,14 @@ def continuous_batching_python_eligible(genparams, api_format):
     if genparams.get("negative_prompt") or genparams.get("images") or genparams.get("audio"):
         utfprint("Batching disabled due to media",2)
         return False
-    if genparams.get("grammar") or genparams.get("grammar_retain_state") or genparams.get("banned_tokens") or genparams.get("banned_strings"):
-        utfprint("Batching disabled due to grammar or bans",2)
-        return False
-    if tryparsefloat(genparams.get("dry_multiplier", 0), 0) or tryparseint(genparams.get("mirostat", 0), 0) or tryparsefloat(genparams.get("xtc_probability", 0), 0) or tryparsefloat(genparams.get("nsigma", 0), 0):
-        utfprint("Batching disabled due to samplers set 1",2)
+    # friend.cpp: grammar, DRY, XTC, top-n-sigma, mirostat and dynatemp are batchable now
+    if genparams.get("grammar_retain_state") or genparams.get("banned_tokens") or genparams.get("banned_strings"):
+        utfprint("Batching disabled due to persistent grammar or bans",2)
         return False
     if tryparsefloat(genparams.get("smoothing_factor", 0), 0) or tryparsefloat(genparams.get("adaptive_target", -1), -1) > 0 or genparams.get("using_openai_tools", False):
         utfprint("Batching disabled due to samplers set 2",2)
         return False
-    if tryparsefloat(genparams.get("top_a", 0), 0) or tryparsefloat(genparams.get("tfs", 1), 1) != 1 or tryparsefloat(genparams.get("dynatemp_range", 0), 0):
+    if tryparsefloat(genparams.get("top_a", 0), 0) or tryparsefloat(genparams.get("tfs", 1), 1) != 1:
         utfprint("Batching disabled due to samplers set 3",2)
         return False
     if genparams.get("sampler_order") and genparams.get("sampler_order") != [6, 0, 1, 3, 4, 2, 5]:
@@ -13217,6 +13217,7 @@ if __name__ == '__main__':
     advparser.add_argument("--cache-disk", dest="cache_disk", metavar=('[MB]'), type=int, default=20480, help="friend.cpp: disk budget of the prompt cache in MiB.")
     advparser.add_argument("--cache-min-tokens", dest="cache_min_tokens", metavar=('[tokens]'), type=int, default=64, help="friend.cpp: don't cache or reuse prefixes shorter than this.")
     advparser.add_argument("--cache-capture-tokens", dest="cache_capture_tokens", metavar=('[tokens]'), type=int, default=512, help="friend.cpp: snapshot a prompt into the cache after prefilling at least this many new tokens.")
+    advparser.add_argument("--draft-fixed", dest="draft_fixed", action='store_true', help="friend.cpp: always draft --draftamount tokens instead of adapting the draft length (0..draftamount) to measured acceptance and verify cost.")
     advparser.add_argument("--cvec-dir", dest="cvec_dir", metavar=('[path]'), default="", help="friend.cpp: directory where /api/extra/steer/build saves steering vectors; every .gguf in it is loaded into the steering pool at startup (name = file stem).")
     advparser.add_argument("--head-pool", dest="head_pool", metavar=('NAME=PATH'), nargs='+', help="friend.cpp: preload named LM heads (GGUF with output.weight); a request swaps with \"head\": \"NAME\". Head swaps keep the KV cache valid.")
     advparser.add_argument("--lowvram","-nkvo","--no-kv-offload", help="If supported by the backend, do not offload KV to GPU (lowvram mode). Not recommended, will be slow.", action='store_true')
