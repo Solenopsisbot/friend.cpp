@@ -214,6 +214,27 @@ This matters for performance, so pay attention to it:
 - **LoRA or steering vector changes invalidate the KV cache.** The prompt cache keys on the adapter set, so each unique combination gets its own cached prefixes. Switching adapters means reprocessing the prompt (or restoring a cache snapshot for that adapter set).
 - **Head swaps do NOT invalidate the KV cache.** The head only affects the final projection after the transformer stack, so switching heads per request is nearly free. This is why head-only fine-tunes are the recommended approach for per-persona customisation.
 
+### Building steering vectors
+
+You don't need an external tool: friend.cpp builds control vectors from contrastive examples on the model it already has loaded. Give it prompts where the model *is* the thing (an excited Kiko) and prompts where it isn't (a flat Kiko), ideally in pairs that differ only in that one respect:
+
+```bash
+curl -s http://localhost:5001/api/extra/steer/build -d '{
+  "name": "excited",
+  "positive": ["<|im_start|>system\nYou are wildly excited about everything.<|im_end|>\n<|im_start|>user\nTell me about my cat.<|im_end|>\n<|im_start|>assistant\nOh", "..."],
+  "negative": ["<|im_start|>system\nYou are bored and flat about everything.<|im_end|>\n<|im_start|>user\nTell me about my cat.<|im_end|>\n<|im_start|>assistant\nOh", "..."],
+  "method": "pca"
+}'
+```
+
+It reads the residual stream at the end of every layer, takes the difference between the two sets (`"method": "mean"`, the default, or `"pca"` -- the dominant direction across pairs, needs equal-length lists), and applies it across the band of layers where the two sets separate best. The vector joins the live steering pool immediately (`"steer": {"excited": 1.5}`), and with `--cvec-dir DIR` it is saved as `DIR/excited.gguf` and loaded again at every startup.
+
+- **Strength scale:** 1.0 is roughly "shift by the difference actually observed between your two sets". On Ternary-Bonsai-1.7B with 12 excited/bored pairs: 1 is noticeably warmer, 2 clearly excited, 4 over the top but still coherent. Negative strengths push the other way.
+- **Other fields:** `"pool": "last"` (default, the final token of each prompt) or `"mean"` (all tokens); `"layers": [start, end]` to override the automatic band; `"normalize": true` for plain unit vectors; `"save": false` to keep it in memory only.
+- **Response:** includes `layers` (the band used), `best_layer`, per-layer `separation` (how cleanly the sets split -- a quick check that your examples actually contrast), and `seconds` (about 1.3 s for 24 short prompts on a 1.7B model).
+- Rebuilding a vector under the same name is safe: the prompt cache keys on the vector's content, never on its name alone.
+- The endpoint respects `--password`, and it is serialized with generation.
+
 ### Extracting head files
 
 ```bash

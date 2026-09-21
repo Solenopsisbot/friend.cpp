@@ -367,7 +367,8 @@ class load_model_inputs(ctypes.Structure):
                 ("friend_cache_disk_mb", ctypes.c_int),
                 ("friend_cache_dir", ctypes.c_char_p),
                 ("friend_cache_min_tokens", ctypes.c_int),
-                ("friend_cache_capture_tokens", ctypes.c_int)]
+                ("friend_cache_capture_tokens", ctypes.c_int),
+                ("friend_cvec_dir", ctypes.c_char_p)]
 
 class generation_inputs(ctypes.Structure):
     _fields_ = [("seed", ctypes.c_int),
@@ -1062,6 +1063,8 @@ def init_library():
     handle.friend_cache_clear.restype = ctypes.c_size_t
     handle.friend_cache_pin.argtypes = [ctypes.c_uint64, ctypes.c_bool]
     handle.friend_cache_pin.restype = ctypes.c_bool
+    handle.friend_build_steering.argtypes = [ctypes.c_char_p]
+    handle.friend_build_steering.restype = ctypes.c_char_p
     handle.sd_load_model.argtypes = [sd_load_model_inputs]
     handle.sd_load_model.restype = ctypes.c_bool
     handle.sd_generate.argtypes = [sd_generation_inputs]
@@ -2118,6 +2121,13 @@ def friend_build_adapter_pools():
         friend_lora_default_scales[name] = 0.0
         lora_lines.append(f"{name}\t{path}\t0")
     friend_adapter_pools["cvec"] = friend_parse_pool_args(getattr(args, "cvec_pool", None), "cvec")
+    # vectors previously built with /api/extra/steer/build come back automatically
+    cvec_dir = getattr(args, "cvec_dir", "")
+    if cvec_dir and os.path.isdir(cvec_dir):
+        for fn in sorted(os.listdir(cvec_dir)):
+            stem, ext = os.path.splitext(fn)
+            if ext.lower() == ".gguf" and _friend_name_re.match(stem) and stem not in friend_adapter_pools["cvec"]:
+                friend_adapter_pools["cvec"][stem] = os.path.join(cvec_dir, fn)
     friend_adapter_pools["head"] = friend_parse_pool_args(getattr(args, "head_pool", None), "head")
     cvec_lines = [f"{n}\t{p}" for n, p in friend_adapter_pools["cvec"].items()]
     head_lines = [f"{n}\t{p}" for n, p in friend_adapter_pools["head"].items()]
@@ -2206,6 +2216,7 @@ def load_model(model_filename):
     inputs.friend_cache_dir = (os.path.abspath(args.cache_dir) if args.cache_dir else "").encode("UTF-8")
     inputs.friend_cache_min_tokens = max(1, int(args.cache_min_tokens))
     inputs.friend_cache_capture_tokens = max(1, int(args.cache_capture_tokens))
+    inputs.friend_cvec_dir = (os.path.abspath(args.cvec_dir) if args.cvec_dir else "").encode("UTF-8")
 
     inputs.draftmodel_filename = args.draftmodel.encode("UTF-8") if (args.draftmodel and args.draftamount>0) else "".encode("UTF-8")
     inputs.draft_amount = args.draftamount
@@ -7715,6 +7726,15 @@ Change Mode<br>
                 except Exception:
                     pass
                 api_format = 2
+            elif clean_path.endswith('/api/extra/steer/build'):
+                # friend.cpp: build a steering vector from contrastive prompts (see FRIEND.md)
+                if not self.secure_endpoint():
+                    return
+                # already serialized: the POST handler holds modelbusy by the time routing runs here
+                result = json.loads((handle.friend_build_steering(body) or b"{}").decode("UTF-8", "ignore"))
+                if result.get("ok"):
+                    friend_adapter_pools["cvec"][result["name"]] = result.get("path") or "<memory>"
+                response_body = json.dumps(result).encode()
             elif clean_path.endswith(('/api/extra/cache/clear', '/api/extra/cache/pin')):
                 # friend.cpp: prompt cache management
                 if not self.secure_endpoint():
@@ -13197,6 +13217,7 @@ if __name__ == '__main__':
     advparser.add_argument("--cache-disk", dest="cache_disk", metavar=('[MB]'), type=int, default=20480, help="friend.cpp: disk budget of the prompt cache in MiB.")
     advparser.add_argument("--cache-min-tokens", dest="cache_min_tokens", metavar=('[tokens]'), type=int, default=64, help="friend.cpp: don't cache or reuse prefixes shorter than this.")
     advparser.add_argument("--cache-capture-tokens", dest="cache_capture_tokens", metavar=('[tokens]'), type=int, default=512, help="friend.cpp: snapshot a prompt into the cache after prefilling at least this many new tokens.")
+    advparser.add_argument("--cvec-dir", dest="cvec_dir", metavar=('[path]'), default="", help="friend.cpp: directory where /api/extra/steer/build saves steering vectors; every .gguf in it is loaded into the steering pool at startup (name = file stem).")
     advparser.add_argument("--head-pool", dest="head_pool", metavar=('NAME=PATH'), nargs='+', help="friend.cpp: preload named LM heads (GGUF with output.weight); a request swaps with \"head\": \"NAME\". Head swaps keep the KV cache valid.")
     advparser.add_argument("--lowvram","-nkvo","--no-kv-offload", help="If supported by the backend, do not offload KV to GPU (lowvram mode). Not recommended, will be slow.", action='store_true')
     advparser.add_argument("--maingpu","--main-gpu","-mg", help="Only used in a multi-gpu setup. Sets the index of the main GPU that will be used.",metavar=('[Device ID]'), type=int, default=-1)
