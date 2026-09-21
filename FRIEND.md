@@ -22,6 +22,7 @@ friend.cpp-specific features, described below:
 1. **Blue-noise sampling** -- anti-correlated randomness that smooths out generation quality
 2. **Per-request adapter profiles** -- LoRA mix, steering vectors, and LM head swaps, per request
 3. **Tiered prompt cache** -- RAM + disk caching of KV state with automatic prefix reuse
+4. **DSpark speculative drafters** -- PrismML's standalone drafters wired into `--draftmodel`, cache-aware
 
 
 ---
@@ -367,6 +368,21 @@ On Apple M5, with persona prompts around 1,050-1,100 tokens:
 ---
 
 
+
+## Speculative decoding with DSpark drafters
+
+PrismML ships standalone DSpark drafters next to their Bonsai models (e.g. `prism-ml/Bonsai-27B-gguf` has `Bonsai-27B-dspark-Q4_1.gguf`). Load one like any draft model:
+
+```bash
+python koboldcpp.py --model Bonsai-27B-Q1_0.gguf \
+  --draftmodel Bonsai-27B-dspark-Q4_1.gguf --draftamount 3
+```
+
+- The drafter reads hidden states from specific target layers, which currently only the Qwen3.5/3.6 family (`qwen35` arch) can provide. Other targets fail at load with a clear error rather than mid-generation.
+- `--draftamount 3` measured best on an M5 (about 1.25x over the target alone at temp 0 and 0.7; 4 barely helped).
+- `LLAMA_DSPARK_SHARED_HEAD=1` makes the drafter borrow the target's LM head (saves ~700 MB).
+- It survives prompt reuse: fast-forward, context shifts, SmartCache slots and the prompt cache all keep the drafter's captured features in step with the target KV, so drafting keeps working on later turns and after switching conversations. Outputs match the target alone.
+
 ## Limits and not-yet-verified
 
 A few things to be honest about:
@@ -374,4 +390,4 @@ A few things to be honest about:
 - **CUDA and HIP**: the code compiles targeting them, but nobody has actually built and run it on Nvidia or AMD GPUs yet. Metal + CPU on Apple Silicon is the tested path.
 - **Vulkan**: shaders generate, but haven't been tested on real GPU hardware.
 - **Recurrent models in batched mode**: turn-boundary checkpoints (the trick that makes cross-conversation reuse work for recurrent models) are not yet taken during continuous batching. They work fine in single-request mode. In batched mode, recurrent models only snapshot whole prompts, so cross-conversation reuse is limited.
-- **DSpark speculative drafting**: wiring is in progress. Not documented here because it's not finished.
+- **DSpark drafting** is modest on Apple Silicon: verifying a draft on the 27B Q1_0 target costs ~60% of a normal token, so the ceiling is low, and on text the drafter predicts badly it can be slower than no drafter. Only standalone `arch=dspark` was exercised; MTP / DFlash / DSpark-in-DFlash paths are unchanged but untested here.
