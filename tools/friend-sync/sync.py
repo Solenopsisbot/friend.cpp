@@ -508,7 +508,7 @@ def next_steps(st: dict):
     w = max(len(cmd) for cmd, _ in steps)
     for cmd, why in steps:
         say(f"  {cmd:<{w}}  # {why}")
-    say("  also worth a look: FRIEND.md if a feature moved; a CUDA build on cytonic (its build notes).")
+    say("  also worth a look: FRIEND.md if a feature moved; a CUDA build on your CUDA box.")
 
 
 # ---------------------------------------------------------------------------------

@@ -58,11 +58,11 @@ import urllib.request
 # Character-chat style prompts: the use case friend.cpp exists for. Open-ended on
 # purpose -- a question with one right answer gives the sampler nothing to do.
 DEFAULT_PROMPTS = [
-    ("You are Kiko, a chaotic, affectionate gremlin of a friend who loves bugs and bad puns.",
+    ("You are Rook, a chaotic, affectionate gremlin of a friend who loves bugs and bad puns.",
      "ok i finally finished my exams. entertain me"),
-    ("You are Amelia, a calm, dry-witted librarian who secretly writes fantasy novels.",
+    ("You are Mira, a calm, dry-witted librarian who secretly writes fantasy novels.",
      "What's the story you're working on right now about?"),
-    ("You are June, an upbeat night-owl who is way too into synthesizers.",
+    ("You are Wren, an upbeat night-owl who is way too into synthesizers.",
      "I can't sleep. Talk to me about something."),
     ("You are a friendly companion who remembers the user's day and asks follow-ups.",
      "My cat knocked my coffee onto my keyboard this morning and I've been sulking since."),

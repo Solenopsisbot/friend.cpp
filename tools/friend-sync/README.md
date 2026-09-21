@@ -60,7 +60,7 @@ The build command depends on the platform:
 - Linux with `nvcc` or `CUDA_PATH`: `make -j4 LLAMA_CUBLAS=1 koboldcpp_cublas`, and the smoke servers get `--usecuda`
 - anything else: `koboldcpp_default`
 
-To use something else, set `FRIEND_SYNC_MAKE` to the full command. On cytonic that's the memory-capped version:
+To use something else, set `FRIEND_SYNC_MAKE` to the full command. On a shared desktop, a memory-capped version is kinder:
 
 ```bash
 FRIEND_SYNC_MAKE="systemd-run --user --scope -p MemoryMax=6G nice make -j3 LLAMA_CUBLAS=1 LLAMA_CUDA_CCBIN=... koboldcpp_cublas" \
