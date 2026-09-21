@@ -2872,6 +2872,14 @@ static bool ggml_metal_op_mul_mat_lut_params(const ggml_tensor * op, ggml_metal_
         return false;
     }
 
+    // At 2-3 columns the stock kernels are only ~1.5x off the single-column cost, and on
+    // small matrices the LUT path's extra dispatch + barrier per matmul eats the kernel win
+    // (Bonsai-1.7B, 2048..6144 x 2048: 2 tokens 4.8 -> 5.1 ms whole-model). Take the LUT
+    // path there only for matrices of 16M+ weights (every LUT-eligible 27B matrix is 26M+).
+    if (src1->ne[1] <= 3 && src0->ne[0]*src0->ne[1] < (1 << 24)) {
+        return false;
+    }
+
     static const int v_env = getenv("GGML_METAL_LUT_V") ? atoi(getenv("GGML_METAL_LUT_V")) : 0;
 
     const int ne11  = (int) src1->ne[1];
