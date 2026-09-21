@@ -442,6 +442,20 @@ python koboldcpp.py --model Bonsai-27B-Q1_0.gguf \
 
 `tools/friend-eval/sampler_lab.py --configs FILE.json` runs any number of sampler configurations (a JSON object of `{name: {request fields}}`) on the same prompts and seeds, interleaved, and reports derailment (tail picks, streaks, surprisal burstiness), repetition, diversity and length against a baseline with Welch t-values. `tools/friend-eval/configs/chat_presets.json` is a starting set.
 
+First run (Ternary-Bonsai-1.7B, 8 persona prompts x 6 seeds, baseline T=1.0 + min_p 0.05; Welch t in brackets):
+
+| config | longest tail streak | tail picks | 4-gram repetition | distinct bigrams |
+|---|---|---|---|---|
+| baseline | 2.00 | 0.102 | 0.0035 | 0.946 |
+| blue noise | 1.46 (-4.1) | 0.097 | 0.0023 | 0.955 |
+| blue noise, T=1.2 | 1.58 (-3.1) | 0.094 | 0.0048 | 0.954 |
+| dynatemp 0.5 | 1.88 (-0.8) | 0.106 | 0.0028 | 0.951 |
+| XTC 0.1/0.5 | 1.77 (-1.6) | 0.083 (-3.4) | 0.0017 | 0.959 (+2.5) |
+| DRY 0.8 | 2.08 (+0.5) | 0.103 | 0.0020 | 0.953 |
+| blue + XTC + DRY | 1.31 (-5.3) | 0.072 (-4.9) | 0.0005 (-2.6) | 0.967 (+3.9) |
+
+What it supports: blue noise cuts derailing streaks by about a quarter, and even at T=1.2 it stays below plain sampling at T=1.0 -- roughly 0.2 of extra temperature (livelier text) for free. **Caveat:** the tail/surprisal metrics are measured on the *post-sampler* distribution, so samplers that reshape it (XTC removes top choices, which mechanically lowers measured surprisal) move those columns partly by construction. Blue noise only changes the roll, so its rows are clean; the XTC/DRY rows need a judged quality eval before anyone treats them as proof.
+
 ## Limits and not-yet-verified
 
 A few things to be honest about:
