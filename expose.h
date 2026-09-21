@@ -106,6 +106,8 @@ struct load_model_inputs
     const char * friend_cvec_dir = nullptr;
     // friend.cpp: false = adaptive draft length (default), true = always --draftamount
     const bool friend_draft_fixed = false;
+    // friend.cpp: snapshot the live context after this many ms of idle (0 = off)
+    const int friend_cache_idle_ms = 300;
 };
 struct generation_inputs
 {
