@@ -503,6 +503,8 @@ add_library(common2
             vendor/hash/hash.h
             vendor/hash/sha256/sha256.c
             vendor/hash/sha256/sha256.h
+            vendor/zstd/zstd.c
+            vendor/zstd/zstd.h
             tools/mtmd/mtmd-audio.cpp
             tools/mtmd/mtmd-audio.h)
 target_include_directories(common2 PUBLIC . ./ggml/include ./ggml/src ./ggml/src/ggml-cpu ./include ./otherarch ./otherarch/tools ./vendor/stb ./vendor/nlohmann ./vendor ./vendor/hash ./otherarch/sdcpp ./otherarch/sdcpp/thirdparty ./tools ./common)
@@ -515,6 +517,7 @@ else()
     set(KCPP_HASH_NO_WARN_FLAG -w)
 endif()
 set_source_files_properties(vendor/hash/sha256/sha256.c PROPERTIES COMPILE_OPTIONS ${KCPP_HASH_NO_WARN_FLAG})
+set_source_files_properties(vendor/zstd/zstd.c PROPERTIES COMPILE_OPTIONS ${KCPP_HASH_NO_WARN_FLAG}) # friend.cpp: prompt cache compression
 
 add_library(sdtype_adapter
             otherarch/sdcpp/sdtype_adapter.cpp
