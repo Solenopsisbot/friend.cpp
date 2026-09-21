@@ -470,6 +470,22 @@ extern "C"
         return gpttype_clear_state_kv(true);
     }
 
+    // friend.cpp: prompt cache management. The returned string stays valid until the next call.
+    static std::string friend_cache_list_buf;
+    const char * friend_cache_list()
+    {
+        friend_cache_list_buf = gpttype_friend_cache_list_json();
+        return friend_cache_list_buf.c_str();
+    }
+    size_t friend_cache_clear(bool include_pinned)
+    {
+        return gpttype_friend_cache_clear(include_pinned);
+    }
+    bool friend_cache_pin(uint64_t id, bool pinned)
+    {
+        return gpttype_friend_cache_pin(id, pinned);
+    }
+
     int set_environment_variable(const char * identifier, const char * value)
     {
         if (!identifier || !value) return -1;

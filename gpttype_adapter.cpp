@@ -65,6 +65,7 @@
 #include "llama-ext.h"
 #include "llama-model.h"
 #include "friend/adapters.hpp"
+#include "friend/prompt_cache.hpp"
 #include "llama-vocab.h"
 #include "nlohmann/json.hpp"
 
@@ -157,6 +158,13 @@ static std::string loaded_latest_logits_head_key = ""; //friend.cpp: head that p
 static friend_adapters::profile friend_active_profile;
 static std::string friend_ctx_kv_key = "";
 static std::string friend_logits_head_key = ""; // head that produced the context's current logits
+
+// friend.cpp: tiered prompt cache (friend/prompt_cache.hpp) for the seq-0 path
+static bool friend_cache_on = false;        // store configured and fast-forward available
+static bool friend_cache_recurrent = false; // model state can't be truncated: only full-prefix reuse
+static size_t friend_cache_capture_tokens = 512; // snapshot after prefilling at least this many new tokens
+static int friend_n_past_after_ff = 0;            // n_past right after cache restore + fast-forward
+static std::vector<int> friend_checkpoints;       // absolute positions to snapshot at during this prefill (recurrent)
 
 // Every context that runs on the main model and therefore must see the same adapters:
 // the main context, the CFG guidance context and an MTP draft context (which shares the
@@ -3764,6 +3772,43 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             }
         }
         savestates.resize(savestate_limit);
+
+        // friend.cpp: tiered prompt cache. Reuse needs fast-forward; when on it replaces
+        // SmartCache's automatic slot switching (the admin save/load slots keep working).
+        {
+            friend_cache::store::config cc;
+            cc.ram_budget  = (size_t) std::max(0, inputs.friend_cache_ram_mb) << 20;
+            cc.disk_budget = (size_t) std::max(0, inputs.friend_cache_disk_mb) << 20;
+            cc.disk_dir    = inputs.friend_cache_dir ? inputs.friend_cache_dir : "";
+            cc.min_tokens  = (size_t) std::max(1, inputs.friend_cache_min_tokens);
+            friend_cache_capture_tokens = (size_t) std::max(1, inputs.friend_cache_capture_tokens);
+            if(!kcpp_data->use_fastforward)
+            {
+                cc.ram_budget = 0;
+            }
+            // everything that changes what a seq state means or how it is laid out
+            std::string fp = "friend-cache-v1|" + kcpp_data->model_filename + "|" + draftmodel_filename;
+            for(const std::string & f : {kcpp_data->model_filename, draftmodel_filename})
+            {
+                std::error_code ec;
+                if(!f.empty())
+                {
+                    fp += "|" + std::to_string(std::filesystem::file_size(f, ec));
+                    fp += "|" + std::to_string((long long) std::filesystem::last_write_time(f, ec).time_since_epoch().count());
+                }
+            }
+            fp += "|k" + std::to_string((int) llama_ctx_params.type_k) + "|v" + std::to_string((int) llama_ctx_params.type_v);
+            fp += "|fa" + std::to_string((int) llama_ctx_params.flash_attn_type) + "|swa" + std::to_string((int) llama_ctx_params.swa_full);
+            fp += "|mtp" + std::to_string((int) inputs.use_mtp);
+            cc.fingerprint = friend_cache::hash_hex(fp);
+            friend_cache::global().configure(cc);
+            friend_cache_on = friend_cache::global().enabled();
+            friend_cache_recurrent = llama_model_is_recurrent(llamamodel) || llama_model_is_hybrid(llamamodel);
+            if(friend_cache_on)
+            {
+                kcpp_data->smartcache = false;
+            }
+        }
         if(kcpp_data->smartcache)
         {
             printf("SmartCache: Prepared %d KV slots\n",savestate_limit);
@@ -4481,6 +4526,9 @@ struct BatchGenerateRequest
     std::string profile_key;
     uint64_t last_served_round = 0;
     std::vector<llama_token> prompt_tokens;
+    std::vector<llama_token> kv_tokens; // friend.cpp: token ids in this slot's KV, in position order
+    int reused_tokens = 0;              // friend.cpp: prompt tokens that came from a retained slot / cache
+    bool capture_after_decode = false;  // friend.cpp: snapshot into the prompt cache once this prefill lands
     int prompt_pos = 0;
     int n_past = 0;
     bool has_pending = false;
@@ -4512,6 +4560,17 @@ struct BatchGenerateRequest
 };
 
 static std::mutex batch_mutex;
+// friend.cpp: KV a finished request leaves behind in its slot, reused by the next request
+// that shares a prefix with it (see batch_claim_waiting_locked). Indexed by seq id.
+struct BatchRetainedSlot
+{
+    bool valid = false;
+    std::vector<llama_token> tokens; // exactly the KV content of the slot
+    std::string kv_key;              // adapter identity it was computed under
+    uint64_t retained_at = 0;        // batch_round when retained (for LRU victim choice)
+};
+static std::vector<BatchRetainedSlot> batch_retained;
+
 // friend.cpp: adapter-profile scheduling state for the batch worker (batch_pick_profile_locked)
 static std::string batch_active_profile_key = "";
 static uint64_t batch_round = 0;
@@ -4583,6 +4642,32 @@ static void batch_invalidate_legacy_context_locked()
     }
 }
 
+static bool friend_cache_capture_seq(llama_seq_id seq, const std::vector<llama_token> & tokens, const std::string & kv_key, const char * label);
+
+// friend.cpp: before a single-user generation, park retained batch slots in the prompt cache
+// and release them -- the legacy path may clear the whole KV, which would silently
+// invalidate them.
+static void batch_release_retained_locked(bool capture)
+{
+    for(int slot = 1; slot < (int) batch_retained.size(); ++slot)
+    {
+        BatchRetainedSlot & keep = batch_retained[slot];
+        if(!keep.valid)
+        {
+            continue;
+        }
+        if(capture && friend_cache_on)
+        {
+            friend_cache_capture_seq(slot, keep.tokens, keep.kv_key, "batch");
+        }
+        if(llama_ctx_v4)
+        {
+            llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), slot, -1, -1);
+        }
+        keep = BatchRetainedSlot();
+    }
+}
+
 class BatchLegacyGuard
 {
 public:
@@ -4593,6 +4678,7 @@ public:
         batch_cv.notify_all();
         batch_cv.wait(lock, [](){ return !batch_legacy_active && !batch_has_live_locked(); });
         batch_legacy_waiting--;
+        batch_release_retained_locked(true);
         batch_invalidate_legacy_context_locked();
         batch_legacy_active = true;
     }
@@ -4854,7 +4940,25 @@ static void batch_finish_request_locked(BatchGenerateRequest & req, stop_reason 
     req.state = reason == stop_reason::ERROR_ENCOUNTERED ? BatchState::FAILED : (reason == stop_reason::INVALID ? BatchState::ABORTED : BatchState::FINISHED);
     if(req.slot >= 0 && llama_ctx_v4)
     {
-        llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), req.slot, -1, -1);
+        // friend.cpp: keep the slot's KV for prefix reuse unless something went wrong
+        if(batch_retained.size() <= (size_t) req.slot)
+        {
+            batch_retained.resize(req.slot + 1);
+        }
+        BatchRetainedSlot & keep = batch_retained[req.slot];
+        const llama_pos pmax = llama_memory_seq_pos_max(llama_get_memory(llama_ctx_v4), req.slot);
+        if(reason != stop_reason::ERROR_ENCOUNTERED && pmax >= 0 && (size_t) pmax + 1 == req.kv_tokens.size())
+        {
+            keep.valid = true;
+            keep.tokens = req.kv_tokens;
+            keep.kv_key = req.profile.kv_key;
+            keep.retained_at = batch_round;
+        }
+        else
+        {
+            keep = BatchRetainedSlot();
+            llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), req.slot, -1, -1);
+        }
     }
     req.slot = -1;
     printf("\n[%s] BatchRequest:%d, Init:%.2fs, Processed:%d in %.2fs (%.2fT/s), Generated:%d/%d in %.2fs (%.2fT/s), Total:%.2fs, Stop:%d",
@@ -4875,61 +4979,236 @@ static bool batch_output_hit_stop(const BatchGenerateRequest & req)
     return false;
 }
 
+// friend.cpp: tokenize a waiting request once (idempotent), so slot choice can use it
+static bool batch_prepare_prompt_locked(BatchGenerateRequest & r)
+{
+    if(!r.prompt_tokens.empty())
+    {
+    return true;
+    }
+    BatchGenerateRequest * req = &r;
+    ApplyPromptFormatAdjustments(req->prompt_added_memory, req->prompt);
+    std::vector<llama_token> added_memory_tokens; //temporary buf before copying over
+
+    TokenizeString(req->prompt, req->prompt_tokens, file_format, add_bos_token);
+    if(req->prompt_tokens.empty())
+    {
+        TokenizeString("", req->prompt_tokens, file_format, add_bos_token);
+    }
+    if(req->prompt_added_memory!="")
+    {
+        TokenizeString(req->prompt_added_memory, added_memory_tokens, file_format, add_bos_token);
+    }
+
+    int n_ctx = req->max_context_length > 0 ? std::min(req->max_context_length, kcpp_data->n_ctx) : kcpp_data->n_ctx;
+    AppendDedicatedMemoryAndNegativePrompt(req->prompt_tokens, added_memory_tokens, std::vector<llama_token>(), req->max_length, n_ctx);
+
+    if(req->max_length > 0 && (int) req->prompt_tokens.size() + req->max_length > n_ctx)
+    {
+        int keep = std::max(1, n_ctx - req->max_length);
+        if((int) req->prompt_tokens.size() > keep)
+        {
+            req->prompt_tokens.erase(req->prompt_tokens.begin(), req->prompt_tokens.end() - keep);
+        }
+    }
+
+    return !req->prompt_tokens.empty();
+}
+
+static bool friend_batch_recurrent()
+{
+    const llama_model * mdl = llama_get_model(llama_ctx_v4);
+    return llama_model_is_recurrent(mdl) || llama_model_is_hybrid(mdl);
+}
+
+// How many prompt tokens `have` (the KV content of some sequence) can serve. Always leaves
+// at least one prompt token to decode, since the request needs fresh logits.
+static size_t friend_batch_usable(const std::vector<llama_token> & have, const std::vector<llama_token> & prompt, bool recurrent)
+{
+    if(prompt.empty())
+    {
+        return 0;
+    }
+    size_t usable = recurrent ? (friend_cache::is_prefix(have, prompt) ? have.size() : 0) : friend_cache::lcp(have, prompt);
+    return std::min(usable, prompt.size() - 1);
+}
+
+// Which free slot a request should take. The slot whose retained KV overlaps the prompt
+// most wins if that overlap is worth having (>= the cache's min_tokens); otherwise take an
+// empty slot, and only then evict the least recently retained one -- a new conversation
+// should not wipe a valuable context to save a handful of tokens. -1 if none free.
+template <typename Occupied>
+static int batch_pick_slot_locked(const BatchGenerateRequest & req, Occupied occupied)
+{
+    const bool recurrent = friend_batch_recurrent();
+    const size_t worth = friend_cache_on ? friend_cache::global().min_tokens() : 32;
+    int best = -1, empty = -1, lru = -1;
+    size_t best_len = 0;
+    uint64_t lru_at = UINT64_MAX;
+    for(int slot = 1; slot <= continuous_batching_slots; ++slot)
+    {
+        if(occupied(slot))
+        {
+            continue;
+        }
+        const bool has = (size_t) slot < batch_retained.size() && batch_retained[slot].valid;
+        if(!has)
+        {
+            if(empty < 0) empty = slot;
+            continue;
+        }
+        if(batch_retained[slot].retained_at < lru_at)
+        {
+            lru_at = batch_retained[slot].retained_at;
+            lru = slot;
+        }
+        if(batch_retained[slot].kv_key == req.profile.kv_key)
+        {
+            const size_t len = friend_batch_usable(batch_retained[slot].tokens, req.prompt_tokens, recurrent);
+            if(len > best_len)
+            {
+                best_len = len;
+                best = slot;
+            }
+        }
+    }
+    if(best >= 0 && best_len >= worth)
+    {
+        return best;
+    }
+    return empty >= 0 ? empty : lru;
+}
+
+// Prepare `slot` for `req` and return how many prompt tokens are already in its KV.
+static int batch_seed_slot_locked(BatchGenerateRequest & req, int slot)
+{
+    llama_memory_t mem = llama_get_memory(llama_ctx_v4);
+    const bool recurrent = friend_batch_recurrent();
+    if(batch_retained.size() <= (size_t) slot)
+    {
+        batch_retained.resize(slot + 1);
+    }
+    BatchRetainedSlot & own = batch_retained[slot];
+
+    size_t own_len = 0;
+    if(own.valid && own.kv_key == req.profile.kv_key)
+    {
+        own_len = friend_batch_usable(own.tokens, req.prompt_tokens, recurrent);
+    }
+
+    // attention models: any other sequence's KV can be shared (unified cells, no copy)
+    int src_seq = -1;
+    size_t src_len = 0;
+    const std::vector<llama_token> * src_tokens = nullptr;
+    if(!recurrent)
+    {
+        for(auto & other : batch_requests)
+        {
+            if(other && other.get() != &req && other->slot >= 0 && other->slot != slot && batch_is_live_state(other->state) &&
+               other->profile.kv_key == req.profile.kv_key)
+            {
+                const size_t l = friend_batch_usable(other->kv_tokens, req.prompt_tokens, false);
+                if(l > src_len) { src_len = l; src_seq = other->slot; src_tokens = &other->kv_tokens; }
+            }
+        }
+        for(int s2 = 1; s2 < (int) batch_retained.size(); ++s2)
+        {
+            if(s2 != slot && batch_retained[s2].valid && batch_retained[s2].kv_key == req.profile.kv_key)
+            {
+                const size_t l = friend_batch_usable(batch_retained[s2].tokens, req.prompt_tokens, false);
+                if(l > src_len) { src_len = l; src_seq = s2; src_tokens = &batch_retained[s2].tokens; }
+            }
+        }
+    }
+
+    // the prompt cache (shared with the single-user path)
+    friend_cache::match m;
+    if(friend_cache_on)
+    {
+        m = friend_cache::global().find(req.prompt_tokens, req.profile.kv_key, "", recurrent); // batching never carries media
+        if(m.e)
+        {
+            m.usable = std::min(m.usable, req.prompt_tokens.size() - 1);
+        }
+    }
+
+    const size_t best = std::max({own_len, src_len, m.e ? m.usable : (size_t) 0});
+    size_t reused = 0;
+    if(best > 0 && best == own_len)
+    {
+        if(recurrent || llama_memory_seq_rm(mem, slot, (llama_pos) own_len, -1))
+        {
+            reused = own_len;
+        }
+    }
+    else if(best > 0 && best == src_len && src_seq >= 0)
+    {
+        llama_memory_seq_rm(mem, slot, -1, -1);
+        llama_memory_seq_cp(mem, src_seq, slot, 0, (llama_pos) src_len);
+        reused = src_len;
+    }
+    else if(best > 0 && m.e && friend_cache::global().ensure_resident(m.e))
+    {
+        llama_memory_seq_rm(mem, slot, -1, -1);
+        if(llama_state_seq_set_data(llama_ctx_v4, m.e->state.data(), m.e->state.size(), slot) != 0 &&
+           (recurrent || llama_memory_seq_rm(mem, slot, (llama_pos) m.usable, -1)))
+        {
+            reused = m.usable;
+        }
+    }
+    if(reused == 0)
+    {
+        llama_memory_seq_rm(mem, slot, -1, -1);
+    }
+    own = BatchRetainedSlot(); // the slot now belongs to the live request
+    req.kv_tokens.assign(req.prompt_tokens.begin(), req.prompt_tokens.begin() + reused);
+    if(reused > 0 && !is_quiet)
+    {
+        printf("\n[Batch slot %d: reusing %zu of %zu prompt tokens (%s)]", slot, reused, req.prompt_tokens.size(),
+               reused == own_len ? "retained" : (reused == src_len ? "shared" : "prompt cache"));
+    }
+    return (int) reused;
+}
+
 static bool batch_claim_waiting_locked()
 {
     bool claimed = false;
-    for(int slot = 1; slot <= continuous_batching_slots && !batch_waiting.empty(); ++slot)
-    {
-        bool occupied = false;
+    auto slot_occupied = [](int slot) {
         for(const auto & req : batch_requests)
         {
             if(req && req->slot == slot && batch_is_live_state(req->state))
             {
-                occupied = true;
-                break;
+                return true;
             }
         }
-        if(occupied)
-        {
-            continue;
-        }
+        return false;
+    };
+    while(!batch_waiting.empty())
+    {
         int request_id = batch_waiting.front();
-        batch_waiting.pop_front();
         BatchGenerateRequest * req = batch_find_request_locked(request_id);
         if(!req || req->state != BatchState::WAITING)
         {
+            batch_waiting.pop_front();
             continue;
         }
+        // friend.cpp: tokenize first so the slot can be chosen by prefix overlap
+        if(!batch_prepare_prompt_locked(*req))
+        {
+            batch_waiting.pop_front();
+            continue;
+        }
+        int slot = batch_pick_slot_locked(*req, slot_occupied);
+        if(slot < 0)
+        {
+            break; // all slots busy
+        }
+        batch_waiting.pop_front();
         req->slot = slot;
         req->state = BatchState::PREFILL;
         req->last_served_round = batch_round; // friend.cpp: starvation clock starts at claim
         batch_touched_since_legacy = true;
         req->start_time = std::chrono::steady_clock::now();
-
-        ApplyPromptFormatAdjustments(req->prompt_added_memory, req->prompt);
-        std::vector<llama_token> added_memory_tokens; //temporary buf before copying over
-
-        TokenizeString(req->prompt, req->prompt_tokens, file_format, add_bos_token);
-        if(req->prompt_tokens.empty())
-        {
-            TokenizeString("", req->prompt_tokens, file_format, add_bos_token);
-        }
-        if(req->prompt_added_memory!="")
-        {
-            TokenizeString(req->prompt_added_memory, added_memory_tokens, file_format, add_bos_token);
-        }
-
-        int n_ctx = req->max_context_length > 0 ? std::min(req->max_context_length, kcpp_data->n_ctx) : kcpp_data->n_ctx;
-        AppendDedicatedMemoryAndNegativePrompt(req->prompt_tokens, added_memory_tokens, std::vector<llama_token>(), req->max_length, n_ctx);
-
-        if(req->max_length > 0 && (int) req->prompt_tokens.size() + req->max_length > n_ctx)
-        {
-            int keep = std::max(1, n_ctx - req->max_length);
-            if((int) req->prompt_tokens.size() > keep)
-            {
-                req->prompt_tokens.erase(req->prompt_tokens.begin(), req->prompt_tokens.end() - keep);
-            }
-        }
 
         if (debugmode==1 && !is_quiet)
         {
@@ -4945,12 +5224,15 @@ static bool batch_claim_waiting_locked()
         {
             llama_sampler_accept(req->sampler, token);
         }
-        req->prompt_pos = 0;
-        req->n_past = 0;
         req->has_pending = false;
         req->i_batch = -1;
         req->i_batch_is_prefill = false;
-        llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), slot, -1, -1);
+        // friend.cpp: start from the longest reusable prefix (retained slot, another
+        // sequence, or the prompt cache) instead of an empty sequence
+        const int reuse = batch_seed_slot_locked(*req, slot);
+        req->prompt_pos = reuse;
+        req->n_past = reuse;
+        req->reused_tokens = reuse;
         req->process_start_time = std::chrono::steady_clock::now();
         req->generation_start_time = std::chrono::steady_clock::time_point();
         req->init_time = std::chrono::duration<float>(req->process_start_time - req->start_time).count();
@@ -5060,12 +5342,15 @@ static void batch_worker_loop()
                             req.i_batch_is_prefill = true;
                         }
                         common_batch_add(batch, req.prompt_tokens[req.prompt_pos], req.n_past, { req.slot }, is_last);
+                        req.kv_tokens.push_back(req.prompt_tokens[req.prompt_pos]);
                         req.prompt_pos++;
                         req.n_past++;
                     }
                     if(req.prompt_pos == (int) req.prompt_tokens.size())
                     {
                         req.state = BatchState::GENERATING;
+                        req.capture_after_decode = friend_cache_on &&
+                            (size_t) (req.prompt_tokens.size() - req.reused_tokens) >= friend_cache_capture_tokens;
                     }
                 }
                 else if(req.state == BatchState::GENERATING && req.has_pending)
@@ -5073,6 +5358,7 @@ static void batch_worker_loop()
                     req.i_batch = batch.n_tokens;
                     req.i_batch_is_prefill = false;
                     common_batch_add(batch, req.pending_token, req.n_past, { req.slot }, true);
+                    req.kv_tokens.push_back(req.pending_token);
                     req.n_past++;
                     req.has_pending = false;
                 }
@@ -5101,6 +5387,16 @@ static void batch_worker_loop()
         else
         {
             decode_status = llama_decode(llama_ctx_v4, batch);
+            if(decode_status == 1)
+            {
+                // friend.cpp: no free KV cells -- retained slots are the first thing to give up
+                std::lock_guard<std::mutex> relock(batch_mutex);
+                batch_release_retained_locked(false);
+            }
+            if(decode_status == 1)
+            {
+                decode_status = llama_decode(llama_ctx_v4, batch);
+            }
         }
         auto decode_finish_time = std::chrono::steady_clock::now();
 
@@ -5126,6 +5422,11 @@ static void batch_worker_loop()
             if(!req || req->state != BatchState::GENERATING || req->i_batch < 0)
             {
                 continue;
+            }
+            if(req->capture_after_decode)
+            {
+                req->capture_after_decode = false;
+                friend_cache_capture_seq(req->slot, req->kv_tokens, req->profile.kv_key, "batch-prefill");
             }
             if(req->i_batch_is_prefill && req->generation_start_time.time_since_epoch().count() == 0)
             {
@@ -5837,8 +6138,15 @@ static int get_nearby_compatible_smartcache_slot()
     return best_slot;
 }
 
+static bool friend_cache_capture(const char * label, bool pinned);
 int smartcache_quick_snapshot(int specific_slot = -1)
 {
+    if(friend_cache_on)
+    {
+        // friend.cpp: recurrent checkpoints go to the prompt cache (exact snapshots, spaced by the store)
+        friend_cache_capture("checkpoint", false);
+        return -1;
+    }
     int identical_slot = get_identical_existing_slot();
     if(identical_slot==-1)
     {
@@ -5872,6 +6180,277 @@ int smartcache_quick_snapshot(int specific_slot = -1)
     {
         touch_slot(identical_slot);
         return identical_slot;
+    }
+}
+
+// --- friend.cpp: prompt cache glue ---------------------------------------------------
+
+// Media placeholders are negative ids that don't identify *which* media; entries holding
+// them are keyed on a hash of the actual media payload.
+static std::string friend_media_hash()
+{
+    return media_composite_image_signature.empty() ? "" : friend_cache::hash_hex(media_composite_image_signature);
+}
+
+// Snapshot seq 0 (main context, plus the draft context if one exists) into the prompt
+// cache. Stores exactly the tokens present in the KV -- current_context_tokens can run
+// ahead of it (tokens are staged before they're decoded, and the last sampled token is
+// never decoded).
+static bool friend_cache_capture(const char * label, bool pinned = false)
+{
+    if(!friend_cache_on || !llama_ctx_v4)
+    {
+        return false;
+    }
+    const llama_pos pmax = llama_memory_seq_pos_max(llama_get_memory(llama_ctx_v4), 0);
+    if(pmax < 0)
+    {
+        return false;
+    }
+    const size_t n_kv = std::min((size_t) pmax + 1, current_context_tokens.size());
+    if(n_kv < friend_cache::global().min_tokens())
+    {
+        return false;
+    }
+    auto e = std::make_shared<friend_cache::entry>();
+    e->tokens.assign(current_context_tokens.begin(), current_context_tokens.begin() + n_kv);
+    e->kv_key = friend_ctx_kv_key;
+    e->media_hash = std::any_of(e->tokens.begin(), e->tokens.end(), [](int32_t t){ return t < 0; }) ? friend_media_hash() : "";
+    e->exact_only = friend_cache_recurrent;
+    e->pinned = pinned;
+    e->label = label ? label : "";
+
+    const size_t sz = llama_state_seq_get_size(llama_ctx_v4, 0);
+    e->state.resize(sz);
+    const size_t got = llama_state_seq_get_data(llama_ctx_v4, e->state.data(), sz, 0);
+    if(got == 0)
+    {
+        return false;
+    }
+    e->state.resize(got);
+    if(draft_ctx)
+    {
+        const size_t dsz = llama_state_seq_get_size(draft_ctx, 0);
+        e->draft_state.resize(dsz);
+        const size_t dgot = llama_state_seq_get_data(draft_ctx, e->draft_state.data(), dsz, 0);
+        e->draft_state.resize(dgot);
+    }
+    // next-token logits are only meaningful if the last decode ended exactly at pmax,
+    // which holds whenever the snapshot covers everything that is in the KV
+    if(n_kv == (size_t) pmax + 1)
+    {
+        const float * lg = draft_is_mtp ? llama_get_logits_ith(llama_ctx_v4, -1) : llama_get_logits(llama_ctx_v4);
+        if(lg)
+        {
+            e->logits.assign(lg, lg + n_vocab);
+            e->logits_head_key = friend_logits_head_key;
+        }
+    }
+    const size_t mb = (e->state.size() + e->draft_state.size()) >> 20;
+    const bool stored = friend_cache::global().insert(e);
+    if(stored && !is_quiet)
+    {
+        printf("\n[Prompt cache: stored %zu tokens (%zu MiB, %s%s)]\n", n_kv, mb, e->label.c_str(), pinned ? ", pinned" : "");
+    }
+    return stored;
+}
+
+// Snapshot an arbitrary sequence (batch slots). No logits/draft: batching has neither.
+static bool friend_cache_capture_seq(llama_seq_id seq, const std::vector<llama_token> & tokens, const std::string & kv_key, const char * label)
+{
+    if(!friend_cache_on || !llama_ctx_v4 || tokens.size() < friend_cache::global().min_tokens())
+    {
+        return false;
+    }
+    const llama_pos pmax = llama_memory_seq_pos_max(llama_get_memory(llama_ctx_v4), seq);
+    if(pmax < 0 || (size_t) pmax + 1 != tokens.size())
+    {
+        return false; // KV and token record disagree: don't store something we can't vouch for
+    }
+    auto e = std::make_shared<friend_cache::entry>();
+    e->tokens.assign(tokens.begin(), tokens.end());
+    e->kv_key = kv_key;
+    e->exact_only = friend_cache_recurrent;
+    e->label = label;
+    const size_t sz = llama_state_seq_get_size(llama_ctx_v4, seq);
+    e->state.resize(sz);
+    const size_t got = llama_state_seq_get_data(llama_ctx_v4, e->state.data(), sz, seq);
+    if(got == 0)
+    {
+        return false;
+    }
+    e->state.resize(got);
+    const bool stored = friend_cache::global().insert(e);
+    if(stored && !is_quiet)
+    {
+        printf("\n[Prompt cache: stored %zu tokens from batch slot %d (%s)]\n", tokens.size(), (int) seq, label);
+    }
+    return stored;
+}
+
+// Load a cache entry into seq 0. On failure seq 0 is left empty and the entry is dropped.
+static bool friend_cache_restore(const friend_cache::entry_ptr & e)
+{
+    auto & store = friend_cache::global();
+    if(draft_ctx && e->draft_bytes == 0)
+    {
+        return false; // the draft model would be left without the prefix
+    }
+    if(!store.ensure_resident(e))
+    {
+        store.forget(e);
+        return false;
+    }
+    llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), 0, -1, -1);
+    if(llama_state_seq_set_data(llama_ctx_v4, e->state.data(), e->state.size(), 0) == 0)
+    {
+        llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), 0, -1, -1);
+        current_context_tokens.clear();
+        store.forget(e); // incompatible with the current context layout
+        return false;
+    }
+    if(draft_ctx)
+    {
+        llama_memory_seq_rm(llama_get_memory(draft_ctx), 0, -1, -1);
+        if(llama_state_seq_set_data(draft_ctx, e->draft_state.data(), e->draft_state.size(), 0) == 0)
+        {
+            llama_memory_seq_rm(llama_get_memory(draft_ctx), 0, -1, -1);
+            llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), 0, -1, -1);
+            current_context_tokens.clear();
+            store.forget(e);
+            return false;
+        }
+    }
+    current_context_tokens.assign(e->tokens.begin(), e->tokens.end());
+    friend_ctx_kv_key = e->kv_key;
+    loaded_latest_logits = e->logits;
+    loaded_latest_logits_head_key = e->logits_head_key;
+    if(loaded_latest_logits_head_key != friend_active_profile.head_key)
+    {
+        loaded_latest_logits.clear(); // produced by a different LM head
+    }
+    return true;
+}
+
+// Checkpoint positions for a recurrent model's prefill. A position p means "snapshot when
+// the KV holds exactly tokens [0, p)". We pick turn boundaries -- right before a control
+// token that follows a newline or another control token (<|im_start|>, <start_of_turn>,
+// <|start_header_id|> ...) -- because that is where later prompts diverge: the end of the
+// system prompt / persona card, and the start of the final turn(s). Plus kobold's classic
+// "32 tokens before the end" point, which guards against token-boundary mutations.
+static std::vector<int> friend_plan_checkpoints(const std::vector<int> & embd_inp, int n_past_start)
+{
+    std::vector<int> cps;
+    const int n = (int) embd_inp.size();
+    if(n < 2)
+    {
+        return cps;
+    }
+    const llama_vocab * vocab = llama_model_get_vocab(llama_get_model(llama_ctx_v4));
+    const int min_tokens = (int) friend_cache::global().min_tokens();
+    auto is_control = [&](int t) {
+        return t >= 0 && (llama_vocab_get_attr(vocab, t) & LLAMA_TOKEN_ATTR_CONTROL);
+    };
+    std::vector<int> boundaries;
+    for(int i = 1; i < n - 1; ++i)
+    {
+        if(!is_control(embd_inp[i]))
+        {
+            continue;
+        }
+        const int prev = embd_inp[i-1];
+        bool after_break = is_control(prev);
+        if(!after_break && prev >= 0)
+        {
+            const std::string piece = FileFormatTokenizeID(prev, file_format, true);
+            after_break = !piece.empty() && piece.back() == '\n';
+        }
+        const int abs_pos = n_past_start + i;
+        if(after_break && abs_pos >= min_tokens)
+        {
+            boundaries.push_back(abs_pos);
+        }
+    }
+    // turn boundaries take priority: the first (end of system prompt / persona card) and the
+    // last two (start of the final turns). Near-duplicates are dropped.
+    std::vector<int> picks;
+    if(!boundaries.empty())
+    {
+        picks.push_back(boundaries.front());
+        for(size_t k = boundaries.size() >= 2 ? boundaries.size() - 2 : 0; k < boundaries.size(); ++k)
+        {
+            picks.push_back(boundaries[k]);
+        }
+    }
+    std::sort(picks.begin(), picks.end());
+    for(int p : picks)
+    {
+        if(p > n_past_start && p < n_past_start + n && (cps.empty() || p - cps.back() >= 16))
+        {
+            cps.push_back(p);
+        }
+    }
+    // kobold's classic "32 before the end" checkpoint, only if no boundary already covers the tail
+    const int tail = n_past_start + n - 32;
+    if(n > 64 && tail > n_past_start && std::all_of(cps.begin(), cps.end(), [&](int p){ return std::abs(p - tail) >= 64; }))
+    {
+        cps.push_back(tail);
+        std::sort(cps.begin(), cps.end());
+    }
+    if(getenv("FRIEND_DEBUG_CKPT"))
+    {
+        printf("\n[ckpt plan] n=%d start=%d boundaries=%zu -> checkpoints:", n, n_past_start, boundaries.size());
+        for(int c : cps) printf(" %d", c);
+        printf("\n");
+    }
+    return cps;
+}
+
+// Before fast-forward: pick the best starting point for this prompt (the live context or
+// a cache entry), and stash the live context first if we're about to throw a lot of it away.
+static void friend_cache_select(const std::vector<int> & embd_inp, bool is_recurrent, bool live_can_shift)
+{
+    auto & store = friend_cache::global();
+    const bool live_ok = friend_ctx_kv_key == friend_active_profile.kv_key;
+    size_t live = 0;
+    if(live_ok)
+    {
+        live = is_recurrent ? (friend_cache::is_prefix(current_context_tokens, embd_inp) ? current_context_tokens.size() : 0)
+                            : friend_cache::lcp(current_context_tokens, embd_inp);
+    }
+    const size_t live_size = current_context_tokens.size();
+    const size_t lost = live_size - std::min(live, live_size);
+    // a context shift (attention models) keeps the live context cheaply; don't fight it
+    const bool keep_live = live_ok && live_can_shift;
+    const bool stash = !keep_live && live_size >= store.min_tokens() &&
+                       (!live_ok || lost >= std::max<size_t>(256, live_size / 4));
+
+    friend_cache::match m;
+    if(!keep_live)
+    {
+        m = store.find(embd_inp, friend_active_profile.kv_key, friend_media_hash(), is_recurrent);
+    }
+    if(m.e && m.usable >= live + 32)
+    {
+        if(stash)
+        {
+            friend_cache_capture("switch");
+        }
+        if(friend_cache_restore(m.e))
+        {
+            if(!is_quiet)
+            {
+                printf("\n[Prompt cache: reusing %zu of %zu prompt tokens from entry %llu%s%s]\n", m.usable, embd_inp.size(),
+                       (unsigned long long) m.e->id, m.e->label.empty() ? "" : ", ", m.e->label.c_str());
+            }
+            return;
+        }
+        printf("\n[Prompt cache: entry %llu could not be restored, reprocessing]\n", (unsigned long long) m.e->id);
+        return;
+    }
+    if(stash)
+    {
+        friend_cache_capture("evicted");
     }
 }
 
@@ -6484,8 +7063,15 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     }
     bool blank_prompt = (addedmemory=="" && kcpp_data->prompt=="");
 
+    // friend.cpp: tiered prompt cache supersedes SmartCache slot switching when enabled
+    if(friend_cache_on && file_format==FileFormat::GGUF_GENERIC && !blank_prompt)
+    {
+        const bool live_can_shift = kcpp_data->use_contextshift && !is_recurrent &&
+                                    CanContextShift(current_context_tokens, embd_inp, inputs.max_length, nctx);
+        friend_cache_select(embd_inp, is_recurrent, live_can_shift);
+    }
     //smart cache logic
-    if(kcpp_data->smartcache && file_format==FileFormat::GGUF_GENERIC)
+    else if(kcpp_data->smartcache && file_format==FileFormat::GGUF_GENERIC)
     {
         bool shiftable = true;
         if(!kcpp_data->use_contextshift || is_recurrent)
@@ -6787,6 +7373,14 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     {
         current_context_tokens.resize(n_past);
     }
+    friend_n_past_after_ff = n_past; // friend.cpp: how much of the prompt the cache/fast-forward covered
+    // friend.cpp: recurrent models only resume from exact snapshots, so plan checkpoints at
+    // conversation-turn boundaries of the part about to be prefilled
+    friend_checkpoints.clear();
+    if(friend_cache_on && is_recurrent && file_format==FileFormat::GGUF_GENERIC)
+    {
+        friend_checkpoints = friend_plan_checkpoints(embd_inp, n_past);
+    }
 
     remaining_tokens = kcpp_data->n_predict;
     int input_consumed = 0;
@@ -6837,7 +7431,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     bool v3_use_scratch = true; //for normal inference always use scratch
     bool rnn_lifeboat_taken = false;
     const int rnn_lifeboat_target = (int)((embd_inp.size() * smartcache_rnn_lifeboat_percent) / 100);
-    const bool rnn_lifeboat_enabled = kcpp_data->smartcache && is_recurrent && file_format==FileFormat::GGUF_GENERIC && (int)embd_inp.size() >= smartcache_rnn_lifeboat_min_prompt_tokens;
+    const bool rnn_lifeboat_enabled = (kcpp_data->smartcache || friend_cache_on) && is_recurrent && file_format==FileFormat::GGUF_GENERIC && (int)embd_inp.size() >= smartcache_rnn_lifeboat_min_prompt_tokens;
 
     speculative_draft_result draft_results; //only use if drafting was used
     bool draft_used = false;
@@ -6984,6 +7578,44 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                                     }
                                     evalres = (evalres && (decode_status==0));
                                     temp_past += chunk.size();
+                                }
+                            }
+                        }
+                    }
+
+                    // friend.cpp: decode up to each planned checkpoint inside this batch, snapshot, continue
+                    if(!skipdecodelater && friend_cache_on && is_recurrent && draft_ctx==nullptr && !startedsampling && embd.size()>1)
+                    {
+                        std::vector<int> cuts;
+                        for(int cp : friend_checkpoints)
+                        {
+                            if(cp > n_past && cp < n_past + (int) embd.size())
+                            {
+                                cuts.push_back(cp);
+                            }
+                        }
+                        if(!cuts.empty())
+                        {
+                            skipdecodelater = true;
+                            evalres = true;
+                            cuts.push_back(n_past + (int) embd.size());
+                            int temp_past = n_past;
+                            for(size_t c = 0; c < cuts.size(); ++c)
+                            {
+                                std::vector<gpt_vocab::id> chunk(embd.begin() + (temp_past - n_past), embd.begin() + (cuts[c] - n_past));
+                                kcpp_embd_batch smallbatch = kcpp_embd_batch(chunk, temp_past, use_mrope, draft_is_mtp);
+                                decode_status = kcpp_decode_main_and_spec(llama_ctx_v4, smallbatch.batch);
+                                if(decode_status != 0)
+                                {
+                                    evalres = false;
+                                    break;
+                                }
+                                temp_past = cuts[c];
+                                if(c + 1 < cuts.size())
+                                {
+                                    // the tail checkpoint is generic; everything else is a turn boundary
+                                    const bool is_tail = cuts[c] == friend_checkpoints.back() && cuts[c] == friend_n_past_after_ff + (int) embd_inp.size() - 32;
+                                    friend_cache_capture(is_tail ? "checkpoint" : "turn", false);
                                 }
                             }
                         }
@@ -7164,8 +7796,24 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                     printf("\n");
                 }
 
+                // friend.cpp: an explicit pin always snapshots the processed prompt; otherwise
+                // attention models snapshot when this request just prefilled a lot of tokens
+                // (recurrent models checkpoint just below)
+                if(friend_cache_on && file_format==FileFormat::GGUF_GENERIC)
+                {
+                    const bool pin = inputs.cache_pin_label && inputs.cache_pin_label[0];
+                    const size_t prefilled = n_past > friend_n_past_after_ff ? (size_t)(n_past - friend_n_past_after_ff) : 0;
+                    if(pin)
+                    {
+                        friend_cache_capture(inputs.cache_pin_label, true);
+                    }
+                    else if(!is_recurrent && prefilled >= friend_cache_capture_tokens)
+                    {
+                        friend_cache_capture("prefill", false);
+                    }
+                }
                  //if running rnn model in smartcache mode, save progress before each gen
-                if(kcpp_data->smartcache && is_recurrent && file_format==FileFormat::GGUF_GENERIC && current_context_tokens.size() > 32)
+                if((kcpp_data->smartcache || friend_cache_on) && is_recurrent && file_format==FileFormat::GGUF_GENERIC && current_context_tokens.size() > 32 && !(inputs.cache_pin_label && inputs.cache_pin_label[0]))
                 {
                     if(rnn_reusable_slot_idx!=-1)
                     {
@@ -7739,7 +8387,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     }
 
     //if running rnn model in smartcache mode, save progress after each gen
-    // if(kcpp_data->smartcache && is_recurrent && file_format==FileFormat::GGUF_GENERIC && current_context_tokens.size() > 32)
+    // if((kcpp_data->smartcache || friend_cache_on) && is_recurrent && file_format==FileFormat::GGUF_GENERIC && current_context_tokens.size() > 32)
     // {
     //     smartcache_quick_snapshot();
     // }
@@ -8031,4 +8679,35 @@ int get_oldest_slot(int excludeSlotId)
         }
     }
     return slotid;
+}
+
+// --- friend.cpp: prompt cache management API ---------------------------------------------
+std::string gpttype_friend_cache_list_json()
+{
+    size_t n = 0, ram = 0, disk = 0;
+    friend_cache::global().stats(n, ram, disk);
+    nlohmann::json j;
+    j["enabled"] = friend_cache_on;
+    j["recurrent"] = friend_cache_recurrent;
+    j["entries"] = n;
+    j["ram_bytes"] = ram;
+    j["disk_bytes"] = disk;
+    j["items"] = nlohmann::json::array();
+    for(const auto & it : friend_cache::global().list())
+    {
+        j["items"].push_back({
+            {"id", it.id}, {"tokens", it.n_tokens}, {"bytes", it.bytes}, {"resident", it.resident},
+            {"on_disk", it.on_disk}, {"pinned", it.pinned}, {"label", it.label}, {"adapters", it.kv_key},
+            {"idle", it.age},
+        });
+    }
+    return j.dump();
+}
+size_t gpttype_friend_cache_clear(bool include_pinned)
+{
+    return friend_cache::global().clear(include_pinned);
+}
+bool gpttype_friend_cache_pin(uint64_t id, bool pinned)
+{
+    return friend_cache::global().set_pinned(id, pinned);
 }

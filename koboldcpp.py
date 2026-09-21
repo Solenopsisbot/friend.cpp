@@ -362,7 +362,12 @@ class load_model_inputs(ctypes.Structure):
                 ("rpc_targets", ctypes.c_char_p),
                 ("friend_lora_pool", ctypes.c_char_p),
                 ("friend_cvec_pool", ctypes.c_char_p),
-                ("friend_head_pool", ctypes.c_char_p)]
+                ("friend_head_pool", ctypes.c_char_p),
+                ("friend_cache_ram_mb", ctypes.c_int),
+                ("friend_cache_disk_mb", ctypes.c_int),
+                ("friend_cache_dir", ctypes.c_char_p),
+                ("friend_cache_min_tokens", ctypes.c_int),
+                ("friend_cache_capture_tokens", ctypes.c_int)]
 
 class generation_inputs(ctypes.Structure):
     _fields_ = [("seed", ctypes.c_int),
@@ -423,7 +428,8 @@ class generation_inputs(ctypes.Structure):
                 ("reasoning_budget", ctypes.c_int),
                 ("blue_noise", ctypes.c_bool),
                 ("rng_type", ctypes.c_int),
-                ("adapter_profile", ctypes.c_char_p)]
+                ("adapter_profile", ctypes.c_char_p),
+                ("cache_pin_label", ctypes.c_char_p)]
 
 class generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -1051,6 +1057,11 @@ def init_library():
     handle.load_state_kv.argtypes = [ctypes.c_int]
     handle.load_state_kv.restype = ctypes.c_bool
     handle.clear_state_kv.restype = ctypes.c_bool
+    handle.friend_cache_list.restype = ctypes.c_char_p
+    handle.friend_cache_clear.argtypes = [ctypes.c_bool]
+    handle.friend_cache_clear.restype = ctypes.c_size_t
+    handle.friend_cache_pin.argtypes = [ctypes.c_uint64, ctypes.c_bool]
+    handle.friend_cache_pin.restype = ctypes.c_bool
     handle.sd_load_model.argtypes = [sd_load_model_inputs]
     handle.sd_load_model.restype = ctypes.c_bool
     handle.sd_generate.argtypes = [sd_generation_inputs]
@@ -2189,6 +2200,12 @@ def load_model(model_filename):
     inputs.friend_lora_pool = friend_lora_pool.encode("UTF-8")
     inputs.friend_cvec_pool = friend_cvec_pool.encode("UTF-8")
     inputs.friend_head_pool = friend_head_pool.encode("UTF-8")
+    # friend.cpp: tiered prompt cache
+    inputs.friend_cache_ram_mb = max(0, int(args.cache_ram))
+    inputs.friend_cache_disk_mb = max(0, int(args.cache_disk))
+    inputs.friend_cache_dir = (os.path.abspath(args.cache_dir) if args.cache_dir else "").encode("UTF-8")
+    inputs.friend_cache_min_tokens = max(1, int(args.cache_min_tokens))
+    inputs.friend_cache_capture_tokens = max(1, int(args.cache_capture_tokens))
 
     inputs.draftmodel_filename = args.draftmodel.encode("UTF-8") if (args.draftmodel and args.draftamount>0) else "".encode("UTF-8")
     inputs.draft_amount = args.draftamount
@@ -2464,6 +2481,8 @@ def generate(genparams, stream_flag=False):
     inputs.adaptive_decay = adaptive_decay
     inputs.blue_noise = bool(blue_noise)
     inputs.rng_type = rng_type
+    cache_pin = genparams.get("cache_pin", None)
+    inputs.cache_pin_label = (str(cache_pin)[:128] if cache_pin else "").encode("UTF-8")
     try:
         inputs.adapter_profile = friend_adapter_profile_spec(genparams).encode("UTF-8")
     except ValueError as e:
@@ -6790,6 +6809,9 @@ Change Mode<br>
         elif clean_path.endswith(('/api/extra/adapters')): # friend.cpp: named LoRA / steering / head pools
             response_body = (json.dumps(friend_adapter_listing()).encode())
 
+        elif clean_path.endswith(('/api/extra/cache')): # friend.cpp: prompt cache contents
+            response_body = (handle.friend_cache_list() or b"{}")
+
         elif clean_path.endswith(('/api/admin/list_options')):  # used by admin to get info about a kcpp instance
             opts = []
             if args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
@@ -7682,6 +7704,31 @@ Change Mode<br>
                 api_format = 1
             elif clean_path.endswith(('/api/v1/generate', '/api/latest/generate')):
                 api_format = 2
+            elif clean_path.endswith('/api/extra/cache/warm'):
+                # friend.cpp: prefill a prompt and pin it in the prompt cache. Rewritten into an
+                # ordinary 1-token generate so it queues and locks like any other request.
+                try:
+                    tmp = json.loads(body)
+                    tmp["max_length"] = 1
+                    tmp["cache_pin"] = str(tmp.get("cache_pin", tmp.get("label", "warm")))
+                    body = json.dumps(tmp).encode()
+                except Exception:
+                    pass
+                api_format = 2
+            elif clean_path.endswith(('/api/extra/cache/clear', '/api/extra/cache/pin')):
+                # friend.cpp: prompt cache management
+                if not self.secure_endpoint():
+                    return
+                try:
+                    tmp = json.loads(body) if body else {}
+                except Exception:
+                    tmp = {}
+                if clean_path.endswith('/clear'):
+                    removed = handle.friend_cache_clear(bool(tmp.get("pinned", False)))
+                    response_body = json.dumps({"success": True, "removed": removed}).encode()
+                else:
+                    ok = handle.friend_cache_pin(int(tmp.get("id", 0)), bool(tmp.get("pinned", True)))
+                    response_body = json.dumps({"success": ok}).encode()
             elif clean_path.endswith('/api/extra/generate/stream'):
                 api_format = 2
                 sse_stream_flag = True
@@ -13145,6 +13192,11 @@ if __name__ == '__main__':
     advparser.add_argument("--loramult", metavar=('[amount]'), help="Multiplier for the Text LORA model to be applied.", type=float, default=1.0)
     advparser.add_argument("--lora-pool", dest="lora_pool", metavar=('NAME=PATH'), nargs='+', help="friend.cpp: preload named LoRA adapters, off by default; a request enables them with \"lora\": {\"NAME\": scale}.")
     advparser.add_argument("--cvec-pool", dest="cvec_pool", metavar=('NAME=PATH'), nargs='+', help="friend.cpp: preload named control (steering) vectors (GGUF, llama.cpp cvec format); a request applies them with \"steer\": {\"NAME\": strength}.")
+    advparser.add_argument("--cache-ram", dest="cache_ram", metavar=('[MB]'), type=int, default=2048, help="friend.cpp: RAM budget of the prompt cache in MiB (0 disables it; it then falls back to --smartcache behaviour).")
+    advparser.add_argument("--cache-dir", dest="cache_dir", metavar=('[path]'), default="", help="friend.cpp: directory for the prompt cache's disk tier. Entries are written through and survive restarts.")
+    advparser.add_argument("--cache-disk", dest="cache_disk", metavar=('[MB]'), type=int, default=20480, help="friend.cpp: disk budget of the prompt cache in MiB.")
+    advparser.add_argument("--cache-min-tokens", dest="cache_min_tokens", metavar=('[tokens]'), type=int, default=64, help="friend.cpp: don't cache or reuse prefixes shorter than this.")
+    advparser.add_argument("--cache-capture-tokens", dest="cache_capture_tokens", metavar=('[tokens]'), type=int, default=512, help="friend.cpp: snapshot a prompt into the cache after prefilling at least this many new tokens.")
     advparser.add_argument("--head-pool", dest="head_pool", metavar=('NAME=PATH'), nargs='+', help="friend.cpp: preload named LM heads (GGUF with output.weight); a request swaps with \"head\": \"NAME\". Head swaps keep the KV cache valid.")
     advparser.add_argument("--lowvram","-nkvo","--no-kv-offload", help="If supported by the backend, do not offload KV to GPU (lowvram mode). Not recommended, will be slow.", action='store_true')
     advparser.add_argument("--maingpu","--main-gpu","-mg", help="Only used in a multi-gpu setup. Sets the index of the main GPU that will be used.",metavar=('[Device ID]'), type=int, default=-1)
