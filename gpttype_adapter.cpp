@@ -6433,6 +6433,12 @@ static bool friend_cache_capture(const char * label, bool pinned = false)
     e->state.resize(got);
     if(draft_ctx)
     {
+        if(draft_is_dspark_standalone && draft_spec)
+        {
+            // standalone dspark keeps not-yet-drafted target features outside its KV;
+            // commit them so the drafter snapshot covers the same prefix as the target's
+            common_speculative_friend_flush(draft_spec, 0);
+        }
         const size_t dsz = llama_state_seq_get_size(draft_ctx, 0);
         e->draft_state.resize(dsz);
         const size_t dgot = llama_state_seq_get_data(draft_ctx, e->draft_state.data(), dsz, 0);
@@ -6522,6 +6528,12 @@ static bool friend_cache_restore(const friend_cache::entry_ptr & e)
             current_context_tokens.clear();
             store.forget(e);
             return false;
+        }
+        if(draft_is_dspark_standalone && draft_spec)
+        {
+            // re-derive dspark's covered prefix from the restored drafter KV; any
+            // shortfall is re-primed by the prompt-reuse sync before the prefill
+            common_speculative_friend_resync(draft_spec, 0);
         }
     }
     current_context_tokens.assign(e->tokens.begin(), e->tokens.end());
@@ -7830,7 +7842,9 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                     }
 
                     // friend.cpp: decode up to each planned checkpoint inside this batch, snapshot, continue
-                    if(!skipdecodelater && friend_cache_on && is_recurrent && draft_ctx==nullptr && !startedsampling && embd.size()>1)
+                    // drafters are fine here: each piece goes through kcpp_decode_main_and_spec like any
+                    // prefill batch, and friend_cache_capture flushes dspark's staged features first
+                    if(!skipdecodelater && friend_cache_on && is_recurrent && !startedsampling && embd.size()>1)
                     {
                         std::vector<int> cuts;
                         for(int cp : friend_checkpoints)
