@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from pathlib import Path
 from typing import Callable, Iterable, TYPE_CHECKING
@@ -16,6 +17,7 @@ from .qwen import QwenModel
 
 
 @ModelBase.register("HunYuanMoEV1ForCausalLM")
+@ModelBase.example("tencent/Hunyuan-A13B-Instruct")
 class HunYuanMoEModel(TextModel):
     model_arch = gguf.MODEL_ARCH.HUNYUAN_MOE
 
@@ -153,6 +155,7 @@ class HunYuanMoEModel(TextModel):
 
 
 @ModelBase.register("HunYuanDenseV1ForCausalLM")
+@ModelBase.example("tencent/Hunyuan-4B-Instruct")
 class HunYuanModel(TextModel):
     model_arch = gguf.MODEL_ARCH.HUNYUAN_DENSE
 
@@ -189,7 +192,8 @@ class HunYuanModel(TextModel):
             self.gguf_writer.add_token_list(tokens)
             self.gguf_writer.add_token_types(toktypes)
 
-            # HunyuanOCR has pad_token_id=-1 in config.json; exclude pad from SpecialVocab
+            # Some HunYuanVL variants (e.g. OCR-style configs) have pad_token_id=-1;
+            # guard SpecialVocab so it doesn't try to emit an invalid pad id.
             token_types = None
             if (self.hparams.get("pad_token_id") or 0) < 0:
                 token_types = ('bos', 'eos', 'unk', 'sep', 'cls', 'mask')
@@ -250,7 +254,8 @@ class HunYuanModel(TextModel):
             self._fix_special_tokens()
 
     def set_gguf_parameters(self):
-        # HunyuanOCR has num_experts=1 which is not MoE, prevent parent from writing it
+        # Some HunYuanVL variants set num_experts=1 (not real MoE);
+        # prevent the parent class from emitting expert_count metadata in that case.
         saved_num_experts = self.hparams.pop("num_experts", None)
         super().set_gguf_parameters()
         if saved_num_experts is not None and saved_num_experts > 1:
@@ -287,52 +292,23 @@ class HunYuanModel(TextModel):
 
 
 @ModelBase.register("HunYuanVLForConditionalGeneration")
+@ModelBase.example("tencent/HunyuanOCR")
 class HunyuanVLVisionModel(MmprojModel):
-    # Handles both HunyuanOCR and HunyuanVL, which share the HF architecture name
-    # "HunYuanVLForConditionalGeneration" and the `vit.perceive.*` vision layout.
-    # Each variant maps to a different projector type in clip.cpp so image
-    # preprocessing follows the correct code path.
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         assert self.hparams_vision is not None
-        # HunyuanOCR / HunyuanVL uses max_image_size instead of image_size
+        # HunyuanVL uses max_image_size instead of image_size
         if "image_size" not in self.hparams_vision:
             self.hparams_vision["image_size"] = self.hparams_vision.get("max_image_size", 2048)
-
-    @staticmethod
-    def is_ocr_variant(hparams: dict) -> bool:
-        """Return True for HunyuanOCR, False for HunyuanVL.
-
-        The projector's output dim must equal the text model's hidden_size by
-        construction (that's what "projector" means). HunyuanOCR pairs a 1B text
-        backbone (hidden=1024); HunyuanVL pairs a 4B one (hidden=3072). So the
-        ViT -> LLM projection dim is a hard architectural signature, not a
-        magic number.
-        """
-        vision_out = int((hparams.get("vision_config") or {}).get("out_hidden_size", 0))
-        return vision_out == 1024
 
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
         assert self.hparams_vision is not None
         vcfg = self.hparams_vision
-
-        if self.is_ocr_variant(self.global_config):
-            # --- HunyuanOCR ---
-            self.gguf_writer.add_clip_projector_type(gguf.VisionProjectorType.HUNYUANOCR)
-            self.gguf_writer.add_vision_use_gelu(True)
-            self.gguf_writer.add_vision_attention_layernorm_eps(vcfg.get("rms_norm_eps", 1e-5))
-            self.gguf_writer.add_vision_spatial_merge_size(vcfg.get("spatial_merge_size", 2))
-            self.gguf_writer.add_vision_min_pixels(self.preprocessor_config["min_pixels"])
-            self.gguf_writer.add_vision_max_pixels(self.preprocessor_config["max_pixels"])
-            return
-
-        # --- HunyuanVL ---
         self.gguf_writer.add_clip_projector_type(gguf.VisionProjectorType.HUNYUANVL)
-        self.gguf_writer.add_vision_use_gelu(str(vcfg["hidden_act"]).lower() == "gelu")
-        self.gguf_writer.add_vision_attention_layernorm_eps(float(vcfg["rms_norm_eps"]))
-        self.gguf_writer.add_vision_spatial_merge_size(int(vcfg["spatial_merge_size"]))
+        self.gguf_writer.add_vision_use_gelu(True)
+        self.gguf_writer.add_vision_attention_layernorm_eps(vcfg.get("rms_norm_eps", 1e-5))
+        self.gguf_writer.add_vision_spatial_merge_size(vcfg.get("spatial_merge_size", 2))
         self.gguf_writer.add_vision_min_pixels(int(self.preprocessor_config["min_pixels"]))
         self.gguf_writer.add_vision_max_pixels(int(self.preprocessor_config["max_pixels"]))
 
@@ -353,48 +329,33 @@ class HunyuanVLVisionModel(MmprojModel):
 
     def tensor_force_quant(self, name, new_name, bid, n_dims):
         # force conv weights to F32 or F16 to avoid BF16 IM2COL issues on Metal
-        # Both HunyuanOCR and HunyuanVL emit the ViT -> LLM projection as mm.0/mm.2.
+        # HunyuanVL emit the ViT -> LLM projection as mm.0/mm.2.
         if ("mm.0." in new_name or "mm.2." in new_name) and new_name.endswith(".weight"):
             return gguf.GGMLQuantizationType.F16 if self.ftype == gguf.LlamaFileType.MOSTLY_F16 else gguf.GGMLQuantizationType.F32
         return super().tensor_force_quant(name, new_name, bid, n_dims)
 
 
 @ModelBase.register("HunYuanVLForConditionalGeneration")
+@ModelBase.example("tencent/HunyuanOCR")
 class HunyuanVLTextModel(HunYuanModel):
-    # The "HunYuanVLForConditionalGeneration" HF architecture covers both HunyuanOCR
-    # and HunyuanVL. HunyuanOCR reuses the HunYuan-Dense text backbone (standard RoPE),
-    # while HunyuanVL introduces a new LLM arch with XD-RoPE. Detect the variant from
-    # the config and pick the matching GGUF architecture.
     model_arch = gguf.MODEL_ARCH.HUNYUAN_VL
 
-    @staticmethod
-    def _is_ocr_config(hparams: dict) -> bool:
-        # OCR pairs a 1B text backbone (hidden=1024) with a ViT projector that
-        # outputs 1024-d; HunyuanVL uses 3072-d. Keep in sync with
-        # HunyuanVLVisionModel.is_ocr_variant.
-        return int((hparams.get("vision_config") or {}).get("out_hidden_size", 0)) == 1024
-
     def __init__(self, dir_model: Path, *args, **kwargs):
-        raw_hparams = kwargs.get("hparams") or ModelBase.load_hparams(dir_model, is_mistral_format=False)
-        if self._is_ocr_config(raw_hparams):
-            self.model_arch = gguf.MODEL_ARCH.HUNYUAN_DENSE
-        else:
-            self.model_arch = gguf.MODEL_ARCH.HUNYUAN_VL
         super().__init__(dir_model, *args, **kwargs)
+        # transformers 5.13.0 encodes HunyuanVL XD-RoPE as dynamic + mrope_section.
+        # Normalize it to avoid the HunYuan dynamic-RoPE context assertion.
+        if self.rope_parameters.get("rope_type") == "dynamic" and "mrope_section" in self.rope_parameters:
+            self.rope_parameters["rope_type"] = "xdrope"
+            self.rope_parameters["type"] = "xdrope"
+            self.rope_parameters["xdrope_section"] = list(self.rope_parameters["mrope_section"])
 
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
 
-        # Only emit XD-RoPE metadata for the HunyuanVL backbone; HunyuanOCR uses
-        # the HunYuan-Dense arch which already handles standard rope in super().
-        if self.model_arch != gguf.MODEL_ARCH.HUNYUAN_VL:
-            return
-
+        # XD-RoPE metadata for the HunyuanVL;
         if self.rope_parameters.get("rope_type") != "xdrope":
             return
 
-        # defaults for HunyuanVL. The C++ side later computes:
-        #   freq_base = rope_theta * alpha ** (head_dim / (head_dim - 2))
         self.gguf_writer.add_rope_freq_base(float(self.rope_parameters["rope_theta"]))
         self.gguf_writer.add_rope_scaling_alpha(float(self.rope_parameters["alpha"]))
         self.gguf_writer.add_rope_scaling_type(gguf.RopeScalingType.NONE)
@@ -405,3 +366,107 @@ class HunyuanVLTextModel(HunYuanModel):
         self.gguf_writer.add_context_length(ctx_len)
 
         self.gguf_writer.add_rope_dimension_sections(list(self.rope_parameters["xdrope_section"]))
+
+
+@ModelBase.register("HYV3ForCausalLM")
+@ModelBase.example("tencent/Hy3")
+class HYV3Model(TextModel):
+    model_arch = gguf.MODEL_ARCH.HY_V3
+    supports_mtp_export = True
+
+    # Trunk layer count, stashed before indexing so the classmethod
+    # filter_tensors can identify the appended MTP block(s) (mirrors
+    # Step35Model).
+    _n_main_layers: int | None = None
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # NextN/MTP layers are appended past num_hidden_layers; extend the
+        # tensor map so the MTP block's tensors resolve to blk.<n>.* names.
+        n_nextn = int(self.hparams.get("num_nextn_predict_layers", 0))
+        if n_nextn > 0 and not self.no_mtp:
+            self.block_count += n_nextn
+            self.tensor_map = gguf.get_tensor_name_map(self.model_arch, self.block_count)
+
+    def index_tensors(self, remote_hf_model_id: str | None = None):
+        type(self)._n_main_layers = self.hparams["num_hidden_layers"]
+        return super().index_tensors(remote_hf_model_id=remote_hf_model_id)
+
+    def set_vocab(self):
+        self._set_vocab_gpt2()
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+        self.gguf_writer.add_expert_feed_forward_length(self.hparams["moe_intermediate_size"])
+        self.gguf_writer.add_expert_shared_feed_forward_length(
+            self.hparams["moe_intermediate_size"] * self.hparams.get("num_shared_experts", 1)
+        )
+        self.gguf_writer.add_expert_weights_norm(self.hparams.get("route_norm", True))
+        self.gguf_writer.add_expert_weights_scale(float(self.hparams.get("router_scaling_factor", 1.0)))
+        # sigmoid router with expert selection bias
+        self.gguf_writer.add_expert_gating_func(gguf.ExpertGatingFuncType.SIGMOID)
+
+        n_nextn = int(self.hparams.get("num_nextn_predict_layers", 0))
+        if n_nextn > 0 and not self.no_mtp:
+            self.gguf_writer.add_nextn_predict_layers(n_nextn)
+
+    @classmethod
+    def filter_tensors(cls, item: tuple[str, Callable[[], Tensor]]) -> tuple[str, Callable[[], Tensor]] | None:
+        if (titem := super().filter_tensors(item)) is None:
+            return None
+        name, gen = titem
+
+        # HY V3 appends the MTP block(s) past num_hidden_layers.
+        assert cls._n_main_layers is not None
+        is_mtp = (m := re.match(r"model\.layers\.(\d+)\.", name)) is not None and int(m.group(1)) >= cls._n_main_layers
+
+        # --no-mtp: drop the appended MTP block(s) entirely.
+        if is_mtp and cls.no_mtp:
+            return None
+        # --mtp: keep ONLY MTP-block tensors plus the shared embeddings/norm/
+        # lm_head (so the resulting GGUF carries just the draft head).
+        if cls.mtp_only and not is_mtp and name not in (
+            "model.embed_tokens.weight", "model.norm.weight", "lm_head.weight",
+        ):
+            return None
+
+        # The MTP block's trailing final_layernorm (applied after the decoder
+        # block, before the shared LM head) maps to nextn.shared_head_norm.
+        if is_mtp:
+            name = name.replace(".final_layernorm.", ".shared_head.norm.")
+
+        return name, gen
+
+    _experts: list[dict[str, Tensor]] | None = None
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        # merge the per-expert tensors into stacked 3d tensors
+        if name.startswith("model.layers.") and ".mlp.experts." in name:
+            n_experts = self.find_hparam(["num_local_experts", "num_experts"])
+            assert bid is not None
+
+            if self._experts is None:
+                self._experts = [{} for _ in range(self.block_count)]
+
+            self._experts[bid][name] = data_torch
+
+            if len(self._experts[bid]) >= n_experts * 3:
+                for w_name in ("down_proj", "gate_proj", "up_proj"):
+                    datas: list[Tensor] = []
+                    for xid in range(n_experts):
+                        ename = f"model.layers.{bid}.mlp.experts.{xid}.{w_name}.weight"
+                        datas.append(self._experts[bid][ename])
+                        del self._experts[bid][ename]
+
+                    merged = torch.stack(datas, dim=0)
+                    yield from super().modify_tensors(merged, f"model.layers.{bid}.mlp.experts.{w_name}.weight", bid)
+            return
+
+        yield from super().modify_tensors(data_torch, name, bid)
+
+    def prepare_tensors(self):
+        super().prepare_tensors()
+        if self._experts is not None:
+            experts = [k for d in self._experts for k in d.keys()]
+            if experts:
+                raise ValueError(f"Unprocessed experts: {experts}")

@@ -4,6 +4,7 @@
 #include "ggml-backend-impl.h"
 #include "ggml-backend.h"
 #include "traits.h"
+#include "iqp.h"
 #include "ggml-cpu-impl.h"
 #include "ggml-impl.h"
 #include "quants.h"
@@ -82,6 +83,9 @@ float ggml_table_f32_f16[1 << 16];
 
 // precomputed f32 table for e8m0 half (1 KB) (simd-mappings.h)
 float ggml_table_f32_e8m0_half[1 << 8];
+
+// precomputed f32 table for ue4m3 (1 KB) (simd-mappings.h)
+float ggml_table_f32_ue4m3[1 << 8];
 
 #if defined(__ARM_ARCH)
 struct ggml_arm_arch_features_type {
@@ -225,6 +229,12 @@ static const struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {
     [GGML_TYPE_Q1_0] = {
         .from_float               = quantize_row_q1_0,
         .vec_dot                  = ggml_vec_dot_q1_0_q8_0,
+        .vec_dot_type             = GGML_TYPE_Q8_0,
+        .nrows                    = 1,
+    },
+    [GGML_TYPE_Q2_0] = {
+        .from_float               = quantize_row_q2_0,
+        .vec_dot                  = ggml_vec_dot_q2_0_q8_0,
         .vec_dot_type             = GGML_TYPE_Q8_0,
         .nrows                    = 1,
     },
@@ -1356,6 +1366,13 @@ UseGgmlGemm1:;
 
     ggml_barrier(params->threadpool);
 
+    // IQ panel gemm (see iqp.h) - must come after the barrier above, it consumes the q8_K rows
+    // of src1 from the work buffer
+    if (ggml_cpu_iqp_supports_mul_mat(dst) && !params->use_ref) {
+        ggml_compute_forward_mul_mat_iqp(params, dst);
+        return;
+    }
+
 #if GGML_USE_LLAMAFILE
     if (src1->type != vec_dot_type) {
         const void* wdata = (src1->type == vec_dot_type) ? src1->data : params->wdata;
@@ -1573,6 +1590,16 @@ static void ggml_compute_forward_mul_mat_id(
     char (*atomic_current_chunk)[CACHE_LINE_SIZE] = // [n_as]
         incr_ptr_aligned(&wdata_cur, CACHE_LINE_SIZE * n_as, CACHE_LINE_SIZE);
 
+    // IQ panel gemm (see iqp.h); per expert eligibility is decided below, but the work buffer is
+    // reserved for the whole node (ggml_graph_plan sizes it without params, use_ref only skips the dispatch)
+    const bool iqp = ggml_cpu_iqp_supports_mul_mat_id(dst) && !params->use_ref;
+
+    char * iqp_panels = NULL;
+
+    if (iqp) {
+        iqp_panels = incr_ptr_aligned(&wdata_cur, nth * ggml_cpu_iqp_scratch_size(dst), 64);
+    }
+
     GGML_ASSERT(params->wsize >= (size_t)((char *) wdata_cur - (char *) params->wdata));
 
     if (src1->type != vec_dot_type) {
@@ -1641,6 +1668,13 @@ static void ggml_compute_forward_mul_mat_id(
         const int64_t cne1 = matrix_row_counts[cur_a];
 
         if (cne1 == 0) {
+            continue;
+        }
+
+        if (iqp && ggml_cpu_iqp_mul_mat_id_min_batch(cne1)) {
+            ggml_compute_forward_mul_mat_id_iqp(params, dst, cur_a, cne1, (const int32_t *) &MMID_MATRIX_ROW(cur_a, 0),
+                                                iqp_panels);
+
             continue;
         }
 
@@ -2684,6 +2718,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_im2col_3d(params, tensor);
             } break;
+        case GGML_OP_COL2IM_1D:
+            {
+                ggml_compute_forward_col2im_1d(params, tensor);
+            } break;
         case GGML_OP_CONV_2D:
             {
                 ggml_compute_forward_conv_2d(params, tensor);
@@ -2818,6 +2856,22 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
         case GGML_OP_GATED_DELTA_NET:
             {
                 ggml_compute_forward_gated_delta_net(params, tensor);
+            } break;
+        case GGML_OP_LIGHTNING_INDEXER:
+            {
+                ggml_compute_forward_lightning_indexer(params, tensor);
+            } break;
+        case GGML_OP_DSV4_HC_COMB:
+            {
+                ggml_compute_forward_dsv4_hc_comb(params, tensor);
+            } break;
+        case GGML_OP_DSV4_HC_PRE:
+            {
+                ggml_compute_forward_dsv4_hc_pre(params, tensor);
+            } break;
+        case GGML_OP_DSV4_HC_POST:
+            {
+                ggml_compute_forward_dsv4_hc_post(params, tensor);
             } break;
         case GGML_OP_MAP_CUSTOM1:
             {
@@ -3040,6 +3094,9 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_COUNT_EQUAL:
         case GGML_OP_SOLVE_TRI:
         case GGML_OP_GATED_DELTA_NET:
+        case GGML_OP_DSV4_HC_COMB:
+        case GGML_OP_DSV4_HC_PRE:
+        case GGML_OP_DSV4_HC_POST:
             {
                 n_tasks = n_threads;
             } break;
@@ -3092,6 +3149,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
                 case GGML_GLU_OP_SWIGLU_OAI:
                 case GGML_GLU_OP_GEGLU_ERF:
                 case GGML_GLU_OP_GEGLU_QUICK:
+                case GGML_GLU_OP_SWIGLU_CLAMP:
                     {
                         n_tasks = n_threads;
                     } break;
@@ -3156,6 +3214,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_CONV_2D:
         case GGML_OP_CONV_3D:
         case GGML_OP_CONV_2D_DW:
+        case GGML_OP_COL2IM_1D:
         case GGML_OP_CONV_TRANSPOSE_1D:
         case GGML_OP_CONV_TRANSPOSE_2D:
             {
@@ -3179,6 +3238,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_FLASH_ATTN_BACK:
         case GGML_OP_SSM_CONV:
         case GGML_OP_SSM_SCAN:
+        case GGML_OP_LIGHTNING_INDEXER:
             {
                 n_tasks = n_threads;
             } break;
@@ -3347,7 +3407,7 @@ static bool ggml_thread_apply_priority(int32_t prio) {
         t.StateMask   = 0;
 
         if (!SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &t, sizeof(t))) {
-            GGML_LOG_DEBUG("failed to disable process power throttling %d : (%d)\n", prio, (int) GetLastError());
+            // GGML_LOG_DEBUG("failed to disable process power throttling %d : (%d)\n", prio, (int) GetLastError());
             return false;
         }
         #endif
@@ -3409,7 +3469,7 @@ static bool ggml_thread_apply_priority(int32_t prio) {
     return true;
 }
 
-#elif defined(__gnu_linux__)
+#elif defined(__linux__)
 // TODO: this may not work on BSD, to be verified
 
 static bool ggml_thread_apply_affinity(const bool * mask) {
@@ -3596,6 +3656,11 @@ struct ggml_cplan ggml_graph_plan(
     n_threads = 1;
 #endif
 
+#if defined(__wasi__)
+    // WASI doesn't support parallelism yet
+    n_threads = 1;
+#endif
+
     size_t work_size = 0;
 
     struct ggml_cplan cplan;
@@ -3654,6 +3719,11 @@ struct ggml_cplan ggml_graph_plan(
                             size_t cur2 = ggml_row_size(vec_dot_type, ggml_nelements(node->src[1]));
                             cur = MAX(cur, cur2);
                         }
+
+                        // the IQ panel path needs one scratch panel per thread past the q8_K rows
+                        if (ggml_cpu_iqp_supports_mul_mat(node)) {
+                            cur = GGML_PAD(cur, 64) + n_tasks * ggml_cpu_iqp_scratch_size(node);
+                        }
                     } break;
                 case GGML_OP_MUL_MAT_ID:
                     {
@@ -3673,10 +3743,21 @@ struct ggml_cplan ggml_graph_plan(
                         cur += n_as*ids->ne[0]*ids->ne[1]*sizeof(struct mmid_row_mapping) + sizeof(int64_t);
                         // atomic_current_chunk
                         cur += CACHE_LINE_SIZE*n_as + CACHE_LINE_SIZE;
+                        // the IQ panel path needs one scratch panel per thread on top of that
+                        if (ggml_cpu_iqp_supports_mul_mat_id(node)) {
+                            cur += n_tasks * ggml_cpu_iqp_scratch_size(node) + 64;
+                        }
                     } break;
                 case GGML_OP_OUT_PROD:
                     {
-                        if (ggml_is_quantized(node->src[0]->type)) {
+                        if (ggml_is_quantized(node->src[0]->type) ||
+                            node->src[0]->type == GGML_TYPE_F16) {
+                            cur = ggml_type_size(GGML_TYPE_F32) * node->src[0]->ne[0] * n_tasks;
+                        }
+                    } break;
+                case GGML_OP_SET_ROWS:
+                    {
+                        if (node->src[0]->type == GGML_TYPE_F16 && node->type != GGML_TYPE_F16) {
                             cur = ggml_type_size(GGML_TYPE_F32) * node->src[0]->ne[0] * n_tasks;
                         }
                     } break;
@@ -3727,12 +3808,13 @@ struct ggml_cplan ggml_graph_plan(
                         const int64_t ne10 = node->src[1]->ne[0]; // W
                         const int64_t ne11 = node->src[1]->ne[1]; // H
                         const int64_t ne12 = node->src[1]->ne[2]; // Channels In
+                        const int64_t ne13 = node->src[1]->ne[3]; // Batch
 
                         GGML_ASSERT(node->src[0]->type == GGML_TYPE_F16 || node->src[0]->type == GGML_TYPE_F32);
                         GGML_ASSERT(node->src[1]->type == GGML_TYPE_F32);
 
                         cur += ggml_type_size(node->src[0]->type) * ne00 * ne01 * ne02 * ne03;
-                        cur += ggml_type_size(node->src[0]->type) * ne10 * ne11 * ne12;
+                        cur += ggml_type_size(node->src[0]->type) * ne10 * ne11 * ne12 * ne13;
 
                     } break;
                 case GGML_OP_TOP_K:
@@ -3780,7 +3862,7 @@ struct ggml_cplan ggml_graph_plan(
                 case GGML_OP_GATED_DELTA_NET:
                     {
                         const int64_t S_v = node->src[2]->ne[0];
-                        const int64_t K   = node->src[5]->ne[1];  // state is (D, K, n_seqs)
+                        const int64_t K   = ggml_get_op_params_i32(node, 0);
                         const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0);
                         cur = per_thread * sizeof(float) * n_tasks;
                     } break;
@@ -3799,6 +3881,12 @@ struct ggml_cplan ggml_graph_plan(
                         // In order to support one sided reflective padding and complex conversions we need two extra n_fft sized buffers
                         // to prepare magnitude and phase for inverted FFTs.
                         cur = ggml_type_size(node->type)*(n_tasks + node->ne[0] * n_tasks * 4);
+                    } break;
+                case GGML_OP_LIGHTNING_INDEXER:
+                    {
+                        // temp buffer for dequantizing lightning indexer keys
+                        const int64_t ne10 = node->src[1]->ne[0];
+                        cur += sizeof(float)*ne10*n_tasks;
                     } break;
                 default:
                     break;
@@ -4609,6 +4697,14 @@ int ggml_cpu_has_sme(void) {
 #endif
 }
 
+int ggml_cpu_has_sme2(void) {
+#if defined(__ARM_ARCH) && defined(__ARM_FEATURE_SME2)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
 void ggml_cpu_init(void) {
     // needed to initialize ggml_time
     {
@@ -4640,6 +4736,11 @@ void ggml_cpu_init(void) {
             // initialize E8M0 half table (256 entries)
             for (int i = 0; i < (1 << 8); ++i) {
                 ggml_table_f32_e8m0_half[i] = GGML_E8M0_TO_FP32_HALF(i);
+            }
+
+            // initialize UE4M3 table (256 entries)
+            for (int i = 0; i < (1 << 8); ++i) {
+                ggml_table_f32_ue4m3[i] = ggml_ue4m3_to_fp32(i);
             }
 
             const uint64_t t_end = ggml_time_us(); UNUSED(t_end);

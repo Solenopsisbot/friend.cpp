@@ -11,6 +11,10 @@ export type {
 	ApiChatMessageData,
 	ApiModelStatus,
 	ApiModelDataEntry,
+	ApiModelLoadStage,
+	ApiModelsSseProgress,
+	ApiModelsSseData,
+	ApiModelsSseEvent,
 	ApiModelDetails,
 	ApiModelListResponse,
 	ApiLlamaCppServerProps,
@@ -29,14 +33,25 @@ export type {
 	ApiRouterModelsStatusResponse,
 	ApiRouterModelsListResponse,
 	ApiRouterModelsUnloadRequest,
-	ApiRouterModelsUnloadResponse
+	ApiRouterModelsUnloadResponse,
+	AudioInputFormat,
+	ApiStreamSession
 } from './api';
 
 // Chat types
 export type {
+	AttachmentMenuItem,
 	ChatUploadedFile,
 	ChatAttachmentDisplayItem,
 	ChatMessageSiblingInfo,
+	ChatMessageActions,
+	ChatMessageActionsContext,
+	ChatMessageDeletionInfo,
+	ChatMessageEditContext,
+	ChatMessageEditState,
+	ChatMessageEditActions,
+	ChatMessageAssistantEditActions,
+	ChatFormActionsContext,
 	ChatMessagePromptProgress,
 	ChatMessageTimings,
 	ChatMessageAgenticTimings,
@@ -47,7 +62,11 @@ export type {
 	LiveProcessingStats,
 	LiveGenerationStats,
 	AttachmentDisplayItemsOptions,
-	FileProcessingResult
+	FileProcessingResult,
+	FileMentionEntry,
+	ChatFormCommand,
+	ChatCommandsOptions,
+	ControlAction
 } from './chat.d';
 
 // Database types
@@ -55,6 +74,7 @@ export type {
 	McpServerOverride,
 	DatabaseConversation,
 	DatabaseMessageExtraAudioFile,
+	DatabaseMessageExtraVideoFile,
 	DatabaseMessageExtraImageFile,
 	DatabaseMessageExtraLegacyContext,
 	DatabaseMessageExtraMcpPrompt,
@@ -68,7 +88,13 @@ export type {
 } from './database';
 
 // Model types
-export type { ModelModalities, ModelOption, ModalityCapabilities } from './models';
+export type {
+	ModelCapabilities,
+	ModelModalities,
+	ModelOption,
+	ModelLoadProgress,
+	ModalityCapabilities
+} from './models';
 
 // Settings types
 export type {
@@ -115,12 +141,14 @@ export type {
 	MCPServerConfig,
 	MCPClientConfig,
 	MCPServerSettingsEntry,
+	MCPServerDisplayInfo,
+	RecommendedMCPServer,
 	MCPToolCall,
 	OpenAIToolDefinition,
 	ServerStatus,
 	ToolCallParams,
 	ToolExecutionResult,
-	ServerBuiltinToolInfo,
+	ServerToolInfo,
 	Tool,
 	Prompt,
 	GetPromptResult,
@@ -142,6 +170,22 @@ export type {
 	MCPServerResources
 } from './mcp';
 
+// Search result types
+export type { SearchResult } from './search';
+
+// Glob search types (working-directory / mention pickers)
+export type {
+	GlobEntry,
+	GlobSearchArgs,
+	GlobSearchResult,
+	GlobEntryResult,
+	GlobSearchChildOptions,
+	GlobSearchChildResult
+} from './glob';
+
+// ChatFormInputRich token types (chat form)
+export type { ChatFormInputRichToken } from './chat-form-input-rich';
+
 // Agentic types
 export type {
 	AgenticConfig,
@@ -155,8 +199,29 @@ export type {
 	AgenticFlowOptions,
 	AgenticFlowParams,
 	AgenticFlowResult,
-	SteeringMessage
+	SteeringMessage,
+	AgenticSection,
+	ToolResultLine,
+	ContinueIntent
 } from './agentic';
 
+// Navigation types
+export type { DesktopIconStripItem } from './navigation';
+
 // Tools types
-export type { ToolEntry, ToolGroup } from './tools';
+export type {
+	EditFileEdit,
+	EditFileMeta,
+	EditFileTitleMeta,
+	ToolEntry,
+	ToolGroup,
+	ToolUiEntry,
+	WriteFileMeta,
+	WriteFileTitleMeta
+} from './tools';
+
+// Reasoning
+export type { ReasoningEffortLevel } from './reasoning';
+
+// Splash
+export type { SplashDimensions } from './splash';

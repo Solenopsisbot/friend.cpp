@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstdint>
 
 const int tensor_split_max = 16;
@@ -51,6 +52,9 @@ struct load_model_inputs
     const int visionmaxtokens = -1;
     const bool use_mmap = false;
     const bool use_mlock = false;
+    const bool use_direct_io = false;
+    const bool no_host = false;
+    const bool use_mtp = false;
     const bool use_smartcontext = false;
     const bool use_contextshift = false;
     const bool use_fastforward = false;
@@ -64,6 +68,7 @@ struct load_model_inputs
     const int overridenativecontext = 0;
     const int moe_experts = -1;
     const int moecpu = 0;
+    const int ffncpu = 0;
     const bool no_bos_token = false;
     const bool load_guidance = false;
     const char * override_kv[overridekv_max] = {};
@@ -75,7 +80,7 @@ struct load_model_inputs
     const bool check_slowness = false;
     const char * jinja_template = nullptr;
     const bool highpriority = false;
-    const bool swa_support = false;
+    const bool prevent_swa = false;
     const int swa_padding = 0;
     const bool smartcache = false;
     const int smartcacheslots = 0;
@@ -85,6 +90,8 @@ struct load_model_inputs
     const bool quiet = false;
     const int debugmode = 0;
     const int continuous_batching_slots = 0;
+    const int rpc_mode = 0; //0=disabled, 1=connect, 2=host
+    const char * rpc_targets = nullptr;
 };
 struct generation_inputs
 {
@@ -185,14 +192,12 @@ struct sd_load_model_inputs
 {
     const char * model_filename = nullptr;
     const char * executable_path = nullptr;
-    const int kcpp_main_gpu = -1;
+    const char * backend = nullptr;
     const int threads = 0;
     const int quant = 0;
     const bool flash_attention = false;
-    const bool offload_cpu = false;
+    const char * params_backend = nullptr;
     const bool use_mmap = false;
-    const bool vae_cpu = false;
-    const bool clip_cpu = false;
     const bool diffusion_conv_direct = false;
     const bool vae_conv_direct = false;
     const bool taesd = false;
@@ -201,6 +206,7 @@ struct sd_load_model_inputs
     const char * clip1_filename = nullptr;
     const char * clip2_filename = nullptr;
     const char * vae_filename = nullptr;
+    const char * audio_vae_filename = nullptr;
     const int lora_len = 0;
     const char ** lora_filenames = nullptr;
     const float * lora_multipliers = nullptr;
@@ -209,6 +215,10 @@ struct sd_load_model_inputs
     const char * upscaler_filename = nullptr;
     const int img_hard_limit = 0;
     const int img_soft_limit = 0;
+    const char * max_vram = nullptr;
+    const char * split_mode = nullptr;
+    const bool stream_layers = false;
+    const bool auto_fit = false;
     const char * devices_override = nullptr;
     const bool quiet = false;
     const int debugmode = 0;
@@ -219,8 +229,12 @@ struct sd_generation_inputs
     const char * negative_prompt = nullptr;
     const char * init_images = "";
     const char * mask = "";
+    const char * video_start_frame = "";
+    const char * video_end_frame = "";
     const int extra_images_len = 0;
     const char ** extra_images = nullptr;
+    const int ref_audios_len = 0;
+    const char ** ref_audios = nullptr;
     const bool flip_mask = false;
     const float denoising_strength = 0.0f;
     const float cfg_scale = 0.0f;
@@ -234,8 +248,11 @@ struct sd_generation_inputs
     const char * sample_method = nullptr;
     const char * scheduler = nullptr;
     const float eta = -1.0f;
+    const char * extra_sample_args = nullptr;
+    const char * ref_image_args = nullptr;
     const int clip_skip = -1;
     const int vid_req_frames = 1;
+    const int vid_fps = 16;
     const int video_output_type = 0; //0=gif, 1=avi, 2=both
     const bool remove_limits = false;
     const bool circular_x = false;
@@ -253,6 +270,7 @@ struct sd_generation_outputs
     int animated = 0;
     const char * data = "";
     const char * data_extra = "";
+    const char * final_frame = ""; //for videos to allow extend
     const char * info = "";
 };
 struct sd_upscale_inputs
@@ -312,6 +330,8 @@ struct tts_generation_inputs
     const char * custom_speaker_data = "";
     const char * reference_audio = "";
     const char * speaker_instruction = "";
+    const char * language = "";
+    const bool use_mp3 = false;
 };
 struct tts_generation_outputs
 {
@@ -380,7 +400,7 @@ extern std::string lora_filename;
 extern std::string mmproj_filename;
 extern std::string draftmodel_filename;
 extern std::vector<std::string> generated_tokens;
-extern bool generation_finished;
+extern std::atomic<bool> generation_finished;
 extern bool audio_multimodal_supported;
 extern bool vision_multimodal_supported;
 extern float last_eval_time;

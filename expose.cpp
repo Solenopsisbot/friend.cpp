@@ -35,6 +35,11 @@ extern "C"
         draftmodel_filename = inputs.draftmodel_filename;
 
         file_format = check_file_format(model.c_str(),&file_format_meta);
+        if (file_format == FileFormat::BADFORMAT)
+        {
+            fprintf(stderr, "%s: error: invalid or unsupported model file '%s'\n", __func__, model.c_str());
+            return false;
+        }
 
         executable_path = inputs.executable_path;
 
@@ -192,6 +197,11 @@ extern "C"
         }
     }
 
+    bool launch_rpc_server(const char * endpoint, const char * devices)
+    {
+        return host_rpc_server(endpoint,devices);
+    }
+
     bool sd_load_model(const sd_load_model_inputs inputs)
     {
         return sdtype_load_model(inputs);
@@ -207,6 +217,18 @@ extern "C"
     sd_info_outputs sd_get_info()
     {
         return sdtype_get_info();
+    }
+    void sd_abort_generation()
+    {
+        sdtype_abort_generation();
+    }
+    sd_info_outputs sd_get_ongoing_generation_info()
+    {
+        return sdtype_get_ongoing_generation_info();
+    }
+    void sd_request_ongoing_generation_preview()
+    {
+        sdtype_request_ongoing_generation_preview();
     }
 
     bool whisper_load_model(const whisper_load_model_inputs inputs)
@@ -246,17 +268,15 @@ extern "C"
     }
 
     const char * new_token(int idx) {
-        if (generated_tokens.size() <= idx || idx < 0) return nullptr;
-
-        return generated_tokens[idx].c_str();
+        return gpttype_new_token(idx);
     }
 
     int get_stream_count() {
-        return generated_tokens.size();
+        return gpttype_get_stream_count();
     }
 
     bool has_finished() {
-        return generation_finished;
+        return generation_finished.load();
     }
     bool batch_generate_enabled() {
         return gpttype_batch_generate_enabled();
@@ -342,6 +362,25 @@ extern "C"
         return chat_template.c_str();
     }
 
+    static std::string parsed_tool_calls = "";
+    const char* parse_chat_tool_calls(const char * generated_text,
+                                      const char * tools_json,
+                                      const char * chat_template,
+                                      const char * chat_template_kwargs_json,
+                                      const char * tool_choice,
+                                      bool parallel_tool_calls,
+                                      bool is_partial) {
+        parsed_tool_calls = gpttype_parse_chat_tool_calls(
+            generated_text ? generated_text : "",
+            tools_json ? tools_json : "",
+            chat_template ? chat_template : "",
+            chat_template_kwargs_json ? chat_template_kwargs_json : "",
+            tool_choice ? tool_choice : "",
+            parallel_tool_calls,
+            is_partial);
+        return parsed_tool_calls.c_str();
+    }
+
     const char* get_pending_output() {
        return gpttype_get_pending_output().c_str();
     }
@@ -373,8 +412,9 @@ extern "C"
         return detokenized_str.c_str();
     }
 
-    static std::vector<TopPicksData> last_logprob_toppicks;
-    static std::vector<logprob_item> last_logprob_items;
+    // Returned pointers remain valid until the next call on the same thread.
+    static thread_local std::vector<TopPicksData> last_logprob_toppicks;
+    static thread_local std::vector<logprob_item> last_logprob_items;
     last_logprobs_outputs last_logprobs()
     {
         last_logprobs_outputs output;

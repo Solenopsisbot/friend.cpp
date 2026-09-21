@@ -1,14 +1,17 @@
 <script lang="ts">
-	import { X } from '@lucide/svelte';
+	import { Music, Video, X } from '@lucide/svelte';
+	import { ActionIcon } from '$lib/components/app';
+	import { ICON_CLASS_DEFAULT } from '$lib/constants';
+	import { AttachmentType } from '$lib/enums';
 	import {
 		formatFileSize,
 		getFileTypeLabel,
 		getPreviewText,
+		isAudioFile,
 		isPdfFile,
-		isTextFile
+		isTextFile,
+		isVideoFile
 	} from '$lib/utils';
-	import { ActionIcon } from '$lib/components/app';
-	import { AttachmentType } from '$lib/enums';
 
 	interface Props {
 		attachment?: DatabaseMessageExtra;
@@ -28,9 +31,9 @@
 		attachment,
 		class: className = '',
 		id,
+		name,
 		onclick,
 		onRemove,
-		name,
 		readonly = false,
 		size,
 		textContent,
@@ -38,6 +41,8 @@
 	}: Props = $props();
 
 	let isPdf = $derived(isPdfFile(attachment, uploadedFile));
+	let isAudio = $derived(isAudioFile(attachment, uploadedFile));
+	let isVideo = $derived(isVideoFile(attachment, uploadedFile));
 	let isPdfWithContent = $derived(isPdf && !!textContent);
 
 	let isText = $derived(isTextFile(attachment, uploadedFile));
@@ -93,8 +98,10 @@
 {/snippet}
 
 {#snippet removeButton()}
-	<div class="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100">
-		<ActionIcon icon={X} tooltip="Remove" stopPropagationOnClick onclick={() => onRemove?.(id)} />
+	<div
+		class="absolute top-2 right-2 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100"
+	>
+		<ActionIcon icon={X} onclick={() => onRemove?.(id)} stopPropagationOnClick tooltip="Remove" />
 	</div>
 {/snippet}
 
@@ -102,7 +109,13 @@
 	<div
 		class="flex h-8 w-8 items-center justify-center rounded bg-primary/10 text-xs font-medium text-primary"
 	>
-		{fileTypeLabel}
+		{#if isAudio}
+			<Music class="{ICON_CLASS_DEFAULT} text-white/70" />
+		{:else if isVideo}
+			<Video class="{ICON_CLASS_DEFAULT} text-white/70" />
+		{:else}
+			{fileTypeLabel}
+		{/if}
 	</div>
 {/snippet}
 

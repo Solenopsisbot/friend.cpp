@@ -10,6 +10,9 @@
 #include <codecvt>
 #include <sstream>
 #include <ctime>
+#include <thread>
+#include <atomic>
+#include <algorithm>
 
 #define MINIAUDIO_IMPLEMENTATION
 #ifndef MTMD_AUDIO_DEBUG
@@ -624,6 +627,66 @@ std::string save_stereo_wav16_base64(const std::vector<float> & raw_audio, int T
     return kcpp_base64_encode(wav_data);
 }
 
+std::string save_mono_mp3_base64(const std::vector<float> & raw_audio, int sample_rate) {
+    std::vector<float> limited_audio = raw_audio;
+    float peak = 0.0f;
+    for (float s : limited_audio) {
+        peak = std::max(peak, std::fabs(s));
+    }
+    if (peak > 1e-6f) {
+        const float target_amp = 0.89125094f; // -1.0 dBFS
+        const float gain = peak > target_amp ? target_amp / peak : 1.0f;
+        for (float & s : limited_audio) {
+            s = std::max(-target_amp, std::min(target_amp, s * gain));
+        }
+    }
+
+    const float * enc_audio = limited_audio.data();
+    int enc_T  = (int) limited_audio.size();
+    int enc_sr = sample_rate;
+    std::vector<float> resampled;
+
+    if (sample_rate != 32000 && sample_rate != 44100 && sample_rate != 48000) {
+        resampled = resample_wav(1, limited_audio, sample_rate, 44100);
+        enc_audio = resampled.data();
+        enc_sr    = 44100;
+        enc_T     = (int) resampled.size();
+    }
+
+    if (enc_T <= 0) {
+        return "";
+    }
+
+    mp3enc_t * enc = mp3enc_init(enc_sr, 1, 128);
+    if (!enc) {
+        fprintf(stderr, "[Audio] mp3enc_init failed\n");
+        return "";
+    }
+
+    std::string mp3_data;
+    mp3_data.reserve(enc_T / 4);
+    int chunk_size = enc_sr;
+    std::vector<float> buf((size_t) chunk_size);
+
+    for (int pos = 0; pos < enc_T; pos += chunk_size) {
+        int n = (pos + chunk_size <= enc_T) ? chunk_size : (enc_T - pos);
+        memcpy(buf.data(), enc_audio + pos, (size_t) n * sizeof(float));
+        int out_size = 0;
+        const uint8_t * mp3 = mp3enc_encode(enc, buf.data(), n, &out_size);
+        if (out_size > 0) {
+            mp3_data.append((const char *) mp3, out_size);
+        }
+    }
+
+    int flush_size = 0;
+    const uint8_t * flush_data = mp3enc_flush(enc, &flush_size);
+    if (flush_size > 0) {
+        mp3_data.append((const char *) flush_data, flush_size);
+    }
+    mp3enc_free(enc);
+    return kcpp_base64_encode(mp3_data);
+}
+
 std::string save_stereo_mp3_base64(const std::vector<float> & raw_audio,int T_audio,int sample_rate) {
     const float * enc_audio = raw_audio.data();
     int enc_T  = T_audio;
@@ -635,40 +698,153 @@ std::string save_stereo_mp3_base64(const std::vector<float> & raw_audio,int T_au
         resampled = resample_wav(2,raw_audio,sample_rate,44100);
         enc_audio = resampled.data();
         enc_sr    = 44100;
+        enc_T     = (int)resampled.size() / 2;
     }
 
-    const int kbps = 128;
-    mp3enc_t * enc = mp3enc_init(enc_sr, 2, kbps);
-    if (!enc) {
-        fprintf(stderr, "[Audio] mp3enc_init failed\n");
+    const int kbps = 192;
+
+    // Encode PCM [offset, offset+len) with optional warm-up.
+    // warmup=true primes filterbank/MDCT/psy with the 1152 PCM samples
+    // immediately preceding offset (caller guarantees offset >= 1152).
+    // Returns raw MP3 bytes, or empty string on init failure.
+    auto encode_chunk = [&](int offset, int len, bool warmup) -> std::string {
+        mp3enc_t * enc = mp3enc_init(enc_sr, 2, kbps);
+        if (!enc) return "";
+
+        if (warmup) {
+            int wo = offset - 1152;
+            float wb[1152 * 2];
+            memcpy(wb,          enc_audio + wo,        1152 * sizeof(float));
+            memcpy(wb + 1152,   enc_audio + enc_T + wo, 1152 * sizeof(float));
+            int dummy = 0;
+            mp3enc_encode(enc, wb, 1152, &dummy);
+            mp3enc_flush(enc, &dummy);
+        }
+
+        std::string result;
+        result.reserve(len / 4);
+
+        int chunk_size = enc_sr;
+        std::vector<float> buf((size_t)chunk_size * 2);
+
+        for (int pos = 0; pos < len; pos += chunk_size) {
+            int n = (pos + chunk_size <= len) ? chunk_size : (len - pos);
+            memcpy(buf.data(),     enc_audio + offset + pos,          (size_t)n * sizeof(float));
+            memcpy(buf.data() + n, enc_audio + enc_T + offset + pos,  (size_t)n * sizeof(float));
+            int out_size = 0;
+            const uint8_t * mp3 = mp3enc_encode(enc, buf.data(), n, &out_size);
+            if (out_size > 0) {
+                result.append((const char *) mp3, out_size);
+            }
+        }
+
+        int flush_size = 0;
+        const uint8_t * flush_data = mp3enc_flush(enc, &flush_size);
+        if (flush_size > 0) {
+            result.append((const char *) flush_data, flush_size);
+        }
+        mp3enc_free(enc);
+        return result;
+    };
+
+    // Determine thread count: at most 1 thread per ~0.5s of audio
+    int n_threads = std::max(1, (int)std::thread::hardware_concurrency());
+    int min_chunk = enc_sr / 2;
+    if (n_threads * min_chunk > enc_T) {
+        n_threads = std::max(1, enc_T / min_chunk);
+    }
+
+    // Single-threaded path — call encode_chunk directly
+    if (n_threads <= 1) {
+        std::string mp3_data = encode_chunk(0, enc_T, false);
+        if (mp3_data.empty()) {
+            fprintf(stderr, "[Audio] mp3enc_init failed\n");
+            return "";
+        }
+        return kcpp_base64_encode(mp3_data);
+    }
+
+    // Multi-threaded path: partition audio, encode chunks in parallel
+    struct Chunk { int offset; int n_samples; };
+    std::vector<Chunk> chunks(n_threads);
+    {
+        constexpr int FRAME = 1152;
+
+        int pos = 0;
+
+        for (int i = 0; i < n_threads; i++) {
+            // Compute ideal boundaries
+            int start = (int)(((int64_t)enc_T * i) / n_threads);
+            int end   = (int)(((int64_t)enc_T * (i + 1)) / n_threads);
+
+            // Align internal boundaries down to frame boundaries
+            if (i != 0) {
+                start = (start / FRAME) * FRAME;
+            }
+            if (i != n_threads - 1) {
+                end = (end / FRAME) * FRAME;
+            }
+
+            // Enforce monotonicity
+            if (start < pos) {
+                start = pos;
+            }
+            if (end < start) {
+                end = start;
+            }
+
+            chunks[i].offset    = start;
+            chunks[i].n_samples = end - start;
+
+            pos = end;
+        }
+
+        // Ensure final chunk reaches exact end
+        if (!chunks.empty()) {
+            chunks.back().n_samples = enc_T - chunks.back().offset;
+        }
+    }
+
+    std::vector<std::string> results(n_threads);
+    std::vector<std::thread> threads;
+    std::atomic<int> init_failures{0};
+
+    // RAII guard: join all threads on any exception
+    struct ThreadGuard {
+        std::vector<std::thread> & t;
+        ~ThreadGuard() { for (auto & th : t) if (th.joinable()) th.join(); }
+    } guard{threads};
+
+    for (int i = 0; i < n_threads; i++) {
+        threads.emplace_back([&, i]() {
+            if (chunks[i].n_samples <= 0) return;
+
+            // Chunk 0 starts fresh; chunks 1..N-1 get warm-up from prior chunk
+            bool warmup = (i > 0);
+            std::string r = encode_chunk(chunks[i].offset, chunks[i].n_samples, warmup);
+            if (r.empty()) {
+                init_failures.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                results[i] = std::move(r);
+            }
+        });
+    }
+
+    for (auto & t : threads) {
+        t.join();
+    }
+
+    if (init_failures.load(std::memory_order_relaxed) > 0) {
+        fprintf(stderr, "[Audio] mp3enc_init failed for %d chunk(s)\n", init_failures.load());
         return "";
     }
 
     std::string mp3_data;
-    mp3_data.reserve(enc_T); // rough preallocation
+    size_t total_size = 0;
+    for (auto & r : results) total_size += r.size();
+    mp3_data.reserve(total_size);
+    for (auto & r : results) mp3_data.append(r);
 
-    int chunk = enc_sr;
-
-    // reusable buffer (replaces malloc inside loop)
-    std::vector<float> buf((size_t)chunk * 2);
-
-    for (int pos = 0; pos < enc_T; pos += chunk) {
-        int n = (pos + chunk <= enc_T) ? chunk : (enc_T - pos);
-        // build planar chunk
-        memcpy(buf.data(),     enc_audio + pos,          (size_t)n * sizeof(float));
-        memcpy(buf.data() + n, enc_audio + enc_T + pos,  (size_t)n * sizeof(float));
-        int out_size = 0;
-        const uint8_t * mp3 = mp3enc_encode(enc, buf.data(), n, &out_size);
-        if (out_size > 0) {
-            mp3_data.append((const char *) mp3, out_size);
-        }
-    }
-    int flush_size = 0;
-    const uint8_t * flush_data = mp3enc_flush(enc, &flush_size);
-    if (flush_size > 0) {
-        mp3_data.append((const char *) flush_data, flush_size);
-    }
-    mp3enc_free(enc);
     return kcpp_base64_encode(mp3_data);
 }
 
@@ -831,6 +1007,55 @@ bool kcpp_decode_audio_from_buf(const unsigned char * buf_in, size_t len, int ta
 
     ma_decoder_uninit(&decoder);
     return true;
+}
+
+bool kcpp_decode_audio_file_from_buf(const unsigned char * buf_in, size_t len, int & sample_rate, int & channels, std::vector<float> & pcmf32_interleaved) {
+    sample_rate = 0;
+    channels = 0;
+    pcmf32_interleaved.clear();
+
+    if (!buf_is_audio_file((const char *)buf_in, len))
+    {
+        return false;
+    }
+
+    ma_result result;
+    ma_decoder_config decoder_config = ma_decoder_config_init(ma_format_f32, 0, 0);
+    ma_decoder decoder;
+
+    result = ma_decoder_init_memory(buf_in, len, &decoder_config, &decoder);
+    if (result != MA_SUCCESS) {
+        return false;
+    }
+
+    ma_uint32 decoded_channels = 0;
+    ma_uint32 decoded_sample_rate = 0;
+    result = ma_decoder_get_data_format(&decoder, nullptr, &decoded_channels, &decoded_sample_rate, nullptr, 0);
+    if (result != MA_SUCCESS || decoded_channels == 0 || decoded_sample_rate == 0) {
+        ma_decoder_uninit(&decoder);
+        return false;
+    }
+
+    ma_uint64 frame_count;
+    ma_uint64 frames_read;
+    result = ma_decoder_get_length_in_pcm_frames(&decoder, &frame_count);
+    if (result != MA_SUCCESS) {
+        ma_decoder_uninit(&decoder);
+        return false;
+    }
+
+    pcmf32_interleaved.resize(static_cast<size_t>(frame_count) * static_cast<size_t>(decoded_channels));
+    result = ma_decoder_read_pcm_frames(&decoder, pcmf32_interleaved.data(), frame_count, &frames_read);
+    ma_decoder_uninit(&decoder);
+    if (result != MA_SUCCESS) {
+        pcmf32_interleaved.clear();
+        return false;
+    }
+
+    pcmf32_interleaved.resize(static_cast<size_t>(frames_read) * static_cast<size_t>(decoded_channels));
+    sample_rate = static_cast<int>(decoded_sample_rate);
+    channels = static_cast<int>(decoded_channels);
+    return !pcmf32_interleaved.empty();
 }
 
 //this version is specifically required for ace-step

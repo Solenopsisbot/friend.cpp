@@ -1,16 +1,13 @@
 <script lang="ts">
-	import { chatStore } from '$lib/stores/chat.svelte';
-	import { modelsStore, modelOptions, selectedModelId } from '$lib/stores/models.svelte';
-	import { isRouterMode, serverError } from '$lib/stores/server.svelte';
 	import { ModelsSelectorDropdown, ModelsSelectorSheet } from '$lib/components/app';
-	import { IsMobile } from '$lib/hooks/is-mobile.svelte';
-	import { activeMessages } from '$lib/stores/conversations.svelte';
+	import { conversationsStore, deviceStore, modelsStore, serverStore } from '$lib/stores';
+	import { getConversationModel } from '$lib/utils';
 
 	interface Props {
-		currentModel?: string;
 		disabled?: boolean;
 		forceForegroundText?: boolean;
 		hasAudioModality?: boolean;
+		hasVideoModality?: boolean;
 		hasVisionModality?: boolean;
 		hasModelSelected?: boolean;
 		isSelectedModelInCache?: boolean;
@@ -19,72 +16,75 @@
 	}
 
 	let {
-		currentModel,
 		disabled = false,
 		forceForegroundText = false,
 		hasAudioModality = $bindable(false),
-		hasVisionModality = $bindable(false),
 		hasModelSelected = $bindable(false),
+		hasVideoModality = $bindable(false),
+		hasVisionModality = $bindable(false),
 		isSelectedModelInCache = $bindable(true),
 		submitTooltip = $bindable(''),
 		useGlobalSelection = false
 	}: Props = $props();
 
-	let isRouter = $derived(isRouterMode());
-	let isOffline = $derived(!!serverError());
+	let isRouter = $derived(serverStore.isRouterMode);
+	let isOffline = $derived(!!serverStore.error);
 
 	let conversationModel = $derived(
-		chatStore.getConversationModel(activeMessages() as DatabaseMessage[])
+		getConversationModel(conversationsStore.activeMessages as DatabaseMessage[])
 	);
 
 	let lastSyncedConversationModel: string | null = null;
 
-	$effect(() => {
-		if (conversationModel && conversationModel !== lastSyncedConversationModel) {
-			lastSyncedConversationModel = conversationModel;
+	let selectorModel = $derived.by(() => {
+		const storeModel = modelsStore.selectedModelName;
 
-			modelsStore.selectModelByName(conversationModel);
-		} else if (isRouter && !modelsStore.selectedModelId && modelsStore.loadedModelIds.length > 0) {
-			lastSyncedConversationModel = null;
-			// auto-select the first loaded model only when nothing is selected yet
-			const first = modelOptions().find((m) => modelsStore.loadedModelIds.includes(m.model));
-
-			if (first) modelsStore.selectModelById(first.id);
-		}
-	});
-
-	let activeModelId = $derived.by(() => {
-		const options = modelOptions();
-
-		if (!isRouter) {
-			return options.length > 0 ? options[0].model : null;
-		}
-
-		const selectedId = selectedModelId();
-
-		if (selectedId) {
-			const model = options.find((m) => m.id === selectedId);
-
-			if (model) return model.model;
+		if (storeModel && storeModel !== conversationModel) {
+			return storeModel;
 		}
 
 		if (conversationModel) {
-			const model = options.find((m) => m.model === conversationModel);
-
-			if (model) return model.model;
+			return conversationModel;
 		}
 
 		return null;
 	});
 
+	$effect(() => {
+		if (conversationModel && conversationModel !== lastSyncedConversationModel) {
+			if (modelsStore.models.some((m) => m.model === conversationModel)) {
+				modelsStore.selectedModelName = conversationModel;
+				modelsStore.selectModelByName(conversationModel);
+			} else {
+				modelsStore.selectedModelId = null;
+				modelsStore.selectedModelName = conversationModel;
+			}
+
+			lastSyncedConversationModel = conversationModel;
+		} else if (
+			isRouter &&
+			!modelsStore.selectedModelId &&
+			modelsStore.loadedModelIds.length > 0 &&
+			conversationsStore.activeMessages.length > 0 &&
+			!conversationModel
+		) {
+			lastSyncedConversationModel = null;
+			const first = modelsStore.models.find((m) => modelsStore.loadedModelIds.includes(m.model));
+
+			if (first) modelsStore.selectModelById(first.id);
+		}
+	});
+
+	let activeModelId = $derived(modelsStore.activeModelId);
+
 	let modelPropsVersion = $state(0); // Used to trigger reactivity after fetch
 
 	$effect(() => {
 		if (activeModelId) {
-			const cached = modelsStore.getModelProps(activeModelId);
+			const cached = modelsStore.props.getModelProps(activeModelId);
 
 			if (!cached) {
-				modelsStore.fetchModelProps(activeModelId).then(() => {
+				modelsStore.props.fetchModelProps(activeModelId).then(() => {
 					modelPropsVersion++;
 				});
 			}
@@ -92,33 +92,31 @@
 	});
 
 	$effect(() => {
-		hasAudioModality = activeModelId ? modelsStore.modelSupportsAudio(activeModelId) : false;
+		void modelPropsVersion;
+
+		hasAudioModality = activeModelId ? modelsStore.props.modelSupportsAudio(activeModelId) : false;
 	});
 
 	$effect(() => {
 		void modelPropsVersion;
 
-		hasVisionModality = activeModelId ? modelsStore.modelSupportsVision(activeModelId) : false;
+		hasVideoModality = activeModelId ? modelsStore.props.modelSupportsVideo(activeModelId) : false;
 	});
 
 	$effect(() => {
-		hasModelSelected = !isRouter || !!conversationModel || !!selectedModelId();
+		void modelPropsVersion;
+
+		hasVisionModality = activeModelId
+			? modelsStore.props.modelSupportsVision(activeModelId)
+			: false;
 	});
 
 	$effect(() => {
-		if (!isRouter) {
-			isSelectedModelInCache = true;
-		} else if (conversationModel) {
-			isSelectedModelInCache = modelOptions().some((option) => option.model === conversationModel);
-		} else {
-			const currentModelId = selectedModelId();
+		hasModelSelected = !isRouter || !!conversationModel || !!modelsStore.selectedModelId;
+	});
 
-			if (!currentModelId) {
-				isSelectedModelInCache = false;
-			} else {
-				isSelectedModelInCache = modelOptions().some((option) => option.id === currentModelId);
-			}
-		}
+	$effect(() => {
+		isSelectedModelInCache = !isRouter || !!conversationModel || !!selectedModelId();
 	});
 
 	$effect(() => {
@@ -134,26 +132,24 @@
 	let selectorModelRef: ModelsSelectorDropdown | ModelsSelectorSheet | undefined =
 		$state(undefined);
 
-	let isMobile = new IsMobile();
-
 	export function open() {
 		selectorModelRef?.open();
 	}
 </script>
 
-{#if isMobile.current}
+{#if deviceStore.isMobile}
 	<ModelsSelectorSheet
-		disabled={disabled || isOffline}
 		bind:this={selectorModelRef}
-		{currentModel}
+		currentModel={selectorModel}
+		disabled={disabled || isOffline}
 		{forceForegroundText}
 		{useGlobalSelection}
 	/>
 {:else}
 	<ModelsSelectorDropdown
-		disabled={disabled || isOffline}
 		bind:this={selectorModelRef}
-		{currentModel}
+		currentModel={selectorModel}
+		disabled={disabled || isOffline}
 		{forceForegroundText}
 		{useGlobalSelection}
 	/>
