@@ -64,6 +64,7 @@ const std::vector<std::string> type_names = {
     "f32",
     "f16",
     "q1_0",
+    "ptq1_0",
     "q2_0",
     "q4_0",
     "q4_1",
@@ -264,8 +265,16 @@ bool is_lut_quant(const std::string& type_name) {
     return is_iq_quant(type_name) || type_name == "mxfp4" || type_name == "nvfp4";
 }
 
+// Quant types that get their own per-type matmul shader (DATA_A_<TYPE>) instead of going
+// through the unified MULMAT_QUANT shader. PTQ1_0 (Prism ternary, group 128) lives here: its
+// base-3 trit decode is only implemented in the per-type path of mul_mm_funcs.glsl, and it has
+// no coopmat2 decoder (skipped below; ggml-vulkan falls back to dequant + f16 matmul there).
+bool is_standalone_mm_quant(const std::string& type_name) {
+    return is_lut_quant(type_name) || type_name == "ptq1_0";
+}
+
 std::string lut_load_vec_a(const std::string& type_name) {
-    if (type_name == "iq1_s" || type_name == "iq1_m" || type_name == "iq2_xxs" || type_name == "iq2_xs" || type_name == "iq2_s") {
+    if (type_name == "iq1_s" || type_name == "iq1_m" || type_name == "iq2_xxs" || type_name == "iq2_xs" || type_name == "iq2_s" || type_name == "ptq1_0") {
         return "8";
     }
     return "4";
@@ -623,6 +632,13 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
         if (tname == "bf16") {
             continue;
         }
+        // PTQ1_0 has no coopmat2 decoder: dequant_funcs_cm2.glsl carries no PTQ1_0 entry,
+        // so emitting mul_mm_cm2 for it fails shader compilation and takes the whole
+        // Vulkan build down, not just this type. Skip it; it falls back to the scalar and
+        // coopmat1 matmul paths, which are the ones implemented and tested.
+        if (coopmat2 && tname == "ptq1_0") {
+            continue;
+        }
 
         // Float types keep per-type compilation (different accumulation loop structure)
         if (tname == "f32" || tname == "f16") {
@@ -655,7 +671,7 @@ void matmul_shaders(bool fp16, MatMulIdType matmul_id_type, bool coopmat, bool c
         }
 #endif
 
-        if (is_lut_quant(tname)) {
+        if (is_standalone_mm_quant(tname)) {
             std::string lva = lut_load_vec_a(tname);
 
             string_to_spv(shader_name + "_" + tname + "_f16" + dot2_sfx, source_name, merge_maps(merge_maps(base_dict, float_type_dict), {{data_a_key, "1"}, {"LOAD_VEC_A", lva}, {"LOAD_VEC_B", load_vec}, {"B_TYPE", aligned_b_type_f16}, {"B_TYPE_SCALAR", "float16_t"}, {"B_TYPEV4", "f16vec4"}, {"D_TYPE", "float"}}), fp16, coopmat, coopmat2, f16acc);
@@ -1117,6 +1133,8 @@ void process_shaders() {
     string_to_spv("cross_entropy_loss_back_f32", "cross_entropy_loss_back.comp", merge_maps(base_dict, {{"A_TYPE", "float"}, {"B_TYPE", "float"}, {"D_TYPE", "float"}}));
     string_to_spv("fwht_f32", "fwht.comp", {});
     string_to_spv("fwht_shmem_f32", "fwht.comp", {{"FWHT_SHMEM", "1"}});
+    string_to_spv("fwht_f16", "fwht.comp", {{"FWHT_F16", "1"}});
+    string_to_spv("fwht_shmem_f16", "fwht.comp", {{"FWHT_F16", "1"}, {"FWHT_SHMEM", "1"}});
     string_to_spv("count_equal_i32", "count_equal.comp", merge_maps(base_dict, {{"A_TYPE", "int"}, {"B_TYPE", "int"}, {"D_TYPE", "int"}}));
     string_to_spv("dsv4_hc_comb_f32", "dsv4_hc_comb.comp", {});
     string_to_spv("dsv4_hc_pre_f32",  "dsv4_hc_pre.comp",  {});

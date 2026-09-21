@@ -69,6 +69,25 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     } else {
         store_a(col, row, FLOAT_TYPEV2(0.0f));
     }
+#elif defined(DATA_A_PTQ1_0)
+    // PTQ1_0 (Prism ternary, group 128, base-3 packed) is compiled as its own per-type
+    // shader rather than a case of the unified MULMAT_QUANT switch below: the trit decode
+    // lives in ptq1_0.glsl (included by mul_mm.comp) and reads data_a[] directly.
+    // LOAD_VEC_A == 8: each idx covers 8 consecutive weights, 16 idx per 128-weight block.
+    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+    const uint k_pair = row * LOAD_VEC_A / 2;
+
+    const uint ib  = idx / 16;
+    const uint grp = idx & 0xfu;      // which 8-element group inside the block
+    const uint e0  = grp * 8u;
+
+    const float d = float(data_a[ib].d);
+
+    [[unroll]] for (uint l = 0; l < 4; ++l) {
+        store_a(col, k_pair + l, FLOAT_TYPEV2(
+            ptq1_0_trit(ib, 0u, e0 + 2u*l)      * d,
+            ptq1_0_trit(ib, 0u, e0 + 2u*l + 1u) * d));
+    }
 #elif defined(DATA_A_IQ1_S)
     const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
     const uint k_pair = row * LOAD_VEC_A / 2;

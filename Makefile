@@ -552,25 +552,29 @@ ggml-quants_failsafe.o: ggml/src/ggml-quants.c ggml/include/ggml.h ggml/src/ggml
 #cpu quants
 ggml-cpu-quants.o: ggml/src/ggml-cpu/quants.c ggml/include/ggml.h ggml/src/ggml-cpu/quants.h ggml/src/ggml-common.h
 	$(CC)  $(CFLAGS) -c $< -o $@
-kcpp-quantmapper.o: ggml/src/ggml-cpu/kcpp-quantmapper.c
+# friend.cpp: the kcpp mappers #include the per-arch sources (arch/<cpu>/quants.c, repack.cpp),
+# so list those as prerequisites -- otherwise edits to them leave stale objects and link errors.
+KCPP_ARCH_QUANT_DEPS := $(wildcard ggml/src/ggml-cpu/arch/*/quants.c) ggml/src/ggml-cpu/arch-fallback.h
+KCPP_ARCH_REPACK_DEPS := $(wildcard ggml/src/ggml-cpu/arch/*/repack.cpp) ggml/src/ggml-cpu/arch-fallback.h ggml/src/ggml-cpu/repack.h
+kcpp-quantmapper.o: ggml/src/ggml-cpu/kcpp-quantmapper.c $(KCPP_ARCH_QUANT_DEPS)
 	$(CC)  $(CFLAGS) $(FULLCFLAGS) -c $< -o $@
-kcpp-quantmapper_noavx2.o: ggml/src/ggml-cpu/kcpp-quantmapper.c
+kcpp-quantmapper_noavx2.o: ggml/src/ggml-cpu/kcpp-quantmapper.c $(KCPP_ARCH_QUANT_DEPS)
 	$(CC)  $(CFLAGS) $(SIMPLECFLAGS) $(FAILSAFE_FLAGS) -c $< -o $@
-kcpp-quantmapper_noavx1.o: ggml/src/ggml-cpu/kcpp-quantmapper.c
+kcpp-quantmapper_noavx1.o: ggml/src/ggml-cpu/kcpp-quantmapper.c $(KCPP_ARCH_QUANT_DEPS)
 	$(CC)  $(CFLAGS) $(SIMPLERCFLAGS) $(FAILSAFE_FLAGS) -c $< -o $@
-kcpp-quantmapper_failsafe.o: ggml/src/ggml-cpu/kcpp-quantmapper.c
+kcpp-quantmapper_failsafe.o: ggml/src/ggml-cpu/kcpp-quantmapper.c $(KCPP_ARCH_QUANT_DEPS)
 	$(CC)  $(CFLAGS) $(NONECFLAGS) $(FAILSAFE_FLAGS) -c $< -o $@
 
 #aarch64 repack
 ggml-repack.o: ggml/src/ggml-cpu/repack.cpp ggml/include/ggml.h ggml/src/ggml-cpu/repack.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
-kcpp-repackmapper.o: ggml/src/ggml-cpu/kcpp-repackmapper.cpp
+kcpp-repackmapper.o: ggml/src/ggml-cpu/kcpp-repackmapper.cpp $(KCPP_ARCH_REPACK_DEPS)
 	$(CXX) $(CXXFLAGS) $(FULLCFLAGS) -c $< -o $@
-kcpp-repackmapper_noavx2.o: ggml/src/ggml-cpu/kcpp-repackmapper.cpp
+kcpp-repackmapper_noavx2.o: ggml/src/ggml-cpu/kcpp-repackmapper.cpp $(KCPP_ARCH_REPACK_DEPS)
 	$(CXX) $(CXXFLAGS) $(SIMPLECFLAGS) $(FAILSAFE_FLAGS) -c $< -o $@
-kcpp-repackmapper_noavx1.o: ggml/src/ggml-cpu/kcpp-repackmapper.cpp
+kcpp-repackmapper_noavx1.o: ggml/src/ggml-cpu/kcpp-repackmapper.cpp $(KCPP_ARCH_REPACK_DEPS)
 	$(CXX) $(CXXFLAGS) $(SIMPLERCFLAGS) $(FAILSAFE_FLAGS) -c $< -o $@
-kcpp-repackmapper_failsafe.o: ggml/src/ggml-cpu/kcpp-repackmapper.cpp
+kcpp-repackmapper_failsafe.o: ggml/src/ggml-cpu/kcpp-repackmapper.cpp $(KCPP_ARCH_REPACK_DEPS)
 	$(CXX) $(CXXFLAGS) $(NONECFLAGS) $(FAILSAFE_FLAGS) -c $< -o $@
 
 #sgemm
