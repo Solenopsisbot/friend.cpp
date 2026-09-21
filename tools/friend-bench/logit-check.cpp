@@ -26,7 +26,12 @@
 static const char * k_prompt =
     "The lighthouse keeper had kept a log for thirty-one years, and in all that time the entries "
     "had been short: wind, weather, ships sighted, lamp trimmed. On the night the fog came in thick "
-    "enough to swallow the beam entirely, she opened the book to a fresh page and wrote something else.";
+    "enough to swallow the beam entirely, she opened the book to a fresh page and wrote something else. "
+    "She wrote about the gulls that nested on the gallery rail every spring, about the supply boat that "
+    "came late in bad years and early in good ones, about the child who had once rowed out alone to ask "
+    "whether the light ever got tired. She wrote until the oil in the lamp beside her ran low, and then "
+    "she kept writing by the glow of the great lens turning overhead, because some nights a log is not "
+    "enough and a letter is the only honest thing left to write.";
 
 static int run(const char * model_path, const char * out_path, int nmax, bool seq) {
     llama_backend_init();
