@@ -13,8 +13,8 @@ From **koboldcpp upstream**: the full feature set -- all GGUF model support, ima
 
 From **PrismML's llama.cpp**: Bonsai 1-bit/ternary GGUF quantisation types. Q1_0 is upstream llama.cpp; PQ2_0 and PTQ1_0 are Prism-only types (you'll find models like `prism-ml/Ternary-Bonsai-*-gguf` on HuggingFace). These come with CPU, Metal, CUDA, and Vulkan compute kernels, plus Hadamard weight folding and Qwen3.5 decode speedups.
 
-**Verified on**: Apple Silicon (Metal + CPU).
-**Present but not yet compiled/tested**: CUDA, HIP.
+**Verified on**: Apple Silicon (Metal + CPU); CUDA on a GTX 970 (Maxwell) with the Bonsai models.
+**Present but not yet compiled/tested**: HIP. CUDA for newer Nvidia architectures compiles but hasn't been run.
 **Shaders generate but untested on actual GPU hardware**: Vulkan.
 
 friend.cpp-specific features, described below:
@@ -23,6 +23,7 @@ friend.cpp-specific features, described below:
 2. **Per-request adapter profiles** -- LoRA mix, steering vectors, and LM head swaps, per request
 3. **Tiered prompt cache** -- RAM + disk caching of KV state with automatic prefix reuse
 4. **DSpark speculative drafters** -- PrismML's standalone drafters wired into `--draftmodel`, cache-aware
+5. **Fast 1-bit / ternary decode on old NVIDIA GPUs** -- a bit-plane mat-vec path for Q1_0 / PQ2_0 on GPUs without `dp4a` (Maxwell)
 
 
 ---
@@ -404,11 +405,29 @@ python koboldcpp.py --model Bonsai-27B-Q1_0.gguf \
 - `LLAMA_DSPARK_SHARED_HEAD=1` makes the drafter borrow the target's LM head (saves ~700 MB).
 - It survives prompt reuse: fast-forward, context shifts, SmartCache slots and the prompt cache all keep the drafter's captured features in step with the target KV, so drafting keeps working on later turns and after switching conversations. Outputs match the target alone.
 
+## 1-bit / ternary decode on GPUs without dp4a
+
+Maxwell cards (GTX 9xx, sm_5x) and GP100 have no `__dp4a`, so ggml's int8 dot products are emulated byte by byte. For Bonsai Q1_0 and PQ2_0 that made token generation ALU-bound: on a GTX 970 the mat-vec kernels read weights at 22-40 GB/s out of ~190, and the matmuls were essentially the whole token time.
+
+1-bit and ternary weights are just select masks, so the dot product doesn't need multiplies. On those GPUs the activation vector is quantised exactly as for q8_1 (same scale, same int8 values) but stored as 8 bit planes per 32 values plus the exact block sum, and each 32-weight chunk becomes 8 (Q1_0) or 16 (PQ2_0) AND+POPC pairs. Single-token decode then runs in a dedicated kernel where each warp owns 4 rows and reuses the activation planes across them. The integer arithmetic and the float summation order are the same as the stock path, so outputs are **bit-identical**; it's purely a speed change.
+
+It's picked automatically for NVIDIA compute capability < 6.1 on plain (non-MoE) matmuls; newer GPUs keep the stock path. `FRIEND_CUDA_NO_BITPLANES=1` forces the stock path for A/B comparisons. Code: `quantize_q8_1_bitplanes` (quantize.cu), `vec_dot_*_q8_1_bitplanes` (vecdotq.cuh), `mul_mat_vec_q_bitplanes` (mmvq.cu).
+
+Measured on a GTX 970 (Bonsai-8B, greedy, 128 tokens):
+
+| | Q1_0 before | Q1_0 after | PQ2_0 before | PQ2_0 after |
+|---|---|---|---|---|
+| generation, short context | 25-29 t/s | 63-72 t/s | 24-26 t/s | 46-48 t/s |
+| generation, ~2k context | 23-26 t/s | 56-60 t/s | 23-24 t/s | 42-43 t/s |
+| prefill (~1.9k tokens, wall clock) | 164 t/s | 159 t/s | 159 t/s | 159 t/s |
+
+Prefill goes through MMQ, which this doesn't touch (the difference is noise). Verification batches for speculative decoding (2-8 columns) also use the bit-plane dot product through the generic kernel; their matmuls got 1.1-1.7x faster in a mat-vec microbenchmark.
+
 ## Limits and not-yet-verified
 
 A few things to be honest about:
 
-- **CUDA and HIP**: the code compiles targeting them, but nobody has actually built and run it on Nvidia or AMD GPUs yet. Metal + CPU on Apple Silicon is the tested path.
+- **CUDA and HIP**: CUDA has been built and run on a GTX 970 (Maxwell) with the Bonsai Q1_0 / PQ2_0 models; newer Nvidia architectures compile but haven't been run, and nobody has built or run HIP on AMD GPUs yet. Metal + CPU on Apple Silicon is the most tested path.
 - **Vulkan**: shaders generate, but haven't been tested on real GPU hardware.
 - **Recurrent models in batched mode**: turn-boundary checkpoints (the trick that makes cross-conversation reuse work for recurrent models) are not yet taken during continuous batching. They work fine in single-request mode. In batched mode, recurrent models only snapshot whole prompts, so cross-conversation reuse is limited.
 - **DSpark drafting** is modest on Apple Silicon: verifying a draft on the 27B Q1_0 target costs ~60% of a normal token, so the ceiling is low, and on text the drafter predicts badly it can be slower than no drafter. Only standalone `arch=dspark` was exercised; MTP / DFlash / DSpark-in-DFlash paths are unchanged but untested here.
