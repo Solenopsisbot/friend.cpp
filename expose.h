@@ -102,6 +102,8 @@ struct load_model_inputs
     const char * friend_cache_dir = nullptr;
     const int friend_cache_min_tokens = 64;
     const int friend_cache_capture_tokens = 512;
+    // friend.cpp: where /api/extra/steer/build saves vectors ("" = keep in memory only)
+    const char * friend_cvec_dir = nullptr;
 };
 struct generation_inputs
 {

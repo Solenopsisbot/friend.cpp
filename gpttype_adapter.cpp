@@ -66,6 +66,7 @@
 #include "llama-model.h"
 #include "friend/adapters.hpp"
 #include "friend/prompt_cache.hpp"
+#include "friend/steering.hpp"
 #include "llama-vocab.h"
 #include "nlohmann/json.hpp"
 
@@ -169,6 +170,7 @@ static std::string friend_logits_head_key = ""; // head that produced the contex
 static bool friend_cache_on = false;        // store configured and fast-forward available
 static bool friend_cache_recurrent = false; // model state can't be truncated: only full-prefix reuse
 static size_t friend_cache_capture_tokens = 512; // snapshot after prefilling at least this many new tokens
+static std::string friend_cvec_dir = "";        // where built steering vectors are saved
 static int friend_n_past_after_ff = 0;            // n_past right after cache restore + fast-forward
 static std::vector<int> friend_checkpoints;       // absolute positions to snapshot at during this prefill (recurrent)
 
@@ -3972,6 +3974,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             cc.disk_dir    = inputs.friend_cache_dir ? inputs.friend_cache_dir : "";
             cc.min_tokens  = (size_t) std::max(1, inputs.friend_cache_min_tokens);
             friend_cache_capture_tokens = (size_t) std::max(1, inputs.friend_cache_capture_tokens);
+            friend_cvec_dir = inputs.friend_cvec_dir ? inputs.friend_cvec_dir : "";
             if(!kcpp_data->use_fastforward)
             {
                 cc.ram_budget = 0;
@@ -8997,4 +9000,128 @@ size_t gpttype_friend_cache_clear(bool include_pinned)
 bool gpttype_friend_cache_pin(uint64_t id, bool pinned)
 {
     return friend_cache::global().set_pinned(id, pinned);
+}
+
+// --- friend.cpp: steering vector builder ---------------------------------------------------
+// Request JSON:
+//   {"name": "excited", "positive": ["<prompt>", ...], "negative": ["<prompt>", ...],
+//    "method": "mean"|"pca", "pool": "last"|"mean", "layers": [start, end],
+//    "normalize": false, "save": true}
+// Prompts are raw text (apply the chat template client-side). The vector is registered in
+// the live cvec pool immediately and, if --cvec-dir is set and save is true, written there.
+std::string gpttype_friend_build_steering(const std::string & request_json)
+{
+    nlohmann::json out;
+    out["ok"] = false;
+    if(kcpp_data == nullptr || file_format != FileFormat::GGUF_GENERIC || !llama_ctx_v4)
+    {
+        out["error"] = "steering vectors need a loaded GGUF model";
+        return out.dump();
+    }
+    nlohmann::json req;
+    try { req = nlohmann::json::parse(request_json); } catch (const std::exception & e) {
+        out["error"] = std::string("bad JSON: ") + e.what();
+        return out.dump();
+    }
+    const std::string name = req.value("name", "");
+    const bool name_ok = !name.empty() && std::all_of(name.begin(), name.end(), [](char c){
+        return std::isalnum((unsigned char) c) || c == '_' || c == '.' || c == '-'; });
+    if(!name_ok)
+    {
+        out["error"] = "name must match [A-Za-z0-9_.-]+";
+        return out.dump();
+    }
+
+    friend_steering::spec sp;
+    sp.method    = req.value("method", "mean");
+    sp.pool      = req.value("pool", "last");
+    sp.normalize = req.value("normalize", false);
+    sp.n_threads = std::max(1, kcpp_data->n_threads);
+    if(req.contains("layers") && req["layers"].is_array() && req["layers"].size() == 2)
+    {
+        sp.layer_start = req["layers"][0].get<int>();
+        sp.layer_end   = req["layers"][1].get<int>();
+    }
+    const size_t max_tokens = (size_t) std::min(kcpp_data->n_ctx, 8192);
+    auto tokenize_all = [&](const char * key, std::vector<std::vector<llama_token>> & dst) -> bool {
+        if(!req.contains(key) || !req[key].is_array())
+        {
+            out["error"] = std::string("'") + key + "' must be a list of prompts";
+            return false;
+        }
+        for(const auto & item : req[key])
+        {
+            if(!item.is_string())
+            {
+                out["error"] = std::string("'") + key + "' entries must be strings";
+                return false;
+            }
+            std::vector<int> toks;
+            TokenizeString(item.get<std::string>(), toks, file_format, add_bos_token);
+            if(toks.empty() || toks.size() > max_tokens)
+            {
+                out["error"] = std::string("a '") + key + "' prompt is empty or longer than " + std::to_string(max_tokens) + " tokens";
+                return false;
+            }
+            dst.emplace_back(toks.begin(), toks.end());
+        }
+        return true;
+    };
+    if(!tokenize_all("positive", sp.positive) || !tokenize_all("negative", sp.negative))
+    {
+        return out.dump();
+    }
+
+    friend_steering::result res;
+    {
+        // same serialization as a generation: no batch decode may run on the model meanwhile
+        BatchLegacyGuard guard;
+        const auto t0 = std::chrono::steady_clock::now();
+        res = friend_steering::build(llama_get_model(llama_ctx_v4) ? const_cast<llama_model *>(llama_get_model(llama_ctx_v4)) : nullptr, sp);
+        out["seconds"] = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    }
+    if(!res.ok)
+    {
+        out["error"] = res.error;
+        return out.dump();
+    }
+
+    std::string path;
+    if(req.value("save", true) && !friend_cvec_dir.empty())
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(friend_cvec_dir, ec);
+        path = (std::filesystem::path(friend_cvec_dir) / (name + ".gguf")).string();
+        char arch[64] = {0};
+        llama_model_meta_val_str(llama_get_model(llama_ctx_v4), "general.architecture", arch, sizeof(arch));
+        if(!friend_steering::write_gguf(path, res, arch))
+        {
+            out["error"] = "could not write " + path;
+            return out.dump();
+        }
+    }
+    std::string err;
+    if(!friend_adapters::upsert_cvec(name, path, res.data, err))
+    {
+        out["error"] = err;
+        return out.dump();
+    }
+    out["ok"] = true;
+    out["name"] = name;
+    out["path"] = path;
+    out["n_layer"] = res.n_layer;
+    out["n_embd"] = res.n_embd;
+    out["positive"] = sp.positive.size();
+    out["negative"] = sp.negative.size();
+    out["layer_norms"] = res.layer_norms;
+    out["separation"] = res.separation;
+    // the layer where the two sets separate best is a good hint for a "layers" range
+    int best = 0;
+    for(size_t i = 1; i < res.separation.size(); ++i) if(res.separation[i] > res.separation[best]) best = (int) i;
+    out["best_layer"] = best + 1;
+    out["layers"] = { res.band_start, res.band_end };
+    printf("\nfriend: built steering vector '%s' from %zu/%zu examples in %.1fs (best separation at layer %d)%s\n",
+           name.c_str(), sp.positive.size(), sp.negative.size(), out["seconds"].get<double>(), best + 1,
+           path.empty() ? " [memory only]" : (" -> " + path).c_str());
+    return out.dump();
 }

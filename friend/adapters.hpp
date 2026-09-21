@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
 #include <map>
 #include <stdexcept>
 #include <sstream>
@@ -40,16 +41,41 @@
 
 namespace friend_adapters {
 
+// Content identity of an adapter, folded into profile::kv_key. Names alone aren't enough:
+// rebuilding "excited" or swapping a LoRA file under the same name must not let the prompt
+// cache reuse KV computed with the old weights (including across restarts, via the disk tier).
+inline std::string content_hash(const void * data, size_t n) {
+    uint64_t h = 1469598103934665603ull; // FNV-1a, stable across runs
+    const unsigned char * p = (const unsigned char *) data;
+    for (size_t i = 0; i < n; ++i) {
+        h ^= p[i];
+        h *= 1099511628211ull;
+    }
+    char buf[17];
+    snprintf(buf, sizeof(buf), "%016llx", (unsigned long long) h);
+    return std::string(buf, 8); // 32 bits is plenty to tell versions of one name apart
+}
+
+inline std::string file_ident(const std::string & path) {
+    std::error_code ec;
+    const auto size  = std::filesystem::file_size(path, ec);
+    const auto mtime = std::filesystem::last_write_time(path, ec).time_since_epoch().count();
+    const std::string key = path + "|" + std::to_string((unsigned long long) size) + "|" + std::to_string((long long) mtime);
+    return content_hash(key.data(), key.size());
+}
+
 struct lora_entry {
     std::string name;
     std::string path;
+    std::string ident;
     llama_adapter_lora * adapter = nullptr;
     float default_scale = 0.0f;
 };
 
 struct cvec_entry {
     std::string name;
-    std::string path;
+    std::string path;   // "" for a vector built at runtime and not saved
+    std::string ident;
     std::vector<float> data; // n_embd * n_layer_data, layer 1 at offset 0 (common_control_vector format)
 };
 
@@ -135,6 +161,7 @@ inline bool load_pools(llama_model * model, const char * lora_pool, const char *
         e.name = f[0];
         e.path = f[1];
         e.default_scale = f.size() > 2 ? std::stof(f[2]) : 0.0f;
+        e.ident = file_ident(e.path);
         printf("\nfriend: loading LoRA '%s' from %s (default scale %s)\n", e.name.c_str(), e.path.c_str(), fmt_scale(e.default_scale).c_str());
         e.adapter = llama_adapter_lora_init(model, e.path.c_str());
         if (!e.adapter) {
@@ -164,6 +191,7 @@ inline bool load_pools(llama_model * model, const char * lora_pool, const char *
             return false;
         }
         e.data = std::move(cv.data);
+        e.ident = content_hash(e.data.data(), e.data.size() * sizeof(float));
         r.cvecs.push_back(std::move(e));
     }
 
@@ -185,6 +213,34 @@ inline bool load_pools(llama_model * model, const char * lora_pool, const char *
         r.heads.push_back(std::move(e));
     }
 
+    return true;
+}
+
+// Add or replace a control vector at runtime (e.g. freshly built by /api/extra/steer/build).
+// Replacing changes its ident, so KV cached under the old vector is never reused and every
+// context re-applies it on the next request.
+inline bool upsert_cvec(const std::string & name, const std::string & path, std::vector<float> data, std::string & err) {
+    auto & r = reg();
+    if (!r.model) {
+        err = "no model loaded";
+        return false;
+    }
+    if (data.empty() || data.size() % (size_t) r.n_embd != 0) {
+        err = "control vector size does not match the model";
+        return false;
+    }
+    cvec_entry e;
+    e.name  = name;
+    e.path  = path;
+    e.ident = content_hash(data.data(), data.size() * sizeof(float));
+    e.data  = std::move(data);
+    for (auto & old : r.cvecs) {
+        if (old.name == name) {
+            old = std::move(e);
+            return true;
+        }
+    }
+    r.cvecs.push_back(std::move(e));
     return true;
 }
 
@@ -232,10 +288,10 @@ inline void finalize(profile & p) {
 
     std::string k;
     for (const auto & [i, s] : p.loras) {
-        k += "L:" + r.loras[i].name + "@" + fmt_scale(s) + ";";
+        k += "L:" + r.loras[i].name + "#" + r.loras[i].ident + "@" + fmt_scale(s) + ";";
     }
     for (const auto & [i, s] : p.cvecs) {
-        k += "C:" + r.cvecs[i].name + "@" + fmt_scale(s) + ";";
+        k += "C:" + r.cvecs[i].name + "#" + r.cvecs[i].ident + "@" + fmt_scale(s) + ";";
     }
     p.kv_key   = k;
     p.head_key = p.head >= 0 ? r.heads[p.head].name : "";
@@ -332,10 +388,10 @@ inline bool apply(const profile & p, const std::vector<llama_context *> & ctxs) 
     // since both force a scheduler re-reserve inside llama
     std::string lora_key, cvec_key;
     for (const auto & [i, s] : p.loras) {
-        lora_key += r.loras[i].name + "@" + fmt_scale(s) + ";";
+        lora_key += r.loras[i].name + "#" + r.loras[i].ident + "@" + fmt_scale(s) + ";";
     }
     for (const auto & [i, s] : p.cvecs) {
-        cvec_key += r.cvecs[i].name + "@" + fmt_scale(s) + ";";
+        cvec_key += r.cvecs[i].name + "#" + r.cvecs[i].ident + "@" + fmt_scale(s) + ";";
     }
 
     std::vector<float> cvec_data;

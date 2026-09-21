@@ -485,6 +485,12 @@ extern "C"
     {
         return gpttype_friend_cache_pin(id, pinned);
     }
+    static std::string friend_steer_buf;
+    const char * friend_build_steering(const char * request_json)
+    {
+        friend_steer_buf = gpttype_friend_build_steering(request_json ? request_json : "{}");
+        return friend_steer_buf.c_str();
+    }
 
     int set_environment_variable(const char * identifier, const char * value)
     {
