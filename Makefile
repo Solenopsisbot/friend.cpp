@@ -809,6 +809,9 @@ test-backend-ops: tools/friend-bench/test-backend-ops.cpp build-info.h ggml.o gg
 # friend.cpp: batched-vs-single-column mat-vec exactness + timing (Metal kernel work). Not shipped.
 mv-check: tools/friend-bench/mv-check.cpp build-info.h ggml.o ggml-cpu.o ggml-ops.o ggml-vec.o ggml-binops.o ggml-iqp.o ggml-unops.o llama.o chat.o llama-model.o console.o clip_default.o mtmd.o mtmd-helper.o mtmd-helper-gen.o mtmd-image.o ggml-backend.o ggml-backend-meta.o ggml-backend-reg_default.o ggml-repack.o $(OBJS_FULL) $(OBJS)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
+# friend.cpp: whole-model logits of small-batch decode, for A/B-ing kernel paths. Not shipped.
+logit-check: tools/friend-bench/logit-check.cpp build-info.h ggml.o ggml-cpu.o ggml-ops.o ggml-vec.o ggml-binops.o ggml-iqp.o ggml-unops.o llama.o chat.o llama-model.o console.o clip_default.o mtmd.o mtmd-helper.o mtmd-helper-gen.o mtmd-image.o ggml-backend.o ggml-backend-meta.o ggml-backend-reg_default.o ggml-repack.o $(OBJS_FULL) $(OBJS)
+	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 gguf-split: tools/gguf-split/gguf-split.cpp ggml.o ggml-cpu.o ggml-ops.o ggml-vec.o ggml-binops.o ggml-iqp.o ggml-unops.o llama.o chat.o llama-model.o build-info.h clip_default.o mtmd.o mtmd-helper.o mtmd-helper-gen.o mtmd-image.o ggml-backend.o ggml-backend-meta.o ggml-backend-reg_default.o ggml-repack.o $(OBJS_FULL) $(OBJS)
 	$(CXX) $(CXXFLAGS) $(filter-out %.h,$^) -o $@ $(LDFLAGS)
 mtmd-cli: tools/mtmd/mtmd-cli.cpp tools/mtmd/clip.cpp common/debug.cpp common/arg.cpp common/preset.cpp $(COMMON_DOWNLOAD_SRCS) build-info.h mtmd.o mtmd-helper.o mtmd-helper-gen.o mtmd-image.o ggml.o ggml-cpu.o ggml-ops.o ggml-vec.o ggml-binops.o ggml-iqp.o ggml-unops.o llama.o chat.o llama-model.o console.o ggml-backend.o ggml-backend-meta.o ggml-backend-reg_default.o ggml-repack.o $(OBJS_FULL) $(OBJS)
