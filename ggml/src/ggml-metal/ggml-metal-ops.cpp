@@ -2767,6 +2767,335 @@ static bool ggml_metal_op_mul_mat_q1_0_pc_supported(const ggml_tensor * op) {
     return ne02 == 1 && ne03 == 1 && ne12 == 1 && ne13 == 1;
 }
 
+// friend.cpp: small-batch Bonsai mat-vec (spec-decode verify batches, continuous batching).
+// See the friend.cpp section of kernels/mul_mv.metal for the why; in short, at 2..32
+// columns the stock Q1_0 / PQ2_0 / PTQ1_0 paths are ALU-bound and each extra column cost
+// 60-80% of a whole single-token pass (27B Q1_0 on M5: 8 tokens took 4.5x one token).
+//
+//   LUT path (Q1_0, PQ2_0): a build pass turns the activations into 16-entry +-sum tables
+//   per 4 K positions (in the dst-buffer tail, like the Q1_0 popcount planes), then the
+//   main pass does one table read + add per 4 weights per column, and for shapes with few
+//   row tiles a third pass sums K-split partials.
+//   MC path (PTQ1_0): decode every trit once, one fma per column.
+//
+// Above LUT_MAX_NR1 = 8 columns both paths run several passes over src0; each type stays
+// on them up to the column count where the mat-mat kernel catches up (measured on M5 at
+// the 27B gate|up shape: mul_mm is flat at ~3.0 ms up to 128 columns there, while a Q1_0
+// LUT pass costs ~0.55 ms, a PQ2_0 pass ~0.9 ms and a PTQ1_0 MC pass ~1.9 ms).
+//
+// Knobs (read once):
+//   GGML_METAL_BONSAI_SB_DISABLE  use the stock kernels (A/B, bisecting)
+//   GGML_METAL_LUT_MAX            lower the per-type column limit below
+//   GGML_METAL_LUT_V              force 2 or 4 columns per table entry
+struct ggml_metal_lut_params {
+    int  nr1;    // columns per pass
+    int  v;      // columns per table entry
+    int  nq;     // table entries (column vectors) per pass
+    int  npass;  // passes over src0
+    bool bsum;   // PQ2_0 also needs per-block column sums
+    int  kc;     // K blocks per split
+    int  ksplit; // K splits
+
+    // scratch layout, in floats: tables, then block sums, then K-split partials
+    int64_t n_tab() const { return (int64_t) npass*nq*v*16; } // times K/4
+};
+
+static bool ggml_metal_op_mul_mat_bonsai_sb_enabled(void) {
+    static const bool disabled = getenv("GGML_METAL_BONSAI_SB_DISABLE") != nullptr;
+    return !disabled;
+}
+
+static int ggml_metal_op_mul_mat_bonsai_sb_max(ggml_type type) {
+    static const int n_env = getenv("GGML_METAL_LUT_MAX") ? atoi(getenv("GGML_METAL_LUT_MAX")) : 1 << 30;
+
+    int n_max = 0;
+    switch (type) {
+        case GGML_TYPE_Q1_0:   n_max = 32; break; // 4 LUT passes ~2.2 ms vs mul_mm ~3.0 ms
+        case GGML_TYPE_PQ2_0:  n_max = 24; break; // 3 LUT passes ~2.8 ms vs mul_mm ~3.1 ms
+        case GGML_TYPE_PTQ1_0: n_max = 12; break; // 2 MC passes ~2.7 ms vs mul_mm ~3.3 ms
+        default:               n_max = 0;  break;
+    }
+
+    return std::min(n_max, n_env);
+}
+
+// shape checks shared by the LUT and MC paths
+static bool ggml_metal_op_mul_mat_bonsai_sb_shape(const ggml_tensor * op) {
+    if (!ggml_metal_op_mul_mat_bonsai_sb_enabled() || !op->src[0] || !op->src[1]) {
+        return false;
+    }
+
+    const ggml_tensor * src0 = op->src[0];
+    const ggml_tensor * src1 = op->src[1];
+
+    const int64_t ne11 = src1->ne[1];
+
+    return src1->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32 &&
+           ne11 >= 2 && ne11 <= ggml_metal_op_mul_mat_bonsai_sb_max(src0->type) &&
+           src0->ne[0] % 128 == 0 &&
+           src1->nb[0] == sizeof(float) &&
+           ggml_is_contiguous(op) &&
+           !ggml_is_transposed(src0);
+}
+
+static bool ggml_metal_op_mul_mat_lut_params(const ggml_tensor * op, ggml_metal_lut_params * lp) {
+    if (!ggml_metal_op_mul_mat_bonsai_sb_shape(op)) {
+        return false;
+    }
+
+    const ggml_tensor * src0 = op->src[0];
+    const ggml_tensor * src1 = op->src[1];
+
+    if (src0->type != GGML_TYPE_Q1_0 && src0->type != GGML_TYPE_PQ2_0) {
+        return false;
+    }
+
+    // the explicit Q1_0 popcount opt-in keeps its own path (and its own scratch)
+    if (ggml_metal_op_mul_mat_q1_0_pc_supported(op)) {
+        return false;
+    }
+
+    // the kernels index src0/src1/dst without broadcast strides
+    if (src0->ne[2] != 1 || src0->ne[3] != 1 || src1->ne[2] != 1 || src1->ne[3] != 1) {
+        return false;
+    }
+
+    // rows are read as ushorts
+    if (src0->nb[1] % 2 != 0) {
+        return false;
+    }
+
+    // Small matrices (attn_k/v at 1024 rows, the 48-row ssm_alpha/beta) are launch- and
+    // latency-bound, and the LUT path's extra build/reduce dispatches cost more there than
+    // the stock kernels (M5, 48 x 5120: ~60 us vs ~25 us). Leave them on the stock path.
+    if (src0->ne[1] < 2048) {
+        return false;
+    }
+
+    // At 2-3 columns the stock kernels are only ~1.5x off the single-column cost, and on
+    // small matrices the LUT path's extra dispatch + barrier per matmul eats the kernel win
+    // (Bonsai-1.7B, 2048..6144 x 2048: 2 tokens 4.8 -> 5.1 ms whole-model). Take the LUT
+    // path there only for matrices of 16M+ weights (every LUT-eligible 27B matrix is 26M+).
+    if (src1->ne[1] <= 3 && src0->ne[0]*src0->ne[1] < (1 << 24)) {
+        return false;
+    }
+
+    static const int v_env = getenv("GGML_METAL_LUT_V") ? atoi(getenv("GGML_METAL_LUT_V")) : 0;
+
+    const int ne11  = (int) src1->ne[1];
+    const int npass = (ne11 + LUT_MAX_NR1 - 1)/LUT_MAX_NR1;
+    const int nr1   = (ne11 + npass - 1)/npass;
+
+    // columns per table entry (one threadgroup-memory read feeds v columns). Measured on
+    // M5: float2 entries are best for PQ2_0 at every width (float4 entries with two reads
+    // per group spill at 7-8 columns: 3.4 ms vs 0.9 ms) and for Q1_0 up to 6 columns;
+    // Q1_0 at 7-8 columns gains ~5% from float4.
+    int v = (src0->type == GGML_TYPE_Q1_0 && nr1 >= 7) ? 4 : 2;
+    if ((v_env == 2 || v_env == 4) && !(v_env == 4 && nr1 == 2)) {
+        v = v_env;
+    }
+
+    // One lane per row and 32*N_SG_LUT rows per threadgroup leave shapes with few rows
+    // (ffn_down's 5120 rows over a 17408-long K, the 5120/6144-row attention and ssm
+    // projections) with a handful of threadgroups each walking all of K. Split K across
+    // threadgroups until there are about GGML_METAL_LUT_TGS of them, and sum the partials
+    // in a second, deterministic pass. The default 64 was the best compromise on M5
+    // (5120 x 17408 at 8 columns: unsplit 0.39 ms, split 2-4 ways 0.32-0.33 ms; 48+ row
+    // threadgroups gain nothing from splitting and pay for the reduce pass).
+    static const int tgs_target = getenv("GGML_METAL_LUT_TGS") ? atoi(getenv("GGML_METAL_LUT_TGS")) : 64;
+
+    const int nb       = (int) (src0->ne[0]/128);
+    const int row_tgs  = (int) ((src0->ne[1] + 32*N_SG_LUT - 1)/(32*N_SG_LUT));
+    const int ks_want  = std::max(1, std::min(nb, (tgs_target + row_tgs*npass - 1)/(row_tgs*npass)));
+    const int kc       = (nb + ks_want - 1)/ks_want;
+    const int ksplit   = (nb + kc - 1)/kc;
+
+    if (lp) {
+        lp->nr1    = nr1;
+        lp->v      = v;
+        lp->nq     = (nr1 + v - 1)/v;
+        lp->npass  = npass;
+        lp->bsum   = src0->type == GGML_TYPE_PQ2_0;
+        lp->kc     = kc;
+        lp->ksplit = ksplit;
+    }
+
+    return true;
+}
+
+// scratch sizes, in floats
+static int64_t ggml_metal_op_mul_mat_lut_n_tab(const ggml_tensor * op, const ggml_metal_lut_params & lp) {
+    return lp.n_tab()*(op->src[0]->ne[0]/4);
+}
+
+static int64_t ggml_metal_op_mul_mat_lut_n_sum(const ggml_tensor * op, const ggml_metal_lut_params & lp) {
+    return lp.bsum ? (int64_t) lp.npass*lp.nq*lp.v*(op->src[0]->ne[0]/128) : 0;
+}
+
+static int64_t ggml_metal_op_mul_mat_lut_n_part(const ggml_tensor * op, const ggml_metal_lut_params & lp) {
+    return lp.ksplit > 1 ? (int64_t) lp.ksplit*op->src[1]->ne[1]*op->src[0]->ne[1] : 0;
+}
+
+static bool ggml_metal_op_mul_mat_mc_supported(const ggml_tensor * op) {
+    return ggml_metal_op_mul_mat_bonsai_sb_shape(op) &&
+           op->src[0]->type == GGML_TYPE_PTQ1_0 &&
+           op->src[1]->ne[2] % op->src[0]->ne[2] == 0 &&
+           op->src[1]->ne[3] % op->src[0]->ne[3] == 0;
+}
+
+size_t ggml_metal_op_mul_mat_extra_lut(const ggml_tensor * op) {
+    assert(op->op == GGML_OP_MUL_MAT);
+
+    // the encoder takes the LUT path exactly when this predicate holds, so shapes that
+    // never use it are not padded
+    ggml_metal_lut_params lp;
+    if (!ggml_metal_op_mul_mat_lut_params(op, &lp)) {
+        return 0;
+    }
+
+    return (size_t) (ggml_metal_op_mul_mat_lut_n_tab (op, lp) +
+                     ggml_metal_op_mul_mat_lut_n_sum (op, lp) +
+                     ggml_metal_op_mul_mat_lut_n_part(op, lp))*sizeof(float);
+}
+
+static int ggml_metal_op_mul_mat_lut(ggml_metal_op_t ctx, int idx, const ggml_metal_lut_params & lp) {
+    ggml_tensor * op = ctx->node(idx);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    const int64_t ne00 = op->src[0]->ne[0];
+    const int64_t ne01 = op->src[0]->ne[1];
+    const int64_t ne11 = op->src[1]->ne[1];
+
+    ggml_metal_buffer_id bid_src0 = ggml_metal_get_buffer_id(op->src[0]);
+    ggml_metal_buffer_id bid_src1 = ggml_metal_get_buffer_id(op->src[1]);
+    ggml_metal_buffer_id bid_dst  = ggml_metal_get_buffer_id(op);
+    ggml_metal_buffer_id bid_lut  = bid_dst;
+
+    // the tables live in the padding ggml_metal_op_mul_mat_extra_lut reserved behind dst
+    bid_lut.offs += ggml_nbytes(op);
+
+    ggml_metal_kargs_mul_mv_lut args = {
+        /*.ne00     =*/ (int32_t) ne00,
+        /*.ne01     =*/ (int32_t) ne01,
+        /*.ne11     =*/ (int32_t) ne11,
+        /*.ne0      =*/ (int32_t) op->ne[0],
+        /*.nb01     =*/ op->src[0]->nb[1],
+        /*.nb11     =*/ op->src[1]->nb[1],
+        /*.nr1      =*/ lp.nr1,
+        /*.nq       =*/ lp.nq,
+        /*.v        =*/ lp.v,
+        /*.npass    =*/ lp.npass,
+        /*.has_bsum =*/ lp.bsum ? 1 : 0,
+        /*.kc       =*/ lp.kc,
+        /*.ksplit   =*/ lp.ksplit,
+        /*.part_off =*/ (uint64_t) (ggml_metal_op_mul_mat_lut_n_tab(op, lp) + ggml_metal_op_mul_mat_lut_n_sum(op, lp)),
+    };
+
+    {
+        auto pipeline = ggml_metal_library_get_pipeline_mul_mv_lut_build(lib);
+
+        const int64_t n_thr = ggml_metal_op_mul_mat_lut_n_tab(op, lp) + ggml_metal_op_mul_mat_lut_n_sum(op, lp);
+        const int     nth   = 256;
+
+        ggml_metal_encoder_set_pipeline(enc, pipeline);
+        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+        ggml_metal_encoder_set_buffer  (enc, bid_src1, 1);
+        ggml_metal_encoder_set_buffer  (enc, bid_lut,  2);
+
+        ggml_metal_encoder_dispatch_threadgroups(enc, (n_thr + nth - 1)/nth, 1, 1, nth, 1, 1);
+    }
+
+    // the main pass reads what the build pass just wrote
+    ggml_metal_op_concurrency_reset(ctx);
+
+    {
+        auto pipeline = ggml_metal_library_get_pipeline_mul_mv_lut(lib, op->src[0]->type, lp.nr1, lp.v);
+
+        ggml_metal_encoder_set_pipeline(enc, pipeline);
+        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+        ggml_metal_encoder_set_buffer  (enc, bid_src0, 1);
+        ggml_metal_encoder_set_buffer  (enc, bid_dst,  2);
+        ggml_metal_encoder_set_buffer  (enc, bid_lut,  3);
+
+        ggml_metal_encoder_set_threadgroup_memory_size(enc, pipeline.smem, 0);
+
+        ggml_metal_encoder_dispatch_threadgroups(enc, (ne01 + pipeline.nr0 - 1)/pipeline.nr0, lp.npass, lp.ksplit, 32, pipeline.nsg, 1);
+    }
+
+    if (lp.ksplit > 1) {
+        ggml_metal_op_concurrency_reset(ctx);
+
+        auto pipeline = ggml_metal_library_get_pipeline_mul_mv_lut_reduce(lib);
+
+        const int64_t n_thr = ne11*ne01;
+        const int     nth   = 256;
+
+        ggml_metal_encoder_set_pipeline(enc, pipeline);
+        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+        ggml_metal_encoder_set_buffer  (enc, bid_lut, 1);
+        ggml_metal_encoder_set_buffer  (enc, bid_dst, 2);
+
+        ggml_metal_encoder_dispatch_threadgroups(enc, (n_thr + nth - 1)/nth, 1, 1, nth, 1, 1);
+    }
+
+    return 1;
+}
+
+static int ggml_metal_op_mul_mat_mc(ggml_metal_op_t ctx, int idx) {
+    ggml_tensor * op = ctx->node(idx);
+
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
+    GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
+    GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
+    GGML_TENSOR_LOCALS(uint64_t, nb1, op->src[1], nb);
+    GGML_TENSOR_LOCALS( int32_t, ne,  op,         ne);
+
+    // up to LUT_MAX_NR1 columns per pass (a pass re-reads src0)
+    const int npass = (ne11 + LUT_MAX_NR1 - 1)/LUT_MAX_NR1;
+    const int nr1   = (ne11 + npass - 1)/npass;
+
+    auto pipeline = ggml_metal_library_get_pipeline_mul_mv_mc(lib, op, nr1);
+
+    ggml_metal_kargs_mul_mv args = {
+        /*.ne00 =*/ ne00,
+        /*.ne01 =*/ ne01,
+        /*.ne02 =*/ ne02,
+        /*.nb00 =*/ nb00,
+        /*.nb01 =*/ nb01,
+        /*.nb02 =*/ nb02,
+        /*.nb03 =*/ nb03,
+        /*.ne10 =*/ ne10,
+        /*.ne11 =*/ ne11,
+        /*.ne12 =*/ ne12,
+        /*.nb10 =*/ nb10,
+        /*.nb11 =*/ nb11,
+        /*.nb12 =*/ nb12,
+        /*.nb13 =*/ nb13,
+        /*.ne0  =*/ ne0,
+        /*.ne1  =*/ ne1,
+        /*.nr0  =*/ pipeline.nr0,
+        /*.r2   =*/ (int16_t) (ne12/ne02),
+        /*.r3   =*/ (int16_t) (ne13/ne03),
+    };
+
+    ggml_metal_encoder_set_pipeline(enc, pipeline);
+    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[0]), 1);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op->src[1]), 2);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(op),         3);
+
+    const int rows_per_tg = pipeline.nr0*pipeline.nsg;
+
+    ggml_metal_encoder_dispatch_threadgroups(enc, (ne01 + rows_per_tg - 1)/rows_per_tg, npass, ne12*ne13, 32, pipeline.nsg, 1);
+
+    return 1;
+}
+
 int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
 
@@ -2895,6 +3224,17 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
         }
 
         return 1;
+    }
+
+    // friend.cpp: small-batch Bonsai paths (see ggml_metal_op_mul_mat_lut_params)
+    {
+        ggml_metal_lut_params lp;
+        if (ggml_metal_op_mul_mat_lut_params(op, &lp)) {
+            return ggml_metal_op_mul_mat_lut(ctx, idx, lp);
+        }
+        if (ggml_metal_op_mul_mat_mc_supported(op)) {
+            return ggml_metal_op_mul_mat_mc(ctx, idx);
+        }
     }
 
     // first try to use small-batch mat-mv kernels
