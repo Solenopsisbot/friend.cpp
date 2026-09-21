@@ -425,7 +425,7 @@ python koboldcpp.py --model Bonsai-27B-Q1_0.gguf \
 ```
 
 - The drafter reads hidden states from specific target layers, which currently only the Qwen3.5/3.6 family (`qwen35` arch) can provide. Other targets fail at load with a clear error rather than mid-generation.
-- **The draft length adapts on its own.** `--draftamount` is now the *maximum*: every round friend.cpp picks the length (0 = don't draft) that maximises expected tokens per millisecond, from live measurements of acceptance rate, drafter time and verify time. Fixed drafting is a trap on unpredictable text -- on an M5 with the 27B Q1_0 target (tokens/s, no drafter / fixed 3 / adaptive): counting 22 / 27.6 / 27.5, surreal haiku 16.8 / 10.3 / 19.0, persona chat 19.4 / 11.0 / 21.8. Adaptive never loses to either. `--draft-fixed` restores always-draft-`--draftamount` behaviour; `FRIEND_DEBUG_SPEC=1` prints each round's decision.
+- **The draft length adapts on its own.** `--draftamount` is now the *maximum*: every round friend.cpp picks the length (0 = don't draft) that maximises expected tokens per millisecond, from live measurements of acceptance rate, drafter time and verify time. Fixed drafting is a trap on unpredictable text. On an M5 with the 27B Q1_0 target and the small-batch kernels below (quiet GPU, tokens/s, no drafter / fixed 3 / adaptive): counting 21.7 / 39.0 / 36.6, code 21.6 / 36.6 / 35.7, surreal haiku 16.4 / 14.7 / 16.3, persona chat 21.5 / 15.8 / 22.0. Adaptive gives up ~7% on highly predictable text (exploration) and never falls below no-drafter; fixed loses ~25% on chat. `--draft-fixed` restores always-draft-`--draftamount` behaviour; `FRIEND_DEBUG_SPEC=1` prints each round's decision.
 - `LLAMA_DSPARK_SHARED_HEAD=1` makes the drafter borrow the target's LM head (saves ~700 MB).
 - It survives prompt reuse: fast-forward, context shifts, SmartCache slots and the prompt cache all keep the drafter's captured features in step with the target KV, so drafting keeps working on later turns and after switching conversations. Outputs match the target alone.
 
@@ -438,7 +438,7 @@ Verify batches (draft + 1 tokens) and continuous batching run 2-32 tokens throug
 | stock (ms) | 42.5 | 57.1 | 87.6 | 101.3 | 144.0 | 190.6 | 377.6 |
 | friend.cpp (ms) | 42.4 | 52.2 | 65.2 | 65.9 | 82.2 | 100.2 | 179.2 |
 
-Single-token decode and prefill are unchanged. Batched logits agree with token-by-token decode to f32 rounding (argmax identical; greedy output identical with and without a drafter). `GGML_METAL_BONSAI_SB_DISABLE=1` restores the stock kernels for A/B runs. The `--draftamount 3` recommendation above predates this and deserves a re-measure.
+Single-token decode and prefill are unchanged. Batched logits agree with token-by-token decode to f32 rounding (argmax identical; greedy output identical with and without a drafter). `GGML_METAL_BONSAI_SB_DISABLE=1` restores the stock kernels for A/B runs.
 ## 1-bit / ternary decode on GPUs without dp4a
 
 Maxwell cards (GTX 9xx, sm_5x) and GP100 have no `__dp4a`, so ggml's int8 dot products are emulated byte by byte. For Bonsai Q1_0 and PQ2_0 that made token generation ALU-bound: on a GTX 970 the mat-vec kernels read weights at 22-40 GB/s out of ~190, and the matmuls were essentially the whole token time.
@@ -491,4 +491,4 @@ A few things to be honest about:
 
 - **CUDA**: built and run on a GTX 970 (Maxwell, CUDA 12.9) with the Bonsai Q1_0 / PQ2_0 models; the CUDA code also compiles for sm_61 through sm_120 but has only *run* on the 970. **HIP** has never been compiled. Metal + CPU on Apple Silicon is the most tested path.
 - **Vulkan**: shaders generate, but haven't been tested on real GPU hardware.
-- **DSpark drafting** is modest on Apple Silicon: verifying a 3-token draft on the 27B Q1_0 target costs ~1.5x a normal token (2.4x before the small-batch kernels above), so the ceiling is low; adaptive drafting keeps it from ever being slower than no drafter. Only standalone `arch=dspark` was exercised; MTP / DFlash / DSpark-in-DFlash paths are unchanged but untested here.
+- **DSpark drafting** is modest on Apple Silicon: verifying a 3-token draft on the 27B Q1_0 target costs ~1.5x a normal token (2.4x before the small-batch kernels above), so the ceiling is about 1.8x on predictable text; adaptive drafting keeps it from being slower than no drafter elsewhere. Only standalone `arch=dspark` was exercised; MTP / DFlash / DSpark-in-DFlash paths are unchanged but untested here.
