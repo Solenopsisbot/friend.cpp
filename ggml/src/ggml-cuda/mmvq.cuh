@@ -8,6 +8,10 @@ bool ggml_cuda_should_use_mmvq(enum ggml_type type, int cc, int64_t ne11);
 // based on the quantization type and GPU architecture (compute capability).
 int get_mmvq_mmid_max_batch(ggml_type type, int cc);
 
+// friend.cpp: true when the no-dp4a bit-plane Q1_0 / PQ2_0 mat-vec path applies (Maxwell, GP100).
+// Set FRIEND_CUDA_NO_BITPLANES=1 to force the stock q8_1 path for A/B comparisons.
+bool ggml_cuda_mmvq_use_bitplanes(enum ggml_type type, int cc, bool has_ids);
+
 void ggml_cuda_mul_mat_vec_q(ggml_backend_cuda_context & ctx,
     const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst, const ggml_cuda_mm_fusion_args_host * fusion = nullptr);
 
