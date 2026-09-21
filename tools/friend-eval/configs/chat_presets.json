@@ -1,0 +1,9 @@
+{
+  "baseline":      {"temperature": 1.0, "min_p": 0.05},
+  "blue":          {"temperature": 1.0, "min_p": 0.05, "blue_noise": true},
+  "blue_hot":      {"temperature": 1.2, "min_p": 0.05, "blue_noise": true},
+  "dynatemp":      {"temperature": 1.0, "min_p": 0.05, "dynatemp_range": 0.5, "dynatemp_exponent": 1.0},
+  "xtc":           {"temperature": 1.0, "min_p": 0.05, "xtc_threshold": 0.1, "xtc_probability": 0.5},
+  "dry":           {"temperature": 1.0, "min_p": 0.05, "dry_multiplier": 0.8, "dry_base": 1.75, "dry_allowed_length": 2, "dry_penalty_last_n": 512},
+  "blue_xtc_dry":  {"temperature": 1.0, "min_p": 0.05, "blue_noise": true, "xtc_threshold": 0.1, "xtc_probability": 0.5, "dry_multiplier": 0.8, "dry_base": 1.75, "dry_allowed_length": 2, "dry_penalty_last_n": 512}
+}
