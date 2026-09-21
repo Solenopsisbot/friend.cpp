@@ -15,7 +15,12 @@
 #    include "dspark-markov-metal.h"
 #endif
 #ifdef LLAMA_DSPARK_MARKOV_BLAS
-#    include <cblas.h>
+#    if defined(__APPLE__)
+// friend.cpp: koboldcpp's macOS build links Accelerate rather than a standalone cblas
+#        include <Accelerate/Accelerate.h>
+#    else
+#        include <cblas.h>
+#    endif
 #endif
 #include "../src/llama-ext.h"  // staging API: llama_set_embeddings_nextn / llama_get_embeddings_nextn_ith (used by MTP)
 #include "log.h"
@@ -195,6 +200,21 @@ struct common_speculative_impl {
     // (optional) serialize/restore per-seq internal state (e.g. eagle3's deferred boundary).
     virtual bool get_state(llama_seq_id /*seq_id*/, std::vector<uint8_t> & /*data*/) const { return false; }
     virtual void set_state(llama_seq_id /*seq_id*/, const std::vector<uint8_t> & /*data*/) {}
+
+    // friend.cpp: prompt-reuse hooks for implementations that keep per-position
+    // target features (standalone dspark). A host that reuses KV across requests
+    // (koboldcpp fast-forward, smartcache slots, rewinds) must keep those features
+    // in sync with the target's KV instead of wiping them with begin(). The
+    // defaults report "not tracked" (-1 / false) so every other implementation
+    // keeps its existing behaviour untouched.
+    //   rewind: forget everything at positions >= n_keep; returns the covered end.
+    //   flush:  commit staged rows into the drafter's own KV (so the drafter KV
+    //           alone describes the covered prefix, e.g. before a state snapshot).
+    //   resync: drop staged rows and re-derive the covered end from the drafter KV
+    //           (after the host restored the drafter context from a snapshot).
+    virtual int64_t friend_rewind(llama_seq_id /*seq_id*/, int64_t /*n_keep*/) { return -1; }
+    virtual bool    friend_flush(llama_seq_id /*seq_id*/) { return false; }
+    virtual int64_t friend_resync(llama_seq_id /*seq_id*/) { return -1; }
 };
 
 struct common_speculative_impl_draft_dspark : public common_speculative_impl {
@@ -214,6 +234,9 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
     std::vector<float>                                                         markov_w1;
     std::vector<float>                                                         markov_w2;
     std::vector<float>                                                         markov_bias;
+    // friend.cpp: per-vocab-row L2 norms of markov_w2 for the bounded argmax in
+    // draft(); empty when disabled (DSPARK_MARKOV_EXACT_SCAN=1) or no Markov head.
+    std::vector<float>                                                         markov_w2_norm;
     int64_t                                                                    markov_rank = 0;
     bool                                                                       has_markov  = false;
     std::vector<std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)>> graph_samplers;
@@ -332,6 +355,20 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
             throw std::runtime_error("dspark: vocab size exceeds cblas integer range");
         }
         markov_bias.resize((size_t) n_vocab);
+        {
+            const char * exact = std::getenv("DSPARK_MARKOV_EXACT_SCAN");
+            if (has_markov && !(exact && std::strcmp(exact, "1") == 0)) {
+                markov_w2_norm.resize((size_t) n_vocab);
+                for (int64_t v = 0; v < n_vocab; ++v) {
+                    const float * row = markov_w2.data() + (size_t) v * (size_t) markov_rank;
+                    double        acc = 0.0;
+                    for (int64_t r = 0; r < markov_rank; ++r) {
+                        acc += (double) row[r] * row[r];
+                    }
+                    markov_w2_norm[(size_t) v] = (float) std::sqrt(acc);
+                }
+            }
+        }
 
         const char * cuda_mode = std::getenv("LLAMA_DSPARK_MARKOV_CUDA");
         if (const char * value = std::getenv("DSPARK_DCUT_COSTS")) {
@@ -532,6 +569,33 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
             auto & feat = ctx_feat[seq_id];
             auto & pos  = ctx_pos[seq_id];
 
+            // friend.cpp: keep the staged rows contiguous with the target's KV.
+            // Staged rows + drafter KV must describe exactly [0, pos0) at draft
+            // time. A target decode starting at p means the target discarded
+            // (or never had) everything >= p, so:
+            //   p <  covered end: the host rewound the target (verify rollback,
+            //                     prompt reuse, anti-slop rewind) -> drop our
+            //                     features >= p as well, then stage normally.
+            //   p >  covered end: a hole (features for [covered, p) were never
+            //                     captured, e.g. a restored KV snapshot the
+            //                     drafter never saw). Staging past the hole would
+            //                     corrupt the drafter's context, so refuse; draft()
+            //                     then declines and the host's covered-end check
+            //                     (common_speculative_friend_rewind) re-primes.
+            {
+                const int64_t p0      = batch_in.pos[i_batch_beg[seq_id]];
+                const int64_t covered = friend_covered_end(seq_id);
+                if (p0 < covered) {
+                    friend_rewind(seq_id, p0);
+                } else if (p0 > covered) {
+                    LOG_WRN("%s: seq %d batch starts at %lld but dspark features only cover [0, %lld) -- "
+                            "not staging (drafting disabled until re-primed)\n",
+                            __func__, (int) seq_id, (long long) p0, (long long) covered);
+                    rows_since_accept[seq_id] = 0;
+                    continue;
+                }
+            }
+
             const size_t row0 = pos.size();
             feat.resize((row0 + (size_t) n_rows) * (size_t) n_embd_cap);
             pos.resize(row0 + (size_t) n_rows);
@@ -564,10 +628,163 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
                 pos[row0 + i] = batch_in.pos[k];
             }
 
-            rows_since_accept[seq_id] += n_rows;
+            // friend.cpp: accept() may only trim the batch it is verifying. Upstream
+            // accumulated (+=) here, which is equivalent when every accept() follows
+            // exactly one draft()+verify, but a host that decodes without a draft in
+            // between (koboldcpp's zero-draft fallback, grammar/last-token decodes)
+            // would otherwise have accept() chop the tail off older, committed rows.
+            rows_since_accept[seq_id] = n_rows;
         }
 
         return true;
+    }
+
+    // friend.cpp: absolute end of the prefix this impl can currently condition on:
+    // drafter KV covers [0, n_cache) and the staged rows are contiguous from there.
+    int64_t friend_covered_end(llama_seq_id seq_id) const {
+        const auto & pos = ctx_pos[seq_id];
+        if (pos.empty()) {
+            return n_cache[seq_id];
+        }
+        return (int64_t) pos.back() + 1;
+    }
+
+    int64_t friend_rewind(llama_seq_id seq_id, int64_t n_keep) override {
+        if (seq_id < 0 || seq_id >= (llama_seq_id) n_seq) {
+            return -1;
+        }
+        n_keep = std::max<int64_t>(0, n_keep);
+
+        auto & feat = ctx_feat[seq_id];
+        auto & pos  = ctx_pos[seq_id];
+
+        // staged rows are strictly increasing, so the ones to drop are a suffix
+        size_t keep_rows = pos.size();
+        while (keep_rows > 0 && pos[keep_rows - 1] >= n_keep) {
+            --keep_rows;
+        }
+        if (keep_rows != pos.size()) {
+            pos.resize(keep_rows);
+            feat.resize(keep_rows * (size_t) n_embd_cap);
+        }
+        rows_since_accept[seq_id] = std::min<int64_t>(rows_since_accept[seq_id], (int64_t) keep_rows);
+
+        if (n_cache[seq_id] > n_keep) {
+            n_cache[seq_id] = n_keep;
+        }
+        // Always trim the drafter KV too: it may hold rows past n_cache (a draft
+        // block that a failed decode left behind), and seq_rm is cheap when empty.
+        llama_memory_seq_rm(llama_get_memory(params.ctx_dft), seq_id, (llama_pos) n_keep, -1);
+
+        return friend_covered_end(seq_id);
+    }
+
+    bool friend_flush(llama_seq_id seq_id) override {
+        if (seq_id < 0 || seq_id >= (llama_seq_id) n_seq) {
+            return false;
+        }
+        const int64_t end = friend_covered_end(seq_id);
+        if (end > n_cache[seq_id]) {
+            // the anchor/mask block is only there because the graph needs >= 1
+            // draft row; its outputs are discarded and its KV rows removed.
+            try {
+                commit_ctx(seq_id, end, mask_token_id);
+            } catch (...) {
+                // drop partially committed chunks so the still-staged rows can be
+                // re-decoded later without duplicating KV cells
+                llama_memory_seq_rm(llama_get_memory(params.ctx_dft), seq_id, (llama_pos) n_cache[seq_id], -1);
+                throw;
+            }
+        }
+        return true;
+    }
+
+    int64_t friend_resync(llama_seq_id seq_id) override {
+        if (seq_id < 0 || seq_id >= (llama_seq_id) n_seq) {
+            return -1;
+        }
+        ctx_feat[seq_id].clear();
+        ctx_pos[seq_id].clear();
+        rows_since_accept[seq_id] = 0;
+        // the drafter KV only ever holds committed context rows [.., n_cache)
+        // between calls (draft blocks are removed right after each decode)
+        const llama_pos pmax = llama_memory_seq_pos_max(llama_get_memory(params.ctx_dft), seq_id);
+        n_cache[seq_id]      = pmax < 0 ? 0 : (int64_t) pmax + 1;
+        return n_cache[seq_id];
+    }
+
+    // Decode the staged context rows [n_cache, start) into the drafter KV, each
+    // chunk followed by a draft block [anchor, mask, mask, ...] at positions
+    // [chunk_end, chunk_end + draft_rows). The block's KV is removed after every
+    // chunk; the caller reads the LAST chunk's block logits (llama_get_logits).
+    // With nothing staged (start == n_cache) this still runs one block-only decode
+    // so the caller gets logits. Consumes the staged rows and sets n_cache = start.
+    // friend.cpp: factored out of draft() unchanged so friend_flush() can reuse it.
+    void commit_ctx(llama_seq_id seq_id, int64_t start, llama_token anchor) {
+        auto *        ctx_dft     = params.ctx_dft;
+        const int64_t n_batch_max = (int64_t) llama_n_batch(ctx_dft);
+
+        auto & feat = ctx_feat[seq_id];
+        auto & pos  = ctx_pos[seq_id];
+
+        int64_t L       = n_cache[seq_id];
+        int64_t ctx_len = start - L;
+        GGML_ASSERT(ctx_len >= 0 && (int64_t) pos.size() == ctx_len);
+
+        // Evict only draft context. Preserve absolute RoPE positions and the commit cursor.
+        const int64_t window_begin = draft_window > 0 ? std::max(int64_t(0), start - draft_window) : 0;
+        const int64_t skip         = std::max(int64_t(0), window_begin - L);
+        L += skip;
+        ctx_len -= skip;
+
+        const int64_t chunk_capacity = std::min(n_batch_max, (int64_t) llama_n_ubatch(ctx_dft)) - draft_rows;
+        if (chunk_capacity < 1) {
+            throw std::runtime_error("dspark: batch cannot hold context and draft block");
+        }
+
+        if (draft_window > 0 &&
+            !llama_memory_seq_rm(llama_get_memory(ctx_dft), seq_id, 0, (llama_pos) window_begin)) {
+            throw std::runtime_error("dspark: draft window eviction failed");
+        }
+        // friend.cpp: `offset == 0 ||` lets a block-only decode run when every
+        // context row is already in the drafter KV (e.g. after friend_flush()).
+        for (int64_t offset = 0; offset == 0 || offset < ctx_len;) {
+            const int64_t count     = std::min(chunk_capacity, ctx_len - offset);
+            const int64_t chunk_end = L + offset + count;
+            llama_set_dspark_ctx(ctx_dft, count > 0 ? feat.data() + (skip + offset) * n_embd_cap : nullptr, count,
+                                 n_embd_cap, count > 0 ? pos.data() + skip + offset : nullptr);
+            common_batch_clear(batch);
+            for (int64_t i = 0; i < count; ++i) {
+                common_batch_add(batch, 0, (llama_pos) (L + offset + i), { seq_id }, false);
+            }
+            // Context K/V depend only on target features. Intermediate block outputs are discarded.
+            common_batch_add(batch, anchor, (llama_pos) chunk_end, { seq_id }, true);
+            for (int32_t k = 1; k < draft_rows; ++k) {
+                common_batch_add(batch, mask_token_id, (llama_pos) (chunk_end + k), { seq_id },
+                                 !correction_prefix || k < correction_rows);
+            }
+            const int32_t rc = llama_decode(ctx_dft, batch);
+            llama_set_dspark_ctx(ctx_dft, nullptr, 0, 0, nullptr);
+            if (rc != 0) {
+                throw std::runtime_error("dspark: chunk decode failed");
+            }
+            if (!llama_memory_seq_rm(llama_get_memory(ctx_dft), seq_id, (llama_pos) chunk_end, -1)) {
+                throw std::runtime_error("dspark: draft tail removal failed");
+            }
+            offset += std::max<int64_t>(count, 1);
+        }
+        if (draft_window > 0) {
+            const auto mem = llama_get_memory(ctx_dft);
+            if (llama_memory_seq_pos_min(mem, seq_id) != window_begin ||
+                llama_memory_seq_pos_max(mem, seq_id) != start - 1) {
+                throw std::runtime_error("dspark: draft window position invariant failed");
+            }
+        }
+        n_cache[seq_id] = start;
+
+        feat.clear();
+        pos.clear();
+        rows_since_accept[seq_id] = 0;  // this round's rows were just consumed
     }
 
     void draft(common_speculative_draft_params_vec & dparams) override {
@@ -581,8 +798,7 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
         } else if (prefix_value) {
             throw std::runtime_error("DSpark correction prefix enabled after initialization");
         }
-        auto *        ctx_dft     = params.ctx_dft;
-        const int64_t n_batch_max = (int64_t) llama_n_batch(ctx_dft);
+        auto * ctx_dft = params.ctx_dft;
 
         for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
             auto & dp = dparams[seq_id];
@@ -590,14 +806,16 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
                 continue;
             }
 
-            auto & feat = ctx_feat[seq_id];
-            auto & pos  = ctx_pos[seq_id];
+            auto & pos = ctx_pos[seq_id];
 
-            int64_t       L       = n_cache[seq_id];
+            const int64_t L       = n_cache[seq_id];
             const int64_t start   = dp.pos0;
-            int64_t       ctx_len = start - L;
+            const int64_t ctx_len = start - L;
 
-            if (ctx_len <= 0) {
+            // friend.cpp: ctx_len == 0 is fine when the drafter KV already covers
+            // [0, start) (friend_flush() committed it); commit_ctx() then runs a
+            // block-only decode. Upstream always had >= 1 fresh row here.
+            if (ctx_len < 0 || (ctx_len == 0 && (start == 0 || !pos.empty()))) {
                 LOG_WRN(
                     "%s: seq %d has no new context rows staged (pos0=%lld, cache=%lld) -- "
                     "skipping this round\n",
@@ -612,63 +830,14 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
                     __func__, (int) seq_id, pos.size(), (long long) ctx_len);
                 continue;
             }
-            GGML_ASSERT(pos.front() == (int32_t) L &&
-                        "dspark: staged rows do not start at the drafter's cache position");
-            GGML_ASSERT(pos.back() == (int32_t) start - 1 &&
-                        "dspark: staged rows do not end just before the anchor position");
-
-            // Evict only draft context. Preserve absolute RoPE positions and the commit cursor.
-            const int64_t window_begin = draft_window > 0 ? std::max(int64_t(0), start - draft_window) : 0;
-            const int64_t skip         = std::max(int64_t(0), window_begin - L);
-            L += skip;
-            ctx_len -= skip;
-
-            const int64_t chunk_capacity = std::min(n_batch_max, (int64_t) llama_n_ubatch(ctx_dft)) - draft_rows;
-            if (chunk_capacity < 1) {
-                throw std::runtime_error("dspark: batch cannot hold context and draft block");
+            if (!pos.empty()) {
+                GGML_ASSERT(pos.front() == (int32_t) L &&
+                            "dspark: staged rows do not start at the drafter's cache position");
+                GGML_ASSERT(pos.back() == (int32_t) start - 1 &&
+                            "dspark: staged rows do not end just before the anchor position");
             }
 
-            if (draft_window > 0 &&
-                !llama_memory_seq_rm(llama_get_memory(ctx_dft), seq_id, 0, (llama_pos) window_begin)) {
-                throw std::runtime_error("dspark: draft window eviction failed");
-            }
-            for (int64_t offset = 0; offset < ctx_len;) {
-                const int64_t count     = std::min(chunk_capacity, ctx_len - offset);
-                const int64_t chunk_end = L + offset + count;
-                llama_set_dspark_ctx(ctx_dft, feat.data() + (skip + offset) * n_embd_cap, count, n_embd_cap,
-                                     pos.data() + skip + offset);
-                common_batch_clear(batch);
-                for (int64_t i = 0; i < count; ++i) {
-                    common_batch_add(batch, 0, (llama_pos) (L + offset + i), { seq_id }, false);
-                }
-                // Context K/V depend only on target features. Intermediate block outputs are discarded.
-                common_batch_add(batch, dp.id_last, (llama_pos) chunk_end, { seq_id }, true);
-                for (int32_t k = 1; k < draft_rows; ++k) {
-                    common_batch_add(batch, mask_token_id, (llama_pos) (chunk_end + k), { seq_id },
-                                     !correction_prefix || k < correction_rows);
-                }
-                const int32_t rc = llama_decode(ctx_dft, batch);
-                llama_set_dspark_ctx(ctx_dft, nullptr, 0, 0, nullptr);
-                if (rc != 0) {
-                    throw std::runtime_error("dspark: chunk decode failed");
-                }
-                if (!llama_memory_seq_rm(llama_get_memory(ctx_dft), seq_id, (llama_pos) chunk_end, -1)) {
-                    throw std::runtime_error("dspark: draft tail removal failed");
-                }
-                offset += count;
-            }
-            if (draft_window > 0) {
-                const auto mem = llama_get_memory(ctx_dft);
-                if (llama_memory_seq_pos_min(mem, seq_id) != window_begin ||
-                    llama_memory_seq_pos_max(mem, seq_id) != start - 1) {
-                    throw std::runtime_error("dspark: draft window position invariant failed");
-                }
-            }
-            n_cache[seq_id] = start;
-
-            feat.clear();
-            pos.clear();
-            rows_since_accept[seq_id] = 0;  // this round's rows were just consumed
+            commit_ctx(seq_id, start, dp.id_last);
 
             // --- sequential Markov resample -------------------------------
             // step_logits[k] = base_logits[k] + markov_w2(markov_w1(prev_token)),
@@ -765,7 +934,12 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
             }
 #endif
 
-            for (int32_t k = 0; k < correction_rows; ++k) {
+            // friend.cpp: the dispatcher truncates the draft to dp.n_max anyway, and
+            // row k only depends on rows < k, so the host loop can stop there with
+            // bit-identical kept tokens. Each row is an n_vocab x markov_rank gemv
+            // (~64M MACs for a 248k vocab at rank 256) -- worth skipping.
+            const int32_t host_rows = dp.n_max > 0 ? std::min(correction_rows, dp.n_max) : correction_rows;
+            for (int32_t k = 0; k < host_rows; ++k) {
                 if (k > 0) {
                     GGML_ASSERT(prev_token != mask_token_id &&
                                 "dspark: markov resample must chain the previous step's SAMPLED "
@@ -777,7 +951,58 @@ struct common_speculative_impl_draft_dspark : public common_speculative_impl {
                 llama_token best_id = mask_token_id == 0 ? 1 : 0;
                 float       best_v  = -std::numeric_limits<float>::infinity();
 
-                if (has_markov) {
+                if (has_markov && !markov_w2_norm.empty()) {
+                    // friend.cpp: bounded argmax. The full correction is an
+                    // n_vocab x rank gemv per row (~64M MACs, 250MB of fp32 weights
+                    // streamed) -- 15-25ms of a ~35ms draft round on an M5. But we
+                    // only need the argmax of base[v] + <emb, w2[v]>, and by
+                    // Cauchy-Schwarz <emb, w2[v]> <= |emb| * |w2[v]|. Seed with the
+                    // base argmax's exact score, then only compute the dot for rows
+                    // whose upper bound can still beat the best so far. Drafter logits
+                    // are peaked, so that is usually a handful of rows. Same argmax as
+                    // the full scan (lowest index on ties) up to float summation order;
+                    // DSPARK_MARKOV_EXACT_SCAN=1 restores the full scan for A/B.
+                    const float * emb = markov_w1.data() + (size_t) prev_token * (size_t) markov_rank;
+                    float         en  = 0.0f;
+                    for (int64_t r = 0; r < markov_rank; ++r) {
+                        en += emb[r] * emb[r];
+                    }
+                    en = std::sqrt(en);
+
+                    const auto bias_of = [&](int64_t v) {
+                        const float * w2row = markov_w2.data() + (size_t) v * (size_t) markov_rank;
+                        float         bias  = 0.0f;
+                        for (int64_t r = 0; r < markov_rank; ++r) {
+                            bias += emb[r] * w2row[r];
+                        }
+                        return bias;
+                    };
+
+                    int64_t seed = -1;
+                    for (int64_t v = 0; v < n_vocab; ++v) {
+                        if (v != mask_token_id && (seed < 0 || base_logits[v] > base_logits[seed])) {
+                            seed = v;
+                        }
+                    }
+                    best_id = (llama_token) seed;
+                    best_v  = base_logits[seed] + bias_of(seed);
+
+                    for (int64_t v = 0; v < n_vocab; ++v) {
+                        if (v == mask_token_id || v == seed) {
+                            continue;
+                        }
+                        // widened slightly so float rounding in the dot can't prune a winner
+                        const float bound = markov_w2_norm[(size_t) v] * en;
+                        if (base_logits[v] + bound * 1.001f + 1e-5f < best_v) {
+                            continue;
+                        }
+                        const float logit = base_logits[v] + bias_of(v);
+                        if (logit > best_v || (logit == best_v && v < best_id)) {
+                            best_v  = logit;
+                            best_id = (llama_token) v;
+                        }
+                    }
+                } else if (has_markov) {
                     const float * emb = markov_w1.data() + (size_t) prev_token * (size_t) markov_rank;
 #ifdef LLAMA_DSPARK_MARKOV_BLAS
                     cblas_sgemv(CblasRowMajor, CblasNoTrans, (int) n_vocab, (int) markov_rank, 1.0f, markov_w2.data(),
@@ -3802,4 +4027,52 @@ bool common_speculative_dspark_stage_ctx_test(common_speculative * spec,
         staged |= impl->stage_test_ctx_feat(seq_id, feat, n_rows, n_embd_cap, pos);
     }
     return staged;
+}
+
+// friend.cpp: prompt-reuse API for standalone dspark (see the friend_* hooks on
+// common_speculative_impl). Returns -1 / false when no registered implementation
+// tracks per-position target features, so hosts can call these unconditionally.
+int32_t common_speculative_friend_rewind(common_speculative * spec, llama_seq_id seq_id, llama_pos n_keep) {
+    if (spec == nullptr) {
+        return -1;
+    }
+    int64_t covered = -1;
+    for (auto & impl : spec->impls) {
+        const int64_t c = impl->friend_rewind(seq_id, n_keep);
+        if (c >= 0) {
+            covered = covered < 0 ? c : std::min(covered, c);
+        }
+    }
+    return (int32_t) covered;
+}
+
+bool common_speculative_friend_flush(common_speculative * spec, llama_seq_id seq_id) {
+    if (spec == nullptr) {
+        return false;
+    }
+    bool any = false;
+    for (auto & impl : spec->impls) {
+        try {
+            any |= impl->friend_flush(seq_id);
+        } catch (const std::exception & e) {
+            // a failed flush leaves the rows staged; the snapshot then simply
+            // won't cover them and the host re-primes on restore
+            LOG_ERR("%s: %s\n", __func__, e.what());
+        }
+    }
+    return any;
+}
+
+int32_t common_speculative_friend_resync(common_speculative * spec, llama_seq_id seq_id) {
+    if (spec == nullptr) {
+        return -1;
+    }
+    int64_t covered = -1;
+    for (auto & impl : spec->impls) {
+        const int64_t c = impl->friend_resync(seq_id);
+        if (c >= 0) {
+            covered = covered < 0 ? c : std::min(covered, c);
+        }
+    }
+    return (int32_t) covered;
 }
