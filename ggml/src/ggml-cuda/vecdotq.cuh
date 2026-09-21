@@ -990,6 +990,79 @@ static __device__ __forceinline__ float vec_dot_pq2_0_q8_1(const void * __restri
     return d2 * d8 * sumi;
 }
 
+// friend.cpp: bit-plane mat-vec path for GPUs without __dp4a (Maxwell, sm_60).
+//
+// On those GPUs ggml_cuda_dp4a is emulated with per-byte sign extensions and multiplies,
+// which made 1-bit/ternary token generation ALU-bound (GTX 970: ~27 GB/s effective weight
+// bandwidth out of ~200). For weights that are just sign/select masks we can avoid the
+// multiplies entirely: the activation block is stored as 8 bit planes (P_k = bit k of each
+// two's-complement int8 value, one 32-bit word per plane, lane i -> bit i), so for a 32-bit
+// weight mask M
+//     sum_{i : M_i = 1} a_i = sum_{k<7} 2^k popc(M & P_k) - 2^7 popc(M & P_7)
+// which is 8 AND+POPC pairs per 32 weights instead of 8 emulated dp4a. The activations are
+// produced by quantize_row_q8_1_bitplanes_cuda in a block_q8_1-sized struct:
+//   ds.x = d (same fp16 value q8_1 would hold), ds.y = exact int16 sum of the 32 int8 values
+//   qs   = the 8 plane words (uint32 each).
+// The integer dot product is exactly the one the dp4a path computes, and the float epilogue
+// is written identically, so results are bit-identical to the q8_1 path.
+
+// Signed weighted popcount over the 8 planes: sum of the int8 activations selected by m.
+static __device__ __forceinline__ int bitplane_masked_sum(const uint32_t m, const int * planes) {
+    int acc = 0;
+#pragma unroll
+    for (int k = 0; k < 7; ++k) {
+        acc += __popc(m & (uint32_t) planes[k]) << k;
+    }
+    return acc - (__popc(m & (uint32_t) planes[7]) << 7);
+}
+
+// Integer sum of all 32 activation values, stashed in the high half of ds as raw int16 bits.
+static __device__ __forceinline__ int bitplane_block_sum(const block_q8_1 * b) {
+    return __half_as_short(__high2half(b->ds));
+}
+
+// Q1_0: w_i = 2*bit_i - 1  =>  dot = 2 * sum_{bit=1} a - sum a. Planes in natural lane order.
+static __device__ __forceinline__ float vec_dot_q1_0_q8_1_bitplanes(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+
+    const block_q1_0 * bq1_0 = (const block_q1_0 *) vbq + kbx;
+    const block_q8_1 * bq8_1_chunk = bq8_1 + iqs;
+
+    const float    d1 = bq1_0->d;
+    const uint32_t m  = get_int_b2(bq1_0->qs, iqs); // bit i -> element 32*iqs + i
+
+    const int sumi = 2*bitplane_masked_sum(m, (const int *) bq8_1_chunk->qs) - bitplane_block_sum(bq8_1_chunk);
+
+    const float d8 = __low2float(bq8_1_chunk->ds);
+    return d1 * d8 * sumi;
+}
+
+// PQ2_0: w_i = c_i - 1 with c_i = b0_i + 2*b1_i  =>  dot = sum_{b0} a + 2 * sum_{b1} a - sum a.
+// The 2-bit codes are interleaved (element e at bits 2e, 2e+1 of a 16-element word), so instead of
+// compacting them the planes are built in a matching permuted lane order (see
+// quantize_row_q8_1_bitplanes_cuda): bit 2j <-> element j, bit 2j+1 <-> element 16+j. Then the
+// b0 / b1 masks are one shift and one bit-select each.
+static __device__ __forceinline__ float vec_dot_pq2_0_q8_1_bitplanes(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+
+    const block_pq2_0 * bq2_0 = (const block_pq2_0 *) vbq + kbx;
+    const block_q8_1 * bq8_1_chunk = bq8_1 + iqs;
+
+    const float    d2 = bq2_0->d;
+    const uint32_t w0 = get_int_b2(bq2_0->qs, 2*iqs + 0); // elements  0..15 of the chunk
+    const uint32_t w1 = get_int_b2(bq2_0->qs, 2*iqs + 1); // elements 16..31 of the chunk
+
+    const uint32_t m0 = (w0 & 0x55555555u) | ((w1 << 1) & 0xAAAAAAAAu); // low code bits
+    const uint32_t m1 = ((w0 >> 1) & 0x55555555u) | (w1 & 0xAAAAAAAAu); // high code bits
+
+    const int * planes = (const int *) bq8_1_chunk->qs;
+    const int sumi = bitplane_masked_sum(m0, planes) + 2*bitplane_masked_sum(m1, planes)
+                   - bitplane_block_sum(bq8_1_chunk);
+
+    const float d8 = __low2float(bq8_1_chunk->ds);
+    return d2 * d8 * sumi;
+}
+
 static __device__ __forceinline__ float vec_dot_q4_0_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
