@@ -5030,7 +5030,12 @@ static size_t friend_batch_usable(const std::vector<llama_token> & have, const s
         return 0;
     }
     size_t usable = recurrent ? (friend_cache::is_prefix(have, prompt) ? have.size() : 0) : friend_cache::lcp(have, prompt);
-    return std::min(usable, prompt.size() - 1);
+    if(usable > prompt.size() - 1)
+    {
+        // recurrent state can't be rolled back by the one token we must re-decode for logits
+        return recurrent ? 0 : prompt.size() - 1;
+    }
+    return usable;
 }
 
 // Which free slot a request should take. The slot whose retained KV overlaps the prompt
@@ -5126,9 +5131,16 @@ static int batch_seed_slot_locked(BatchGenerateRequest & req, int slot)
     if(friend_cache_on)
     {
         m = friend_cache::global().find(req.prompt_tokens, req.profile.kv_key, "", recurrent); // batching never carries media
-        if(m.e)
+        if(m.e && m.usable > req.prompt_tokens.size() - 1)
         {
-            m.usable = std::min(m.usable, req.prompt_tokens.size() - 1);
+            if(recurrent)
+            {
+                m = friend_cache::match(); // would need a rollback the state can't do
+            }
+            else
+            {
+                m.usable = req.prompt_tokens.size() - 1;
+            }
         }
     }
 
