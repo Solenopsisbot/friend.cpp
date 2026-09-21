@@ -8414,6 +8414,12 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 128, n, 1280, {1, 1}, {1, 1}));
             test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 33,  n, 384,  {2, 3}, {1, 1}));
         }
+        // >= 2048 rows reach the Metal LUT path; 2112 leaves a partial row tile, K = 3072
+        // (24 blocks) is split across threadgroups, K = 256 is not
+        for (int64_t n : {2, 3, 5, 7, 8, 9, 13, 17, 24, 25, 32, 33}) {
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 2112, n, 3072, {1, 1}, {1, 1}));
+            test_cases.emplace_back(new test_mul_mat(type_a, GGML_TYPE_F32, 2112, n, 256,  {1, 1}, {1, 1}));
+        }
     }
 
     // unary ops
