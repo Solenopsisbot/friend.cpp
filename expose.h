@@ -96,6 +96,12 @@ struct load_model_inputs
     const char * friend_lora_pool = nullptr;
     const char * friend_cvec_pool = nullptr;
     const char * friend_head_pool = nullptr;
+    // friend.cpp: tiered prompt cache (friend/prompt_cache.hpp); ram_mb 0 disables it
+    const int friend_cache_ram_mb = 0;
+    const int friend_cache_disk_mb = 0;
+    const char * friend_cache_dir = nullptr;
+    const int friend_cache_min_tokens = 64;
+    const int friend_cache_capture_tokens = 512;
 };
 struct generation_inputs
 {
@@ -159,6 +165,8 @@ struct generation_inputs
     const int rng_type = 0;
     // friend.cpp: per-request adapter profile (LoRA mix / steering / head), see friend/adapters.hpp
     const char * adapter_profile = nullptr;
+    // friend.cpp: if set, snapshot the processed prompt into the prompt cache, pinned, under this label
+    const char * cache_pin_label = nullptr;
 };
 struct generation_outputs
 {

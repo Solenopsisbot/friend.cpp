@@ -151,6 +151,10 @@ size_t gpttype_calc_old_state_tokencount(int slot);
 size_t gpttype_save_state_kv(int slot);
 bool gpttype_load_state_kv(int slot);
 bool gpttype_clear_state_kv(bool shrink);
+// friend.cpp: prompt cache management (friend/prompt_cache.hpp)
+std::string gpttype_friend_cache_list_json();
+size_t gpttype_friend_cache_clear(bool include_pinned);
+bool gpttype_friend_cache_pin(uint64_t id, bool pinned);
 int get_oldest_slot(int excludeSlotId);
 void touch_slot(int slot);
 int get_identical_existing_slot();
