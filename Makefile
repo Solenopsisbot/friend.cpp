@@ -340,7 +340,12 @@ OBJS     += ggml-metal.o ggml-metal-device.o ggml-metal-device-m.o ggml-metal-co
 ggml-metal-common.o: ggml/src/ggml-metal/ggml-metal-common.cpp ggml/src/ggml-metal/ggml-metal-common.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-ggml-metal-ops.o: ggml/src/ggml-metal/ggml-metal-ops.cpp ggml/src/ggml-metal/ggml-metal-ops.h
+# friend.cpp: the host side shares kernel-parameter macros and kargs structs with the shaders
+# through ggml-metal-impl.h; without it as a dependency, editing it rebuilt the shader copy but
+# left stale dispatch geometry in these objects.
+METAL_HOST_DEPS = ggml/src/ggml-metal/ggml-metal-impl.h ggml/src/ggml-metal/ggml-metal-device.h ggml/src/ggml-metal/ggml-metal-ops.h
+
+ggml-metal-ops.o: ggml/src/ggml-metal/ggml-metal-ops.cpp $(METAL_HOST_DEPS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 ggml-metal-tuning.o: ggml/src/ggml-metal/ggml-metal-tuning.cpp ggml/src/ggml-metal/ggml-metal-tuning.h
@@ -349,10 +354,10 @@ ggml-metal-tuning.o: ggml/src/ggml-metal/ggml-metal-tuning.cpp ggml/src/ggml-met
 ggml-metal-fusion.o: ggml/src/ggml-metal/ggml-metal-fusion.cpp ggml/src/ggml-metal/ggml-metal-fusion.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-ggml-metal.o: ggml/src/ggml-metal/ggml-metal.cpp
+ggml-metal.o: ggml/src/ggml-metal/ggml-metal.cpp $(METAL_HOST_DEPS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-ggml-metal-device.o: ggml/src/ggml-metal/ggml-metal-device.cpp
+ggml-metal-device.o: ggml/src/ggml-metal/ggml-metal-device.cpp $(METAL_HOST_DEPS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 ggml-metal-device-m.o: ggml/src/ggml-metal/ggml-metal-device.m ggml/src/ggml-metal/ggml-metal-impl.h ggml/include/ggml-metal.h ggml/src/ggml-common.h
