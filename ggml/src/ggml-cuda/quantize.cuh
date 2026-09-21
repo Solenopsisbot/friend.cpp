@@ -21,6 +21,13 @@ void quantize_row_q8_1_cuda(
         ggml_type type_src0, int64_t ne00, int64_t s01, int64_t s02, int64_t s03,
         int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3, cudaStream_t stream);
 
+// friend.cpp: q8_1-sized blocks holding {d, int16 sum} + 8 bit planes instead of 32 int8 values;
+// consumed only by the no-dp4a Q1_0 / PQ2_0 mat-vec path (vec_dot_*_q8_1_bitplanes).
+void quantize_row_q8_1_bitplanes_cuda(
+        const float * x, void * vy, ggml_type type_src0,
+        int64_t ne00, int64_t s01, int64_t s02, int64_t s03,
+        int64_t ne0, int64_t ne1, int64_t ne2, int64_t ne3, cudaStream_t stream);
+
 void quantize_mmq_q8_1_cuda(
         const float * x, const int32_t * ids, void * vy,
         ggml_type type_src0, int64_t ne00, int64_t s01, int64_t s02, int64_t s03,

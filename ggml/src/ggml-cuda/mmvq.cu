@@ -68,6 +68,16 @@ static constexpr __device__ vec_dot_q_cuda_t get_vec_dot_q_cuda(ggml_type type) 
     }
 }
 
+// friend.cpp: vec_dots that read bit-plane q8_1 (quantize_row_q8_1_bitplanes_cuda). Only used on
+// GPUs without __dp4a, see ggml_cuda_mmvq_use_bitplanes.
+static constexpr __device__ vec_dot_q_cuda_t get_vec_dot_q_bitplanes_cuda(ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_Q1_0:  return vec_dot_q1_0_q8_1_bitplanes;
+        case GGML_TYPE_PQ2_0: return vec_dot_pq2_0_q8_1_bitplanes;
+        default:              return nullptr;
+    }
+}
+
 static constexpr __host__ __device__ int get_vdr_mmvq(ggml_type type) {
     switch (type) {
         case GGML_TYPE_Q1_0:    return VDR_Q1_0_Q8_1_MMVQ;
@@ -593,7 +603,8 @@ static constexpr __host__ __device__ int calc_rows_per_block(int ncols_dst, int 
     return 1;
 }
 
-template <ggml_type type, int ncols_dst, bool has_fusion, bool has_gate, bool small_k = false, bool halve_iters = false>
+template <ggml_type type, int ncols_dst, bool has_fusion, bool has_gate, bool small_k = false, bool halve_iters = false,
+          bool bitplanes = false> // friend.cpp: y holds bit-plane q8_1 (no-dp4a Q1_0 / PQ2_0 path)
 __launch_bounds__(calc_nwarps(type, ncols_dst, get_device_table_id(), small_k, halve_iters)*ggml_cuda_get_physical_warp_size(), 1)
 static __global__ void mul_mat_vec_q(
         const void * vx_ptr, const void * vy_ptr, const int32_t * ids_ptr, const ggml_cuda_mm_fusion_args_device fusion, float * dst_ptr,
@@ -615,7 +626,7 @@ static __global__ void mul_mat_vec_q(
     constexpr int rows_per_cuda_block = calc_rows_per_block(ncols_dst, table_id, small_k, nwarps);
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
 
-    constexpr vec_dot_q_cuda_t vec_dot_q_cuda = get_vec_dot_q_cuda(type);
+    constexpr vec_dot_q_cuda_t vec_dot_q_cuda = bitplanes ? get_vec_dot_q_bitplanes_cuda(type) : get_vec_dot_q_cuda(type);
 
     const     int tid = warp_size*threadIdx.y + threadIdx.x;
     const     int row0 = rows_per_cuda_block*blockIdx.x;
@@ -914,6 +925,152 @@ static __global__ void mul_mat_vec_q(
     }
 }
 
+// friend.cpp: single-column (token generation) kernel for the no-dp4a bit-plane path.
+//
+// Once the dot product is a few POPCs, the generic kernel's shape becomes the bottleneck on Maxwell:
+// 4 warps split K, each thread does ~1 chunk per row and then the block pays a shared-memory
+// reduction + __syncthreads, so little overlaps the DRAM latency. Here each warp owns
+// `rows_per_warp` rows outright and walks the whole row by itself: every lane does the work of the
+// generic kernel's 4 logical warps (lane l, logical warp w -> quant block 8w + l/4 of each 32-block
+// stripe, chunk l%4), keeping one accumulator per logical warp. That is the exact same chunk
+// assignment and float summation order as the generic kernel (per-thread running sums, then
+// warp0 + warp1 + warp2 + warp3, then the same butterfly), so results stay bit-identical, but there
+// is no shared memory or block barrier, the activation planes are reused across rows, and each lane
+// has 4x the independent loads in flight.
+template <ggml_type type, int rows_per_warp, int nwarps, bool has_fusion, bool has_gate>
+__launch_bounds__(nwarps*WARP_SIZE, 1)
+static __global__ void mul_mat_vec_q_bitplanes(
+        const void * __restrict__ vx, const void * __restrict__ vy, const ggml_cuda_mm_fusion_args_device fusion,
+        float * __restrict__ dst, const uint32_t ncols_x, const uint32_t nrows_x, const uint32_t stride_row_x,
+        const uint3 channel_ratio, const uint32_t stride_channel_x, const uint32_t stride_channel_y,
+        const uint32_t stride_channel_dst, const uint3 sample_ratio, const uint32_t stride_sample_x,
+        const uint32_t stride_sample_y, const uint32_t stride_sample_dst) {
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    constexpr int qk  = ggml_cuda_type_traits<type>::qk;
+    constexpr int qi  = ggml_cuda_type_traits<type>::qi;
+    constexpr int vdr = get_vdr_mmvq(type);
+    // Reference geometry = what the generic kernel uses for ncols_dst == 1 on these GPUs.
+    constexpr int ref_nwarps      = calc_nwarps(type, 1, MMVQ_PARAMETERS_GENERIC);
+    constexpr int lanes_per_block = qi/vdr;                       // lanes sharing one quant block
+    constexpr int blocks_per_warp = WARP_SIZE/lanes_per_block;    // quant blocks per logical warp
+    constexpr int blocks_per_iter = ref_nwarps*blocks_per_warp;   // quant blocks per K step
+    constexpr vec_dot_q_cuda_t vec_dot = get_vec_dot_q_bitplanes_cuda(type);
+    static_assert(vec_dot != nullptr, "type has no bit-plane vec_dot");
+
+    const int lane = threadIdx.x;
+    const int row0 = (blockIdx.x*nwarps + threadIdx.y)*rows_per_warp;
+    if (row0 >= (int) nrows_x) {
+        return; // warps are independent, no block-wide sync below
+    }
+
+    const uint32_t channel_dst = blockIdx.y;
+    const uint32_t channel_x   = fastdiv(channel_dst, channel_ratio);
+    const uint32_t sample_dst  = blockIdx.z;
+    const uint32_t sample_x    = fastdiv(sample_dst, sample_ratio);
+
+    const block_q8_1 * y = (const block_q8_1 *) vy + sample_dst*stride_sample_y + channel_dst*stride_channel_y;
+    const int kbx_offset = sample_x*stride_sample_x + channel_x*stride_channel_x + row0*stride_row_x;
+    [[maybe_unused]] const void * vgate = fusion.gate;
+
+    // The last warp can run past the end of the matrix (e.g. the 151669-row output head): clamp the
+    // row that is read so we never touch memory past the tensor; those results are not written.
+    int row_off[rows_per_warp];
+#pragma unroll
+    for (int r = 0; r < rows_per_warp; ++r) {
+        row_off[r] = min(r, (int) nrows_x - 1 - row0)*stride_row_x;
+    }
+
+    float acc[ref_nwarps][rows_per_warp] = {{0.0f}};
+    [[maybe_unused]] float acc_gate[ref_nwarps][rows_per_warp] = {{0.0f}};
+
+    ggml_cuda_pdl_sync();
+
+    const int blocks_per_row_x = ncols_x / qk;
+    const int kqs = vdr*(lane % lanes_per_block);
+    for (int kb = lane / lanes_per_block; kb < blocks_per_row_x; kb += blocks_per_iter) {
+#pragma unroll
+        for (int w = 0; w < ref_nwarps; ++w) {
+            const int kbx = kb + w*blocks_per_warp;
+            if (kbx >= blocks_per_row_x) {
+                break;
+            }
+            const int kby = kbx*(qk/QK8_1);
+#pragma unroll
+            for (int r = 0; r < rows_per_warp; ++r) {
+                acc[w][r] += vec_dot(vx, &y[kby], kbx_offset + row_off[r] + kbx, kqs);
+                if constexpr (has_gate) {
+                    acc_gate[w][r] += vec_dot(vgate, &y[kby], kbx_offset + row_off[r] + kbx, kqs);
+                }
+            }
+        }
+    }
+
+    dst += sample_dst*stride_sample_dst + channel_dst*stride_channel_dst + row0;
+    [[maybe_unused]] const float * x_bias    = (const float *) fusion.x_bias;
+    [[maybe_unused]] const float * gate_bias = has_gate ? (const float *) fusion.gate_bias : nullptr;
+    if constexpr (has_fusion) {
+        const uint32_t bias_offset = sample_dst*stride_sample_dst + channel_dst*stride_channel_dst + row0;
+        x_bias    = x_bias    ? x_bias    + bias_offset : nullptr;
+        gate_bias = gate_bias ? gate_bias + bias_offset : nullptr;
+    }
+
+#pragma unroll
+    for (int r = 0; r < rows_per_warp; ++r) {
+        // generic kernel: warp 0's partial, then += warps 1..3 in order, then the butterfly
+        float sum = acc[0][r];
+#pragma unroll
+        for (int w = 1; w < ref_nwarps; ++w) {
+            sum += acc[w][r];
+        }
+        sum = warp_reduce_sum<WARP_SIZE>(sum);
+
+        [[maybe_unused]] float sum_gate = 0.0f;
+        if constexpr (has_gate) {
+            sum_gate = acc_gate[0][r];
+#pragma unroll
+            for (int w = 1; w < ref_nwarps; ++w) {
+                sum_gate += acc_gate[w][r];
+            }
+            sum_gate = warp_reduce_sum<WARP_SIZE>(sum_gate);
+        }
+
+        if (lane == r && row0 + r < (int) nrows_x) {
+            float result = sum;
+            if constexpr (has_fusion) {
+                // same epilogue as mul_mat_vec_q (absent biases add 0.0f there too)
+                result += x_bias ? x_bias[r] : 0.0f;
+                if constexpr (has_gate) {
+                    const float gate_value = sum_gate + (gate_bias ? gate_bias[r] : 0.0f);
+                    switch (fusion.glu_op) {
+                        case GGML_GLU_OP_SWIGLU:
+                            result *= ggml_cuda_op_silu_single(gate_value);
+                            break;
+                        case GGML_GLU_OP_GEGLU:
+                            result *= ggml_cuda_op_gelu_single(gate_value);
+                            break;
+                        case GGML_GLU_OP_SWIGLU_OAI:
+                            result = ggml_cuda_op_swiglu_oai_single(gate_value, result);
+                            break;
+                        case GGML_GLU_OP_SWIGLU_CLAMP:
+                            result = ggml_cuda_op_swiglu_clamp_single(gate_value, result, fusion.glu_limit);
+                            break;
+                        default:
+                            result = result * gate_value;
+                            break;
+                    }
+                }
+            }
+            dst[r] = result;
+        }
+    }
+#else
+    GGML_UNUSED_VARS(vx, vy, fusion, dst, ncols_x, nrows_x, stride_row_x, channel_ratio, stride_channel_x,
+                     stride_channel_y, stride_channel_dst, sample_ratio, stride_sample_x, stride_sample_y,
+                     stride_sample_dst);
+    NO_DEVICE_CODE;
+#endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+}
+
 // Dedicated MoE multi-token kernel.
 // Grid: (ceil(nrows_x / c_rows_per_block), nchannels_dst)
 // Block: (warp_size, ncols_dst) - each warp handles one token independently.
@@ -1077,7 +1234,7 @@ static std::pair<dim3, dim3> calc_launch_params(
     return {block_nums, block_dims};
 }
 
-template<ggml_type type, int c_ncols_dst, bool small_k = false, bool halve_iters = false>
+template<ggml_type type, int c_ncols_dst, bool small_k = false, bool halve_iters = false, bool bitplanes = false>
 static void mul_mat_vec_q_switch_fusion(
         const void * vx, const void * vy, const int32_t * ids, const ggml_cuda_mm_fusion_args_device fusion, float * dst,
         const uint32_t ncols_x, const uint3 nchannels_y, const uint32_t stride_row_x, const uint32_t stride_col_y,
@@ -1093,12 +1250,12 @@ static void mul_mat_vec_q_switch_fusion(
         if (has_fusion) {
             const ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(block_nums, block_dims, nbytes_shared, stream);
             if (fusion.gate != nullptr) {
-                ggml_cuda_kernel_launch(mul_mat_vec_q<type, c_ncols_dst, true, true, small_k, halve_iters>, launch_params,
+                ggml_cuda_kernel_launch(mul_mat_vec_q<type, c_ncols_dst, true, true, small_k, halve_iters, bitplanes>, launch_params,
                      vx, vy, ids, fusion, dst, ncols_x, nchannels_y, stride_row_x, stride_col_y, stride_col_dst,
                      channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                      sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst, ids_stride);
             } else {
-                ggml_cuda_kernel_launch(mul_mat_vec_q<type, c_ncols_dst, true, false, small_k, halve_iters>, launch_params,
+                ggml_cuda_kernel_launch(mul_mat_vec_q<type, c_ncols_dst, true, false, small_k, halve_iters, bitplanes>, launch_params,
                      vx, vy, ids, fusion, dst, ncols_x, nchannels_y, stride_row_x, stride_col_y, stride_col_dst,
                      channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
                      sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst, ids_stride);
@@ -1110,7 +1267,7 @@ static void mul_mat_vec_q_switch_fusion(
     GGML_ASSERT(!has_fusion && "fusion only supported for ncols_dst=1");
 
     const ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(block_nums, block_dims, nbytes_shared, stream);
-    ggml_cuda_kernel_launch(mul_mat_vec_q<type, c_ncols_dst, false, false, small_k, halve_iters>, launch_params,
+    ggml_cuda_kernel_launch(mul_mat_vec_q<type, c_ncols_dst, false, false, small_k, halve_iters, bitplanes>, launch_params,
         vx, vy, ids, fusion, dst, ncols_x, nchannels_y, stride_row_x, stride_col_y, stride_col_dst,
         channel_ratio, stride_channel_x, stride_channel_y, stride_channel_dst,
         sample_ratio, stride_sample_x, stride_sample_y, stride_sample_dst, ids_stride);
@@ -1149,7 +1306,7 @@ static void mul_mat_vec_q_moe_launch(
     }
 }
 
-template <ggml_type type>
+template <ggml_type type, bool bitplanes = false>
 static void mul_mat_vec_q_switch_ncols_dst(
         const void * vx, const void * vy, const int32_t * ids, const ggml_cuda_mm_fusion_args_device fusion, float * dst,
         const int ncols_x, const int nrows_x, const int ncols_dst,
@@ -1249,6 +1406,7 @@ static void mul_mat_vec_q_switch_ncols_dst(
 
     if (has_ids && ncols_dst > 1) {
         // Multi-token MUL_MAT_ID path - dedicated MoE kernel
+        GGML_ASSERT(!bitplanes); // friend.cpp: the MoE kernel only understands plain q8_1
         mul_mat_vec_q_moe_launch<type>(
             vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, nrows_x,
             stride_row_x, stride_col_y, stride_col_dst,
@@ -1274,7 +1432,7 @@ static void mul_mat_vec_q_switch_ncols_dst(
 
                 std::pair<dim3, dim3> dims = calc_launch_params<type>(c_ncols_dst, nrows_x, nchannels_dst,
                                                                       nsamples_dst, warp_size, table_id, c_small_k, c_halve_iters);
-                mul_mat_vec_q_switch_fusion<type, c_ncols_dst, c_small_k, c_halve_iters>(
+                mul_mat_vec_q_switch_fusion<type, c_ncols_dst, c_small_k, c_halve_iters, bitplanes>(
                     vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
                     channel_ratio_fd, stride_channel_x, stride_channel_y, stride_channel_dst, sample_ratio_fd,
                     stride_sample_x, stride_sample_y, stride_sample_dst, dims.first, dims.second, 0, ids_stride,
@@ -1292,7 +1450,7 @@ static void mul_mat_vec_q_switch_ncols_dst(
         case 2: {
             constexpr int c_ncols_dst = 2;
             std::pair<dim3, dim3> dims = calc_launch_params<type>(c_ncols_dst, nrows_x, nchannels_dst, nsamples_dst, warp_size, table_id);
-            mul_mat_vec_q_switch_fusion<type, c_ncols_dst>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
+            mul_mat_vec_q_switch_fusion<type, c_ncols_dst, false, false, bitplanes>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
                  channel_ratio_fd, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio_fd, stride_sample_x, stride_sample_y, stride_sample_dst,
                  dims.first, dims.second, 0, ids_stride, stream);
@@ -1300,7 +1458,7 @@ static void mul_mat_vec_q_switch_ncols_dst(
         case 3: {
             constexpr int c_ncols_dst = 3;
             std::pair<dim3, dim3> dims = calc_launch_params<type>(c_ncols_dst, nrows_x, nchannels_dst, nsamples_dst, warp_size, table_id);
-            mul_mat_vec_q_switch_fusion<type, c_ncols_dst>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
+            mul_mat_vec_q_switch_fusion<type, c_ncols_dst, false, false, bitplanes>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
                  channel_ratio_fd, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio_fd, stride_sample_x, stride_sample_y, stride_sample_dst,
                  dims.first, dims.second, 0, ids_stride, stream);
@@ -1308,7 +1466,7 @@ static void mul_mat_vec_q_switch_ncols_dst(
         case 4: {
             constexpr int c_ncols_dst = 4;
             std::pair<dim3, dim3> dims = calc_launch_params<type>(c_ncols_dst, nrows_x, nchannels_dst, nsamples_dst, warp_size, table_id);
-            mul_mat_vec_q_switch_fusion<type, c_ncols_dst>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
+            mul_mat_vec_q_switch_fusion<type, c_ncols_dst, false, false, bitplanes>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
                  channel_ratio_fd, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio_fd, stride_sample_x, stride_sample_y, stride_sample_dst,
                  dims.first, dims.second, 0, ids_stride, stream);
@@ -1316,7 +1474,7 @@ static void mul_mat_vec_q_switch_ncols_dst(
         case 5: {
             constexpr int c_ncols_dst = 5;
             std::pair<dim3, dim3> dims = calc_launch_params<type>(c_ncols_dst, nrows_x, nchannels_dst, nsamples_dst, warp_size, table_id);
-            mul_mat_vec_q_switch_fusion<type, c_ncols_dst>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
+            mul_mat_vec_q_switch_fusion<type, c_ncols_dst, false, false, bitplanes>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
                  channel_ratio_fd, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio_fd, stride_sample_x, stride_sample_y, stride_sample_dst,
                  dims.first, dims.second, 0, ids_stride, stream);
@@ -1324,7 +1482,7 @@ static void mul_mat_vec_q_switch_ncols_dst(
         case 6: {
             constexpr int c_ncols_dst = 6;
             std::pair<dim3, dim3> dims = calc_launch_params<type>(c_ncols_dst, nrows_x, nchannels_dst, nsamples_dst, warp_size, table_id);
-            mul_mat_vec_q_switch_fusion<type, c_ncols_dst>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
+            mul_mat_vec_q_switch_fusion<type, c_ncols_dst, false, false, bitplanes>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
                  channel_ratio_fd, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio_fd, stride_sample_x, stride_sample_y, stride_sample_dst,
                  dims.first, dims.second, 0, ids_stride, stream);
@@ -1332,7 +1490,7 @@ static void mul_mat_vec_q_switch_ncols_dst(
         case 7: {
             constexpr int c_ncols_dst = 7;
             std::pair<dim3, dim3> dims = calc_launch_params<type>(c_ncols_dst, nrows_x, nchannels_dst, nsamples_dst, warp_size, table_id);
-            mul_mat_vec_q_switch_fusion<type, c_ncols_dst>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
+            mul_mat_vec_q_switch_fusion<type, c_ncols_dst, false, false, bitplanes>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
                  channel_ratio_fd, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio_fd, stride_sample_x, stride_sample_y, stride_sample_dst,
                  dims.first, dims.second, 0, ids_stride, stream);
@@ -1340,7 +1498,7 @@ static void mul_mat_vec_q_switch_ncols_dst(
         case 8: {
             constexpr int c_ncols_dst = 8;
             std::pair<dim3, dim3> dims = calc_launch_params<type>(c_ncols_dst, nrows_x, nchannels_dst, nsamples_dst, warp_size, table_id);
-            mul_mat_vec_q_switch_fusion<type, c_ncols_dst>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
+            mul_mat_vec_q_switch_fusion<type, c_ncols_dst, false, false, bitplanes>(vx, vy, ids, fusion, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y, stride_col_dst,
                  channel_ratio_fd, stride_channel_x, stride_channel_y, stride_channel_dst,
                  sample_ratio_fd, stride_sample_x, stride_sample_y, stride_sample_dst,
                  dims.first, dims.second, 0, ids_stride, stream);
@@ -1515,6 +1673,103 @@ static void mul_mat_vec_q_switch_type(
     }
 }
 
+// friend.cpp: launch the single-column bit-plane kernel.
+template <ggml_type type, int rows_per_warp, int nwarps>
+static void mul_mat_vec_q_bitplanes_launch(
+        const void * vx, const void * vy, const ggml_cuda_mm_fusion_args_device & fusion, float * dst,
+        const int ncols_x, const int nrows_x, const int stride_row_x,
+        const int nchannels_x, const int nchannels_dst, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
+        const int nsamples_x, const int nsamples_dst, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst,
+        cudaStream_t stream) {
+    const uint3 channel_ratio_fd = init_fastdiv_values(nchannels_dst / nchannels_x);
+    const uint3 sample_ratio_fd  = init_fastdiv_values(nsamples_dst  / nsamples_x);
+
+    constexpr int rows_per_block = rows_per_warp*nwarps;
+    const dim3 block_nums((nrows_x + rows_per_block - 1) / rows_per_block, nchannels_dst, nsamples_dst);
+    const dim3 block_dims(WARP_SIZE, nwarps, 1);
+
+    const bool has_fusion = fusion.gate != nullptr || fusion.x_bias != nullptr || fusion.gate_bias != nullptr;
+#define FRIEND_MMVQ_BP_ARGS vx, vy, fusion, dst, ncols_x, nrows_x, stride_row_x, channel_ratio_fd, stride_channel_x, \
+        stride_channel_y, stride_channel_dst, sample_ratio_fd, stride_sample_x, stride_sample_y, stride_sample_dst
+    if (fusion.gate != nullptr) {
+        mul_mat_vec_q_bitplanes<type, rows_per_warp, nwarps, true, true><<<block_nums, block_dims, 0, stream>>>(FRIEND_MMVQ_BP_ARGS);
+    } else if (has_fusion) {
+        mul_mat_vec_q_bitplanes<type, rows_per_warp, nwarps, true, false><<<block_nums, block_dims, 0, stream>>>(FRIEND_MMVQ_BP_ARGS);
+    } else {
+        mul_mat_vec_q_bitplanes<type, rows_per_warp, nwarps, false, false><<<block_nums, block_dims, 0, stream>>>(FRIEND_MMVQ_BP_ARGS);
+    }
+#undef FRIEND_MMVQ_BP_ARGS
+}
+
+// friend.cpp: bit-plane counterpart of mul_mat_vec_q_switch_type, Q1_0 / PQ2_0 only, no MUL_MAT_ID.
+// Single columns (token generation) get the dedicated kernel; 2..8 columns (speculative decoding
+// batches) reuse the generic kernel with the bit-plane vec_dot.
+static void mul_mat_vec_q_switch_type_bitplanes(
+        const void * vx, const ggml_type type_x, const void * vy, const ggml_cuda_mm_fusion_args_device fusion, float * dst,
+        const int ncols_x, const int nrows_x, const int ncols_dst,
+        const int stride_row_x, const int stride_col_y, const int stride_col_dst,
+        const int nchannels_x, const int nchannels_y, const int nchannels_dst,
+        const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
+        const int nsamples_x, const int nsamples_dst, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst,
+        cudaStream_t stream) {
+    // Tuned on a GTX 970: 4 rows per warp amortizes the activation planes and keeps enough weight
+    // loads in flight; 2 warps per block (64 threads) lets 32 blocks fill an SM. rows 2 / 8 and
+    // 1 / 4 warps were measured slower or equal for both types.
+    constexpr int rows_per_warp = 4;
+    constexpr int nwarps        = 2;
+    if (ncols_dst == 1) {
+        switch (type_x) {
+            case GGML_TYPE_Q1_0:
+                mul_mat_vec_q_bitplanes_launch<GGML_TYPE_Q1_0, rows_per_warp, nwarps>(vx, vy, fusion, dst, ncols_x, nrows_x,
+                    stride_row_x, nchannels_x, nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
+                    nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
+                return;
+            case GGML_TYPE_PQ2_0:
+                mul_mat_vec_q_bitplanes_launch<GGML_TYPE_PQ2_0, rows_per_warp, nwarps>(vx, vy, fusion, dst, ncols_x, nrows_x,
+                    stride_row_x, nchannels_x, nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
+                    nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, stream);
+                return;
+            default:
+                GGML_ABORT("fatal error");
+        }
+    }
+    switch (type_x) {
+        case GGML_TYPE_Q1_0:
+            mul_mat_vec_q_switch_ncols_dst<GGML_TYPE_Q1_0, true>
+                (vx, vy, nullptr, fusion, dst, ncols_x, nrows_x, ncols_dst, stride_row_x, stride_col_y, stride_col_dst,
+                 nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, 0, stream);
+            break;
+        case GGML_TYPE_PQ2_0:
+            mul_mat_vec_q_switch_ncols_dst<GGML_TYPE_PQ2_0, true>
+                (vx, vy, nullptr, fusion, dst, ncols_x, nrows_x, ncols_dst, stride_row_x, stride_col_y, stride_col_dst,
+                 nchannels_x, nchannels_y, nchannels_dst, stride_channel_x, stride_channel_y, stride_channel_dst,
+                 nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst, 0, stream);
+            break;
+        default:
+            GGML_ABORT("fatal error");
+            break;
+    }
+}
+
+// friend.cpp: the bit-plane path replaces emulated dp4a with AND+POPC, so it only pays off where
+// __dp4a is missing (Maxwell, GP100). Everything newer keeps the stock q8_1 path untouched.
+bool ggml_cuda_mmvq_use_bitplanes(enum ggml_type type, int cc, bool has_ids) {
+#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+    GGML_UNUSED_VARS(type, cc, has_ids);
+    return false;
+#else
+    if (has_ids || (type != GGML_TYPE_Q1_0 && type != GGML_TYPE_PQ2_0)) {
+        return false;
+    }
+    static const bool disabled = getenv("FRIEND_CUDA_NO_BITPLANES") != nullptr; // escape hatch for A/B checks
+    if (disabled) {
+        return false;
+    }
+    return GGML_CUDA_CC_IS_NVIDIA(cc) && cc < GGML_CUDA_CC_DP4A;
+#endif
+}
+
 void ggml_cuda_mul_mat_vec_q(
         ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst,
         const ggml_cuda_mm_fusion_args_host * fusion) {
@@ -1594,13 +1849,22 @@ void ggml_cuda_mul_mat_vec_q(
         }
     }
 
+    // friend.cpp: on GPUs without __dp4a, 1-bit / ternary weights take the bit-plane path
+    // (masked popcounts instead of emulated int8 dot products); results are bit-identical.
+    const bool use_bitplanes = ggml_cuda_mmvq_use_bitplanes(src0->type,
+            ggml_cuda_info().devices[ggml_cuda_get_device()].cc, ids != nullptr);
+
     const int64_t ne10_padded = GGML_PAD(ne10, MATRIX_ROW_PADDING);
     ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), ne13*ne12 * ne11*ne10_padded * sizeof(block_q8_1)/QK8_1);
     {
         const int64_t s11 = src1->nb[1] / ts_src1;
         const int64_t s12 = src1->nb[2] / ts_src1;
         const int64_t s13 = src1->nb[3] / ts_src1;
-        quantize_row_q8_1_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded, ne11, ne12, ne13, stream);
+        if (use_bitplanes) {
+            quantize_row_q8_1_bitplanes_cuda(src1_d, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded, ne11, ne12, ne13, stream);
+        } else {
+            quantize_row_q8_1_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded, ne11, ne12, ne13, stream);
+        }
     }
 
     const int64_t s01 = src0->nb[1] / ts_src0;
@@ -1624,6 +1888,15 @@ void ggml_cuda_mul_mat_vec_q(
     const int64_t stride_channel_y   = ids ? s11  : s12;
 
     const int64_t ids_stride = ids ? ids->nb[1] / ggml_type_size(ids->type) : 0;
+
+    if (use_bitplanes) {
+        mul_mat_vec_q_switch_type_bitplanes(
+            src0->data, src0->type, src1_q8_1.get(), fusion_local, dst_d, ne00,
+            ne01,              ncols_dst,     s01, stride_col_y,     stride_col_dst,
+            ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
+            ne03,              ne3,           s03, s13,              s3,               stream);
+        return;
+    }
 
     mul_mat_vec_q_switch_type(
         src0->data, src0->type, src1_q8_1.get(), ids_d, fusion_local, dst_d, ne00,
