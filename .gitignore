@@ -55,6 +55,7 @@ models-mnt
 /libllama.so
 /llama-bench
 /mv-check
+/logit-check
 /test-backend-ops
 /lookahead
 /lookup
