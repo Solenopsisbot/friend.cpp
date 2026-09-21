@@ -89,3 +89,32 @@ struct llama_adapter_lora {
 
 using llama_adapter_loras = std::unordered_map<llama_adapter_lora *, float>;
 using llama_adapter_loras_ptr = std::unique_ptr<llama_adapter_loras>;
+
+//
+// llama_adapter_head (friend.cpp)
+//
+// A hot-swappable LM head: `output.weight` plus optional `output_norm.weight`,
+// `output.bias`, `output.scale` and `output.input_scale`, loaded from a small GGUF
+// and allocated on the same device as the base head. Swapping a head changes only
+// the final projection, so KV caches computed with a different head stay valid --
+// that is what makes per-request head selection cheap compared to LoRA.
+//
+// Heads are always treated as un-rotated: Hadamard folding (prism) is keyed by
+// tensor pointer, so a swapped-in head never picks up the base head's rotation.
+struct llama_adapter_head {
+    llama_model * model = nullptr;
+
+    ggml_tensor * output      = nullptr; // required, [n_embd, n_vocab]
+    ggml_tensor * output_norm = nullptr; // optional, [n_embd]; base norm is kept when absent
+    ggml_tensor * output_b    = nullptr; // optional, [n_vocab]
+    ggml_tensor * output_s    = nullptr; // optional NVFP4 scale2
+    ggml_tensor * output_in_s = nullptr; // optional NVFP4 input scale
+
+    std::vector<ggml_context_ptr> ctxs;
+    std::vector<ggml_backend_buffer_ptr> bufs;
+
+    // gguf metadata
+    std::unordered_map<std::string, std::string> gguf_kv;
+
+    explicit llama_adapter_head(llama_model * model) : model(model) {}
+};

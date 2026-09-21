@@ -548,6 +548,8 @@ struct savestate_data
     std::vector<float> latest_logits;
     int64_t last_used = 0; //unix timestamp, updated on save or load
     std::string media_signature = "";
+    std::string kv_key = "";          // friend.cpp: LoRA+cvec identity the KV was computed under
+    std::string logits_head_key = ""; // friend.cpp: LM head that produced latest_logits
 };
 
 const float default_norm_eps = 1e-5f;

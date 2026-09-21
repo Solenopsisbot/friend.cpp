@@ -223,3 +223,20 @@ LLAMA_API bool llama_model_dspark_get_meta(const struct llama_model * model, lla
 LLAMA_API bool llama_model_dspark_get_markov(const struct llama_model * model,
                                              std::vector<float> &       w1,
                                              std::vector<float> &       w2);
+
+//
+// friend.cpp: hot-swappable LM heads
+//
+// A head file is a GGUF holding `output.weight` (required, same shape as the model's
+// head) and optionally `output_norm.weight`, `output.bias`, `output.scale`,
+// `output.input_scale`. Swapping heads is model-wide and must happen between decodes;
+// it does not invalidate KV caches (only logits change). The caller owns heads and
+// must free them before the model.
+struct llama_adapter_head;
+
+LLAMA_API struct llama_adapter_head * llama_adapter_head_init(struct llama_model * model, const char * path);
+LLAMA_API void                        llama_adapter_head_free(struct llama_adapter_head * head);
+
+// head == NULL restores the model's own head. Returns 0 on success.
+LLAMA_API int32_t                     llama_model_set_head(struct llama_model * model, struct llama_adapter_head * head);
+LLAMA_API struct llama_adapter_head * llama_model_get_head(const struct llama_model * model);

@@ -92,6 +92,10 @@ struct load_model_inputs
     const int continuous_batching_slots = 0;
     const int rpc_mode = 0; //0=disabled, 1=connect, 2=host
     const char * rpc_targets = nullptr;
+    // friend.cpp: named adapter pools, see friend/adapters.hpp for the wire format
+    const char * friend_lora_pool = nullptr;
+    const char * friend_cvec_pool = nullptr;
+    const char * friend_head_pool = nullptr;
 };
 struct generation_inputs
 {
@@ -153,6 +157,8 @@ struct generation_inputs
     const int reasoning_budget = -1;
     const bool blue_noise = false;
     const int rng_type = 0;
+    // friend.cpp: per-request adapter profile (LoRA mix / steering / head), see friend/adapters.hpp
+    const char * adapter_profile = nullptr;
 };
 struct generation_outputs
 {

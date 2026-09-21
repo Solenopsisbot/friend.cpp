@@ -2763,6 +2763,7 @@ llm_graph_params llama_context::graph_params(
         /*.dspark_ctx_width =*/dspark_ctx.n_embd_cap,
         /*.hadamard_rotations =*/&model.hadamard_rotations,
         /*.hadamard_inverses  =*/&model.hadamard_inverses,
+        /*.head_epoch  =*/model.head_epoch,
         /*.samplers    =*/sampling.samplers,
         /*.n_outputs   =*/n_outputs,
         /*.cb          =*/graph_get_cb(),
