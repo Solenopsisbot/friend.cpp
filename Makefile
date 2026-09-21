@@ -199,6 +199,9 @@ CFLAGS  += -DGGML_USE_ACCELERATE -DGGML_USE_BLAS -DGGML_BLAS_USE_ACCELERATE
 CXXFLAGS  += -DGGML_USE_ACCELERATE -DGGML_USE_BLAS -DGGML_BLAS_USE_ACCELERATE
 LDFLAGS += -framework Accelerate
 OBJS += ggml-blas.o
+# friend.cpp: route the dspark drafter's host-side Markov correction (an
+# n_vocab x rank gemv per drafted token) through Accelerate instead of a scalar loop
+SPECULATIVE_FLAGS += -DLLAMA_DSPARK_MARKOV_BLAS
 endif
 endif
 
@@ -691,7 +694,7 @@ common.o: common/common.cpp common/common.h common/log.h
 common-json.o: common/json.cpp common/json.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 speculative.o: common/speculative.cpp common/speculative.h
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(SPECULATIVE_FLAGS) -c $< -o $@
 sampling.o: common/sampling.cpp common/common.h common/sampling.h common/log.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 console.o: common/console.cpp common/console.h
