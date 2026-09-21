@@ -429,6 +429,16 @@ python koboldcpp.py --model Bonsai-27B-Q1_0.gguf \
 - `LLAMA_DSPARK_SHARED_HEAD=1` makes the drafter borrow the target's LM head (saves ~700 MB).
 - It survives prompt reuse: fast-forward, context shifts, SmartCache slots and the prompt cache all keep the drafter's captured features in step with the target KV, so drafting keeps working on later turns and after switching conversations. Outputs match the target alone.
 
+### Small-batch Bonsai kernels (Metal)
+
+Verify batches (draft + 1 tokens) and continuous batching run 2-32 tokens through every weight matrix at once. On Apple GPUs the stock Q1_0 / PQ2_0 / PTQ1_0 kernels were ALU-bound at those sizes, so every extra token cost 60-80% of a whole single-token pass. friend.cpp adds a lookup-table mat-vec for Q1_0 and PQ2_0 and a decode-once multi-column kernel for PTQ1_0 (details in the friend.cpp section of `ggml/src/ggml-metal/kernels/mul_mv.metal`). Bonsai-27B Q1_0 on an M5, one batch of n tokens:
+
+| n | 1 | 2 | 3 | 4 | 5 | 8 | 16 |
+|---|---|---|---|---|---|---|---|
+| stock (ms) | 42.5 | 57.1 | 87.6 | 101.3 | 144.0 | 190.6 | 377.6 |
+| friend.cpp (ms) | 42.4 | 52.2 | 65.2 | 65.9 | 82.2 | 100.2 | 179.2 |
+
+Single-token decode and prefill are unchanged. Batched logits agree with token-by-token decode to f32 rounding (argmax identical; greedy output identical with and without a drafter). `GGML_METAL_BONSAI_SB_DISABLE=1` restores the stock kernels for A/B runs. The `--draftamount 3` recommendation above predates this and deserves a re-measure.
 ## 1-bit / ternary decode on GPUs without dp4a
 
 Maxwell cards (GTX 9xx, sm_5x) and GP100 have no `__dp4a`, so ggml's int8 dot products are emulated byte by byte. For Bonsai Q1_0 and PQ2_0 that made token generation ALU-bound: on a GTX 970 the mat-vec kernels read weights at 22-40 GB/s out of ~190, and the matmuls were essentially the whole token time.
@@ -481,4 +491,4 @@ A few things to be honest about:
 
 - **CUDA**: built and run on a GTX 970 (Maxwell, CUDA 12.9) with the Bonsai Q1_0 / PQ2_0 models; the CUDA code also compiles for sm_61 through sm_120 but has only *run* on the 970. **HIP** has never been compiled. Metal + CPU on Apple Silicon is the most tested path.
 - **Vulkan**: shaders generate, but haven't been tested on real GPU hardware.
-- **DSpark drafting** is modest on Apple Silicon: verifying a draft on the 27B Q1_0 target costs ~60% of a normal token, so the ceiling is low (adaptive drafting at least never makes it slower than no drafter). Only standalone `arch=dspark` was exercised; MTP / DFlash / DSpark-in-DFlash paths are unchanged but untested here.
+- **DSpark drafting** is modest on Apple Silicon: verifying a 3-token draft on the 27B Q1_0 target costs ~1.5x a normal token (2.4x before the small-batch kernels above), so the ceiling is low; adaptive drafting keeps it from ever being slower than no drafter. Only standalone `arch=dspark` was exercised; MTP / DFlash / DSpark-in-DFlash paths are unchanged but untested here.

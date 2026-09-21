@@ -37,6 +37,16 @@
 #define N_R0_PTQ1_0 4
 #define N_SG_PTQ1_0 1
 
+// friend.cpp: small-batch (2..16 column) Bonsai mat-vec, see the "friend.cpp:
+// small-batch" section of mul_mv.metal.
+//   LUT path (Q1_0, PQ2_0): one src0 row per lane, N_SG_LUT simdgroups per threadgroup,
+//   at most LUT_MAX_NR1 columns per pass.
+//   MC path (PTQ1_0): N_R0_MC_PTQ1_0 rows per simdgroup, N_SG_MC_PTQ1_0 simdgroups.
+#define N_SG_LUT        8
+#define LUT_MAX_NR1     8
+#define N_R0_MC_PTQ1_0  4
+#define N_SG_MC_PTQ1_0  2
+
 #define N_R0_Q4_0 4
 #define N_SG_Q4_0 2
 
@@ -541,6 +551,24 @@ typedef struct {
     int32_t  ne11;
     uint64_t nb11;
 } ggml_metal_kargs_q1_0_planes;
+
+// friend.cpp: small-batch LUT mat-vec (build pass + main pass share these)
+typedef struct {
+    int32_t  ne00;     // K
+    int32_t  ne01;     // rows of src0
+    int32_t  ne11;     // columns of src1 (tokens)
+    int32_t  ne0;      // rows of dst (= ne01)
+    uint64_t nb01;     // src0 row stride
+    uint64_t nb11;     // src1 column stride
+    int32_t  nr1;      // columns per pass
+    int32_t  nq;       // column vectors per pass = ceil(nr1/v)
+    int32_t  v;        // columns per table entry (2 or 4)
+    int32_t  npass;    // ceil(ne11/nr1)
+    int32_t  has_bsum; // also build per-block column sums (PQ2_0)
+    int32_t  kc;       // K blocks per split
+    int32_t  ksplit;   // K splits (> 1: partial sums go to the scratch, then a reduce pass)
+    uint64_t part_off; // float offset of the partial sums in the scratch
+} ggml_metal_kargs_mul_mv_lut;
 
 typedef struct {
     int32_t  ne00;

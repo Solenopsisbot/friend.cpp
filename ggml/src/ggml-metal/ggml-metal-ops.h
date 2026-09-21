@@ -34,6 +34,9 @@ int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx);
 // activation bit-planes for the Q1_0 word-parallel path
 size_t ggml_metal_op_mul_mat_extra_q1_0_planes(const struct ggml_tensor * op);
 
+// friend.cpp: activation lookup tables for the small-batch Bonsai LUT mat-vec
+size_t ggml_metal_op_mul_mat_extra_lut(const struct ggml_tensor * op);
+
 // tokens per expert
 size_t ggml_metal_op_mul_mat_id_extra_tpe(const struct ggml_tensor * op);
 
