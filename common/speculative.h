@@ -98,6 +98,23 @@ void common_speculative_set_state(common_speculative * spec, llama_seq_id seq_id
 // print statistics about the speculative decoding
 void common_speculative_print_stats(const common_speculative * spec);
 
+// friend.cpp: prompt-reuse support for implementations that condition on
+// per-position target features (standalone dspark). koboldcpp reuses KV across
+// requests instead of re-prefilling, so rather than begin() (which wipes those
+// features) the host keeps them in sync with the target's KV:
+//   rewind: drop features/drafter KV at positions >= n_keep (call wherever the
+//           target KV is truncated). Returns the end of the prefix the drafter
+//           can condition on; if that is < the target's n_past there is a hole
+//           and the host must re-decode [covered, n_past) with capture.
+//   flush:  commit staged features into the drafter KV, so that saving the
+//           drafter context (llama_state_get_data) captures everything.
+//   resync: after restoring the drafter context from such a snapshot, drop
+//           staged rows and re-derive the covered end from the drafter KV.
+// All return -1/false when no registered implementation tracks features.
+int32_t common_speculative_friend_rewind(common_speculative * spec, llama_seq_id seq_id, llama_pos n_keep);
+bool    common_speculative_friend_flush (common_speculative * spec, llama_seq_id seq_id);
+int32_t common_speculative_friend_resync(common_speculative * spec, llama_seq_id seq_id);
+
 // TEST/DEBUG ONLY: directly stage target-tap context rows for the dspark
 // implementation (if registered), bypassing the normal process()-driven
 // capture path, which requires a real target context with
