@@ -127,6 +127,12 @@ static llama_context * draft_ctx = nullptr; //will remain null if speculative is
 static common_speculative * draft_spec = nullptr; // llama.cpp speculative state for draft model / MTP drafting
 static bool draft_is_mtp = false; // true for MTP/DFLASH/DSPARK paths that verify multiple target logits
 static common_speculative_type draft_spec_type_active = COMMON_SPECULATIVE_TYPE_NONE;
+// friend.cpp: true for a standalone arch=dspark drafter (not DSpark-in-DFlash). It
+// conditions on target-layer features captured per position, which must stay in
+// sync with the target KV across koboldcpp's prompt reuse -- see kcpp_dspark_rewind and the
+// prompt-reuse sync before the prefill in gpttype_generate.
+static bool draft_is_dspark_standalone = false;
+static int kcpp_dspark_rewind(int n_keep);
 static bool mtp_uses_spec_checkpoint = false;
 static common_prompt_checkpoint mtp_spec_ckpt;
 static llama_context * guidance_ctx = nullptr; //for classifier free guidance, will be null if unused
@@ -243,6 +249,13 @@ static common_speculative_type speculative_draft_type_from_model(const llama_mod
         return model->dspark_markov_w1 != nullptr ? COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK : COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH;
     }
 
+    // friend.cpp: standalone DSpark drafters (PrismML arch=dspark) previously fell
+    // through to draft-simple, which rejects their tokenizer-less vocab.
+    if(model->arch == LLM_ARCH_DSPARK)
+    {
+        return COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK;
+    }
+
     if(model->hparams.n_layer_nextn > 0)
     {
         return COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
@@ -264,14 +277,17 @@ static bool speculative_draft_type_needs_preprocess_kv_rollback(common_speculati
         || type == COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK;
 }
 
-static void speculative_apply_block_draft_output_limits(llama_context_params & ctx_params, common_speculative_type type)
+// friend.cpp: block_size is the standalone dspark drafter's baked block length (0
+// otherwise). That impl always decodes -- and requests logits for -- a full block
+// per call regardless of the draft amount, so the output buffer must hold it.
+static void speculative_apply_block_draft_output_limits(llama_context_params & ctx_params, common_speculative_type type, uint32_t block_size = 0)
 {
     if(type != COMMON_SPECULATIVE_TYPE_DRAFT_DFLASH && type != COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK)
     {
         return;
     }
 
-    const uint32_t per_seq = std::max<uint32_t>(1, speculative_chunk_amt + 1);
+    const uint32_t per_seq = std::max<uint32_t>({1u, (uint32_t)(speculative_chunk_amt + 1), block_size});
     ctx_params.n_outputs_max = std::max<uint32_t>(ctx_params.n_outputs_max, per_seq);
     ctx_params.n_outputs_max_per_seq = std::max<uint32_t>(ctx_params.n_outputs_max_per_seq, per_seq);
 }
@@ -580,6 +596,7 @@ static size_t estimate_draft_autofit_tax_mb(
     const char * estimate_model_path = has_draft_model ? spec_model_filename.c_str() : main_model_filename.c_str();
     bool measure_model_bytes = true;
     common_speculative_type draft_spec_type_estimate = !has_draft_model && use_mtp ? COMMON_SPECULATIVE_TYPE_DRAFT_MTP : COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE;
+    uint32_t draft_block_size_estimate = 0;
 
     //mute logs for the fitting stuff first
     auto oldverbosity = common_log_get_verbosity_thold();
@@ -600,6 +617,10 @@ static size_t estimate_draft_autofit_tax_mb(
         if(draft_probe != nullptr)
         {
             draft_spec_type_estimate = speculative_draft_type_from_model(draft_probe);
+            if(draft_probe->arch == LLM_ARCH_DSPARK) //friend.cpp: size the fit estimate like the real drafter context
+            {
+                draft_block_size_estimate = draft_probe->hparams.dspark_block_size;
+            }
             llama_model_free(draft_probe);
         }
     }
@@ -656,7 +677,7 @@ static size_t estimate_draft_autofit_tax_mb(
         draft_ctx_params.n_outputs_max = std::max<uint32_t>(1, base_ctx_params.n_seq_max); //match the real MTP draft context so the autofit tax doesn't over-reserve the draft compute buffer at n_batch*n_vocab (~2GB on large-vocab models like Gemma)
         measure_model_bytes = has_draft_model;
     }
-    speculative_apply_block_draft_output_limits(draft_ctx_params, draft_spec_type_estimate);
+    speculative_apply_block_draft_output_limits(draft_ctx_params, draft_spec_type_estimate, draft_block_size_estimate);
 
     std::vector<ggml_backend_dev_t> devs;
     uint32_t hp_ngl = 0;
@@ -850,6 +871,7 @@ bool ContextRewind(std::vector<int> &embd, std::vector<int> &current_context_tok
         {
             llama_memory_seq_rm(llama_get_memory(draft_ctx), 0, n_past, -1);
         }
+        kcpp_dspark_rewind(n_past); //friend.cpp
     }
 
     embd.clear();
@@ -962,6 +984,75 @@ static void mtp_decoding_setup(llama_model * main_model, llama_context * main_ct
     speculative_state_setup(main_ctx, mtp_ctx_params, -1, COMMON_SPECULATIVE_TYPE_DRAFT_MTP);
 }
 
+// friend.cpp: a standalone dspark drafter conditions on the outputs of several
+// target layers (its GGUF's dspark.target_layers), captured for every target
+// position. Engage that capture on the target context and prove the target graph
+// can actually produce it: only some architectures build the capture tensor
+// (qwen35 at the time of writing), and on the rest every target decode would fail
+// with -1 mid-generation. A one-token probe decode fails fast here instead.
+static bool kcpp_dspark_enable_capture(llama_context * main_ctx, const llama_model * draftmodel)
+{
+    const auto & hp = draftmodel->hparams;
+    std::vector<int32_t> layer_ids;
+    for(uint32_t i = 0; i < hp.n_dspark_target_layers; ++i)
+    {
+        layer_ids.push_back((int32_t) hp.dspark_target_layers[i]);
+    }
+    if(layer_ids.empty())
+    {
+        printf("Error: DSpark draft model lists no target layers to capture.\n");
+        return false;
+    }
+    try
+    {
+        llama_set_capture_layers(main_ctx, layer_ids.data(), layer_ids.size());
+    }
+    catch(const std::exception & e)
+    {
+        printf("Error: DSpark target layers do not fit the main model (%s).\n", e.what());
+        llama_set_capture_layers(main_ctx, nullptr, 0);
+        return false;
+    }
+
+    const llama_vocab * vocab = llama_model_get_vocab(llama_get_model(main_ctx));
+    llama_token probe_tok = llama_vocab_bos(vocab);
+    if(probe_tok < 0)
+    {
+        probe_tok = 0;
+    }
+    llama_batch probe = llama_batch_init(1, 0, 1);
+    probe.n_tokens = 1;
+    probe.token[0] = probe_tok;
+    probe.pos[0] = 0;
+    probe.n_seq_id[0] = 1;
+    probe.seq_id[0][0] = 0;
+    probe.logits[0] = true;
+    const int32_t rc = llama_decode(main_ctx, probe);
+    const bool captured = rc == 0 && llama_get_embeddings_capture_ith(main_ctx, 0) != nullptr;
+    llama_batch_free(probe);
+    llama_memory_clear(llama_get_memory(main_ctx), true);
+    if(!captured)
+    {
+        printf("Error: this main model's architecture (%s) cannot provide the per-layer hidden states a DSpark drafter needs.\n",
+            llm_arch_name(llama_get_model(main_ctx)->arch));
+        llama_set_capture_layers(main_ctx, nullptr, 0);
+        return false;
+    }
+    return true;
+}
+
+// friend.cpp: keep the dspark drafter's captured features in step with the target
+// KV. Call wherever the target KV is truncated to n_keep (0 = cleared). Returns the
+// end of the prefix the drafter can condition on, or -1 if not a standalone dspark.
+static int kcpp_dspark_rewind(int n_keep)
+{
+    if(!draft_is_dspark_standalone || draft_spec == nullptr)
+    {
+        return -1;
+    }
+    return common_speculative_friend_rewind(draft_spec, 0, n_keep);
+}
+
 //loads a model for speculative decoding.
 static void speculative_decoding_setup(std::string spec_model_filename, llama_context * main_ctx, const llama_model_params & base_model_params, const llama_context_params & base_ctx_params, int base_n_vocab, const float * draft_gpusplit, int draft_gpulayers)
 {
@@ -991,7 +1082,27 @@ static void speculative_decoding_setup(std::string spec_model_filename, llama_co
     draft_ctx_params.type_v = base_ctx_params.type_v;
     draft_ctx_params.swa_full = base_ctx_params.swa_full;
 
-    llama_model * draftmodel = llama_model_load_from_file(spec_model_filename.c_str(), draft_model_params);
+    llama_model * draftmodel = nullptr;
+    // friend.cpp: LLAMA_DSPARK_SHARED_HEAD=1 (same opt-in as PrismML's llama.cpp) lets a
+    // standalone dspark drafter borrow the target's LM head instead of loading its own
+    // n_vocab x n_embd copy. Other architectures ignore dspark_head_source. The target
+    // head must be unscaled and dimension-matched; if not, the load throws and we retry
+    // with the drafter's own head.
+    const char * dspark_shared_head = std::getenv("LLAMA_DSPARK_SHARED_HEAD");
+    if(dspark_shared_head && std::string(dspark_shared_head) == "1")
+    {
+        llama_model_params shared_params = draft_model_params;
+        shared_params.dspark_head_source = llama_get_model(main_ctx);
+        draftmodel = llama_model_load_from_file(spec_model_filename.c_str(), shared_params);
+        if(draftmodel == nullptr)
+        {
+            printf("Warning: could not share the main model's LM head with the draft model, loading its own.\n");
+        }
+    }
+    if(draftmodel == nullptr)
+    {
+        draftmodel = llama_model_load_from_file(spec_model_filename.c_str(), draft_model_params);
+    }
     if(draftmodel == nullptr)
     {
         printf("Error: failed to load speculative decoding draft model '%s'\n", spec_model_filename.c_str());
@@ -1008,6 +1119,41 @@ static void speculative_decoding_setup(std::string spec_model_filename, llama_co
         draft_ctx_params.ctx_other = main_ctx;
         draft_ctx_params.n_rs_seq = speculative_chunk_amt;
         draft_ctx_params.n_outputs_max = base_ctx_params.n_seq_max; //draft-mtp generates tokens autoregressively (1 output per sequence per decode, looped up to n_max); cap outputs at n_seq instead of letting it default to n_batch, which sized the draft sampling buffer at n_batch*n_vocab (~2GB on large-vocab models like Gemma)
+    }
+    else if(draft_spec_type == COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK && draftmodel->arch == LLM_ARCH_DSPARK)
+    {
+        // friend.cpp: standalone dspark (arch=dspark). Its impl decodes context chunks
+        // plus a full block per call, so outputs >= block_size and a ubatch that can
+        // hold at least one context row next to the block.
+        const uint32_t block_size = draftmodel->hparams.dspark_block_size;
+        printf("Detected standalone DSpark draft model (block size %u), using llama.cpp DSpark speculative decoding.\n", block_size);
+        speculative_apply_block_draft_output_limits(draft_ctx_params, draft_spec_type, block_size);
+        if(std::min(draft_ctx_params.n_batch, draft_ctx_params.n_ubatch) <= block_size)
+        {
+            printf("Error: batch size (%u) must exceed the DSpark block size (%u). Speculative decoding will not be used!\n",
+                std::min(draft_ctx_params.n_batch, draft_ctx_params.n_ubatch), block_size);
+            llama_model_free(draftmodel);
+            draft_is_mtp = false;
+            return;
+        }
+        if(!kcpp_dspark_enable_capture(main_ctx, draftmodel))
+        {
+            printf("Speculative Decoding will not be used!\n");
+            llama_model_free(draftmodel);
+            draft_is_mtp = false;
+            return;
+        }
+        if(llama_model_is_hybrid(llama_get_model(main_ctx)) && llama_n_rs_seq(main_ctx) < (uint32_t) speculative_chunk_amt)
+        {
+            // the post-verify partial seq_rm would silently no-op and bake rejected
+            // draft tokens into the recurrent state -- wrong output, so refuse
+            printf("Error: hybrid main model has %u recurrent rollback slots but drafts of %d need rolling back. Speculative decoding will not be used!\n",
+                llama_n_rs_seq(main_ctx), speculative_chunk_amt);
+            llama_set_capture_layers(main_ctx, nullptr, 0);
+            llama_model_free(draftmodel);
+            draft_is_mtp = false;
+            return;
+        }
     }
     else if(draft_spec_type == COMMON_SPECULATIVE_TYPE_DRAFT_DSPARK)
     {
@@ -1032,6 +1178,12 @@ static void speculative_decoding_setup(std::string spec_model_filename, llama_co
     {
         const llama_vocab * tmpvocab = llama_model_get_vocab(draftmodel);
         int draftvocab = llama_vocab_n_tokens(tmpvocab);
+        llama_dspark_meta dspark_meta;
+        if(draftmodel->arch == LLM_ARCH_DSPARK && llama_model_dspark_get_meta(draftmodel, &dspark_meta))
+        {
+            //friend.cpp: dspark ships no tokenizer (it uses the target's); its width is token_embd's row count
+            draftvocab = (int) dspark_meta.n_vocab;
+        }
         if(!draft_is_mtp && (llama_model_is_recurrent(draftmodel) || llama_model_is_hybrid(draftmodel)))
         {
             printf("Error: Speculative decoding cannot be used with Recurrent draft models!\n");
@@ -1065,11 +1217,16 @@ static void speculative_decoding_setup(std::string spec_model_filename, llama_co
         if(draft_ctx && draft_is_mtp)
         {
             speculative_state_setup(main_ctx, draft_ctx_params, draft_gpulayers, draft_spec_type);
+            draft_is_dspark_standalone = (draft_spec != nullptr && draftmodel->arch == LLM_ARCH_DSPARK);
         }
         else if(draft_ctx)
         {
             speculative_state_setup(main_ctx, draft_ctx_params, draft_gpulayers, COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE);
         }
+    }
+    if(draftmodel->arch == LLM_ARCH_DSPARK && !draft_is_dspark_standalone)
+    {
+        llama_set_capture_layers(main_ctx, nullptr, 0); //friend.cpp: drafter failed to come up, stop paying for the capture
     }
 }
 
@@ -1078,7 +1235,10 @@ static int32_t kcpp_decode_main_and_spec(llama_context * main_ctx, llama_batch b
     const int32_t decode_status = llama_decode(main_ctx, batch);
     if(decode_status == 0 && draft_spec)
     {
-        if(draft_ctx && batch.n_tokens > 0 && batch.n_seq_id[0] > 0 &&
+        // friend.cpp: standalone dspark is excluded: its process() rewinds its drafter KV
+        // *and* its staged features together when a batch starts before their end;
+        // trimming only the KV here would desync the two.
+        if(draft_ctx && !draft_is_dspark_standalone && batch.n_tokens > 0 && batch.n_seq_id[0] > 0 &&
             (llama_get_ctx_other(draft_ctx) != main_ctx || speculative_draft_type_needs_preprocess_kv_rollback(draft_spec_type_active)))
         {
             llama_memory_seq_rm(llama_get_memory(draft_ctx), batch.seq_id[0][0], batch.pos[0], -1);
@@ -1121,6 +1281,29 @@ static speculative_draft_result speculative_decoding_eval_chunk(llama_context * 
     dp.result = &drafted_ids;
 
     common_speculative_draft(draft_spec);
+    if(drafted_ids.empty() && draft_is_dspark_standalone)
+    {
+        // friend.cpp: dspark declines to draft when its features don't cover the
+        // prefix (e.g. after a multimodal batch it cannot capture). Rather than fail
+        // the generation, verify just the pending token -- a plain decode that still
+        // stages its features -- and report a zero-length draft.
+        std::vector<llama_token> single = { embd[0] };
+        kcpp_embd_batch batch = kcpp_embd_batch(single, n_past, use_mrope, true);
+        if(kcpp_decode_main_and_spec(main_ctx, batch.batch) != 0)
+        {
+            return results;
+        }
+        if(mtp_uses_spec_checkpoint)
+        {
+            mtp_spec_ckpt.clear(); //nothing to roll back this round; don't leave a stale checkpoint armed
+        }
+        results.verify_tokens = single;
+        results.verify_n_past = n_past;
+        results.drafted_amount = 0;
+        results.actual_logits.push_back(llama_get_logits_ith(main_ctx, 0));
+        results.draft_success = true;
+        return results;
+    }
     if(drafted_ids.empty())
     {
         kcpp_flush_log_output();
@@ -2934,6 +3117,12 @@ bool DoContextShifting(llama_context * ctx, llama_context * draft_ctx, std::vect
                     llama_memory_seq_rm(llama_get_memory(draft_ctx), 0, trimstart, trimstart + diff);
                     llama_memory_seq_add(llama_get_memory(draft_ctx), 0, trimstart + diff, -1, -diff);
                 }
+                // friend.cpp: dspark's staged features carry absolute positions and were
+                // captured with the erased span in the target's context; rather than
+                // shift them, forget everything from trimstart on. The prompt-reuse sync
+                // then re-decodes that range through the (shifted) target to recapture.
+                // (Only reachable for non-recurrent targets; qwen35 never shifts.)
+                kcpp_dspark_rewind(trimstart);
                 for (size_t i = trimstart + diff; i < current_context_tokens.size() - 1; i++)
                 {
                     current_context_tokens[i - diff] = current_context_tokens[i];
@@ -3181,6 +3370,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     }
     draft_ctx = nullptr;
     draft_is_mtp = false;
+    draft_is_dspark_standalone = false;
     draft_spec_type_active = COMMON_SPECULATIVE_TYPE_NONE;
     mtp_uses_spec_checkpoint = false;
     mtp_spec_ckpt.clear();
@@ -4535,6 +4725,7 @@ static void batch_invalidate_legacy_context_locked()
     {
         llama_memory_seq_rm(llama_get_memory(draft_ctx), 0, -1, -1);
     }
+    kcpp_dspark_rewind(0); //friend.cpp
     if(debugmode==1 && !is_quiet)
     {
         printf("\n[Continuous batching touched shared context; forcing next legacy generation to reprocess prompt]\n");
@@ -6511,6 +6702,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 {
                     llama_memory_clear(llama_get_memory(draft_ctx),true);
                 }
+                kcpp_dspark_rewind(0); //friend.cpp
             }
             else
             {
@@ -6628,6 +6820,48 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     if(current_context_tokens.size()>n_past)
     {
         current_context_tokens.resize(n_past);
+    }
+
+    // friend.cpp: prompt reuse for a standalone dspark drafter.
+    // Invariant: before the first draft of a generation, dspark's captured target
+    // features (drafter KV + staged rows) must cover exactly [0, n_past), i.e. the
+    // same prefix as the target KV; the prefill then appends [n_past, ...). All the
+    // reuse machinery above (fast-forward, smartcache slot swaps, context shift)
+    // only decided how much target KV to keep, so trim dspark to match here. If
+    // dspark covers LESS than the target (a restored slot without a drafter
+    // snapshot, a context shift, a batch dspark could not capture), the target has
+    // to re-decode the hole with capture on: roll the target back to the covered
+    // prefix and push those tokens back into the prompt. Recurrent/hybrid targets
+    // can usually only roll back a few tokens, so they may fall back to a full
+    // reprocess -- slower, but drafting stays correct on every later turn.
+    if(draft_is_dspark_standalone && draft_spec && file_format == FileFormat::GGUF_GENERIC)
+    {
+        int covered = kcpp_dspark_rewind(n_past);
+        if(covered >= 0 && covered < n_past)
+        {
+            if(covered == 0 || !llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), 0, covered, -1))
+            {
+                llama_memory_clear(llama_get_memory(llama_ctx_v4), true);
+                llama_memory_clear(llama_get_memory(draft_ctx), true);
+                kcpp_dspark_rewind(0);
+                covered = 0;
+            }
+            if(!is_quiet)
+            {
+                printf("\n[DSpark drafter only covers %d of %d reused tokens; reprocessing %d tokens to recapture]\n", covered, n_past, n_past - covered);
+            }
+            const int requeue = std::min<int>(n_past, (int) current_context_tokens.size()) - covered;
+            if(requeue > 0)
+            {
+                embd_inp.insert(embd_inp.begin(), current_context_tokens.begin() + covered, current_context_tokens.begin() + covered + requeue);
+                current_context_tokens.resize(covered);
+                //mirror ContextFastForward's own undo: it appended one entry per reused token
+                const int drop = std::min<int>(requeue, (int) last_n_tokens.size());
+                last_n_tokens.erase(last_n_tokens.end() - drop, last_n_tokens.end());
+            }
+            n_past = covered;
+            blasmode = (embd_inp.size() >= 32 && kcpp_backend_check(KCPP_BACKENDS_BLAS) && kcpp_data->n_batch>=32);
+        }
     }
 
     remaining_tokens = kcpp_data->n_predict;
@@ -6989,7 +7223,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             if (!startedsampling)
             {
                 startedsampling = true;
-                if(draft_spec)
+                // friend.cpp: not for standalone dspark -- begin() wipes the features the
+                // prefill just staged (and any reused ones). Its state is kept in sync
+                // with the target KV by kcpp_dspark_rewind and the prompt-reuse sync instead.
+                if(draft_spec && !draft_is_dspark_standalone)
                 {
                     llama_tokens prompt_tokens;
                     if(draft_is_mtp)
@@ -7394,6 +7631,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                 if (draft_ctx) {
                     llama_memory_seq_rm(llama_get_memory(draft_ctx), 0, n_past, -1);
                 }
+                kcpp_dspark_rewind(n_past); //friend.cpp: drop features of the rejected tail too
             }
 
             fflush(stdout);
@@ -7722,6 +7960,13 @@ size_t gpttype_save_state_kv(int slot)
 
         if(draft_ctx)
         {
+            if(draft_is_dspark_standalone && draft_spec)
+            {
+                // friend.cpp: dspark keeps not-yet-drafted target features outside the
+                // drafter KV; commit them so the drafter snapshot covers the same
+                // prefix as the target snapshot (restored via friend_resync on load).
+                common_speculative_friend_flush(draft_spec, 0);
+            }
             size_t newsize2 = llama_state_get_size(draft_ctx);
             try {
                 if (savestates[slot].current_draft_savestate_buffer.capacity() < newsize2 + 512) {
@@ -7760,6 +8005,22 @@ bool gpttype_load_state_kv(int slot)
             llama_memory_clear(llama_get_memory(draft_ctx),true);
             auto res2 = llama_state_set_data(draft_ctx, savestates[slot].current_draft_savestate_buffer.data(), savestates[slot].current_draft_savestate_size);
             printf("\nKV Load DraftSaveState %d: Restored KV with %zu tokens.\n", slot,current_context_tokens.size());
+        }
+        if(draft_is_dspark_standalone && draft_spec)
+        {
+            // friend.cpp: the staged features belong to the context being replaced.
+            // Re-derive dspark's covered prefix from the restored drafter KV (or start
+            // from nothing if this slot has no drafter snapshot); any shortfall versus
+            // the target is re-primed by the prompt-reuse sync before the prefill.
+            if(savestates[slot].current_draft_savestate_size>0)
+            {
+                common_speculative_friend_resync(draft_spec, 0);
+            }
+            else
+            {
+                llama_memory_clear(llama_get_memory(draft_ctx),true);
+                common_speculative_friend_rewind(draft_spec, 0, 0);
+            }
         }
         llama_memory_clear(llama_get_memory(llama_ctx_v4),true);
         auto res = llama_state_set_data(llama_ctx_v4, savestates[slot].current_savestate_buffer.data(), savestates[slot].current_savestate_size);
