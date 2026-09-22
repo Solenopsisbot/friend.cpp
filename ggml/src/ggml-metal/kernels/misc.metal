@@ -622,6 +622,93 @@ template [[host_name("kernel_norm_fwht_512")]]  kernel kernel_norm_fwht_t kernel
 template [[host_name("kernel_norm_fwht_1024")]] kernel kernel_norm_fwht_t kernel_norm_fwht<1024>;
 template [[host_name("kernel_norm_fwht_2048")]] kernel kernel_norm_fwht_t kernel_norm_fwht<2048>;
 
+// friend.cpp: SWIGLU + MUL(signs) + FWHT, optionally with the value side normalised per head
+// (rms_norm over hd elements * w) and the heads permuted from tiled [hd, nk, rep] to grouped
+// [hd, rep, nk] order on the way in -- the whole path from a GDN output / FFN up+gate to the
+// Hadamard-folded ssm_out / ffn_down input in one launch. Same thread layout as
+// kernel_norm_fwht: (blocks of N, rows) threadgroups of N/4 threads, one float4 per thread.
+// With the norm, the 128 elements of a head are exactly one simdgroup (32 lanes x float4), so
+// the per-head sum of squares is a single simd_sum.
+template<int N>
+kernel void kernel_glu_fwht(
+        constant ggml_metal_kargs_glu_fwht & args,
+        device const float4 * g,
+        device const float4 * x,
+        device const float4 * w,
+        device const float4 * signs,
+        device       float4 * dst_rot,
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort sgitg[[simdgroup_index_in_threadgroup]],
+        ushort tiisg[[thread_index_in_simdgroup]]) {
+
+    constexpr int NW = N_SIMDWIDTH;
+    constexpr int NT = N / 4;
+
+    threadgroup float4 shmem[NT];
+
+    const int     blk = tgpig.x;
+    const int64_t row = tgpig.y;
+    if (row >= args.nrows) {
+        return;
+    }
+
+    const int t = sgitg * NW + tiisg;
+    const int j = blk * NT + t;     // output float4 within the row
+    const int p = 4 * j;            // first output element
+
+    // source element for output position p (the permutation keeps d, moves whole heads)
+    int e = p;
+    if (args.perm_rep > 1) {
+        const int d  = p % args.hd;
+        const int gp = p / args.hd;         // grouped head index = r + rep*k
+        const int r  = gp % args.perm_rep;
+        const int k  = gp / args.perm_rep;
+        e = d + args.hd * (k + args.perm_nk * r);
+    }
+
+    g += row * (args.nbg / 4);
+    x += row * (args.nbx / 4);
+    dst_rot += row * (args.ne0 / 4);
+
+    const float4 gj = g[e / 4];
+    float4       xj = x[e / 4];
+    const float4 sj = signs[j];
+
+    if (args.norm) {
+        const float4 wj = w[(e % args.hd) / 4];
+        const float sum = simd_sum(dot(xj, xj));      // this simdgroup = this head
+        const float scale = 1.0f/sqrt(sum/args.hd + args.eps);
+        xj = (xj*scale)*wj;
+    }
+
+    const float4 silu = gj / (1.0f + exp(-gj));
+    float4 r = (silu*xj)*sj*(1.0f/sqrt((float) N));
+
+    r = float4(r.x + r.y, r.x - r.y, r.z + r.w, r.z - r.w);
+    r = float4(r.x + r.z, r.y + r.w, r.x - r.z, r.y - r.w);
+
+    for (int m = 1; m < NW && m < NT; m *= 2) {
+        const float4 q = simd_shuffle_xor(r, (ushort) m);
+        r = (t & m) == 0 ? q + r : q - r;
+    }
+
+    for (int m = NW; m < NT; m *= 2) {
+        shmem[t] = r;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        const float4 q = shmem[t ^ m];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        r = (t & m) == 0 ? q + r : q - r;
+    }
+
+    dst_rot[j] = r;
+}
+
+typedef decltype(kernel_glu_fwht<1024>) kernel_glu_fwht_t;
+
+template [[host_name("kernel_glu_fwht_512")]]  kernel kernel_glu_fwht_t kernel_glu_fwht<512>;
+template [[host_name("kernel_glu_fwht_1024")]] kernel kernel_glu_fwht_t kernel_glu_fwht<1024>;
+template [[host_name("kernel_glu_fwht_2048")]] kernel kernel_glu_fwht_t kernel_glu_fwht<2048>;
+
 typedef decltype(kernel_fwht<64, float>) kernel_fwht_f32_t;
 typedef decltype(kernel_fwht<64, half>)  kernel_fwht_f16_t;
 
