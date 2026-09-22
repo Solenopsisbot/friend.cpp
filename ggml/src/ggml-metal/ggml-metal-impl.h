@@ -1318,6 +1318,19 @@ typedef struct {
     float    eps;
 } ggml_metal_kargs_glu_fwht;
 
+// friend.cpp: one decode step of the short causal conv (d_conv = 4): CONCAT(state, x) +
+// CPY(new state -> cache) + SSM_CONV + SILU. Strides in floats.
+typedef struct {
+    int32_t  C;        // channels
+    int32_t  n_seqs;
+    int64_t  st_c;     // gathered state: channel stride (d_conv - 1 = 3 when contiguous)
+    int64_t  st_s;     //                 seq stride
+    int64_t  x_c;      // new input column: channel stride
+    int64_t  x_s;      //                   seq stride
+    int64_t  out_s;    // conv output: seq stride
+    int64_t  dst_s;    // state cache destination: seq stride (channel stride 3)
+} ggml_metal_kargs_ssm_conv_step;
+
 typedef struct {
     int64_t  ne0;
     float    start;

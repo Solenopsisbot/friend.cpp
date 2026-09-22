@@ -475,7 +475,12 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn_linear(
     // GPU device in the model is Metal.
     static const bool gdn_state_rows_env = getenv("GGML_GDN_STATE_GATHER") == nullptr;
 
-    const bool gdn_state_rows = gdn_state_rows_env && gdn_state_rows_dev_ok && cparams.n_rs_seq > 0;
+    // friend.cpp: also for single-sequence batches without rollback snapshots (n_rs_seq == 0,
+    // K = 1): otherwise every layer gathers its full recurrent state (48 x 3 MB per token on
+    // a 27B) just to read it once. Multi-sequence batches keep the gather: rows mode's cache
+    // relocation has a known multi-sequence hazard (see build_rs_cache_view).
+    const bool gdn_state_rows = gdn_state_rows_env && gdn_state_rows_dev_ok &&
+        (cparams.n_rs_seq > 0 || n_seqs == 1);
 
     ggml_tensor * state;
     if (gdn_state_rows) {

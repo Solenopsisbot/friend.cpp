@@ -199,6 +199,8 @@ static std::mutex                 g_op_stats_mtx;
 static std::map<std::string, int> g_op_stats;
 static std::atomic<int>           g_op_stats_barriers{0};
 static std::map<int, std::string> g_op_stats_seq; // idx -> key of the most recent graph (level 2)
+static thread_local bool          g_op_stats_pending_barrier = false;
+static thread_local int           g_op_stats_barrier_line    = 0;
 
 bool ggml_metal_op_stats_enabled(void) {
     static const bool enabled = getenv("GGML_METAL_TIMING") != nullptr;
@@ -216,13 +218,19 @@ static void ggml_metal_op_stats_record(ggml_metal_op_t ctx, int idx, int n_fuse)
         if (t->op == GGML_OP_MUL_MAT && t->src[0]) {
             key += std::string("[") + ggml_type_name(t->src[0]->type) + "]";
         }
+        if (ggml_is_empty(t)) {
+            key += "(empty)";
+        } else if (t->op == GGML_OP_GET_ROWS || t->op == GGML_OP_CPY || t->op == GGML_OP_SCALE) {
+            key += "(" + std::to_string(ggml_nelements(t)) + ")";
+        }
     }
     std::lock_guard<std::mutex> lock(g_op_stats_mtx);
     g_op_stats[key]++;
     static const bool seq = getenv("GGML_METAL_TIMING") && atoi(getenv("GGML_METAL_TIMING")) >= 2;
     if (seq) {
-        g_op_stats_seq[idx] = key + " " + ggml_get_name(ctx->node(idx + n_fuse - 1));
+        g_op_stats_seq[idx] = (g_op_stats_pending_barrier ? "|L" + std::to_string(g_op_stats_barrier_line) + " " : std::string("  ")) + key + " " + ggml_get_name(ctx->node(idx + n_fuse - 1));
     }
+    g_op_stats_pending_barrier = false;
 }
 
 void ggml_metal_op_stats_dump(int n_graphs) {
@@ -250,7 +258,13 @@ void ggml_metal_op_stats_dump(int n_graphs) {
     g_op_stats_barriers = 0;
 }
 
-static bool ggml_metal_op_concurrency_reset(ggml_metal_op_t ctx) {
+static int ggml_metal_op_friend_fused(ggml_metal_op_t ctx, int idx);
+
+// friend.cpp: every barrier site is recorded by line under GGML_METAL_TIMING=2 (the "|L123"
+// marks in the encode-order dump), so unexpected barriers can be traced to their cause
+#define ggml_metal_op_concurrency_reset(ctx) ggml_metal_op_concurrency_reset_impl(ctx, __LINE__)
+
+static bool ggml_metal_op_concurrency_reset_impl(ggml_metal_op_t ctx, int line) {
     if (!ctx->mem_ranges) {
         return true;
     }
@@ -258,6 +272,8 @@ static bool ggml_metal_op_concurrency_reset(ggml_metal_op_t ctx) {
     ggml_metal_encoder_memory_barrier(ctx->enc);
     if (ggml_metal_op_stats_enabled()) {
         g_op_stats_barriers++;
+        g_op_stats_pending_barrier = true;
+        g_op_stats_barrier_line = line;
     }
 
     ggml_mem_ranges_reset(ctx->mem_ranges);
@@ -336,6 +352,16 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
         }
     }
 
+    // friend.cpp: fused kernels whose buffers differ from the union of their graph nodes are
+    // matched before the generic concurrency check, which would test (and later register) the
+    // never-materialised intermediates and insert false barriers
+    if (ctx->use_fusion()) {
+        const int n_ff = ggml_metal_op_friend_fused(ctx, idx);
+        if (n_ff > 0) {
+            return n_ff;
+        }
+    }
+
     int n_fuse = 1;
 
     // check if the current node can run concurrently with other nodes before it
@@ -348,6 +374,25 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
     //
     {
         const bool is_concurrent = ggml_metal_op_concurrency_check(ctx, node);
+
+        // friend.cpp: GGML_METAL_TIMING=3 logs which buffer of a node forced its barrier
+        static const bool why = getenv("GGML_METAL_TIMING") && atoi(getenv("GGML_METAL_TIMING")) >= 3;
+        if (!is_concurrent && why && ctx->mem_ranges) {
+            for (int i = 0; i < GGML_MAX_SRC; ++i) {
+                if (node->src[i] && !ggml_mem_ranges_check_read(ctx->mem_ranges, node->src[i])) {
+                    fprintf(stderr, "barrier before %s: src[%d] %s (%p..+%zu) prev %s dst %p..+%zu\n", ggml_get_name(node), i, ggml_get_name(node->src[i]), node->src[i]->data, ggml_nbytes(node->src[i]),
+                            idx > 0 ? ggml_get_name(ctx->node(idx - 1)) : "-", idx > 0 ? ctx->node(idx - 1)->data : nullptr, idx > 0 ? ggml_nbytes(ctx->node(idx - 1)) : 0);
+                    {
+                        const ggml_tensor * b = node->src[i]->view_src ? node->src[i]->view_src : node->src[i];
+                        fprintf(stderr, "    base %s op %s data %p alloc %zu nbytes %zu\n", ggml_get_name(b), ggml_op_desc(b), b->data,
+                                b->buffer ? ggml_backend_buft_get_alloc_size(b->buffer->buft, b) : 0, ggml_nbytes(b));
+                    }
+                }
+            }
+            if (!ggml_mem_ranges_check_write(ctx->mem_ranges, node)) {
+                fprintf(stderr, "barrier before %s: dst (%p..+%zu)\n", ggml_get_name(node), node->data, ggml_nbytes(node));
+            }
+        }
 
         if (!is_concurrent) {
             ggml_metal_op_concurrency_reset(ctx);
@@ -668,6 +713,9 @@ int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx) {
 
     return res;
 }
+
+static int ggml_metal_op_can_fuse_ssm_conv_step(ggml_metal_op_t ctx, int idx);
+static int ggml_metal_op_ssm_conv_step(ggml_metal_op_t ctx, int idx);
 
 int ggml_metal_op_concat(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
@@ -1020,14 +1068,6 @@ static int ggml_metal_op_glu_fwht(ggml_metal_op_t ctx, int idx, const ggml_metal
 
 int ggml_metal_op_glu(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
-
-    // friend.cpp: swiglu + sign MUL + FWHT feeding a Hadamard-folded matmul
-    if (ctx->use_fusion()) {
-        const ggml_metal_glu_fwht_match gm = ggml_metal_op_can_fuse_glu_fwht(ctx, idx);
-        if (gm.n > 0) {
-            return ggml_metal_op_glu_fwht(ctx, idx, gm);
-        }
-    }
 
     ggml_metal_library_t lib = ctx->lib;
     ggml_metal_encoder_t enc = ctx->enc;
@@ -2907,15 +2947,6 @@ static int ggml_metal_op_norm_fwht(ggml_metal_op_t ctx, int idx, int n) {
     ggml_tensor * w     = mulw->src[1];
     ggml_tensor * signs = muls->src[0] == mulw ? muls->src[1] : muls->src[0];
 
-    // the encode loop only checked the leading node's ranges; the fused kernel also writes
-    // the normed row and the matmul output
-    for (int i = 1; i < n; ++i) {
-        if (!ggml_metal_op_concurrency_check(ctx, ctx->node(idx + i))) {
-            ggml_metal_op_concurrency_reset(ctx);
-            break;
-        }
-    }
-
     const int32_t N = (int32_t) mm->src[0]->ne[0];
 
     ggml_metal_kargs_norm_fwht args = {
@@ -3138,13 +3169,6 @@ static int ggml_metal_op_glu_fwht(ggml_metal_op_t ctx, int idx, const ggml_metal
     ggml_metal_library_t lib = ctx->lib;
     ggml_metal_encoder_t enc = ctx->enc;
 
-    for (int i = 1; i < m.n; ++i) {
-        if (!ggml_metal_op_concurrency_check(ctx, ctx->node(idx + i))) {
-            ggml_metal_op_concurrency_reset(ctx);
-            break;
-        }
-    }
-
     const int32_t N   = (int32_t) m.mm->src[0]->ne[0];
     const int64_t row = ggml_nelements(m.signs);
 
@@ -3173,6 +3197,205 @@ static int ggml_metal_op_glu_fwht(ggml_metal_op_t ctx, int idx, const ggml_metal
     ggml_metal_encoder_dispatch_threadgroups(enc, row / N, args.nrows, 1, N / 4, 1, 1);
 
     return m.n;
+}
+
+// friend.cpp: CONCAT(conv state, x^T) -> CPY(last 3 columns -> state cache) -> SSM_CONV -> SILU
+// for a single decode token, as one launch (kernel_ssm_conv_step_f32). Returns the number of
+// encode-list nodes consumed (4) or 0.
+static int ggml_metal_op_can_fuse_ssm_conv_step(ggml_metal_op_t ctx, int idx) {
+    static const bool disabled = getenv("GGML_METAL_CONV_STEP_DISABLE") != nullptr;
+    if (disabled || idx + 3 >= ctx->n_nodes()) {
+        return 0;
+    }
+
+    const ggml_tensor * cat  = ctx->node(idx);
+    const ggml_tensor * cpy  = ctx->node(idx + 1);
+    const ggml_tensor * conv = ctx->node(idx + 2);
+    const ggml_tensor * act  = ctx->node(idx + 3);
+
+    if (cat->op != GGML_OP_CONCAT || ggml_get_op_params_i32(cat, 0) != 0 ||
+        cpy->op != GGML_OP_CPY || conv->op != GGML_OP_SSM_CONV ||
+        act->op != GGML_OP_UNARY || ggml_get_unary_op(act) != GGML_UNARY_OP_SILU ||
+        conv->src[0] != cat || act->src[0] != conv) {
+        return 0;
+    }
+
+    const ggml_tensor * st   = cat->src[0];   // [3, C, S]
+    const ggml_tensor * x    = cat->src[1];   // [1, C, S] (transposed view of the projection)
+    const ggml_tensor * kern = conv->src[1];  // [4, C]
+    const ggml_tensor * last = cpy->src[0];   // view of cat: columns 1..3
+    const ggml_tensor * dst  = cpy->src[1];   // view of the state cache
+
+    const int64_t C = cat->ne[1];
+    const int64_t S = cat->ne[2];
+
+    if (cat->ne[0] != 4 || st->ne[0] != 3 || x->ne[0] != 1 || cat->ne[3] != 1 ||
+        kern->ne[0] != 4 || kern->ne[1] != C || !ggml_is_contiguous(kern) ||
+        cat->type != GGML_TYPE_F32 || st->type != GGML_TYPE_F32 || x->type != GGML_TYPE_F32 ||
+        kern->type != GGML_TYPE_F32 || dst->type != GGML_TYPE_F32 || act->type != GGML_TYPE_F32 ||
+        !ggml_is_contiguous(act) || conv->ne[0] != C || conv->ne[1] != 1) {
+        return 0;
+    }
+    // the copied view is exactly the last 3 columns; the cache slice is [3*C, S], contiguous rows
+    if (last->op != GGML_OP_VIEW || last->view_src != cat || last->view_offs != sizeof(float) ||
+        last->ne[0] != 3 || last->ne[1] != C || last->ne[2] != S ||
+        dst->ne[0] != 3*C || dst->nb[0] != sizeof(float) ||
+        (S > 1 && dst->ne[1] != S) || st->nb[0] != sizeof(float) ||
+        (st->nb[1] % sizeof(float)) != 0 || (x->nb[1] % sizeof(float)) != 0) {
+        return 0;
+    }
+
+    // subgraph: concat, the view, cpy, conv, silu -- the concat and conv are consumed inside
+    const int gi_cat = ctx->gf_index(idx);
+    const int gi_act = ctx->gf_index(idx + 3);
+    std::vector<int>     sub;
+    std::vector<ggml_op> sub_ops;
+    for (int k = gi_cat; k <= gi_act; ++k) {
+        const ggml_tensor * t = ctx->graph()->nodes[k];
+        if (t == cat || t == last || t == cpy || t == conv || t == act) {
+            sub.push_back(k);
+            sub_ops.push_back(t->op);
+        }
+    }
+    const int outs[2] = { ctx->gf_index(idx + 1), gi_act };
+    if (sub.size() != 5 || !ggml_can_fuse_subgraph_ext(ctx->graph(), sub.data(), (int) sub.size(), sub_ops.data(), outs, 2)) {
+        return 0;
+    }
+
+    return 4;
+}
+
+static int ggml_metal_op_ssm_conv_step(ggml_metal_op_t ctx, int idx) {
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    ggml_tensor * cat  = ctx->node(idx);
+    ggml_tensor * cpy  = ctx->node(idx + 1);
+    ggml_tensor * conv = ctx->node(idx + 2);
+    ggml_tensor * act  = ctx->node(idx + 3);
+
+    ggml_tensor * st   = cat->src[0];
+    ggml_tensor * x    = cat->src[1];
+    ggml_tensor * kern = conv->src[1];
+    ggml_tensor * dst  = cpy->src[1];
+
+    ggml_metal_kargs_ssm_conv_step args = {
+        /*.C      =*/ (int32_t) cat->ne[1],
+        /*.n_seqs =*/ (int32_t) cat->ne[2],
+        /*.st_c   =*/ (int64_t) (st->nb[1] / sizeof(float)),
+        /*.st_s   =*/ (int64_t) (st->nb[2] / sizeof(float)),
+        /*.x_c    =*/ (int64_t) (x->nb[1]  / sizeof(float)),
+        /*.x_s    =*/ (int64_t) (x->nb[2]  / sizeof(float)),
+        /*.out_s  =*/ (int64_t) (act->nb[2] / sizeof(float)),
+        /*.dst_s  =*/ (int64_t) (dst->nb[1] / sizeof(float)),
+    };
+
+    auto pipeline = ggml_metal_library_get_pipeline_ssm_conv_step(lib);
+
+    ggml_metal_encoder_set_pipeline(enc, pipeline);
+    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(st),   1);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(x),    2);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(kern), 3);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(act),  4);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(dst),  5);
+
+    const int nth = 256;
+    ggml_metal_encoder_dispatch_threadgroups(enc, (args.C + nth - 1) / nth, args.n_seqs, 1, nth, 1, 1);
+
+    return 4;
+}
+
+// friend.cpp: dispatch for the norm / glu -> Hadamard and conv-step fusions. Each declares the
+// buffers its kernel really reads and writes; concurrency is checked and registered on exactly
+// those, so the intermediates the graph describes but the kernel never materialises (and the
+// transform's keep-alive sources) cannot cause false barriers. Returns nodes consumed, or 0.
+static int ggml_metal_op_friend_fused(ggml_metal_op_t ctx, int idx) {
+    const ggml_tensor * node = ctx->node(idx);
+
+    std::vector<const ggml_tensor *> reads;
+    std::vector<const ggml_tensor *> writes;
+
+    int kind = 0;
+    int n    = 0;
+    ggml_metal_glu_fwht_match gm;
+
+    if (node->op == GGML_OP_ADD || node->op == GGML_OP_RMS_NORM) {
+        n = ggml_metal_op_can_fuse_norm_fwht(ctx, idx);
+        if (n > 0) {
+            kind = 1;
+            const bool has_add = n == 5;
+            const ggml_tensor * add  = has_add ? ctx->node(idx) : nullptr;
+            const ggml_tensor * norm = ctx->node(idx + n - 4);
+            const ggml_tensor * mulw = ctx->node(idx + n - 3);
+            const ggml_tensor * muls = ctx->node(idx + n - 2);
+            const ggml_tensor * mm   = ctx->node(idx + n - 1);
+            reads  = { has_add ? add->src[0] : norm->src[0], mulw->src[1], muls->src[0] == mulw ? muls->src[1] : muls->src[0] };
+            if (has_add) {
+                reads.push_back(add->src[1]);
+                writes.push_back(add);
+            }
+            writes.push_back(mulw);
+            writes.push_back(mm);
+        }
+    }
+    if (kind == 0 && (node->op == GGML_OP_RMS_NORM || node->op == GGML_OP_GLU)) {
+        gm = ggml_metal_op_can_fuse_glu_fwht(ctx, idx);
+        if (gm.n > 0) {
+            kind = 2;
+            n = gm.n;
+            reads  = { gm.g, gm.x, gm.signs };
+            if (gm.norm) {
+                reads.push_back(gm.w);
+            }
+            writes = { gm.mm };
+        }
+    }
+    if (kind == 0 && node->op == GGML_OP_CONCAT) {
+        n = ggml_metal_op_can_fuse_ssm_conv_step(ctx, idx);
+        if (n > 0) {
+            kind = 3;
+            reads  = { node->src[0], node->src[1], ctx->node(idx + 2)->src[1] };
+            writes = { ctx->node(idx + 3), ctx->node(idx + 1)->src[1] };
+        }
+    }
+    if (kind == 0) {
+        return 0;
+    }
+
+    if (ctx->mem_ranges) {
+        bool ok = true;
+        for (const ggml_tensor * t : reads) {
+            ok = ok && ggml_mem_ranges_check_read(ctx->mem_ranges, t);
+        }
+        for (const ggml_tensor * t : writes) {
+            ok = ok && ggml_mem_ranges_check_write(ctx->mem_ranges, t);
+        }
+        if (!ok) {
+            ggml_metal_op_concurrency_reset(ctx);
+        }
+    }
+
+    switch (kind) {
+        case 1: ggml_metal_op_norm_fwht(ctx, idx, n); break;
+        case 2: ggml_metal_op_glu_fwht(ctx, idx, gm); break;
+        case 3: ggml_metal_op_ssm_conv_step(ctx, idx); break;
+    }
+
+    if (ctx->mem_ranges) {
+        for (const ggml_tensor * t : reads) {
+            ggml_mem_ranges_add_read(ctx->mem_ranges, t);
+        }
+        for (const ggml_tensor * t : writes) {
+            ggml_mem_ranges_add_write(ctx->mem_ranges, t);
+        }
+    }
+
+    if (ggml_metal_op_stats_enabled()) {
+        ggml_metal_op_stats_record(ctx, idx, n);
+    }
+
+    return n;
 }
 
 int ggml_metal_op_pool_2d(ggml_metal_op_t ctx, int idx) {
@@ -5125,12 +5348,6 @@ int ggml_metal_op_bin(ggml_metal_op_t ctx, int idx) {
     if (ctx->use_fusion() && ggml_metal_op_can_fuse_fwht_signed(ctx, idx)) {
         return ggml_metal_op_fwht_signed(ctx, idx);
     }
-    if (ctx->use_fusion() && fusion == nullptr && ctx->node(idx)->op == GGML_OP_ADD) {
-        const int n_nf = ggml_metal_op_can_fuse_norm_fwht(ctx, idx);
-        if (n_nf > 0) {
-            return ggml_metal_op_norm_fwht(ctx, idx, n_nf);
-        }
-    }
 
     ggml_tensor * op = ctx->node(idx);
 
@@ -5401,18 +5618,6 @@ int ggml_metal_op_group_norm(ggml_metal_op_t ctx, int idx) {
 int ggml_metal_op_norm(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
 
-    // friend.cpp: RMS_NORM + MUL + sign MUL + FWHT with no residual ADD in front, or the
-    // per-head gated norm of a GDN output through to its folded output projection
-    if (ctx->use_fusion() && op->op == GGML_OP_RMS_NORM) {
-        const int n_nf = ggml_metal_op_can_fuse_norm_fwht(ctx, idx);
-        if (n_nf > 0) {
-            return ggml_metal_op_norm_fwht(ctx, idx, n_nf);
-        }
-        const ggml_metal_glu_fwht_match gm = ggml_metal_op_can_fuse_glu_fwht(ctx, idx);
-        if (gm.n > 0) {
-            return ggml_metal_op_glu_fwht(ctx, idx, gm);
-        }
-    }
 
     ggml_metal_library_t lib = ctx->lib;
     ggml_metal_encoder_t enc = ctx->enc;
