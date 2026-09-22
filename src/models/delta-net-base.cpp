@@ -551,7 +551,8 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
     const int64_t n_seqs       = v->ne[3];
     const int64_t n_seq_tokens = q->ne[2];
 
-    const bool keep = cparams.n_rs_seq > 0;
+    // rows mode implies the snapshot (ring) layout; with n_rs_seq == 0 that is one slot, K = 1
+    const bool keep = cparams.n_rs_seq > 0 || state_rows != nullptr;
 
     GGML_ASSERT(state_rows == nullptr || keep); // rows mode is a ring-path optimization
 
