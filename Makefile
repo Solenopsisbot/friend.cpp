@@ -704,7 +704,9 @@ ggml-vulkan-shaders-noext.o: ggml/src/ggml-vulkan-shaders-noext.cpp ggml/include
 # intermediate objects
 llama.o: src/llama.cpp ggml/include/ggml.h ggml/include/ggml-alloc.h ggml/include/ggml-backend.h ggml/include/ggml-cuda.h ggml/include/ggml-metal.h include/llama.h otherarch/llama-util.h src/llama-chat.cpp src/llama-mmap.cpp src/llama-context.cpp src/llama-adapter.cpp src/llama-arch.cpp src/llama-batch.cpp src/llama-vocab.cpp src/llama-grammar.cpp src/llama-sampler.cpp src/llama-kv-cache.cpp src/llama-kv-cache-dsa.cpp src/llama-kv-cache-dsv4.cpp src/llama-kv-cache-iswa.cpp src/llama-kv-cache-msa.cpp src/llama-memory-hybrid.cpp src/llama-memory-hybrid-iswa.cpp src/llama-memory-recurrent.cpp src/llama-model-loader.cpp src/llama-model-saver.cpp src/llama-quant.cpp src/llama-hparams.cpp src/llama-graph.cpp src/llama-io.cpp src/llama-memory.cpp common/fit.cpp ggml/include/ggml.h ggml/include/ggml-cpu.h ggml/include/ggml-cuda.h include/llama.h otherarch/llama-util.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
-llama-model.o: src/llama-model.cpp src/llama-model.h src/models/models.h ggml/include/ggml.h include/llama.h
+# friend.cpp: the model graphs are #included into llama-model.cpp (unity build), so editing one
+# must rebuild it
+llama-model.o: src/llama-model.cpp src/llama-model.h src/models/models.h $(wildcard src/models/*.cpp) ggml/include/ggml.h include/llama.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 common.o: common/common.cpp common/common.h common/log.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
