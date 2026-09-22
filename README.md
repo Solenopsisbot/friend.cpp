@@ -206,7 +206,7 @@ This is a build-from-source project with no release binaries.
 - **CUDA (Maxwell / GTX 970):** built and run. The 1-bit dp4a-free kernels are
   verified here. The CUDA code also compiles for sm_61 through sm_120, but only
   the 970 (sm_52) has been run on real hardware so far.
-- **Vulkan:** builds, but has not been run on real hardware yet.
+- **Vulkan:** run on a GTX 970 (Maxwell): Q1_0 and PQ2_0 about 32 tok/s generation on Bonsai-8B, PTQ1_0 about 14; test-backend-ops passes, and PQ2_0 greedy output matches CUDA. CUDA is still faster on that card for Q1_0 and PQ2_0; Vulkan wins for PTQ1_0.
 - **HIP (AMD):** not built yet.
 
 See [FRIEND.md -- limits](FRIEND.md#limits-and-not-yet-verified) for the honest
