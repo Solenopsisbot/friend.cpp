@@ -340,6 +340,92 @@ static void dequantize_block_cont_cuda(const void * __restrict__ vx, dst_t * __r
     dequantize_block_cuda<qk, qr, dequantize_kernel, dst_t>(vx, y, k, 1, 1, 1, k/qk, k/qk, k/qk, stream);
 }
 
+// friend.cpp: fast contiguous Q1_0 / PQ2_0 -> f32 dequantization.
+//
+// On GPUs without fast fp16 (Maxwell) and outside the MMQ range, prompt processing runs these
+// types as "dequantize the whole weight matrix to f32, then cublasSgemm". The generic
+// dequantize_block kernel writes two scalar floats per thread with a stride of two, which on a
+// GTX 970 only reached ~100 GB/s and cost ~9% of every prefill matmul (a 4096x12288 matrix is
+// 201 MB of f32). Here each thread expands one weight byte and writes it with float4 stores, so
+// a warp writes one contiguous run and the pass runs close to write bandwidth: the prefill matmuls
+// get 2-4% faster (the f32 write itself, ~31 GB per 8B-model ubatch, is the remaining floor). The
+// values are exactly the stock ones (+-d for Q1_0, (c - 1) * d for PQ2_0): bit-identical results.
+// FRIEND_CUDA_NO_FAST_DEQUANT=1 selects the generic kernel for A/B checks.
+
+// Q1_0: 16 threads per 128-weight block, one qs byte (8 weights) per thread.
+static __global__ void dequantize_q1_0_f32_fast(const block_q1_0 * __restrict__ x, float4 * __restrict__ y, const int64_t nb) {
+    const int64_t t  = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    const int64_t ib = t / (QK1_0 / 8);
+    const int     j  = t % (QK1_0 / 8);
+    if (ib >= nb) {
+        return;
+    }
+    const float d = __half2float(x[ib].d);
+    const uint32_t bits = x[ib].qs[j];
+
+    float4 lo, hi;
+    lo.x = (bits & 0x01u) ? d : -d;
+    lo.y = (bits & 0x02u) ? d : -d;
+    lo.z = (bits & 0x04u) ? d : -d;
+    lo.w = (bits & 0x08u) ? d : -d;
+    hi.x = (bits & 0x10u) ? d : -d;
+    hi.y = (bits & 0x20u) ? d : -d;
+    hi.z = (bits & 0x40u) ? d : -d;
+    hi.w = (bits & 0x80u) ? d : -d;
+
+    y[ib * (QK1_0 / 4) + 2 * j + 0] = lo;
+    y[ib * (QK1_0 / 4) + 2 * j + 1] = hi;
+}
+
+// PQ2_0: 32 threads per 128-weight block, one qs byte (4 two-bit codes) per thread.
+static __global__ void dequantize_pq2_0_f32_fast(const block_pq2_0 * __restrict__ x, float4 * __restrict__ y, const int64_t nb) {
+    const int64_t t  = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+    const int64_t ib = t / (QK_PQ2_0 / 4);
+    const int     j  = t % (QK_PQ2_0 / 4);
+    if (ib >= nb) {
+        return;
+    }
+    const float d = __half2float(x[ib].d);
+    const uint32_t q = x[ib].qs[j];
+
+    float4 v;
+    v.x = (float) ((int) ( q       & 3u) - 1) * d;
+    v.y = (float) ((int) ((q >> 2) & 3u) - 1) * d;
+    v.z = (float) ((int) ((q >> 4) & 3u) - 1) * d;
+    v.w = (float) ((int) ( q >> 6      ) - 1) * d;
+
+    y[ib * (QK_PQ2_0 / 4) + j] = v;
+}
+
+static bool friend_fast_dequant_enabled() {
+    static const bool disabled = getenv("FRIEND_CUDA_NO_FAST_DEQUANT") != nullptr;
+    return !disabled;
+}
+
+static void dequantize_row_q1_0_f32_cuda(const void * __restrict__ vx, float * __restrict__ y, const int64_t k, cudaStream_t stream) {
+    GGML_ASSERT(k % QK1_0 == 0);
+    const int64_t nb = k / QK1_0;
+    if (!friend_fast_dequant_enabled() || ((uintptr_t) y % sizeof(float4)) != 0) {
+        dequantize_block_cont_cuda<QK1_0, QR1_0, dequantize_q1_0>(vx, y, k, stream);
+        return;
+    }
+    const int64_t nthreads = nb * (QK1_0 / 8);
+    const int     nblocks  = (int) ((nthreads + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE);
+    dequantize_q1_0_f32_fast<<<nblocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>((const block_q1_0 *) vx, (float4 *) y, nb);
+}
+
+static void dequantize_row_pq2_0_f32_cuda(const void * __restrict__ vx, float * __restrict__ y, const int64_t k, cudaStream_t stream) {
+    GGML_ASSERT(k % QK_PQ2_0 == 0);
+    const int64_t nb = k / QK_PQ2_0;
+    if (!friend_fast_dequant_enabled() || ((uintptr_t) y % sizeof(float4)) != 0) {
+        dequantize_block_cont_cuda<QK_PQ2_0, QR_PQ2_0, dequantize_pq2_0>(vx, y, k, stream);
+        return;
+    }
+    const int64_t nthreads = nb * (QK_PQ2_0 / 4);
+    const int     nblocks  = (int) ((nthreads + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE);
+    dequantize_pq2_0_f32_fast<<<nblocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>((const block_pq2_0 *) vx, (float4 *) y, nb);
+}
+
 static void dequantize_block_q8_0_f16_cuda(const void * __restrict__ vx, half * __restrict__ y, const int64_t k, cudaStream_t stream) {
     const int num_blocks = (k + CUDA_Q8_0_NE_ALIGN - 1) / CUDA_Q8_0_NE_ALIGN;
     if (k % CUDA_Q8_0_NE_ALIGN == 0) {
@@ -672,11 +758,11 @@ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
 to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
     switch (type) {
         case GGML_TYPE_Q1_0:
-            return dequantize_block_cont_cuda<QK1_0, QR1_0, dequantize_q1_0>;
+            return dequantize_row_q1_0_f32_cuda; // friend.cpp: float4 stores, same values
         case GGML_TYPE_Q2_0:
             return dequantize_block_cont_cuda<QK2_0, QR2_0, dequantize_q2_0>;
         case GGML_TYPE_PQ2_0:
-            return dequantize_block_cont_cuda<QK_PQ2_0, QR_PQ2_0, dequantize_pq2_0>;
+            return dequantize_row_pq2_0_f32_cuda; // friend.cpp: float4 stores, same values
         case GGML_TYPE_PTQ1_0:
 #if !defined(GGML_USE_HIP)
             return dequantize_row_ptq1_0_cuda;
