@@ -1640,6 +1640,22 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_norm_fwht(ggml_m
     return res;
 }
 
+// friend.cpp: fused SWIGLU (+ per-head norm, + head permutation) + sign MUL + FWHT (see kernel_glu_fwht)
+ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_glu_fwht(ggml_metal_library_t lib, int n) {
+    char base[256];
+    char name[256];
+
+    snprintf(base, 256, "kernel_glu_fwht_%d", n);
+    snprintf(name, 256, "%s", base);
+
+    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+    if (!res.pipeline) {
+        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
+    }
+
+    return res;
+}
+
 // note: reuse the argsort kernel for the bitonic top_k fallback
 ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_top_k(ggml_metal_library_t lib, const ggml_tensor * op) {
     assert(op->op == GGML_OP_TOP_K);

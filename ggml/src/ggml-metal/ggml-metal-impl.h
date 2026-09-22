@@ -1304,6 +1304,20 @@ typedef struct {
     float    eps;
 } ggml_metal_kargs_norm_fwht;
 
+// friend.cpp: SWIGLU (+ per-head RMS_NORM * weight on the value side, + head permutation)
+// + MUL(signs) + FWHT -- the input side of a Hadamard-folded down / output projection.
+typedef struct {
+    int32_t  ne0;      // row width of the transform input (the folded matmul's K)
+    int32_t  nrows;
+    int32_t  norm;     // value side is rms_norm(x per head of hd) * w
+    int32_t  hd;       // head dim for the norm and the permutation (128)
+    int32_t  perm_nk;  // tiled [hd, nk, rep] -> grouped [hd, rep, nk]; rep == 1: no permutation
+    int32_t  perm_rep;
+    int64_t  nbg;      // row stride of the gate, in floats
+    int64_t  nbx;      // row stride of the value side, in floats
+    float    eps;
+} ggml_metal_kargs_glu_fwht;
+
 typedef struct {
     int64_t  ne0;
     float    start;

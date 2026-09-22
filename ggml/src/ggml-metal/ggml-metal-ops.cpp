@@ -1008,8 +1008,26 @@ int ggml_metal_op_unary(ggml_metal_op_t ctx, int idx) {
     return 1;
 }
 
+struct ggml_metal_glu_fwht_match {
+    int n = 0;                       // encode-list nodes consumed; 0 = no match
+    const ggml_tensor * norm = nullptr, * mulw = nullptr, * glu = nullptr, * muls = nullptr, * mm = nullptr;
+    const ggml_tensor * g = nullptr, * x = nullptr, * w = nullptr, * signs = nullptr;
+    int hd = 0, nk = 1, rep = 1;
+};
+
+static ggml_metal_glu_fwht_match ggml_metal_op_can_fuse_glu_fwht(ggml_metal_op_t ctx, int idx);
+static int ggml_metal_op_glu_fwht(ggml_metal_op_t ctx, int idx, const ggml_metal_glu_fwht_match & m);
+
 int ggml_metal_op_glu(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
+
+    // friend.cpp: swiglu + sign MUL + FWHT feeding a Hadamard-folded matmul
+    if (ctx->use_fusion()) {
+        const ggml_metal_glu_fwht_match gm = ggml_metal_op_can_fuse_glu_fwht(ctx, idx);
+        if (gm.n > 0) {
+            return ggml_metal_op_glu_fwht(ctx, idx, gm);
+        }
+    }
 
     ggml_metal_library_t lib = ctx->lib;
     ggml_metal_encoder_t enc = ctx->enc;
@@ -2923,6 +2941,238 @@ static int ggml_metal_op_norm_fwht(ggml_metal_op_t ctx, int idx, int n) {
     ggml_metal_encoder_dispatch_threadgroups(enc, args.ne0 / N, args.nrows, 1, N / 4, 1, 1);
 
     return n;
+}
+
+// friend.cpp: the path from a gated activation to a Hadamard-folded matmul,
+//   [RMS_NORM -> MUL(w)] -> GLU(swiglu, split) -> [RESHAPE -> PERMUTE(0,2,1,3) -> CONT]
+//     -> MUL(signs) -> RESHAPE -> MUL_MAT(Hadamard hint)
+// as one launch (kernel_glu_fwht). With the norm this is the GDN output (per-head gated norm,
+// then the tiled -> grouped head permutation of gdn_v_grouped folds); without it, the FFN
+// swiglu feeding ffn_down. Up to four dependent launches become one.
+
+// follows RESHAPE / VIEW (no-op view) sources back to the producing op
+static const ggml_tensor * ggml_metal_skip_reshapes(const ggml_tensor * t) {
+    while (t && (t->op == GGML_OP_RESHAPE || (t->op == GGML_OP_VIEW && t->view_offs == 0 &&
+            ggml_nelements(t) == ggml_nelements(t->src[0]) && ggml_is_contiguous(t)))) {
+        t = t->src[0];
+    }
+    return t;
+}
+
+static ggml_metal_glu_fwht_match ggml_metal_op_can_fuse_glu_fwht(ggml_metal_op_t ctx, int idx) {
+    ggml_metal_glu_fwht_match res;
+    ggml_metal_glu_fwht_match m;
+
+    static const bool disabled = getenv("GGML_METAL_GLU_FWHT_DISABLE") != nullptr;
+    if (disabled) {
+        return res;
+    }
+
+    int pos = idx;
+    const int n_nodes = ctx->n_nodes();
+
+    if (ctx->node(pos)->op == GGML_OP_RMS_NORM) {
+        if (pos + 1 >= n_nodes) {
+            return res;
+        }
+        m.norm = ctx->node(pos);
+        m.mulw = ctx->node(pos + 1);
+        if (m.mulw->op != GGML_OP_MUL || m.mulw->src[0] != m.norm) {
+            return res;
+        }
+        pos += 2;
+    }
+    if (pos + 2 >= n_nodes) {
+        return res;
+    }
+    m.glu = ctx->node(pos++);
+    if (m.glu->op != GGML_OP_GLU || m.glu->src[1] == nullptr ||
+        ggml_get_glu_op(m.glu) != GGML_GLU_OP_SWIGLU || ggml_get_op_params_i32(m.glu, 1) != 0) {
+        return res;
+    }
+    if (m.norm && m.glu->src[1] != m.mulw) {
+        return res;
+    }
+
+    const ggml_tensor * cont = nullptr;
+    if (ctx->node(pos)->op == GGML_OP_CONT) {
+        cont = ctx->node(pos++);
+    }
+    if (pos + 1 >= n_nodes) {
+        return res;
+    }
+    m.muls = ctx->node(pos);
+    m.mm   = ctx->node(pos + 1);
+    if (m.muls->op != GGML_OP_MUL || m.mm->op != GGML_OP_MUL_MAT ||
+        ggml_get_op_params_i32(m.mm, 1) != GGML_HINT_SRC0_IS_HADAMARD) {
+        return res;
+    }
+
+    // data flow, through the view ops
+    if (ggml_metal_skip_reshapes(m.mm->src[1]) != m.muls) {
+        return res;
+    }
+    const ggml_tensor * mx = ggml_metal_skip_reshapes(m.muls->src[0]);
+    const ggml_tensor * ms = m.muls->src[1];
+    if (mx != (cont ? cont : m.glu)) {
+        std::swap(mx, ms);
+        mx = ggml_metal_skip_reshapes(mx);
+        if (mx != (cont ? cont : m.glu)) {
+            return res;
+        }
+    }
+    m.signs = ms;
+
+    if (cont) {
+        // CONT(PERMUTE(RESHAPE_4D(glu), 0, 2, 1, 3)): tiled [hd, nk, rep] -> grouped [hd, rep, nk]
+        const ggml_tensor * perm = cont->src[0];
+        if (perm == nullptr || perm->op != GGML_OP_PERMUTE) {
+            return res;
+        }
+        const int32_t * ax = (const int32_t *) perm->op_params;
+        if (ax[0] != 0 || ax[1] != 2 || ax[2] != 1 || ax[3] != 3) {
+            return res;
+        }
+        const ggml_tensor * r4 = perm->src[0];
+        if (r4 == nullptr || r4->op != GGML_OP_RESHAPE || ggml_metal_skip_reshapes(r4) != m.glu) {
+            return res;
+        }
+        m.hd  = (int) r4->ne[0];
+        m.nk  = (int) r4->ne[1];
+        m.rep = (int) r4->ne[2];
+    }
+
+    m.g = m.glu->src[0];
+    m.x = m.glu->src[1];
+    if (m.norm) {
+        m.w = m.mulw->src[1];
+        const int hd_norm = (int) m.norm->ne[0];
+        if (m.hd != 0 && m.hd != hd_norm) {
+            return res;
+        }
+        m.hd = hd_norm;
+        m.x  = m.norm->src[0];
+    }
+
+    const int64_t N = m.mm->src[0]->ne[0];
+
+    const int64_t row = ggml_nelements(m.signs);           // the sign vector spans one token row
+    if (row <= 0 || ggml_nelements(m.glu) % row != 0 || row % N != 0 || row % 4 != 0 ||
+        !(N == 512 || N == 1024 || N == 2048)) {
+        return res;
+    }
+    const int64_t nrows = ggml_nelements(m.glu) / row;
+
+    const bool heads = m.norm || m.rep > 1;
+    // the kernel's per-head norm is one simdgroup: 32 lanes x float4 = 128
+    if (heads && (m.hd != 128 || row % m.hd != 0 ||
+                  (m.rep > 1 && (int64_t) m.hd * m.nk * m.rep != row))) {
+        return res;
+    }
+
+    // types, contiguity: the kernel reads float4 rows of g and x at a row stride
+    const auto row_ok = [&](const ggml_tensor * t) {
+        return t->type == GGML_TYPE_F32 && t->nb[0] == sizeof(float) && ggml_nelements(t) == nrows * row &&
+            ggml_is_contiguous_rows(t) && (t->nb[1] % 16) == 0;
+    };
+    if (!row_ok(m.g) || !row_ok(m.x) || !ggml_is_contiguous(m.g) || !ggml_is_contiguous(m.x) ||
+        m.glu->type != GGML_TYPE_F32 || m.muls->type != GGML_TYPE_F32 || m.mm->type != GGML_TYPE_F32 ||
+        m.signs->type != GGML_TYPE_F32 || !ggml_is_contiguous(m.signs) || !ggml_is_contiguous(m.mm) ||
+        ggml_nelements(m.mm) != nrows * row) {
+        return res;
+    }
+    if (m.norm && (m.w->type != GGML_TYPE_F32 || ggml_nelements(m.w) != m.hd || !ggml_is_contiguous(m.w) ||
+                   m.norm->type != GGML_TYPE_F32 || m.mulw->type != GGML_TYPE_F32)) {
+        return res;
+    }
+
+    // every node of the chain (views included) must be consumed only inside it
+    const int gi_first = ctx->gf_index(idx);
+    const int gi_last  = ctx->gf_index(pos + 1);
+    std::vector<const ggml_tensor *> chain;
+    for (const ggml_tensor * t = m.mm; t != nullptr; ) {
+        chain.push_back(t);
+        if (t == (m.norm ? m.norm : m.glu)) {
+            break;
+        }
+        const ggml_tensor * next = nullptr;
+        if (t == m.mm)        next = m.mm->src[1];
+        else if (t == m.muls) next = (m.muls->src[0] == m.signs) ? m.muls->src[1] : m.muls->src[0];
+        else if (t == m.glu)  next = m.mulw;
+        else if (t == m.mulw) next = m.norm;
+        else                  next = t->src[0];
+        t = next;
+    }
+    std::vector<int>     sub;
+    std::vector<ggml_op> sub_ops;
+    for (int k = gi_first; k <= gi_last; ++k) {
+        const ggml_tensor * t = ctx->graph()->nodes[k];
+        if (std::find(chain.begin(), chain.end(), t) != chain.end()) {
+            sub.push_back(k);
+            sub_ops.push_back(t->op);
+        }
+    }
+    if (sub.size() != chain.size() || sub.size() > 30) {
+        return res;
+    }
+    const int out = gi_last;
+    if (!ggml_can_fuse_subgraph_ext(ctx->graph(), sub.data(), (int) sub.size(), sub_ops.data(), &out, 1)) {
+        return res;
+    }
+
+    // threadgroups read (permuted) elements of the whole row while writing their block
+    const auto overlaps = [](const ggml_tensor * a, const ggml_tensor * b) {
+        const char * a0 = (const char *) a->data;
+        const char * b0 = (const char *) b->data;
+        return a0 != nullptr && b0 != nullptr && a0 < b0 + ggml_nbytes(b) && b0 < a0 + ggml_nbytes(a);
+    };
+    if (overlaps(m.mm, m.g) || overlaps(m.mm, m.x)) {
+        return res;
+    }
+
+    m.n = pos + 2 - idx;
+    return m;
+}
+
+static int ggml_metal_op_glu_fwht(ggml_metal_op_t ctx, int idx, const ggml_metal_glu_fwht_match & m) {
+    ggml_metal_library_t lib = ctx->lib;
+    ggml_metal_encoder_t enc = ctx->enc;
+
+    for (int i = 1; i < m.n; ++i) {
+        if (!ggml_metal_op_concurrency_check(ctx, ctx->node(idx + i))) {
+            ggml_metal_op_concurrency_reset(ctx);
+            break;
+        }
+    }
+
+    const int32_t N   = (int32_t) m.mm->src[0]->ne[0];
+    const int64_t row = ggml_nelements(m.signs);
+
+    ggml_metal_kargs_glu_fwht args = {
+        /*.ne0      =*/ (int32_t) row,
+        /*.nrows    =*/ (int32_t) (ggml_nelements(m.glu) / row),
+        /*.norm     =*/ m.norm ? 1 : 0,
+        /*.hd       =*/ m.hd > 0 ? m.hd : 1,
+        /*.perm_nk  =*/ m.nk,
+        /*.perm_rep =*/ m.rep,
+        /*.nbg      =*/ (int64_t) row,
+        /*.nbx      =*/ (int64_t) row,
+        /*.eps      =*/ m.norm ? ggml_get_op_params_f32(m.norm, 0) : 0.0f,
+    };
+
+    auto pipeline = ggml_metal_library_get_pipeline_glu_fwht(lib, N);
+
+    ggml_metal_encoder_set_pipeline(enc, pipeline);
+    ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(m.g),     1);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(m.x),     2);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(m.norm ? m.w : m.signs), 3);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(m.signs), 4);
+    ggml_metal_encoder_set_buffer  (enc, ggml_metal_get_buffer_id(m.mm),    5);
+
+    ggml_metal_encoder_dispatch_threadgroups(enc, row / N, args.nrows, 1, N / 4, 1, 1);
+
+    return m.n;
 }
 
 int ggml_metal_op_pool_2d(ggml_metal_op_t ctx, int idx) {
@@ -5151,11 +5401,16 @@ int ggml_metal_op_group_norm(ggml_metal_op_t ctx, int idx) {
 int ggml_metal_op_norm(ggml_metal_op_t ctx, int idx) {
     ggml_tensor * op = ctx->node(idx);
 
-    // friend.cpp: RMS_NORM + MUL + sign MUL + FWHT with no residual ADD in front
+    // friend.cpp: RMS_NORM + MUL + sign MUL + FWHT with no residual ADD in front, or the
+    // per-head gated norm of a GDN output through to its folded output projection
     if (ctx->use_fusion() && op->op == GGML_OP_RMS_NORM) {
         const int n_nf = ggml_metal_op_can_fuse_norm_fwht(ctx, idx);
         if (n_nf > 0) {
             return ggml_metal_op_norm_fwht(ctx, idx, n_nf);
+        }
+        const ggml_metal_glu_fwht_match gm = ggml_metal_op_can_fuse_glu_fwht(ctx, idx);
+        if (gm.n > 0) {
+            return ggml_metal_op_glu_fwht(ctx, idx, gm);
         }
     }
 
