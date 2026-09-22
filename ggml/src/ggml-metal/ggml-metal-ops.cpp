@@ -2353,6 +2353,7 @@ int ggml_metal_op_gated_delta_net(ggml_metal_op_t ctx, int idx) {
         /*.nb2  =*/ nb2,
         /*.nb3  =*/ nb3,
         /*.nb_out =*/ nb_out,
+        /*.qk_l2_eps =*/ ggml_get_op_params_i32(op, 2) != 0 ? ggml_get_op_params_f32(op, 3) : 0.0f,
     };
 
     ggml_metal_encoder_set_pipeline(enc, pipeline);

@@ -6529,6 +6529,16 @@ void ggml_gated_delta_net_set_raw_gates(
     gdn->src[8] = a;
 }
 
+void ggml_gated_delta_net_set_qk_l2(
+        struct ggml_tensor  * gdn,
+        float                 eps) {
+    GGML_ASSERT(gdn->op == GGML_OP_GATED_DELTA_NET);
+    GGML_ASSERT(gdn->src[0]->ne[0] == gdn->src[1]->ne[0]);
+
+    ggml_set_op_params_i32(gdn, 2, 1);
+    ggml_set_op_params_f32(gdn, 3, eps);
+}
+
 // ggml_lightning_indexer
 
 struct ggml_tensor * ggml_lightning_indexer(
