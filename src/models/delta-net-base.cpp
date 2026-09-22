@@ -590,6 +590,9 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
     if (raw) {
         ggml_gated_delta_net_set_raw_gates(gdn_out, gdn_raw_dt_bias, gdn_raw_a);
     }
+    if (gdn_qk_l2_eps >= 0.0f) {
+        ggml_gated_delta_net_set_qk_l2(gdn_out, gdn_qk_l2_eps);
+    }
     if (n_seq_tokens > 1) {
         res->add_fused_node({LLM_FUSED_OP_GDN_CH, gdn_out, il});
     } else {

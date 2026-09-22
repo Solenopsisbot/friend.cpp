@@ -147,7 +147,11 @@ llama_model_qwen35::graph::graph(const llama_model & model, const llm_graph_para
         if (reg_name == nullptr) {
             gdn_state_rows_dev_ok = false;
             gdn_raw_gates_dev_ok  = false;
+            gdn_qk_l2_dev_ok      = false;
             break;
+        }
+        if (strcmp(reg_name, "MTL") != 0 && strcmp(reg_name, "CPU") != 0) {
+            gdn_qk_l2_dev_ok = false;
         }
         // integrated GPUs (e.g. unified-memory CUDA devices) report IGPU, not GPU
         const bool is_gpu = ggml_backend_dev_type(ldev.dev) == GGML_BACKEND_DEVICE_TYPE_GPU ||
@@ -538,6 +542,13 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn_linear(
             nb1_qkv,
             nb1_qkv * n_seq_tokens,
             0);
+    // friend.cpp: on CPU/Metal the fused (rows-mode) GDN l2-normalises q and k itself -- two
+    // dependent launches fewer per layer. GGML_GDN_QK_L2_UNFOLD=1 keeps the graph norm.
+    static const bool qk_l2_unfold = getenv("GGML_GDN_QK_L2_UNFOLD") != nullptr;
+    const bool qk_l2_fold = !qk_l2_unfold && gdn_qk_l2_dev_ok && gdn_state_rows && head_k_dim == head_v_dim;
+    gdn_qk_l2_eps = qk_l2_fold ? eps_norm : -1.0f;
+
+    if (!qk_l2_fold) {
     qk_conv = build_gdn_l2_norm(ctx0, qk_conv, eps_norm);
     cb(qk_conv, "qk_conv_l2", il);
 
@@ -545,6 +556,7 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn_linear(
             qk_conv->nb[1], qk_conv->nb[2], qk_conv->nb[3], 0);
     k_conv = ggml_view_4d(ctx0, qk_conv, head_k_dim, num_k_heads, n_seq_tokens, n_seqs,
             qk_conv->nb[1], qk_conv->nb[2], qk_conv->nb[3], num_k_heads * qk_conv->nb[1]);
+    }
 
     //q_conv = ggml_cont_4d(ctx0, q_conv, head_k_dim, num_k_heads, n_seq_tokens, n_seqs);
     //k_conv = ggml_cont_4d(ctx0, k_conv, head_k_dim, num_k_heads, n_seq_tokens, n_seqs);

@@ -137,6 +137,7 @@
 #define FC_GATED_DELTA_NET             1600
 #define FC_GATED_DELTA_NET_WRITE_ROWS  (FC_GATED_DELTA_NET + 4)
 #define FC_GATED_DELTA_NET_RAW_GATES   (FC_GATED_DELTA_NET + 5)
+#define FC_GATED_DELTA_NET_QK_L2       (FC_GATED_DELTA_NET + 6) // friend.cpp
 
 // op-specific constants
 #define OP_FLASH_ATTN_EXT_NQPSG 8
@@ -1033,6 +1034,7 @@ typedef struct {
     uint64_t nb2;
     uint64_t nb3;
     uint64_t nb_out; // 0 => snapshots are appended after the attn scores (unfused)
+    float    qk_l2_eps; // friend.cpp: eps of the folded q/k l2 norm (FC_GATED_DELTA_NET_QK_L2)
 } ggml_metal_kargs_gated_delta_net;
 
 typedef struct {
