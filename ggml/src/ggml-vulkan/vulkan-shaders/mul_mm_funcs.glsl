@@ -83,11 +83,13 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
 
     const float d = float(data_a[ib].d);
 
-    [[unroll]] for (uint l = 0; l < 4; ++l) {
-        store_a(col, k_pair + l, FLOAT_TYPEV2(
-            ptq1_0_trit(ib, 0u, e0 + 2u*l)      * d,
-            ptq1_0_trit(ib, 0u, e0 + 2u*l + 1u) * d));
-    }
+    // friend.cpp: two 4-element word decodes instead of eight per-element ones (same values)
+    const vec4 lo = ptq1_0_trits4(ib, 0u, e0)      * d;
+    const vec4 hi = ptq1_0_trits4(ib, 0u, e0 + 4u) * d;
+    store_a(col, k_pair,      FLOAT_TYPEV2(lo.xy));
+    store_a(col, k_pair + 1u, FLOAT_TYPEV2(lo.zw));
+    store_a(col, k_pair + 2u, FLOAT_TYPEV2(hi.xy));
+    store_a(col, k_pair + 3u, FLOAT_TYPEV2(hi.zw));
 #elif defined(DATA_A_PQ2_0)
     // friend.cpp: PQ2_0 (Q2_0 codec at group 128), standalone per-type shader like PTQ1_0.
     // LOAD_VEC_A == 4: each idx is one byte of 2-bit codes, 32 idx per 128-weight block.
