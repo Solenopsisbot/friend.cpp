@@ -133,10 +133,8 @@ vec2 dequantize(uint ib, uint iqs, uint a_offset) {
     return vec2(ptq1_0_trit(ib, a_offset, iqs), ptq1_0_trit(ib, a_offset, iqs + 1u));
 }
 vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
-    return vec4(ptq1_0_trit(ib, a_offset, iqs),
-                ptq1_0_trit(ib, a_offset, iqs + 1u),
-                ptq1_0_trit(ib, a_offset, iqs + 2u),
-                ptq1_0_trit(ib, a_offset, iqs + 3u));
+    // friend.cpp: callers pass iqs % 4 == 0 (mul_mat_vec steps 4/8 elements per block slot)
+    return ptq1_0_trits4(ib, a_offset, iqs);
 }
 #endif
 

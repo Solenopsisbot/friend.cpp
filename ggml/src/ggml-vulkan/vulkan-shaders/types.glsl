@@ -225,11 +225,19 @@ struct block_ptq1_0
     float16_t d;
 };
 
+// friend.cpp: 32-bit view of the same 28-byte block, so decoders can fetch four qs bytes (or qh
+// plus d) in one load: w[0..5] = qs, w[6] = qh[0] | qh[1] << 8 | d << 16 (little endian).
+struct block_ptq1_0_packed32
+{
+    uint32_t w[7];
+};
+
 #if defined(DATA_A_PTQ1_0)
 #define QUANT_K QUANT_K_PTQ1_0
 #define QUANT_R QUANT_R_PTQ1_0
 #define QUANT_AUXF 1
 #define A_TYPE block_ptq1_0
+#define A_TYPE_PACKED32 block_ptq1_0_packed32
 #endif
 
 #define QUANT_K_Q2_0 64
