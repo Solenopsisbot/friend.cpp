@@ -439,6 +439,20 @@ Verify batches (draft + 1 tokens) and continuous batching run 2-32 tokens throug
 | friend.cpp (ms) | 42.4 | 52.2 | 65.2 | 65.9 | 82.2 | 100.2 | 179.2 |
 
 Single-token decode and prefill are unchanged. Batched logits agree with token-by-token decode to f32 rounding (argmax identical; greedy output identical with and without a drafter). `GGML_METAL_BONSAI_SB_DISABLE=1` restores the stock kernels for A/B runs.
+
+### Latency-bound decode on big Apple GPUs (Metal)
+
+On an M3 Ultra, Ternary-Bonsai-2-27B PQ2_0 decoded at ~45 tok/s, streaming 7.2 GB per token at ~300 GB/s on a chip with ~800. The weight matmuls weren't the problem: timed on their own they run at 640-710 GB/s, about 10 ms of the 22 ms token. The rest was the graph's dependency chain. A token was ~1350 memory barriers, and on that GPU every dependent step costs a few microseconds of drain and refill however little work it does (measured in the real graph by dropping op types: 4-9 us each for norms, scales, swiglu, copies). Batching doesn't hide it at batch 1, so the fix is fewer dependent steps:
+
+- **Hadamard inputs in one kernel.** Every Hadamard-folded matmul input was 2-4 launches: `[ADD] -> RMS_NORM -> weight -> sign -> FWHT` on the input side, `[per-head gated RMS_NORM] -> SWIGLU -> [head permutation] -> sign -> FWHT` on the output side of the FFN and GDN. Two kernels (`kernel_norm_fwht`, `kernel_glu_fwht`) do each chain in one launch, one threadgroup per 1024-wide block with every load issued up front. They read a whole row while writing a block, so the graph lists the chain's inputs as extra sources of the transform's matmul (`llama_hadamard_keepalive`) to stop the allocator placing the output over them.
+- **Decode conv step in one kernel**: concat + state write-back + conv + silu.
+- **GDN reads its state from the cache** for single-sequence batches (before, every layer gathered its full 3 MB state first), and **l2-normalises q/k itself** (`ggml_gated_delta_net_set_qk_l2`, CPU and Metal).
+- **An upstream off-by-one** in `ggml_mem_ranges_check` treated back-to-back buffers as overlapping, planting false barriers in every Metal graph (e.g. `ffn_up` serialised behind `ffn_gate`).
+
+Result: 1772 -> 1076 launches and 1348 -> 793 barriers per token. Logits within 1.1e-4 relative of the unfused path, argmax identical, sequential and batched. The test GPU was shared, so the numbers are best-of samples: up to 55 tok/s in quiet windows (was 45), and +15% interleaved under the same background load (37.4 vs 32.6). Prefill unchanged.
+
+Knobs (each restores the old path): `GGML_METAL_NORM_FWHT_DISABLE`, `GGML_METAL_GLU_FWHT_DISABLE`, `LLAMA_HADAMARD_KEEPALIVE_DISABLE`, `GGML_METAL_CONV_STEP_DISABLE`, `GGML_GDN_STATE_GATHER`, `GGML_GDN_QK_L2_UNFOLD`. For finding the next barrier: `GGML_METAL_TIMING=1` logs encode vs GPU time and a histogram of launched kernels; `=2` adds the encode order with each barrier tagged by the source line that placed it; `=3` logs which buffer forced each barrier. `GGML_METAL_SKIP_OPS=OP,...` drops ops (garbage output) to measure what they cost in the real graph.
+
 ## 1-bit / ternary decode on GPUs without dp4a
 
 Maxwell cards (GTX 9xx, sm_5x) and GP100 have no `__dp4a`, so ggml's int8 dot products are emulated byte by byte. For Bonsai Q1_0 and PQ2_0 that made token generation ALU-bound: on a GTX 970 the mat-vec kernels read weights at 22-40 GB/s out of ~190, and the matmuls were essentially the whole token time.
