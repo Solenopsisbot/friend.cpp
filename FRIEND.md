@@ -13,9 +13,8 @@ From **koboldcpp upstream**: the full feature set -- all GGUF model support, ima
 
 From **PrismML's llama.cpp**: Bonsai 1-bit/ternary GGUF quantisation types. Q1_0 is upstream llama.cpp; PQ2_0 and PTQ1_0 are Prism-only types (you'll find models like `prism-ml/Ternary-Bonsai-*-gguf` on HuggingFace). These come with CPU, Metal, CUDA, and Vulkan compute kernels, plus Hadamard weight folding and Qwen3.5 decode speedups.
 
-**Verified on**: Apple Silicon (Metal + CPU); CUDA on a GTX 970 (Maxwell) with the Bonsai models.
-**Present but not yet compiled/tested**: HIP. CUDA for newer Nvidia architectures compiles but hasn't been run.
-**Shaders generate but untested on actual GPU hardware**: Vulkan.
+**Verified on**: Apple Silicon (Metal + CPU); CUDA and Vulkan on a GTX 970 (Maxwell) with the Bonsai models (Q1_0, PQ2_0, PTQ1_0).
+**Present but not yet compiled/tested**: HIP. CUDA for newer Nvidia architectures compiles but hasn't been run. Vulkan has only run on that one NVIDIA card, so its coopmat / integer-dot paths are unexercised.
 
 friend.cpp-specific features, described below:
 
@@ -456,7 +455,52 @@ Measured on a GTX 970 (Bonsai-8B, greedy, 128 tokens):
 | generation, ~2k context | 23-26 t/s | 56-60 t/s | 23-24 t/s | 42-43 t/s |
 | prefill (~1.9k tokens, wall clock) | 164 t/s | 159 t/s | 159 t/s | 159 t/s |
 
-Prefill goes through MMQ, which this doesn't touch (the difference is noise). Verification batches for speculative decoding (2-8 columns) also use the bit-plane dot product through the generic kernel; their matmuls got 1.1-1.7x faster in a mat-vec microbenchmark.
+Prefill doesn't use this path (the difference is noise; see below for what it does use). Verification batches for speculative decoding (2-8 columns) also use the bit-plane dot product through the generic kernel; their matmuls got 1.1-1.7x faster in a mat-vec microbenchmark.
+
+### Prompt processing on Maxwell
+
+It's tempting to apply the same trick to prompt processing, but on a GTX 970 prefill never touches MMQ. ggml doesn't pick MMQ for dense matmuls on pre-Pascal GPUs, and with no fast fp16 the batched path is "dequantize the weight matrix to f32, then `cublasSgemm`". Profiling one 512-token ubatch of Bonsai-8B (`tools/friend-bench/op-profile.cpp`): matmuls are 86-91% of the time, attention 5% on an empty cache and 14% after 1.5k tokens, everything else ~3%. The SGEMM runs at ~3.6 TFLOP/s, about 77% of the card's FP32 peak at the 1.4 GHz it holds when cool.
+
+That's why multiply-free doesn't carry over. Maxwell does 128 FP32 FMAs per SM per clock but only 32 POPCs, and a bit-plane dot product costs 8 POPCs per 32 weights. So even a perfect bit-plane GEMM would only tie the FMA roof cuBLAS already reaches 77% of, and it would also switch the activations to q8_1 (MMQ numerics instead of f32). A lookup-table GEMM (Four Russians) is capped by shared-memory bandwidth at about 1.6x the FMA roof before its table-building cost, so it isn't worth the complexity either. Forcing MMQ (`FRIEND_CUDA_FORCE_MMQ=1`, a measurement knob) confirms the order: it's ~1.6x slower than cuBLAS for both types.
+
+What did help was the dequant pass itself. The generic kernel wrote f32 at ~100 GB/s and cost ~9% of every prefill matmul. Dedicated Q1_0 / PQ2_0 kernels with float4 stores get the matmuls 2-4% faster, with bit-identical outputs (`FRIEND_CUDA_NO_FAST_DEQUANT=1` restores the generic kernel). The ~31 GB of f32 written per ubatch is the floor that's left.
+
+Matmul time per 512-token ubatch (`tools/friend-bench/cuda-mm-bench.cpp`, GTX 970):
+
+| | f32 weights (pure SGEMM) | stock dequant + cuBLAS | fast dequant + cuBLAS | forced MMQ |
+|---|---|---|---|---|
+| Q1_0 | 2102 ms | 2299-2340 ms | 2246-2261 ms | 3496 ms |
+| PQ2_0 | 2102 ms | 2284-2286 ms | 2228-2233 ms | 3632 ms |
+
+Whole 512-token ubatch with the GPU at its sustained ~1.3 GHz (`op-profile`, best of 3, before -> after):
+
+| | empty cache | after 1536 cached tokens |
+|---|---|---|
+| Q1_0 | 180.3 -> 184.1 t/s | 161.7 -> 164.4 t/s |
+| PQ2_0 | 180.5 -> 184.7 t/s | 161.7 -> 165.3 t/s |
+
+A cold card does ~205-210 t/s on the first ubatch before it heats up to ~80 C and drops its clock. Greedy output is identical before and after. KoboldCpp's reported "process speed" overstates the first request after a long prompt: the last partial ubatch gets counted as generation time, so on a GTX 970 a fresh 1.9k-token prompt shows ~250 t/s prefill next to ~26 t/s generation, against ~62 t/s generation on the next request. Use `op-profile` for prefill numbers.
+
+Still slow on this card: **PTQ1_0 decode through CUDA** (3.6 t/s on Ternary-Bonsai-8B vs 72 for Q1_0). Its mat-vec hands one 128-weight block to each thread, and on sm_52 that's latency-bound: 4096-wide rows run 3x slower per weight than 12288-wide ones. It needs a bit-plane or split-block kernel. On pre-dp4a GPUs, PQ2_0 is the ternary format to use for now.
+
+## Vulkan
+
+First run on real hardware: GTX 970, NVIDIA 580 driver (no fp16, no integer dot, no cooperative matrices, so every Bonsai matmul takes the scalar shaders). Build with `make LLAMA_VULKAN=1 koboldcpp_vulkan`. The Makefile uses the bundled `glslc-linux` unless a system `glslc` prints "glslang" in its version string, so the Arch shaderc package's `glslc` is skipped (the bundled one works). Shader changes only rebuild if you delete `vulkan-shaders-gen` and `ggml/src/ggml-vulkan-shaders.cpp`, because the generated file only depends on the generator's source.
+
+What happened on the first run:
+
+- **PQ2_0 had no Vulkan kernels at all**, so Ternary-Bonsai models ran every weight matrix on the CPU. It's now a standalone per-type shader (the Q2_0 codec at group 128, same as PTQ1_0's setup): mat-vec, matmul, dequant, get_rows.
+- **PTQ1_0 was correct but 17x slower than Q1_0** in mat-vec (2.2 t/s generation), because each element did its own byte fetch, a divergent three-way branch and a loop. It now decodes four trits per 32-bit load in closed form and without branches: mat-vec 30 -> 223 GFLOPS, 512-column matmul 555 -> 907 GFLOPS, generation 2.2 -> 14 t/s.
+
+`test-backend-ops` (MUL_MAT 309 cases, MUL_MAT_ID 225, GET_ROWS) passes against the CPU for q1_0 / pq2_0 / ptq1_0. Bonsai-8B family, fully offloaded (37/37 layers), 128 greedy tokens per prompt:
+
+| | Q1_0 | PQ2_0 | PTQ1_0 |
+|---|---|---|---|
+| generation, short context (Vulkan / CUDA) | 32 / 72 t/s | 31.5 / 50 t/s | 14 / 3.6 t/s |
+| prefill, 512-token ubatch (Vulkan / CUDA) | 71 / 184 t/s | ~70 / 185 t/s | -- |
+| greedy output vs CPU | first ~60 tokens identical on the long prompt, all 128 on the short one | identical | identical |
+
+PTQ1_0 was produced losslessly from the PQ2_0 file (`quantize_gguf --allow-requantize ... PTQ1_0`) and gives the same text as PQ2_0 on every backend. Q1_0's small divergence is float summation order. CUDA diverges from the CPU at about the same point, just on the other prompt. Vulkan prefill runs at a third of CUDA's because its generic scalar matmul shader reaches ~1 TFLOP/s on this card, against cuBLAS's ~3.6. Tuning that shader for pre-Turing NVIDIA is open work.
 
 ## Tools for maintaining the fork
 
