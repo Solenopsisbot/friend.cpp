@@ -512,6 +512,116 @@ kernel void kernel_fwht_tg(
     }
 }
 
+// friend.cpp: residual ADD (optional) + RMS_NORM + weight MUL + Hadamard sign MUL + FWHT, the
+// whole input side of a Hadamard-folded matmul in one launch instead of three dependent ones.
+// Writes the add result (dst_add, the residual), the normed row (dst_norm, read by unrotated
+// consumers) and the rotated row (dst_rot, the folded matmul's input).
+//
+// Grid: (ne0/N blocks, rows), N/4 threads per threadgroup, each thread owning 4 contiguous
+// elements of its block as one float4. At batch 1 this is latency-bound, not bandwidth-bound,
+// so every load is issued up front: the thread's block float4 (and weight / signs) plus its
+// share of the full-row sum of squares, one memory round trip. Each threadgroup reduces the
+// whole row itself (a few KB) so the blocks run on separate cores; the host only fuses the ADD
+// when its output does not alias an input, as another threadgroup may still be reading.
+//
+// Transform on the float4 layout (element e = 4*t + c): strides 1, 2 inside the thread,
+// 4..64 across the simdgroup (thread t ^ stride/4), the rest through threadgroup memory.
+// Walsh-Hadamard stages commute, so this is the same transform as kernel_fwht_tg.
+template<int N>
+kernel void kernel_norm_fwht(
+        constant ggml_metal_kargs_norm_fwht & args,
+        device const float4 * a,
+        device const float4 * b,
+        device const float4 * w,
+        device const float4 * signs,
+        device       float4 * dst_add,
+        device       float4 * dst_norm,
+        device       float4 * dst_rot,
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort sgitg[[simdgroup_index_in_threadgroup]],
+        ushort tiisg[[thread_index_in_simdgroup]]) {
+
+    constexpr int NW = N_SIMDWIDTH;
+    constexpr int NT = N / 4;           // threads per threadgroup, one float4 each
+
+    threadgroup float4 shmem[NT];
+    threadgroup float  red[NT / NW];
+
+    const int     blk = tgpig.x;
+    const int64_t row = tgpig.y;
+    if (row >= args.nrows) {
+        return;
+    }
+
+    const int t  = sgitg * NW + tiisg;
+    const int R4 = args.ne0 / 4;        // float4s per row
+    const int64_t off = row * R4;
+
+    a        += off;
+    b        += off;
+    dst_add  += off;
+    dst_norm += off;
+    dst_rot  += off;
+
+    const int j = blk * NT + t;         // this thread's float4 in the row
+
+    // issue everything this thread needs at once
+    const float4 wj = w[j];
+    const float4 sj = signs[j];
+    const float4 vj = args.has_add ? a[j] + b[j] : a[j];
+
+    float sumf = 0.0f;
+    for (int i = t; i < R4; i += NT) {
+        const float4 v = args.has_add ? a[i] + b[i] : a[i];
+        sumf += dot(v, v);
+    }
+    sumf = simd_sum(sumf);
+    if (tiisg == 0) {
+        red[sgitg] = sumf;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    sumf = tiisg < NT / NW ? red[tiisg] : 0.0f;
+    sumf = simd_sum(sumf);
+
+    const float scale_norm = 1.0f/sqrt(sumf/args.ne0 + args.eps);
+    const float scale_h    = 1.0f/sqrt((float) N);
+
+    const float4 nv = (vj*scale_norm)*wj;
+    if (args.has_add) {
+        dst_add[j] = vj;
+    }
+    dst_norm[j] = nv;
+
+    float4 r = nv*sj*scale_h;
+
+    // strides 1 and 2: inside the thread
+    r = float4(r.x + r.y, r.x - r.y, r.z + r.w, r.z - r.w);
+    r = float4(r.x + r.z, r.y + r.w, r.x - r.z, r.y - r.w);
+
+    // strides 4 .. 4*(NW/2): partner thread t ^ m in the same simdgroup
+    for (int m = 1; m < NW && m < NT; m *= 2) {
+        const float4 p = simd_shuffle_xor(r, (ushort) m);
+        r = (t & m) == 0 ? p + r : p - r;
+    }
+
+    // wider strides: partner thread in another simdgroup
+    for (int m = NW; m < NT; m *= 2) {
+        shmem[t] = r;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        const float4 p = shmem[t ^ m];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        r = (t & m) == 0 ? p + r : p - r;
+    }
+
+    dst_rot[j] = r;
+}
+
+typedef decltype(kernel_norm_fwht<1024>) kernel_norm_fwht_t;
+
+template [[host_name("kernel_norm_fwht_512")]]  kernel kernel_norm_fwht_t kernel_norm_fwht<512>;
+template [[host_name("kernel_norm_fwht_1024")]] kernel kernel_norm_fwht_t kernel_norm_fwht<1024>;
+template [[host_name("kernel_norm_fwht_2048")]] kernel kernel_norm_fwht_t kernel_norm_fwht<2048>;
+
 typedef decltype(kernel_fwht<64, float>) kernel_fwht_f32_t;
 typedef decltype(kernel_fwht<64, half>)  kernel_fwht_f16_t;
 

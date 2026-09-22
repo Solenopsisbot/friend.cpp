@@ -1294,6 +1294,16 @@ typedef struct {
     int32_t n_blk; // sign rows per activation row (K / N); 0 = no sign flip fused in
 } ggml_metal_kargs_fwht;
 
+// friend.cpp: [ADD +] RMS_NORM + MUL(weight) + MUL(signs) + FWHT in one kernel -- the input side
+// of a Hadamard-folded matmul. One threadgroup per (block of N, row); the ADD is only fused when
+// its output does not alias an input (see ggml_metal_op_can_fuse_norm_fwht).
+typedef struct {
+    int32_t  ne0;      // row width (a multiple of the transform size N)
+    int32_t  nrows;
+    int32_t  has_add;  // src a + b (the residual ADD fused in) or just a
+    float    eps;
+} ggml_metal_kargs_norm_fwht;
+
 typedef struct {
     int64_t  ne0;
     float    start;

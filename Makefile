@@ -360,7 +360,11 @@ ggml-metal.o: ggml/src/ggml-metal/ggml-metal.cpp $(METAL_HOST_DEPS)
 ggml-metal-device.o: ggml/src/ggml-metal/ggml-metal-device.cpp $(METAL_HOST_DEPS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-ggml-metal-device-m.o: ggml/src/ggml-metal/ggml-metal-device.m ggml/src/ggml-metal/ggml-metal-impl.h ggml/include/ggml-metal.h ggml/src/ggml-common.h
+# friend.cpp: the runtime compiles the kernels from the kernels/ copy, so the copy must follow
+# every kernel source edit -- not only edits that happen to rebuild ggml-metal-device.m
+METAL_KERNEL_SRCS := $(wildcard ggml/src/ggml-metal/kernels/*.metal ggml/src/ggml-metal/kernels/*.h)
+
+ggml-metal-device-m.o: ggml/src/ggml-metal/ggml-metal-device.m ggml/src/ggml-metal/ggml-metal-impl.h ggml/include/ggml-metal.h ggml/src/ggml-common.h $(METAL_KERNEL_SRCS)
 	@echo "== Preparing Metal kernel resources =="
 	@mkdir -p kernels
 	@cp ggml/src/ggml-metal/kernels/*.metal ggml/src/ggml-metal/kernels/*.h kernels/
