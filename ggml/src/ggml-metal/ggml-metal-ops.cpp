@@ -3237,9 +3237,17 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
         }
     }
 
+    // friend.cpp: the ext kernel needs ne00 % (4 floats * 4 chunks * nxpsg) == 0, and
+    // nxpsg drops to 4 when ne00 % 128 != 0, so float weights (one chunk per block)
+    // only need ne00 % 64 == 0 -- e.g. 1344-wide rows, which otherwise fell to
+    // the generic mul_mv and cost ~1.4x per extra column at 2..8 columns
+    // (from 3 columns: at 2 the generic kernel measured ~10% faster on these rows)
+    const bool mv_ext_float_64 = ne00 % 64 == 0 && ne11 >= 3 &&
+        (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16 || op->src[0]->type == GGML_TYPE_BF16);
+
     // first try to use small-batch mat-mv kernels
     // these should be efficient for BS [2, ~8]
-    if (op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0) &&
+    if (op->src[1]->type == GGML_TYPE_F32 && (ne00%128 == 0 || mv_ext_float_64) &&
         (
          (
           (
