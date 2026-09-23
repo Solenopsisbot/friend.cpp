@@ -18,7 +18,7 @@ From **PrismML's llama.cpp**: Bonsai 1-bit/ternary GGUF quantisation types. Q1_0
 
 friend.cpp-specific features, described below:
 
-1. **Blue-noise sampling** -- anti-correlated randomness that smooths out generation quality
+1. **Blue-noise sampling** -- anti-correlated randomness: fewer streaks for the model to amplify into loops (context collapse) or derailing
 2. **Per-request adapter profiles** -- LoRA mix, steering vectors, and LM head swaps, per request
 3. **Tiered prompt cache** -- RAM + disk caching of KV state with automatic prefix reuse
 4. **DSpark speculative drafters** -- PrismML's standalone drafters wired into `--draftmodel`, cache-aware
@@ -90,11 +90,13 @@ The server will match the system prompt against the pinned cache entry, skip pre
 
 ### The problem it solves
 
-Standard sampling draws each token independently. That's mathematically fine on average, but in practice you sometimes get unlucky streaks -- several consecutive low-probability picks that send the generation off a cliff. The averages are correct; the variance is the problem.
+Standard sampling draws each token independently. That's mathematically fine on average, but by chance you get streaks: several rolls in a row landing at the same end of the distribution. A streak doesn't stay local, because the model conditions on its own output and amplifies it. A run of max-probability picks makes the text more predictable, which makes the next max-probability pick likelier still, until the generation locks into a loop (context collapse). A run of lowest-probability picks derails it the same way in the other direction. The averages are correct; the streaks are the problem.
+
+The effect is strongest where nothing pulls the model back on track: base models and long generations. kaetemi, whose branch this sampler comes from, reports a large reduction in context collapse on base models with blue noise, and about a 1% improvement on reasoning-model output in preliminary benchmarks.
 
 ### How it works
 
-Every sampled token consumes a uniform random roll. Blue-noise sampling keeps each individual roll uniform (so sampling remains unbiased -- the distribution of any single token is unchanged) but **anti-correlates consecutive rolls**. If the last roll was low, the next one is nudged away from also being low. The result is fewer clusters of tail-probability picks in a row, without changing what the model thinks is likely.
+Every sampled token consumes a uniform random roll. Blue-noise sampling keeps each individual roll uniform (so sampling remains unbiased -- the distribution of any single token is unchanged) but **anti-correlates consecutive rolls**. If the last roll was low, the next one is nudged away from also being low, and the same for high. The result is fewer streaks at either end, without changing what the model thinks is likely.
 
 ### Request fields
 
@@ -107,7 +109,7 @@ Works on `/api/v1/generate`, the OpenAI-compatible endpoints (`/v1/chat/completi
 
 ### Measured results
 
-Evaluated with `tools/friend-eval/blue_noise_eval.py` using Ternary-Bonsai-1.7B, 8 chat prompts, 10 seeds each, T=1.0, min_p=0.02:
+**The mechanism** -- `tools/friend-eval/blue_noise_eval.py`, Ternary-Bonsai-1.7B (instruct), 8 chat prompts, 10 seeds each, 160 tokens, T=1.0, min_p=0.02:
 
 | Metric | Baseline | Blue noise | Change |
 |---|---|---|---|
@@ -118,7 +120,24 @@ Evaluated with `tools/friend-eval/blue_noise_eval.py` using Ternary-Bonsai-1.7B,
 | Cross-seed diversity | -- | -- | slightly better, t = -2 |
 | Repetition | -- | -- | not significantly changed |
 
-The important line: mean surprisal is unchanged (the model's calibration is preserved), but surprisal variance drops by a third (generation is smoother).
+The important line: mean surprisal is unchanged (the model's calibration is preserved), but surprisal variance drops by a third (generation is smoother). Short replies from an instruct model are the wrong place to look for collapse, though: they rarely run long enough to lock in. That's what the next test is for.
+
+**Context collapse** -- `tools/friend-eval/collapse_eval.py`, Qwen3-1.7B-Base (Q4_K_M), 12 raw document openings (fiction, encyclopedia, forum post, code, recipe, news, ...) x 16 seeds, 768 tokens, EOS banned, no repetition penalty. The same (prompt, seed) runs with white and with blue noise, 192 pairs per setting. A generation counts as collapsed when it locks into repetition and never recovers (every 400-character window from some point on repeats more than half its 20-character spans); the continuous measures are the final window's repeated fraction and the zlib compression ratio of the whole text (higher = less repetitive).
+
+| | T=0.7 white | T=0.7 blue | T=1.0, min_p 0.05 white | blue |
+|---|---|---|---|---|
+| Collapsed | 24.5% | 19.8% | 12.0% | 10.9% |
+| Mean onset of collapse (chars) | 1468 | 1589 | 1596 | 1919 |
+| Final-window repeated fraction | 0.269 | 0.211 (paired t = -2.1) | 0.157 | 0.148 (t = -0.4) |
+| Compression ratio | 0.251 | 0.273 (paired t = +2.3) | 0.296 | 0.309 (t = +1.7) |
+
+Every measure moves in blue noise's favour in both settings. At T=0.7 -- where this base model loops most -- the continuous measures are significant on their own, and about a fifth fewer generations collapse (31 pairs where only white collapsed vs 22 where only blue did; sign test p = 0.27, so the binary count alone isn't conclusive at n = 192). The effect is smaller with min_p truncation at T=1.0. This is the direction kaetemi reports, at a more modest size than "large" on this model and length; longer generations, where collapse has more room to compound, are the obvious next test.
+
+```bash
+# base model, server with --parallelrequests 8 and enough context for 8 x (prompt + 768)
+python tools/friend-eval/collapse_eval.py --url http://localhost:5001 \
+  --seeds 16 --max-tokens 768 --temperature 0.7 --workers 8 --out collapse.json
+```
 
 ### Running the eval
 
@@ -557,7 +576,7 @@ What it supports: blue noise cuts derailing streaks by about a quarter, and even
 | DRY 0.8 | 0.50 | [0.31, 0.66] |
 | blue + XTC + DRY | 0.38 | [0.22, 0.56] |
 
-No configuration beats plain T=1.0 + min_p 0.05 here: every interval includes 0.5. So the mechanical gains above (fewer derailing streaks, less repetition) don't show up as replies this judge prefers. That's evidence *against* over-claiming, not proof any of them is worse -- n=32 is small and a 1-bit judge is weak. Treat blue noise as a safety margin (it makes higher temperatures safer), not as a quality upgrade.
+No configuration beats plain T=1.0 + min_p 0.05 here: every interval includes 0.5. So on 160-token persona replies from an instruct model, the mechanical gains above (fewer derailing streaks, less repetition) don't show up as replies this judge prefers -- n=32 is small and a 1-bit judge is weak. This setup can't see context collapse, which needs long generations and shows up most on base models; see [blue-noise sampling](#blue-noise-sampling) for that test.
 
 ## Limits and not-yet-verified
 
