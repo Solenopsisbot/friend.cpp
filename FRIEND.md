@@ -267,6 +267,8 @@ device and memory budget can absorb the extra KV/compute state.
 The companion process router marks connection-failed workers unhealthy for a short
 exponential cooldown, resets the cooldown after a successful response, and keeps
 probing when all workers are cooling down so recovery is automatic.
+It periodically samples worker request states and KV-block counts, using fresh
+observations in its load score and ignoring samples older than two seconds.
 
 `--schedule-tokens N` bounds the total tokens admitted to one scheduler round;
 decodes are admitted before prompt chunks, and `0` uses the backend batch size.

@@ -276,6 +276,9 @@ The router namespaces request IDs as `router-epoch:worker:local-id`, aggregates
 request listings across healthy workers, retries only connection failures before
 the request is sent, and forwards SSE/NDJSON chunks as they arrive. Pause/resume
 controls use the namespaced ID, so they cannot target a request on another worker.
+The router also samples each worker's running/waiting requests and KV-block count;
+fresh samples influence least-load selection, while samples older than two seconds
+expire back to the local in-flight counter.
 Connection failures put a replica on a short exponential health cooldown, while
 successful responses restore it immediately; if every replica is cooling down the
 router still probes one so a recovered worker can rejoin.
