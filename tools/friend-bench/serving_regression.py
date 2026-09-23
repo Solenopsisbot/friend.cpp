@@ -31,6 +31,12 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
             body = response.read().decode()
             return body if path == '/metrics' else json.loads(body)
 
+    def request_raw(path, data):
+        req = urllib.request.Request(base + path, data=json.dumps(data).encode(),
+                                     headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=120) as response:
+            return response.read().decode()
+
     def metric(name):
         return float(next(line.split()[1] for line in request('/metrics').splitlines() if line.startswith(name + ' ')))
 
@@ -80,6 +86,13 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
             assert isinstance(chat_choice.get('logprobs'), dict), 'chat logprobs missing'
             assert chat_choice['logprobs'].get('content'), 'chat completion logprobs missing'
             assert chat_choice.get('prompt_logprobs'), 'chat prompt logprobs missing'
+            stream_payload = {'messages': [{'role': 'user', 'content': 'Answer with six short words.'}],
+                              'max_tokens': 6, 'temperature': 0, 'stream': True,
+                              'stream_interval': 3, 'cache_salt': 'stream-interval'}
+            stream_body = request_raw('/v1/chat/completions', stream_payload)
+            stream_events = [line for line in stream_body.splitlines() if line.startswith('data: {')]
+            assert stream_body.rstrip().endswith('data: [DONE]'), 'stream did not finish'
+            assert 1 <= len(stream_events) <= 4, f'unexpected stream event count: {len(stream_events)}'
             if max_queued_requests:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     long_future = pool.submit(request, '/api/v1/generate',

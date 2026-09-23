@@ -6182,6 +6182,10 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         anthropic_block_index = 0              # current content block index for Anthropic SSE
         rseq_num = 0
         current_token = 0
+        emitted_token = 0
+        stream_token_buffer = ""
+        default_stream_interval = getattr(args, "stream_interval", 1)
+        stream_interval = max(1, min(64, tryparseint(genparams.get("stream_interval", default_stream_interval), default_stream_interval)))
         prompttokens = 0
         incomplete_token_buffer = bytearray()
         async_sleep_short = 0.02
@@ -6227,6 +6231,18 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     if tokenSeg!="" and not badFragment:
                         incomplete_token_buffer.clear()
                         tokenStr += tokenSeg
+
+                # Buffer a configurable number of generated tokens before
+                # emitting an event. Completion/error paths always flush the
+                # final partial chunk; logprob cursors advance only when that
+                # chunk is actually sent.
+                stream_token_buffer += tokenStr
+                if not streamDone and current_token - emitted_token < stream_interval:
+                    await asyncio.sleep(async_sleep_short)
+                    continue
+                tokenStr = stream_token_buffer
+                stream_token_buffer = ""
+                emitted_token = current_token
 
                 # Each stream owns a cursor; scores cannot leak from another request.
                 if api_format in (3, 4):
@@ -13469,6 +13485,7 @@ if __name__ == '__main__':
     advparser.add_argument("--profile-lanes", type=check_range(int,1,32), default=1, help="Native concurrent contexts sharing model weights. Each lane owns its KV/compute buffers and parallelrequests slots. CPU threads are divided across lanes; memory use increases.")
     advparser.add_argument("--max-queued-requests", type=check_range(int,0,1000000), default=0, help="friend.cpp: maximum live continuous-batching requests, including waiting/running/paused requests; overloads are rejected when full (0 disables).")
     advparser.add_argument("--kv-watermark", type=check_range(float,0.0,0.9), default=0.0, help="friend.cpp: reserve this fraction of estimated continuous-batching KV capacity for active sequences (0 disables).")
+    advparser.add_argument("--stream-interval", type=check_range(int,1,64), default=1, help="friend.cpp: stream this many generated tokens per event when possible; final partial chunks always flush.")
     advparser.add_argument("--prefill-tokens", dest="prefilltokens", metavar='[tokens]', type=check_range(int,0,65536), default=0, help="friend.cpp: maximum prompt tokens admitted per continuous-batching round after ready decodes. Lower values protect inter-token latency; 0 uses the full batch size.")
     advparser.add_argument("--password", metavar=('[API key]'), help="Enter a password required to use this instance. This key will be required for all text endpoints. Image endpoints are not secured. Can also be set with env var KCPP_PASSWORD", default=os.getenv('KCPP_PASSWORD',None))
     advparser.add_argument("--preloadstory", metavar=('[savefile]'), help="Configures a prepared story json save file to be hosted on the server, which frontends (such as KoboldAI Lite) can access over the API.", default="")
