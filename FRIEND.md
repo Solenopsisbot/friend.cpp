@@ -275,6 +275,8 @@ copy-on-write path. The share count is exposed as
 `friend_batch_kv_block_shares_total` in `/metrics`.
 When profile lanes are enabled, `/metrics` also exposes the bounded live count per
 lane as `friend_batch_lane_running{lane="N"}`.
+`--max-queued-requests N` rejects new batch work once waiting, running and paused
+requests reach N; `friend_batch_requests_rejected_total` records those rejections.
 
 Pause and priority-preemption snapshots are bounded by 512 MiB of host storage.
 They use the prompt-cache codec when compression reduces their size and restore

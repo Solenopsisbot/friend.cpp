@@ -105,6 +105,7 @@ static int friend_prefill_tokens = 0;
 static int friend_ngram_draft = 0;
 static int friend_suffix_draft = 0;
 static int friend_schedule_tokens = 0;
+static int friend_max_queued_requests = 0;
 
 llama_grammar *  grammar = nullptr; //currently used grammar
 llama_grammar_parser parsed_grammar;
@@ -3415,6 +3416,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     friend_ngram_draft = std::clamp(inputs.friend_ngram_draft, 0, 32);
     friend_suffix_draft = std::clamp(inputs.friend_suffix_draft, 0, 32);
     friend_schedule_tokens = std::max(0, inputs.friend_schedule_tokens);
+    friend_max_queued_requests = std::max(0, inputs.friend_max_queued_requests);
     if(continuous_batching_slots > 0)
     {
         printf("Continuous batching: prepared %d GGUF sequence slots.\n", continuous_batching_slots);
@@ -6335,6 +6337,15 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     if(batch_legacy_active || batch_legacy_waiting > 0)
     {
         return -1;
+    }
+    if(friend_max_queued_requests > 0) {
+        size_t live = 0;
+        for(const auto & pending : batch_requests)
+            if(pending && batch_is_live_state(pending->state)) ++live;
+        if(live >= (size_t) friend_max_queued_requests) {
+            ++batch_metrics.rejected;
+            return -2; // overload: the API layer must not silently fall back to legacy generation
+        }
     }
     auto req = std::make_unique<BatchGenerateRequest>();
     req->id = batch_next_request_id++;

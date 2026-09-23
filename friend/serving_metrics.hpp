@@ -28,7 +28,7 @@ struct histogram {
     }
 };
 struct metrics {
-    uint64_t submitted = 0, completed = 0, failed = 0, cancelled = 0;
+    uint64_t submitted = 0, rejected = 0, completed = 0, failed = 0, cancelled = 0;
     uint64_t prompt_tokens = 0, reused_tokens = 0, generated_tokens = 0;
     uint64_t rounds = 0, batch_tokens = 0, preemptions = 0, kv_block_shares = 0;
     uint64_t draft_proposed = 0, draft_accepted = 0;
@@ -41,6 +41,7 @@ struct metrics {
             out << "friend_batch_" << name << ' ' << n << '\n';
         };
         value("requests_submitted_total", "counter", submitted);
+        value("requests_rejected_total", "counter", rejected);
         value("requests_completed_total", "counter", completed);
         value("requests_failed_total", "counter", failed);
         value("requests_cancelled_total", "counter", cancelled);

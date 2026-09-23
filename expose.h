@@ -116,6 +116,8 @@ struct load_model_inputs
     // friend.cpp: unified per-round token budget; zero uses batchsize.
     const int friend_schedule_tokens = 0;
     const int friend_profile_lanes = 1;
+    // friend.cpp: cap live continuous-batching requests (waiting/running/paused); 0 disables.
+    const int friend_max_queued_requests = 0;
 };
 struct generation_inputs
 {
