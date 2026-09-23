@@ -62,7 +62,11 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
             payload = dict(prompt=prompt, max_length=160, max_context_length=4096, temperature=0,
                            rep_pen=1, top_k=0, top_p=1, seed=123, cache_salt='test-A',
                            grammar='root ::= "alpha beta gamma delta " root')
-            result = request('/api/v1/generate', payload)['results'][0]['text']
+            result_obj = request('/api/v1/generate', payload)['results'][0]
+            result = result_obj['text']
+            timing = result_obj.get('timing')
+            assert timing and timing['total_seconds'] >= timing['decode_seconds'] >= 0, timing
+            assert timing['queue_seconds'] >= 0 and timing['prefill_seconds'] >= 0, timing
             lp = request('/api/v1/generate', dict(payload, max_length=8, logprobs=3, prompt_logprobs=3, cache_salt='logprobs'))['results'][0]
             assert isinstance(lp.get('logprobs'), list) and lp['logprobs'], 'batch completion logprobs missing'
             assert isinstance(lp.get('prompt_logprobs'), list) and lp['prompt_logprobs'], 'batch prompt logprobs missing'

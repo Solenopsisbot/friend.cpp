@@ -4813,6 +4813,7 @@ struct BatchGenerateRequest
     std::vector<int> prefill_logprob_rows;
     std::vector<llama_token> prefill_logprob_targets;
     std::string logprobs_json;
+    std::string timing_json;
     int prompt_token_count = 0;
     int completion_token_count = 0;
     std::chrono::steady_clock::time_point submitted_time = std::chrono::steady_clock::now();
@@ -5486,6 +5487,14 @@ static void batch_finish_request_locked(BatchGenerateRequest & req, stop_reason 
         }).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
         req.result.logprobs_json = req.logprobs_json.c_str();
     }
+    req.timing_json = nlohmann::json({
+        {"queue_seconds", req.start_time.time_since_epoch().count() == 0 ? 0.0 : std::chrono::duration<double>(req.start_time - req.submitted_time).count()},
+        {"prefill_seconds", process_time},
+        {"time_to_first_token_seconds", req.generation_start_time.time_since_epoch().count() == 0 ? 0.0 : std::chrono::duration<double>(req.generation_start_time - req.start_time).count()},
+        {"decode_seconds", gen_time},
+        {"total_seconds", total_time},
+    }).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    req.result.timing_json = req.timing_json.c_str();
     req.state = reason == stop_reason::ERROR_ENCOUNTERED ? BatchState::FAILED : (reason == stop_reason::INVALID ? BatchState::ABORTED : BatchState::FINISHED);
     if(req.slot >= 0 && batch_context())
     {
@@ -6531,6 +6540,7 @@ generation_outputs gpttype_batch_generate_result(int request_id)
 {
     static thread_local std::string reader_copy;
     static thread_local std::string logprob_copy;
+    static thread_local std::string timing_copy;
     std::unique_lock<std::mutex> lock(batch_mutex);
     batch_cv.wait(lock, [request_id](){
         BatchGenerateRequest * req = batch_find_request_locked(request_id);
@@ -6546,6 +6556,7 @@ generation_outputs gpttype_batch_generate_result(int request_id)
         output.completion_tokens = 0;
         output.text = batch_empty_string.c_str();
         output.logprobs_json = nullptr;
+        output.timing_json = nullptr;
         return output;
     }
     reader_copy = req->output;
@@ -6553,6 +6564,8 @@ generation_outputs gpttype_batch_generate_result(int request_id)
     output.text = reader_copy.c_str();
     logprob_copy = req->logprobs_json;
     output.logprobs_json = logprob_copy.empty() ? nullptr : logprob_copy.c_str();
+    timing_copy = req->timing_json;
+    output.timing_json = timing_copy.empty() ? nullptr : timing_copy.c_str();
     return output;
 }
 
