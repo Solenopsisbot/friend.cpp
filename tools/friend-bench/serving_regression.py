@@ -80,6 +80,7 @@ def run(model, draft, suffix=False, profile_lanes=1):
                         break
                     time.sleep(.005)
                 assert target is not None, 'no active generation found'
+                offload_before = metric('friend_batch_offloaded_bytes')
                 assert request('/api/extra/requests/pause', {'id': target})['accepted']
                 while time.monotonic() < deadline:
                     state = next(r for r in request('/api/extra/requests') if r['id'] == target)
@@ -88,6 +89,7 @@ def run(model, draft, suffix=False, profile_lanes=1):
                     time.sleep(.005)
                 assert state['state'] == 'paused', state
                 assert state['paused_bytes'] > 0, state
+                assert metric('friend_batch_offloaded_bytes') > offload_before, 'offload metric missing'
                 # Another request must make progress while the first has released its slot.
                 request('/api/v1/generate', dict(other, cache_salt='test-C'))
                 assert not future.done(), 'paused request completed'
