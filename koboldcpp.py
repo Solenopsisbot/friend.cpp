@@ -1576,6 +1576,16 @@ def cached_json_to_gbnf(json_obj):
                 structured_grammar_cache.pop(next(iter(structured_grammar_cache)))
     return compiled
 
+def choices_to_gbnf(choices):
+    """Compile vLLM-style guided_choice values into a native GBNF root."""
+    if not isinstance(choices, list) or not choices or not all(isinstance(value, str) for value in choices):
+        return ""
+    # JSON string escaping is also the escaping accepted by llama.cpp's grammar
+    # parser for quoted terminals. Preserve order while removing duplicates so
+    # clients get deterministic grammar cache keys and output alternatives.
+    unique = list(dict.fromkeys(choices))
+    return "root ::= " + " | ".join(json.dumps(value, ensure_ascii=False) for value in unique) + "\n"
+
 def get_capabilities():
     global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, musicllmmodelpath, has_audio_support, has_vision_support, mcp_connections
     global autoswapmode, textName, sttName, ttsName, embedName, musicName, imageName, mmprojName
@@ -4923,6 +4933,11 @@ ws ::= | " " | "\n" [ \t]{0,20}
 
             # handle structured outputs
             respformat = genparams.get('response_format', None)
+            structured = genparams.get('structured_outputs')
+            if not isinstance(structured, dict):
+                structured = {}
+            guided_json = genparams.get('guided_json', structured.get('json', structured.get('json_schema')))
+            guided_choice = genparams.get('guided_choice', structured.get('choice'))
             if respformat:
                 try:
                     rt = respformat.get('type')
@@ -4937,6 +4952,18 @@ ws ::= | " " | "\n" [ \t]{0,20}
                     # In case of any issues, just do normal gen
                     print("Structured Output not valid - discarded")
                     pass
+            elif guided_json is not None:
+                try:
+                    schema = guided_json.get('schema') if isinstance(guided_json, dict) and 'schema' in guided_json else guided_json
+                    decoded = cached_json_to_gbnf(schema)
+                    if decoded:
+                        genparams["grammar"] = decoded
+                except Exception:
+                    print("Structured Outputs JSON not valid - discarded")
+            elif guided_choice is not None:
+                decoded = choices_to_gbnf(guided_choice)
+                if decoded:
+                    genparams["grammar"] = decoded
             elif 'json_schema' in genparams:
                 try:
                     schema = genparams.get('json_schema')

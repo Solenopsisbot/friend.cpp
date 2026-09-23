@@ -88,6 +88,12 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
             assert isinstance(chat_choice.get('logprobs'), dict), 'chat logprobs missing'
             assert chat_choice['logprobs'].get('content'), 'chat completion logprobs missing'
             assert chat_choice.get('prompt_logprobs'), 'chat prompt logprobs missing'
+            guided = request('/v1/chat/completions', {
+                'messages': [{'role': 'user', 'content': 'Answer yes or no: is two greater than one?'}],
+                'max_tokens': 4, 'temperature': 0, 'structured_outputs': {'choice': ['yes', 'no']},
+                'cache_salt': 'guided-choice', 'stream': False,
+            })
+            assert guided['choices'][0]['message']['content'].strip() in ('yes', 'no'), guided
             stream_payload = {'messages': [{'role': 'user', 'content': 'Answer with six short words.'}],
                               'max_tokens': 6, 'temperature': 0, 'stream': True,
                               'stream_interval': 3, 'cache_salt': 'stream-interval'}

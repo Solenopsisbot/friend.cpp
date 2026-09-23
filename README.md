@@ -308,6 +308,11 @@ completed.
 `tools/friend-bench/lane_benchmark.py` measures end-to-end throughput for one or
 more native profile-lane counts and verifies every result is non-empty.
 
+OpenAI structured output requests use the same cached native grammar path for
+JSON Schema and JSON object responses. vLLM-style `structured_outputs: {"json":
+...}` / `{"json_schema": ...}` and `{"choice": [...]}` forms, plus
+`guided_json` and `guided_choice`, are accepted as aliases.
+
 ---
 
 ## Status and tested hardware

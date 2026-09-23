@@ -27,6 +27,7 @@ friend.cpp-specific features, described below:
 6. **Priority-aware continuous batching** -- fair priority queues, bounded host KV snapshots for preemption, and per-request batch logprobs
 7. **Suffix speculation** -- prompt/history suffix matching with frequency-weighted adaptive drafts
 8. **Logical KV block tables** -- fixed-token blocks used for aligned llama sequence sharing and copy-on-write prefix reuse
+9. **Structured output aliases** -- cached JSON Schema and choice grammars through the OpenAI/vLLM request forms
 
 
 ---
