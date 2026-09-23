@@ -26,6 +26,7 @@
 #include <locale>
 #include <chrono>
 #include <algorithm>
+#include <numeric>
 #include <array>
 #include <condition_variable>
 #include <deque>
@@ -60,6 +61,7 @@
 #include "otherarch/sdcpp/thirdparty/stb_image_resize.h"
 #include "common/common.h"
 #include "common/fit.h"
+#include "common/ngram-map.h"
 #include "ggml-rpc.h"
 #include "llama-impl.h"
 #include "llama-ext.h"
@@ -68,6 +70,9 @@
 #include "friend/prompt_cache.hpp"
 #include "friend/steering.hpp"
 #include "friend/spec_tuner.hpp"
+#include "friend/suffix_draft.hpp"
+#include "friend/serving_metrics.hpp"
+#include "friend/kv_blocks.hpp"
 #include "llama-vocab.h"
 #include "nlohmann/json.hpp"
 
@@ -96,6 +101,10 @@ int last_draft_failed = 0;
 stop_reason last_stop_reason = stop_reason::INVALID;
 std::vector<std::string> generated_tokens;
 static int continuous_batching_slots = 0;
+static int friend_prefill_tokens = 0;
+static int friend_ngram_draft = 0;
+static int friend_suffix_draft = 0;
+static int friend_schedule_tokens = 0;
 
 llama_grammar *  grammar = nullptr; //currently used grammar
 llama_grammar_parser parsed_grammar;
@@ -127,6 +136,8 @@ static rwkv_context * rwkv_ctx_v3 = nullptr;
 static llama_v2_context * llama_ctx_v2 = nullptr;
 static llama_v3_context * llama_ctx_v3 = nullptr;
 static llama_context * llama_ctx_v4 = nullptr;
+static bool friend_init_batch_lanes(llama_model * model, llama_context_params params, int count);
+static bool friend_bind_default_profile_to_lanes();
 static llama_context * draft_ctx = nullptr; //will remain null if speculative is unused
 static common_speculative * draft_spec = nullptr; // llama.cpp speculative state for draft model / MTP drafting
 static bool draft_is_mtp = false; // true for MTP/DFLASH/DSPARK paths that verify multiple target logits
@@ -3400,6 +3411,10 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     kcpp_data->n_batch = GetBatchSize(inputs.batchsize, in_file_format);
     kcpp_data->n_ubatch = kcpp_data->n_batch;
     continuous_batching_slots = (isGguf && inputs.continuous_batching_slots > 1) ? inputs.continuous_batching_slots : 0;
+    friend_prefill_tokens = std::max(0, inputs.friend_prefill_tokens);
+    friend_ngram_draft = std::clamp(inputs.friend_ngram_draft, 0, 32);
+    friend_suffix_draft = std::clamp(inputs.friend_suffix_draft, 0, 32);
+    friend_schedule_tokens = std::max(0, inputs.friend_schedule_tokens);
     if(continuous_batching_slots > 0)
     {
         printf("Continuous batching: prepared %d GGUF sequence slots.\n", continuous_batching_slots);
@@ -4123,6 +4138,18 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         {
             return ModelLoadResult::FAIL;
         }
+        if(inputs.friend_profile_lanes > 1 && (inputs.use_mtp || load_guidance || !draftmodel_filename.empty())) {
+            fprintf(stderr, "friend: profile lanes require batching without model speculation or CFG\n");
+            return ModelLoadResult::FAIL;
+        }
+        if(!friend_init_batch_lanes(llamamodel, llama_ctx_params, inputs.friend_profile_lanes))
+            return ModelLoadResult::FAIL;
+        // The main context already has the default profile from above.  Extra
+        // lanes are new llama contexts, so bind that same profile before the
+        // first request can reach them.  Without this, a lane would silently
+        // run the base weights while its sibling ran the configured default
+        // LoRA/vector/head profile.
+        if(!friend_bind_default_profile_to_lanes()) return ModelLoadResult::FAIL;
 
         if(mmproj_filename != "" && file_format==FileFormat::GGUF_GENERIC)
         {
@@ -4700,6 +4727,7 @@ enum class BatchState
     WAITING,
     PREFILL,
     GENERATING,
+    PAUSED,
     FINISHED,
     FAILED,
     ABORTED,
@@ -4709,6 +4737,10 @@ struct BatchGenerateRequest
 {
     int id = 0;
     int slot = -1;
+    int lane = 0;
+    int priority = 0;
+    int logprobs = -1;
+    int prompt_logprobs = -1;
     BatchState state = BatchState::WAITING;
     std::string prompt;
     std::string prompt_added_memory;
@@ -4753,6 +4785,7 @@ struct BatchGenerateRequest
     float dynatemp_exponent = 1.0f;
     std::vector<llama_token> prompt_tokens;
     std::vector<llama_token> kv_tokens; // friend.cpp: token ids in this slot's KV, in position order
+    friend_kv::block_table kv_blocks;   // logical prefix blocks for reuse/eviction bookkeeping
     int reused_tokens = 0;              // friend.cpp: prompt tokens that came from a retained slot / cache
     bool capture_after_decode = false;  // friend.cpp: snapshot into the prompt cache once this prefill lands
     std::vector<int> checkpoints;       // friend.cpp: turn-boundary positions to snapshot at (recurrent models)
@@ -4763,11 +4796,23 @@ struct BatchGenerateRequest
     llama_token pending_token = 0;
     int i_batch = -1;
     bool i_batch_is_prefill = false;
+    std::vector<llama_token> ngram_proposals;
+    std::vector<int> ngram_rows;
+    int ngram_base_past = 0;
     llama_sampler * sampler = nullptr;
     std::vector<std::string> generated_pieces;
     std::string output;
+    // Per-request logprobs keep concurrent batch requests isolated. The legacy
+    // endpoint still uses its existing thread-local top-picks buffer.
+    nlohmann::json prompt_logprob_items = nlohmann::json::array();
+    nlohmann::json completion_logprob_items = nlohmann::json::array();
+    std::vector<int> prefill_logprob_rows;
+    std::vector<llama_token> prefill_logprob_targets;
+    std::string logprobs_json;
     int prompt_token_count = 0;
     int completion_token_count = 0;
+    std::chrono::steady_clock::time_point submitted_time = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point last_sample_time;
     std::chrono::steady_clock::time_point start_time;
     std::chrono::steady_clock::time_point process_start_time;
     std::chrono::steady_clock::time_point generation_start_time;
@@ -4775,6 +4820,13 @@ struct BatchGenerateRequest
     float process_time = 0.0f;
     stop_reason finish_reason = stop_reason::INVALID;
     bool abort_requested = false;
+    bool pause_requested = false;
+    BatchState resume_state = BatchState::WAITING;
+    std::vector<uint8_t> paused_kv;
+    bool paused_kv_packed = false;
+    size_t paused_kv_raw_size = 0;
+    bool preempted = false;
+
     generation_outputs result;
 
     ~BatchGenerateRequest()
@@ -4788,21 +4840,149 @@ struct BatchGenerateRequest
 };
 
 static std::mutex batch_mutex;
+static friend_serving::metrics batch_metrics;
+// Bounded host storage for explicitly paused requests. Device KV is released only
+// after a complete snapshot succeeds. Samplers remain owned by their request.
+static size_t batch_paused_bytes = 0;
+static constexpr size_t BATCH_PAUSED_LIMIT = size_t(512) << 20;
+static llama_context * batch_context();
+
+// Serialize a sequence before releasing its device KV. Compression is optional
+// and lossless; the budget is charged against the stored representation, so a
+// large preemption burst cannot quietly consume unbounded host memory.
+static bool batch_snapshot_paused_locked(BatchGenerateRequest & req, int slot)
+{
+    const size_t size = llama_state_seq_get_size(batch_context(), slot);
+    if(size == 0 || size > BATCH_PAUSED_LIMIT - batch_paused_bytes) return false;
+    std::vector<uint8_t> raw(size);
+    if(llama_state_seq_get_data(batch_context(), raw.data(), raw.size(), slot) != size) return false;
+    auto packed = friend_cache::codec::pack(raw.data(), raw.size(), 2);
+    if(!packed.empty() && packed.size() < raw.size()) {
+        req.paused_kv = std::move(packed);
+        req.paused_kv_packed = true;
+    } else {
+        req.paused_kv = std::move(raw);
+        req.paused_kv_packed = false;
+    }
+    req.paused_kv_raw_size = size;
+    if(!llama_memory_seq_rm(llama_get_memory(batch_context()), slot, -1, -1)) {
+        req.paused_kv.clear();
+        req.paused_kv_raw_size = 0;
+        req.paused_kv_packed = false;
+        return false;
+    }
+    batch_paused_bytes += req.paused_kv.size();
+    return true;
+}
+
+static bool batch_restore_paused_locked(BatchGenerateRequest & req, int slot)
+{
+    std::vector<uint8_t> raw;
+    const uint8_t * data = req.paused_kv.data();
+    size_t size = req.paused_kv.size();
+    if(req.paused_kv_packed) {
+        if(!friend_cache::codec::unpack(data, size, raw) || raw.size() != req.paused_kv_raw_size) return false;
+        data = raw.data();
+        size = raw.size();
+    }
+    return llama_state_seq_set_data(batch_context(), data, size, slot) == req.paused_kv_raw_size;
+}
+
+static void batch_release_paused_bytes_locked(BatchGenerateRequest & req)
+{
+    batch_paused_bytes -= std::min(batch_paused_bytes, req.paused_kv.size());
+    std::vector<uint8_t>().swap(req.paused_kv);
+    req.paused_kv_packed = false;
+    req.paused_kv_raw_size = 0;
+}
 // friend.cpp: KV a finished request leaves behind in its slot, reused by the next request
 // that shares a prefix with it (see batch_claim_waiting_locked). Indexed by seq id.
 struct BatchRetainedSlot
 {
     bool valid = false;
     std::vector<llama_token> tokens; // exactly the KV content of the slot
+    friend_kv::block_table blocks;
     std::string kv_key;              // adapter identity it was computed under
     uint64_t retained_at = 0;        // batch_round when retained (for LRU victim choice)
 };
-static std::vector<BatchRetainedSlot> batch_retained;
 
-// friend.cpp: adapter-profile scheduling state for the batch worker (batch_pick_profile_locked)
-static std::string batch_active_profile_key = "";
-static uint64_t batch_round = 0;
 static const uint64_t FRIEND_BATCH_MAX_WAIT_ROUNDS = 8;
+static std::vector<BatchRetainedSlot> batch_retained;
+static std::string batch_active_profile_key;
+static uint64_t batch_round = 0;
+struct BatchLane {
+    int id = 0;
+    llama_context * ctx = nullptr;
+    std::vector<BatchRetainedSlot> retained;
+    std::string active_profile_key;
+    uint64_t round = 0;
+    std::string affinity_key;
+    bool has_affinity = false;
+};
+static std::vector<std::unique_ptr<BatchLane>> batch_lanes;
+static thread_local BatchLane * batch_lane = nullptr;
+static llama_context * batch_context() {
+    return batch_lane ? batch_lane->ctx : llama_ctx_v4;
+}
+static std::vector<BatchRetainedSlot> & batch_retained_for() {
+    return batch_lane && batch_lane->id > 0 ? batch_lane->retained : batch_retained;
+}
+static std::string & batch_active_profile_for() {
+    return batch_lane && batch_lane->id > 0 ? batch_lane->active_profile_key : batch_active_profile_key;
+}
+static uint64_t & batch_round_for() {
+    return batch_lane && batch_lane->id > 0 ? batch_lane->round : batch_round;
+}
+static bool batch_owns(const BatchGenerateRequest * req) {
+    return req && req->lane == (batch_lane ? batch_lane->id : 0);
+}
+
+static bool friend_init_batch_lanes(llama_model * model, llama_context_params params, int count) {
+    count = std::clamp(count, 1, 32);
+    if(count > 1 && continuous_batching_slots <= 1) {
+        fprintf(stderr, "friend: --profile-lanes requires --parallelrequests greater than 1\n");
+        return false;
+    }
+    if(count > 1 && count > continuous_batching_slots) {
+        fprintf(stderr, "friend: --profile-lanes (%d) cannot exceed --parallelrequests (%d)\n",
+                count, continuous_batching_slots);
+        return false;
+    }
+    if(count > 1 && !friend_adapters::reg().heads.empty() &&
+       llama_set_adapter_head(llama_ctx_v4, llama_get_adapter_head(llama_ctx_v4)) == -2) {
+        fprintf(stderr, "friend: architecture has model-wide head bindings; concurrent head lanes are unsupported\n");
+        return false;
+    }
+    params.n_threads = std::max(1, params.n_threads / count);
+    params.n_threads_batch = std::max(1, params.n_threads_batch / count);
+    for(int i = 0; i < count; ++i) {
+        auto lane = std::make_unique<BatchLane>();
+        lane->id = i;
+        lane->ctx = i == 0 ? llama_ctx_v4 : llama_init_from_model(model, params);
+        if(!lane->ctx) {
+            for(auto & previous : batch_lanes) if(previous->id) llama_free(previous->ctx);
+            batch_lanes.clear();
+            return false;
+        }
+        // Extra contexts create backend-private CPU pools; never attach the
+        // primary context's pool to a concurrently executing context.
+        llama_set_n_threads(lane->ctx, params.n_threads, params.n_threads_batch);
+        batch_lanes.push_back(std::move(lane));
+    }
+    printf("friend: %d native lane(s), shared model weights, independent KV and compute buffers\n", count);
+    return true;
+}
+static bool friend_bind_default_profile_to_lanes() {
+    for(auto & lane : batch_lanes)
+    {
+        if(lane->id > 0 && !friend_adapters::apply(friend_active_profile, {lane->ctx}))
+        {
+            fprintf(stderr, "friend: failed to apply the default profile to lane %d\n", lane->id);
+            return false;
+        }
+    }
+    return true;
+}
 static std::condition_variable batch_cv;
 static std::deque<int> batch_waiting;
 static std::vector<std::unique_ptr<BatchGenerateRequest>> batch_requests;
@@ -4814,6 +4994,49 @@ static bool batch_touched_since_legacy = false;
 static int batch_legacy_waiting = 0;
 static int batch_next_request_id = 1;
 static std::string batch_empty_string = "";
+
+// Build the small, endpoint-neutral representation used by both prompt and
+// completion logprobs. This reads the logits row produced by the current batch;
+// it never touches the shared legacy top-picks history, so concurrent requests
+// remain independent.
+static nlohmann::json batch_logprob_item(llama_context * ctx, int row, llama_token selected, int top_n)
+{
+    nlohmann::json item;
+    if(!ctx || row < 0 || top_n < 0) return item;
+    const float * logits = llama_get_logits_ith(ctx, row);
+    if(!logits) return item;
+    const int vocab = llama_vocab_n_tokens(llama_model_get_vocab(llama_get_model(ctx)));
+    if(vocab <= 0) return item;
+    top_n = std::min(top_n, 20);
+    std::vector<int> ids(vocab);
+    std::iota(ids.begin(), ids.end(), 0);
+    const int keep = std::min(std::max(1, top_n), vocab);
+    std::partial_sort(ids.begin(), ids.begin() + keep, ids.end(), [&](int a, int b) {
+        return logits[a] > logits[b];
+    });
+    float max_logit = logits[ids[0]];
+    for(int id : ids) max_logit = std::max(max_logit, logits[id]);
+    double denom = 0.0;
+    for(int id = 0; id < vocab; ++id) denom += std::exp((double) logits[id] - max_logit);
+    if(!(denom > 0.0)) return item;
+    auto one = [&](int id) {
+        const float lp = (float) ((double) logits[id] - max_logit - std::log(denom));
+        const auto piece = FileFormatTokenizeID(id, file_format, true);
+        return nlohmann::json{{"token", piece}, {"bytes", std::vector<uint8_t>(piece.begin(), piece.end())},
+                              {"token_id", id}, {"logprob", lp}};
+    };
+    item["token"] = FileFormatTokenizeID(selected, file_format, true);
+    const auto piece = item["token"].get<std::string>();
+    item["bytes"] = std::vector<uint8_t>(piece.begin(), piece.end());
+    item["token_id"] = selected;
+    double selected_lp = 0.0;
+    if(selected >= 0 && selected < vocab)
+        selected_lp = (double) logits[selected] - max_logit - std::log(denom);
+    item["logprob"] = (float) selected_lp;
+    item["top_logprobs"] = nlohmann::json::array();
+    for(int i = 0; i < std::min(top_n, vocab); ++i) item["top_logprobs"].push_back(one(ids[i]));
+    return item;
+}
 
 static BatchGenerateRequest * batch_find_request_locked(int request_id)
 {
@@ -4829,7 +5052,7 @@ static BatchGenerateRequest * batch_find_request_locked(int request_id)
 
 static bool batch_is_live_state(BatchState state)
 {
-    return state == BatchState::WAITING || state == BatchState::PREFILL || state == BatchState::GENERATING;
+    return state == BatchState::WAITING || state == BatchState::PREFILL || state == BatchState::GENERATING || state == BatchState::PAUSED;
 }
 
 static bool batch_has_live_locked()
@@ -4842,6 +5065,33 @@ static bool batch_has_live_locked()
         }
     }
     return false;
+}
+
+// Prefer the least-loaded context first so a hot profile cannot pin all of its
+// traffic to one lane.  Affinity is a tie-breaker among equally idle lanes:
+// it preserves head/adapter locality without sacrificing actual parallelism.
+// When profiles outnumber lanes, each lane retains the fair profile scheduler.
+static int batch_choose_lane_locked(const friend_adapters::profile & profile) {
+    std::vector<size_t> load(batch_lanes.size(), 0);
+    for(const auto & req : batch_requests)
+        if(req && batch_is_live_state(req->state)) ++load[req->lane];
+    // Head bindings are part of the execution state even when the LoRA/vector
+    // identity is shared.  Include the head key so base and alternate heads
+    // can actually occupy separate native lanes instead of serialising behind
+    // one context and defeating the point of --profile-lanes.
+    const std::string lane_key = profile.execution_key + "|head=" + profile.head_key;
+    const size_t minimum = *std::min_element(load.begin(), load.end());
+    int id = -1;
+    for(const auto & lane : batch_lanes)
+        if(load[lane->id] == minimum && lane->has_affinity && lane->affinity_key == lane_key)
+            { id = lane->id; break; }
+    if(id < 0) id = (int) std::distance(load.begin(), std::min_element(load.begin(), load.end()));
+    auto & lane = *batch_lanes[id];
+    if(load[id] == 0) {
+        lane.affinity_key = lane_key;
+        lane.has_affinity = true;
+    }
+    return id;
 }
 
 static void batch_invalidate_legacy_context_locked()
@@ -4871,7 +5121,7 @@ static void batch_invalidate_legacy_context_locked()
     }
 }
 
-static bool friend_cache_capture_seq(llama_seq_id seq, const std::vector<llama_token> & tokens, const std::string & kv_key, const char * label);
+static bool friend_cache_capture_seq(llama_context * ctx, llama_seq_id seq, const std::vector<llama_token> & tokens, const std::string & kv_key, const char * label);
 static std::vector<int> friend_plan_checkpoints(const std::vector<int> & embd_inp, int n_past_start);
 
 // friend.cpp: before a single-user generation, park retained batch slots in the prompt cache
@@ -4879,20 +5129,20 @@ static std::vector<int> friend_plan_checkpoints(const std::vector<int> & embd_in
 // invalidate them.
 static void batch_release_retained_locked(bool capture)
 {
-    for(int slot = 1; slot < (int) batch_retained.size(); ++slot)
+    for(int slot = 1; slot < (int) batch_retained_for().size(); ++slot)
     {
-        BatchRetainedSlot & keep = batch_retained[slot];
+        BatchRetainedSlot & keep = batch_retained_for()[slot];
         if(!keep.valid)
         {
             continue;
         }
         if(capture && friend_cache_on)
         {
-            friend_cache_capture_seq(slot, keep.tokens, keep.kv_key, "batch");
+            friend_cache_capture_seq(batch_context(), slot, keep.tokens, keep.kv_key, "batch");
         }
-        if(llama_ctx_v4)
+        if(batch_context())
         {
-            llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), slot, -1, -1);
+            llama_memory_seq_rm(llama_get_memory(batch_context()), slot, -1, -1);
         }
         keep = BatchRetainedSlot();
     }
@@ -4908,7 +5158,17 @@ public:
         batch_cv.notify_all();
         batch_cv.wait(lock, [](){ return !batch_legacy_active && !batch_has_live_locked(); });
         batch_legacy_waiting--;
-        batch_release_retained_locked(true);
+        // Retained KV belongs to the lane that owns its sequence ids.  Park
+        // every lane before legacy generation clears the shared main context;
+        // releasing only lane 0 leaks device cells and makes later requests
+        // appear to have a mysteriously full KV cache.
+        BatchLane * previous_lane = batch_lane;
+        for(auto & lane : batch_lanes)
+        {
+            batch_lane = lane.get();
+            batch_release_retained_locked(true);
+        }
+        batch_lane = previous_lane;
         batch_invalidate_legacy_context_locked();
         batch_legacy_active = true;
     }
@@ -4923,7 +5183,7 @@ public:
 
 static bool batch_inputs_eligible(const generation_inputs & inputs)
 {
-    if(continuous_batching_slots <= 1 || file_format != FileFormat::GGUF_GENERIC || !llama_ctx_v4 || !kcpp_data)
+    if(continuous_batching_slots <= 1 || file_format != FileFormat::GGUF_GENERIC || !batch_context() || !kcpp_data)
     {
         return false;
     }
@@ -5120,7 +5380,7 @@ static llama_sampler * batch_rep_pen_init(int32_t penalty_last_n, float penalty_
 // prompt to every other element (penalty/DRY history) but never to the grammar.
 static llama_sampler * batch_build_sampler(const BatchGenerateRequest & req)
 {
-    const llama_vocab * vocab = llama_model_get_vocab(llama_get_model(llama_ctx_v4));
+    const llama_vocab * vocab = llama_model_get_vocab(llama_get_model(batch_context()));
     const int32_t n_vocab = llama_vocab_n_tokens(vocab);
     const uint32_t seed = req.seed < 0 ? LLAMA_DEFAULT_SEED : (uint32_t) req.seed;
     llama_sampler_chain_params params = llama_sampler_chain_default_params();
@@ -5195,6 +5455,9 @@ static llama_sampler * batch_build_sampler(const BatchGenerateRequest & req)
 static void batch_finish_request_locked(BatchGenerateRequest & req, stop_reason reason)
 {
     auto finish_time = std::chrono::steady_clock::now();
+    if(reason == stop_reason::ERROR_ENCOUNTERED) ++batch_metrics.failed;
+    else if(reason == stop_reason::INVALID) ++batch_metrics.cancelled;
+    else ++batch_metrics.completed;
     float total_time = req.start_time.time_since_epoch().count() == 0 ? 0.0f : std::chrono::duration<float>(finish_time - req.start_time).count();
     float init_time = req.init_time;
     float process_time = req.process_time;
@@ -5211,29 +5474,39 @@ static void batch_finish_request_locked(BatchGenerateRequest & req, stop_reason 
     req.result.prompt_tokens = req.prompt_token_count;
     req.result.completion_tokens = req.completion_token_count;
     req.result.text = req.output.c_str();
+    if(req.logprobs >= 0 || req.prompt_logprobs >= 0)
+    {
+        req.logprobs_json = nlohmann::json({
+            {"prompt", req.prompt_logprob_items},
+            {"completion", req.completion_logprob_items},
+        }).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+        req.result.logprobs_json = req.logprobs_json.c_str();
+    }
     req.state = reason == stop_reason::ERROR_ENCOUNTERED ? BatchState::FAILED : (reason == stop_reason::INVALID ? BatchState::ABORTED : BatchState::FINISHED);
-    if(req.slot >= 0 && llama_ctx_v4)
+    if(req.slot >= 0 && batch_context())
     {
         // friend.cpp: keep the slot's KV for prefix reuse unless something went wrong
-        if(batch_retained.size() <= (size_t) req.slot)
+        if(batch_retained_for().size() <= (size_t) req.slot)
         {
-            batch_retained.resize(req.slot + 1);
+            batch_retained_for().resize(req.slot + 1);
         }
-        BatchRetainedSlot & keep = batch_retained[req.slot];
-        const llama_pos pmax = llama_memory_seq_pos_max(llama_get_memory(llama_ctx_v4), req.slot);
+        BatchRetainedSlot & keep = batch_retained_for()[req.slot];
+        const llama_pos pmax = llama_memory_seq_pos_max(llama_get_memory(batch_context()), req.slot);
         if(reason != stop_reason::ERROR_ENCOUNTERED && pmax >= 0 && (size_t) pmax + 1 == req.kv_tokens.size())
         {
             keep.valid = true;
             keep.tokens = req.kv_tokens;
+            keep.blocks.rebuild(keep.tokens);
             keep.kv_key = req.profile.kv_key;
-            keep.retained_at = batch_round;
+            keep.retained_at = batch_round_for();
         }
         else
         {
             keep = BatchRetainedSlot();
-            llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), req.slot, -1, -1);
+            llama_memory_seq_rm(llama_get_memory(batch_context()), req.slot, -1, -1);
         }
     }
+    batch_release_paused_bytes_locked(req);
     req.slot = -1;
     printf("\n[%s] BatchRequest:%d, Init:%.2fs, Processed:%d in %.2fs (%.2fT/s), Generated:%d/%d in %.2fs (%.2fT/s), Total:%.2fs, Stop:%d",
         get_timestamp_str().c_str(), req.id, init_time, req.prompt_token_count, process_time, processed_tps, req.completion_token_count, req.max_length, gen_time, generated_tps, total_time, (int) reason);
@@ -5291,7 +5564,7 @@ static bool batch_prepare_prompt_locked(BatchGenerateRequest & r)
 
 static bool friend_batch_recurrent()
 {
-    const llama_model * mdl = llama_get_model(llama_ctx_v4);
+    const llama_model * mdl = llama_get_model(batch_context());
     return llama_model_is_recurrent(mdl) || llama_model_is_hybrid(mdl);
 }
 
@@ -5312,6 +5585,15 @@ static size_t friend_batch_usable(const std::vector<llama_token> & have, const s
     return usable;
 }
 
+// llama_memory_seq_cp shares cells when two sequence IDs use the same KV stream.
+// Aligning shared prefixes to complete logical blocks makes that sharing stable:
+// the destination can append without invalidating a partial source block.
+static size_t friend_batch_block_usable(const std::vector<llama_token> & have, const std::vector<llama_token> & prompt)
+{
+    const size_t usable = friend_batch_usable(have, prompt, false);
+    return usable - usable % friend_kv::block_table::block_tokens;
+}
+
 // Which free slot a request should take. The slot whose retained KV overlaps the prompt
 // most wins if that overlap is worth having (>= the cache's min_tokens); otherwise take an
 // empty slot, and only then evict the least recently retained one -- a new conversation
@@ -5330,20 +5612,20 @@ static int batch_pick_slot_locked(const BatchGenerateRequest & req, Occupied occ
         {
             continue;
         }
-        const bool has = (size_t) slot < batch_retained.size() && batch_retained[slot].valid;
+        const bool has = (size_t) slot < batch_retained_for().size() && batch_retained_for()[slot].valid;
         if(!has)
         {
             if(empty < 0) empty = slot;
             continue;
         }
-        if(batch_retained[slot].retained_at < lru_at)
+        if(batch_retained_for()[slot].retained_at < lru_at)
         {
-            lru_at = batch_retained[slot].retained_at;
+            lru_at = batch_retained_for()[slot].retained_at;
             lru = slot;
         }
-        if(batch_retained[slot].kv_key == req.profile.kv_key)
+        if(batch_retained_for()[slot].kv_key == req.profile.kv_key)
         {
-            const size_t len = friend_batch_usable(batch_retained[slot].tokens, req.prompt_tokens, recurrent);
+            const size_t len = friend_batch_usable(batch_retained_for()[slot].tokens, req.prompt_tokens, recurrent);
             if(len > best_len)
             {
                 best_len = len;
@@ -5361,13 +5643,25 @@ static int batch_pick_slot_locked(const BatchGenerateRequest & req, Occupied occ
 // Prepare `slot` for `req` and return how many prompt tokens are already in its KV.
 static int batch_seed_slot_locked(BatchGenerateRequest & req, int slot)
 {
-    llama_memory_t mem = llama_get_memory(llama_ctx_v4);
+    llama_memory_t mem = llama_get_memory(batch_context());
     const bool recurrent = friend_batch_recurrent();
-    if(batch_retained.size() <= (size_t) slot)
+    if(batch_retained_for().size() <= (size_t) slot)
     {
-        batch_retained.resize(slot + 1);
+        batch_retained_for().resize(slot + 1);
     }
-    BatchRetainedSlot & own = batch_retained[slot];
+    BatchRetainedSlot & own = batch_retained_for()[slot];
+
+    // Cached KV has no per-position logits, and head-only reuse may have been
+    // produced with a different head. Prompt scoring therefore evaluates every
+    // prompt token under this request's profile rather than returning holes.
+    if(req.prompt_logprobs >= 0) {
+        llama_memory_seq_rm(mem, slot, -1, -1);
+        own = BatchRetainedSlot();
+        req.kv_tokens.clear();
+        req.kv_blocks.clear();
+        req.prompt_logprob_items = nlohmann::json::array({nullptr});
+        return 0;
+    }
 
     size_t own_len = 0;
     if(own.valid && own.kv_key == req.profile.kv_key)
@@ -5383,19 +5677,19 @@ static int batch_seed_slot_locked(BatchGenerateRequest & req, int slot)
     {
         for(auto & other : batch_requests)
         {
-            if(other && other.get() != &req && other->slot >= 0 && other->slot != slot && batch_is_live_state(other->state) &&
+            if(batch_owns(other.get()) && other.get() != &req && other->slot >= 0 && other->slot != slot && batch_is_live_state(other->state) &&
                other->profile.kv_key == req.profile.kv_key)
             {
-                const size_t l = friend_batch_usable(other->kv_tokens, req.prompt_tokens, false);
+                const size_t l = friend_batch_block_usable(other->kv_tokens, req.prompt_tokens);
                 if(l > src_len) { src_len = l; src_seq = other->slot; src_tokens = &other->kv_tokens; }
             }
         }
-        for(int s2 = 1; s2 < (int) batch_retained.size(); ++s2)
+        for(int s2 = 1; s2 < (int) batch_retained_for().size(); ++s2)
         {
-            if(s2 != slot && batch_retained[s2].valid && batch_retained[s2].kv_key == req.profile.kv_key)
+            if(s2 != slot && batch_retained_for()[s2].valid && batch_retained_for()[s2].kv_key == req.profile.kv_key)
             {
-                const size_t l = friend_batch_usable(batch_retained[s2].tokens, req.prompt_tokens, false);
-                if(l > src_len) { src_len = l; src_seq = s2; src_tokens = &batch_retained[s2].tokens; }
+                const size_t l = friend_batch_block_usable(batch_retained_for()[s2].tokens, req.prompt_tokens);
+                if(l > src_len) { src_len = l; src_seq = s2; src_tokens = &batch_retained_for()[s2].tokens; }
             }
         }
     }
@@ -5432,12 +5726,13 @@ static int batch_seed_slot_locked(BatchGenerateRequest & req, int slot)
     {
         llama_memory_seq_rm(mem, slot, -1, -1);
         llama_memory_seq_cp(mem, src_seq, slot, 0, (llama_pos) src_len);
+        ++batch_metrics.kv_block_shares;
         reused = src_len;
     }
     else if(best > 0 && m.e && friend_cache::global().load(m.e, cached))
     {
         llama_memory_seq_rm(mem, slot, -1, -1);
-        if(llama_state_seq_set_data(llama_ctx_v4, cached.state->data(), cached.state->size(), slot) != 0 &&
+        if(llama_state_seq_set_data(batch_context(), cached.state->data(), cached.state->size(), slot) != 0 &&
            (recurrent || llama_memory_seq_rm(mem, slot, (llama_pos) m.usable, -1)))
         {
             reused = m.usable;
@@ -5449,6 +5744,7 @@ static int batch_seed_slot_locked(BatchGenerateRequest & req, int slot)
     }
     own = BatchRetainedSlot(); // the slot now belongs to the live request
     req.kv_tokens.assign(req.prompt_tokens.begin(), req.prompt_tokens.begin() + reused);
+    req.kv_blocks.rebuild(req.kv_tokens);
     if(reused > 0 && !is_quiet)
     {
         printf("\n[Batch slot %d: reusing %zu of %zu prompt tokens (%s)]", slot, reused, req.prompt_tokens.size(),
@@ -5463,20 +5759,26 @@ static bool batch_claim_waiting_locked()
     auto slot_occupied = [](int slot) {
         for(const auto & req : batch_requests)
         {
-            if(req && req->slot == slot && batch_is_live_state(req->state))
+            if(batch_owns(req.get()) && req->slot == slot && batch_is_live_state(req->state))
             {
                 return true;
             }
         }
         return false;
     };
-    while(!batch_waiting.empty())
+    size_t to_visit = batch_waiting.size();
+    while(!batch_waiting.empty() && to_visit-- > 0)
     {
         int request_id = batch_waiting.front();
         BatchGenerateRequest * req = batch_find_request_locked(request_id);
         if(!req || req->state != BatchState::WAITING)
         {
             batch_waiting.pop_front();
+            continue;
+        }
+        if(!batch_owns(req)) {
+            batch_waiting.pop_front();
+            batch_waiting.push_back(request_id);
             continue;
         }
         // friend.cpp: tokenize first so the slot can be chosen by prefix overlap
@@ -5492,10 +5794,28 @@ static bool batch_claim_waiting_locked()
         }
         batch_waiting.pop_front();
         req->slot = slot;
+        if(!req->paused_kv.empty()) {
+            // Restore exactly the evaluated tokens; pending output and sampler RNG
+            // stayed on the request, so resumption consumes no extra sample.
+            llama_memory_seq_rm(llama_get_memory(batch_context()), slot, -1, -1);
+            if((size_t) slot < batch_retained_for().size()) batch_retained_for()[slot] = BatchRetainedSlot();
+            const bool restored = batch_restore_paused_locked(*req, slot);
+            batch_release_paused_bytes_locked(*req);
+            if(!restored) {
+                batch_finish_request_locked(*req, stop_reason::ERROR_ENCOUNTERED);
+                continue;
+            }
+            req->state = req->resume_state;
+            req->preempted = false;
+            req->last_served_round = batch_round_for();
+            claimed = true;
+            continue;
+        }
         req->state = BatchState::PREFILL;
-        req->last_served_round = batch_round; // friend.cpp: starvation clock starts at claim
+        req->last_served_round = batch_round_for(); // friend.cpp: starvation clock starts at claim
         batch_touched_since_legacy = true;
         req->start_time = std::chrono::steady_clock::now();
+        batch_metrics.queue.observe(std::chrono::duration<double>(req->start_time - req->submitted_time).count());
 
         if (debugmode==1 && !is_quiet)
         {
@@ -5529,6 +5849,7 @@ static bool batch_claim_waiting_locked()
         req->prompt_pos = reuse;
         req->n_past = reuse;
         req->reused_tokens = reuse;
+        batch_metrics.reused_tokens += reuse;
         req->checkpoints.clear();
         if(friend_cache_on && friend_cache_recurrent)
         {
@@ -5545,6 +5866,52 @@ static bool batch_claim_waiting_locked()
     return claimed;
 }
 
+// If all sequence slots are occupied, a higher-priority waiting request can make
+// progress by moving one lower-priority sequence to the bounded host snapshot tier.
+// This is deliberately conservative: equal-priority work keeps its slot, avoiding
+// thrash under a uniform workload.
+static bool batch_preempt_for_waiting_locked() {
+    if (batch_waiting.empty() || batch_paused_bytes >= BATCH_PAUSED_LIMIT) return false;
+    for (int slot = 1; slot <= continuous_batching_slots; ++slot) {
+        bool occupied = false;
+        for (const auto & ptr : batch_requests) {
+            if (batch_owns(ptr.get()) && ptr->slot == slot && batch_is_live_state(ptr->state)) {
+                occupied = true;
+                break;
+            }
+        }
+        if (!occupied) return false;
+    }
+    BatchGenerateRequest * incoming = nullptr;
+    for (int id : batch_waiting) {
+        BatchGenerateRequest * req = batch_find_request_locked(id);
+        if (batch_owns(req) && req->state == BatchState::WAITING &&
+            (!incoming || req->priority < incoming->priority)) incoming = req;
+    }
+    if (!incoming) return false;
+
+    BatchGenerateRequest * victim = nullptr;
+    for (auto & ptr : batch_requests) {
+        if (!batch_owns(ptr.get()) || ptr->slot < 0 || ptr->state == BatchState::PAUSED ||
+            ptr->state == BatchState::WAITING || ptr->abort_requested ||
+            ptr->priority <= incoming->priority) continue;
+        if (!victim || ptr->priority > victim->priority ||
+            (ptr->priority == victim->priority && ptr->last_served_round > victim->last_served_round))
+            victim = ptr.get();
+    }
+    if (!victim) return false;
+
+    if (!batch_snapshot_paused_locked(*victim, victim->slot)) return false;
+    if ((size_t) victim->slot < batch_retained_for().size()) batch_retained_for()[victim->slot] = BatchRetainedSlot();
+    victim->resume_state = victim->state;
+    victim->state = BatchState::WAITING;
+    victim->preempted = true;
+    victim->slot = -1;
+    batch_waiting.push_back(victim->id);
+    ++batch_metrics.preemptions;
+    return true;
+}
+
 // friend.cpp: which adapter profile the next decode serves. Stick with the current
 // profile while it has work (switching costs a scheduler re-reserve), but switch to the
 // most-starved other profile once it has waited FRIEND_BATCH_MAX_WAIT_ROUNDS decodes.
@@ -5555,7 +5922,7 @@ static std::string batch_pick_profile_locked()
     bool current_has_work = false;
     for(auto & req_ptr : batch_requests)
     {
-        if(!req_ptr || req_ptr->slot < 0)
+        if(!batch_owns(req_ptr.get()) || req_ptr->slot < 0)
         {
             continue;
         }
@@ -5565,39 +5932,69 @@ static std::string batch_pick_profile_locked()
         {
             continue;
         }
-        if(req.profile_key == batch_active_profile_key)
+        if(req.profile_key == batch_active_profile_for())
         {
             current_has_work = true;
         }
-        else if(!starving || req.last_served_round < starving->last_served_round)
+        else if(!starving || req.priority < starving->priority ||
+                (req.priority == starving->priority && req.last_served_round < starving->last_served_round))
         {
             starving = &req;
         }
     }
-    if(current_has_work && (!starving || batch_round - starving->last_served_round < FRIEND_BATCH_MAX_WAIT_ROUNDS))
+    if(current_has_work && (!starving || batch_round_for() - starving->last_served_round < FRIEND_BATCH_MAX_WAIT_ROUNDS))
     {
-        return batch_active_profile_key;
+        return batch_active_profile_for();
     }
     if(starving)
     {
-        batch_active_profile_key = starving->profile_key;
+        batch_active_profile_for() = starving->profile_key;
     }
-    return batch_active_profile_key;
+    return batch_active_profile_for();
 }
 
-static void batch_worker_loop()
+// Only the worker touches device state, after the previous verification round
+// has completed and speculative suffixes have been trimmed.
+static void batch_process_controls_locked() {
+    for(auto & ptr : batch_requests) {
+        if(!batch_owns(ptr.get()) || !batch_is_live_state(ptr->state)) continue;
+        auto & req = *ptr;
+        if(req.abort_requested) {
+            batch_finish_request_locked(req, stop_reason::INVALID);
+            continue;
+        }
+        if(!req.pause_requested || req.state == BatchState::PAUSED) continue;
+        req.pause_requested = false;
+        req.resume_state = req.state;
+        if(req.slot >= 0) {
+            if(!batch_snapshot_paused_locked(req, req.slot)) continue;
+            if((size_t) req.slot < batch_retained_for().size()) batch_retained_for()[req.slot] = BatchRetainedSlot();
+            req.slot = -1;
+        }
+        req.state = BatchState::PAUSED;
+    }
+}
+
+static void batch_worker_loop(BatchLane * lane)
 {
-    const int batch_cap = std::max(1, kcpp_data ? kcpp_data->n_batch : 512);
+    batch_lane = lane;
+        const int batch_cap = std::max(1, std::min(kcpp_data ? kcpp_data->n_batch : 512,
+            friend_schedule_tokens > 0 ? friend_schedule_tokens : (kcpp_data ? kcpp_data->n_batch : 512)));
     llama_batch batch = llama_batch_init(batch_cap, 0, 1);
     while(true)
     {
         std::vector<int> decode_ids;
+        std::vector<int> scheduled_ids;
         friend_adapters::profile active_profile_copy;
         const friend_adapters::profile * active_profile = nullptr;
         {
             std::unique_lock<std::mutex> lock(batch_mutex);
             batch_cv.wait_for(lock, std::chrono::milliseconds(5), [](){
-                return batch_worker_stop || (!batch_legacy_active && batch_has_live_locked());
+                if(batch_worker_stop) return true;
+                if(batch_legacy_active) return false;
+                for(const auto & req : batch_requests)
+                    if(batch_owns(req.get()) && batch_is_live_state(req->state) && (req->state != BatchState::PAUSED || req->abort_requested)) return true;
+                return false;
             });
             if(batch_worker_stop)
             {
@@ -5607,42 +6004,113 @@ static void batch_worker_loop()
             {
                 continue;
             }
+            batch_process_controls_locked();
+            batch_preempt_for_waiting_locked();
             batch_claim_waiting_locked();
             common_batch_clear(batch);
             const std::string active_key = batch_pick_profile_locked();
-            for(auto & req_ptr : batch_requests)
-            {
-                if(!req_ptr || !batch_is_live_state(req_ptr->state) || req_ptr->slot < 0 || batch.n_tokens >= batch_cap)
-                {
-                    continue;
-                }
-                BatchGenerateRequest & req = *req_ptr;
-                req.i_batch = -1;
-                req.i_batch_is_prefill = false;
-                if(req.abort_requested)
-                {
-                    batch_finish_request_locked(req, stop_reason::INVALID);
-                    continue;
-                }
-                if(req.profile_key != active_key)
-                {
-                    continue; // different adapters: waits for its profile's turn
-                }
-                if(active_profile == nullptr)
-                {
+            // vLLM-style scheduling: admit every ready decode first, then spend the
+            // remaining batch capacity on prompt work. This keeps inter-token latency
+            // stable when a long prompt arrives while several chats are generating.
+            const int prefill_budget = friend_prefill_tokens > 0 ?
+                std::min(friend_prefill_tokens, batch_cap) : batch_cap;
+            int prefill_tokens = 0;
+            auto select_profile = [&](BatchGenerateRequest & req) -> bool {
+                if(req.profile_key != active_key) return false;
+                if(active_profile == nullptr) {
                     active_profile_copy = req.profile;
                     active_profile = &active_profile_copy;
                 }
-                req.last_served_round = batch_round;
-                if(req.state == BatchState::PREFILL)
-                {
+                req.last_served_round = batch_round_for();
+                return true;
+            };
+
+            // Reset every request before capacity checks: an unscheduled request must
+            // never retain a logits index from a previous decode.
+            for(auto & req : batch_requests) {
+                if(!batch_owns(req.get())) continue;
+                req->i_batch = -1;
+                req->i_batch_is_prefill = false;
+                req->ngram_proposals.clear();
+                req->ngram_rows.clear();
+                req->prefill_logprob_rows.clear();
+                req->prefill_logprob_targets.clear();
+                if(batch_is_live_state(req->state) && req->abort_requested)
+                    batch_finish_request_locked(*req, stop_reason::INVALID);
+            }
+            // Oldest-served requests go first within each phase, including when the
+            // batch is smaller than the number of ready sequences.
+            std::vector<BatchGenerateRequest *> ready;
+            for(auto & req : batch_requests)
+                if(batch_owns(req.get()) && req->slot >= 0 && batch_is_live_state(req->state) && req->profile_key == active_key)
+                    ready.push_back(req.get());
+            std::stable_sort(ready.begin(), ready.end(), [](const auto * a, const auto * b) {
+                if (a->priority != b->priority) return a->priority < b->priority;
+                return a->last_served_round < b->last_served_round;
+            });
+            // Decode pass. A request contributes at most one token here.
+            for(auto * req_ptr : ready)
+            {
+                if(!req_ptr || !batch_is_live_state(req_ptr->state) || req_ptr->slot < 0 || batch.n_tokens >= batch_cap)
+                    continue;
+                BatchGenerateRequest & req = *req_ptr;
+                req.i_batch = -1;
+                req.i_batch_is_prefill = false;
+                if(req.abort_requested) { batch_finish_request_locked(req, stop_reason::INVALID); continue; }
+                if(req.state != BatchState::GENERATING || !req.has_pending || !select_profile(req)) continue;
+                scheduled_ids.push_back(req.id);
+                if((friend_ngram_draft > 0 || friend_suffix_draft > 0) && !friend_batch_recurrent()) {
+                    const int context_limit = req.max_context_length > 0 ? std::min(req.max_context_length, kcpp_data->n_ctx) : kcpp_data->n_ctx;
+                    const int configured = friend_suffix_draft > 0 ? friend_suffix_draft : friend_ngram_draft;
+                    const int remaining = req.max_length > 0 ? req.max_length - req.completion_token_count - 1 : configured;
+                    const int cap = std::max(0, std::min({configured, remaining, context_limit - req.n_past - 1}));
+                    if(cap > 0) {
+                        req.ngram_proposals = friend_suffix_draft > 0
+                            ? friend_spec::suffix_draft(req.kv_tokens, req.pending_token, cap)
+                            : common_ngram_simple_draft({4, (uint16_t) cap}, req.kv_tokens, req.pending_token);
+                    }
+                }
+                req.i_batch = batch.n_tokens;
+                common_batch_add(batch, req.pending_token, req.n_past, { req.slot }, true);
+                req.kv_tokens.push_back(req.pending_token);
+                req.n_past++;
+                req.has_pending = false;
+                req.ngram_base_past = req.n_past;
+                req.ngram_rows.push_back(req.i_batch);
+            }
+
+            // All ordinary decodes have capacity before any speculative work. Cap
+            // verification at the remaining batch space, with every row requesting
+            // logits for target-only sampling. Recurrent state needs checkpointed
+            // rollback and is deliberately excluded here.
+            for(auto * req : ready) {
+                if(req->ngram_rows.empty()) continue;
+                const size_t count = std::min(req->ngram_proposals.size(), (size_t)(batch_cap - batch.n_tokens));
+                req->ngram_proposals.resize(count);
+                for(llama_token token : req->ngram_proposals) {
+                    req->ngram_rows.push_back(batch.n_tokens);
+                    common_batch_add(batch, token, req->n_past++, {req->slot}, true);
+                    req->kv_tokens.push_back(token);
+                }
+                batch_metrics.draft_proposed += count;
+            }
+
+            // Prefill pass. Chunk each prompt to the configured budget and never let
+            // it consume capacity needed by decodes already admitted above.
+            for(auto * req_ptr : ready)
+            {
+                if(!req_ptr || !batch_is_live_state(req_ptr->state) || req_ptr->slot < 0 || batch.n_tokens >= batch_cap || prefill_tokens >= prefill_budget)
+                    continue;
+                BatchGenerateRequest & req = *req_ptr;
+                if(req.state != BatchState::PREFILL || !select_profile(req)) continue;
+                scheduled_ids.push_back(req.id);
                     // friend.cpp: never pack past the next planned checkpoint in one round
                     while(!req.checkpoints.empty() && req.checkpoints.front() <= req.prompt_pos)
                     {
                         req.checkpoints.erase(req.checkpoints.begin());
                     }
                     const int stop_at = req.checkpoints.empty() ? (int) req.prompt_tokens.size() : req.checkpoints.front();
-                    while(req.prompt_pos < stop_at && batch.n_tokens < batch_cap)
+                    while(req.prompt_pos < stop_at && batch.n_tokens < batch_cap && prefill_tokens < prefill_budget)
                     {
                         bool is_last = req.prompt_pos == (int) req.prompt_tokens.size() - 1;
                         if(is_last)
@@ -5650,9 +6118,16 @@ static void batch_worker_loop()
                             req.i_batch = batch.n_tokens;
                             req.i_batch_is_prefill = true;
                         }
-                        common_batch_add(batch, req.prompt_tokens[req.prompt_pos], req.n_past, { req.slot }, is_last);
+                        const int prompt_row = batch.n_tokens;
+                        common_batch_add(batch, req.prompt_tokens[req.prompt_pos], req.n_past, { req.slot }, is_last || req.prompt_logprobs >= 0);
+                        if(req.prompt_logprobs >= 0 && req.prompt_pos + 1 < (int) req.prompt_tokens.size())
+                        {
+                            req.prefill_logprob_rows.push_back(prompt_row);
+                            req.prefill_logprob_targets.push_back(req.prompt_tokens[req.prompt_pos + 1]);
+                        }
                         req.kv_tokens.push_back(req.prompt_tokens[req.prompt_pos]);
                         req.prompt_pos++;
+                        prefill_tokens++;
                         req.n_past++;
                     }
                     if(req.prompt_pos == stop_at && stop_at < (int) req.prompt_tokens.size())
@@ -5666,16 +6141,6 @@ static void batch_worker_loop()
                         req.capture_after_decode = friend_cache_on &&
                             (size_t) (req.prompt_tokens.size() - req.reused_tokens) >= friend_cache_capture_tokens;
                     }
-                }
-                else if(req.state == BatchState::GENERATING && req.has_pending)
-                {
-                    req.i_batch = batch.n_tokens;
-                    req.i_batch_is_prefill = false;
-                    common_batch_add(batch, req.pending_token, req.n_past, { req.slot }, true);
-                    req.kv_tokens.push_back(req.pending_token);
-                    req.n_past++;
-                    req.has_pending = false;
-                }
             }
             if(batch.n_tokens == 0)
             {
@@ -5683,24 +6148,29 @@ static void batch_worker_loop()
             }
             for(auto & req_ptr : batch_requests)
             {
-                if(req_ptr && req_ptr->i_batch >= 0)
+                if(batch_owns(req_ptr.get()) && req_ptr->i_batch >= 0)
                 {
                     decode_ids.push_back(req_ptr->id);
                 }
             }
-            batch_round++;
+            batch_round_for()++;
+            ++batch_metrics.rounds;
+            batch_metrics.batch_tokens += batch.n_tokens;
+            batch_metrics.prompt_tokens += prefill_tokens;
         }
 
         // friend.cpp: switch adapters only when the profile actually changes; the legacy
         // path may have applied something else meanwhile, which apply() detects per context
+        const auto decode_start_time = std::chrono::steady_clock::now();
         int decode_status = 0;
-        if(active_profile && !friend_adapters::apply(*active_profile, friend_model_contexts()))
         {
-            decode_status = -1;
+            std::lock_guard<std::mutex> lock(batch_mutex);
+            if(active_profile && !friend_adapters::apply(*active_profile, {batch_context()})) decode_status = -1;
+
         }
-        else
+        if(decode_status == 0)
         {
-            decode_status = llama_decode(llama_ctx_v4, batch);
+            decode_status = llama_decode(batch_context(), batch);
             if(decode_status == 1)
             {
                 // friend.cpp: no free KV cells -- retained slots are the first thing to give up
@@ -5709,15 +6179,17 @@ static void batch_worker_loop()
             }
             if(decode_status == 1)
             {
-                decode_status = llama_decode(llama_ctx_v4, batch);
+                decode_status = llama_decode(batch_context(), batch);
             }
         }
         auto decode_finish_time = std::chrono::steady_clock::now();
 
         std::lock_guard<std::mutex> lock(batch_mutex);
+
+        batch_metrics.decode.observe(std::chrono::duration<double>(decode_finish_time - decode_start_time).count());
         if(decode_status != 0)
         {
-            for(int request_id : decode_ids)
+            for(int request_id : scheduled_ids)
             {
                 BatchGenerateRequest * req = batch_find_request_locked(request_id);
                 if(req && batch_is_live_state(req->state))
@@ -5730,14 +6202,28 @@ static void batch_worker_loop()
 
         for(auto & req_ptr : batch_requests)
         {
-            if(req_ptr && req_ptr->checkpoint_after_decode && req_ptr->slot >= 0)
+            if(batch_owns(req_ptr.get()) && req_ptr->checkpoint_after_decode && req_ptr->slot >= 0)
             {
                 req_ptr->checkpoint_after_decode = false;
-                friend_cache_capture_seq(req_ptr->slot, req_ptr->kv_tokens, req_ptr->profile.kv_key, "turn");
+                friend_cache_capture_seq(batch_context(), req_ptr->slot, req_ptr->kv_tokens, req_ptr->profile.kv_key, "turn");
             }
         }
-        const llama_vocab * vocab = llama_model_get_vocab(llama_get_model(llama_ctx_v4));
+        const llama_vocab * vocab = llama_model_get_vocab(llama_get_model(batch_context()));
         const std::vector<llama_token> eog_tokens = GetEogIDs(file_format,n_vocab);
+        if(active_profile)
+        {
+            for(auto & req_ptr : batch_requests)
+            {
+                if(!batch_owns(req_ptr.get()) || req_ptr->prompt_logprobs < 0 || req_ptr->prefill_logprob_rows.empty()) continue;
+                auto & req = *req_ptr;
+                const size_t count = std::min(req.prefill_logprob_rows.size(), req.prefill_logprob_targets.size());
+                for(size_t i = 0; i < count; ++i)
+                {
+                    const auto item = batch_logprob_item(batch_context(), req.prefill_logprob_rows[i], req.prefill_logprob_targets[i], req.prompt_logprobs);
+                    if(!item.empty()) req.prompt_logprob_items.push_back(item);
+                }
+            }
+        }
         for(int request_id : decode_ids)
         {
             BatchGenerateRequest * req = batch_find_request_locked(request_id);
@@ -5748,37 +6234,73 @@ static void batch_worker_loop()
             if(req->capture_after_decode)
             {
                 req->capture_after_decode = false;
-                friend_cache_capture_seq(req->slot, req->kv_tokens, req->profile.kv_key, "batch-prefill");
+                friend_cache_capture_seq(batch_context(), req->slot, req->kv_tokens, req->profile.kv_key, "batch-prefill");
             }
             if(req->i_batch_is_prefill && req->generation_start_time.time_since_epoch().count() == 0)
             {
                 req->generation_start_time = decode_finish_time;
                 req->process_time = std::chrono::duration<float>(decode_finish_time - req->process_start_time).count();
             }
-            llama_token sampled = llama_sampler_sample(req->sampler, llama_ctx_v4, req->i_batch);
+            if(req->ngram_rows.empty()) req->ngram_rows.push_back(req->i_batch);
+            int accepted = 0;
+            auto trim_draft = [&]() {
+                if(req->ngram_proposals.empty()) return;
+                const int keep = req->ngram_base_past + accepted;
+                llama_memory_seq_rm(llama_get_memory(batch_context()), req->slot, keep, -1);
+                req->n_past = keep;
+                req->kv_tokens.resize(keep);
+            };
+            for(size_t row = 0; row < req->ngram_rows.size(); ++row) {
+            llama_token sampled = llama_sampler_sample(req->sampler, batch_context(), req->ngram_rows[row]);
+            if(req->logprobs >= 0)
+            {
+                const auto item = batch_logprob_item(batch_context(), req->ngram_rows[row], sampled, req->logprobs);
+                if(!item.empty()) req->completion_logprob_items.push_back(item);
+            }
             req->completion_token_count++;
+            ++batch_metrics.generated_tokens;
+            const auto sample_time = std::chrono::steady_clock::now();
+            if(req->last_sample_time.time_since_epoch().count() == 0)
+                batch_metrics.first_token.observe(std::chrono::duration<double>(sample_time - req->submitted_time).count());
+            else
+                batch_metrics.inter_token.observe(std::chrono::duration<double>(sample_time - req->last_sample_time).count());
+            req->last_sample_time = sample_time;
             bool is_eog = std::find(eog_tokens.begin(), eog_tokens.end(), sampled) != eog_tokens.end();
             if(is_eog && !req->bypass_eos_token)
             {
+                trim_draft();
                 batch_finish_request_locked(*req, stop_reason::EOS_TOKEN_HIT);
-                continue;
+                break;
             }
             std::string piece = FileFormatTokenizeID(sampled, file_format, req->render_special);
             req->generated_pieces.push_back(piece);
             req->output += piece;
             if(batch_output_hit_stop(*req))
             {
+                trim_draft();
                 batch_finish_request_locked(*req, stop_reason::CUSTOM_STOPPER);
-                continue;
+                break;
             }
             if(req->max_length > 0 && req->completion_token_count >= req->max_length)
             {
+                trim_draft();
                 batch_finish_request_locked(*req, stop_reason::OUT_OF_TOKENS);
-                continue;
+                break;
             }
             req->pending_token = sampled;
             req->has_pending = true;
+            if(row < req->ngram_proposals.size() && sampled == req->ngram_proposals[row]) {
+                ++accepted;
+                ++batch_metrics.draft_accepted;
+                req->has_pending = false;
+                continue;
+            }
+            break;
+            }
+            if(req->slot >= 0) trim_draft();
+            req->kv_blocks.rebuild(req->kv_tokens);
             req->i_batch = -1;
+
         }
     }
     llama_batch_free(batch);
@@ -5786,13 +6308,9 @@ static void batch_worker_loop()
 
 static void batch_start_worker_locked()
 {
-    if(batch_worker_started)
-    {
-        return;
-    }
+    if(batch_worker_started) return;
     batch_worker_stop = false;
-    batch_worker_thread = std::thread(batch_worker_loop);
-    batch_worker_thread.detach();
+    for(auto & lane : batch_lanes) std::thread(batch_worker_loop, lane.get()).detach();
     batch_worker_started = true;
 }
 
@@ -5820,6 +6338,10 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     }
     auto req = std::make_unique<BatchGenerateRequest>();
     req->id = batch_next_request_id++;
+    req->priority = inputs.priority;
+    req->logprobs = std::clamp(inputs.logprobs, -1, 20);
+    req->prompt_logprobs = std::clamp(inputs.prompt_logprobs, -1, 20);
+    ++batch_metrics.submitted;
     req->prompt = inputs.prompt ? inputs.prompt : "";
     req->prompt_added_memory = inputs.memory ? inputs.memory : "";
     req->max_context_length = inputs.max_context_length;
@@ -5839,7 +6361,8 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     req->render_special = inputs.render_special;
     req->blue_noise = inputs.blue_noise;
     req->profile = profile;
-    req->profile_key = profile.kv_key + "|" + profile.head_key;
+    req->lane = batch_choose_lane_locked(profile);
+    req->profile_key = profile.execution_key + "|" + profile.head_key;
     req->grammar = inputs.grammar ? inputs.grammar : "";
     if(!req->grammar.empty())
     {
@@ -5893,6 +6416,7 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
             req->stop_sequences.emplace_back(inputs.stop_sequence[i]);
         }
     }
+    batch_start_worker_locked();
     int request_id = req->id;
     batch_requests.emplace_back(std::move(req));
     batch_waiting.push_back(request_id);
@@ -5941,9 +6465,28 @@ const char * gpttype_batch_generate_pending_output(int request_id)
     return reader_copy.c_str();
 }
 
+// A nonblocking, bounded slice for streaming. The caller owns its cursor and
+// copies the JSON before the next call on the same thread.
+const char * gpttype_batch_generate_logprobs(int request_id, int begin, int end)
+{
+    static thread_local std::string buffer;
+    std::lock_guard<std::mutex> lock(batch_mutex);
+    auto * req = batch_find_request_locked(request_id);
+    nlohmann::json items = nlohmann::json::array();
+    if(req) {
+        const int size = (int) req->completion_logprob_items.size();
+        begin = std::clamp(begin, 0, size);
+        end = std::clamp(end, begin, size);
+        for(int i = begin; i < end; ++i) items.push_back(req->completion_logprob_items[i]);
+    }
+    buffer = items.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    return buffer.c_str();
+}
+
 generation_outputs gpttype_batch_generate_result(int request_id)
 {
     static thread_local std::string reader_copy;
+    static thread_local std::string logprob_copy;
     std::unique_lock<std::mutex> lock(batch_mutex);
     batch_cv.wait(lock, [request_id](){
         BatchGenerateRequest * req = batch_find_request_locked(request_id);
@@ -5958,11 +6501,14 @@ generation_outputs gpttype_batch_generate_result(int request_id)
         output.prompt_tokens = 0;
         output.completion_tokens = 0;
         output.text = batch_empty_string.c_str();
+        output.logprobs_json = nullptr;
         return output;
     }
     reader_copy = req->output;
     generation_outputs output = req->result;
     output.text = reader_copy.c_str();
+    logprob_copy = req->logprobs_json;
+    output.logprobs_json = logprob_copy.empty() ? nullptr : logprob_copy.c_str();
     return output;
 }
 
@@ -6621,13 +7167,13 @@ static bool friend_cache_capture(const char * label, bool pinned = false)
 }
 
 // Snapshot an arbitrary sequence (batch slots). No logits/draft: batching has neither.
-static bool friend_cache_capture_seq(llama_seq_id seq, const std::vector<llama_token> & tokens, const std::string & kv_key, const char * label)
+static bool friend_cache_capture_seq(llama_context * ctx, llama_seq_id seq, const std::vector<llama_token> & tokens, const std::string & kv_key, const char * label)
 {
-    if(!friend_cache_on || !llama_ctx_v4 || tokens.size() < friend_cache::global().min_tokens())
+    if(!friend_cache_on || !ctx || tokens.size() < friend_cache::global().min_tokens())
     {
         return false;
     }
-    const llama_pos pmax = llama_memory_seq_pos_max(llama_get_memory(llama_ctx_v4), seq);
+    const llama_pos pmax = llama_memory_seq_pos_max(llama_get_memory(ctx), seq);
     if(pmax < 0 || (size_t) pmax + 1 != tokens.size())
     {
         return false; // KV and token record disagree: don't store something we can't vouch for
@@ -6637,9 +7183,9 @@ static bool friend_cache_capture_seq(llama_seq_id seq, const std::vector<llama_t
     e->kv_key = kv_key;
     e->exact_only = friend_cache_recurrent;
     e->label = label;
-    const size_t sz = llama_state_seq_get_size(llama_ctx_v4, seq);
+    const size_t sz = llama_state_seq_get_size(ctx, seq);
     friend_cache::bytes state(sz);
-    const size_t got = llama_state_seq_get_data(llama_ctx_v4, state.data(), sz, seq);
+    const size_t got = llama_state_seq_get_data(ctx, state.data(), sz, seq);
     if(got == 0)
     {
         return false;
@@ -9383,4 +9929,51 @@ std::string gpttype_friend_build_steering(const std::string & request_json)
            name.c_str(), sp.positive.size(), sp.negative.size(), out["seconds"].get<double>(), best + 1,
            path.empty() ? " [memory only]" : (" -> " + path).c_str());
     return out.dump();
+}
+
+// Safe to scrape concurrently with generation; no llama state reads are needed.
+std::string gpttype_friend_metrics() {
+    std::lock_guard<std::mutex> lock(batch_mutex);
+    size_t waiting = 0, running = 0;
+    for(const auto & req : batch_requests) {
+        if(!req) continue;
+        if(req->state == BatchState::WAITING) ++waiting;
+        else if(req->state == BatchState::PREFILL || req->state == BatchState::GENERATING) ++running;
+    }
+    std::string result = batch_metrics.render(waiting, running, batch_paused_bytes);
+    return result;
+}
+
+std::string gpttype_friend_requests() {
+    std::lock_guard<std::mutex> lock(batch_mutex);
+    nlohmann::json result = nlohmann::json::array();
+    const char * names[] = {"waiting", "prefill", "generating", "paused", "finished", "failed", "aborted"};
+    for(const auto & req : batch_requests) {
+        if(!req) continue;
+        result.push_back({{"id", req->id}, {"lane", req->lane}, {"state", names[(int) req->state]},
+            {"tokens", req->completion_token_count}, {"paused_bytes", req->paused_kv.size()},
+            {"profile", req->profile_key}, {"kv_blocks", req->kv_blocks.hashes.size()},
+            {"preempted", req->preempted},
+            {"pause_requested", req->pause_requested}});
+    }
+    return result.dump();
+}
+
+bool gpttype_friend_request_control(int id, bool pause) {
+    std::lock_guard<std::mutex> lock(batch_mutex);
+    auto * req = batch_find_request_locked(id);
+    if(!req || !batch_is_live_state(req->state)) return false;
+    if(pause) {
+        req->pause_requested = req->state != BatchState::PAUSED;
+    } else {
+        req->pause_requested = false;
+        if(req->state == BatchState::PAUSED) {
+            req->state = BatchState::WAITING;
+            // A waiting request may still have a stale queue entry from before pause.
+            batch_waiting.erase(std::remove(batch_waiting.begin(), batch_waiting.end(), id), batch_waiting.end());
+            batch_waiting.push_back(id);
+        }
+    }
+    batch_cv.notify_all();
+    return true;
 }

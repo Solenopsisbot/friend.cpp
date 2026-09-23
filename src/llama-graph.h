@@ -868,6 +868,7 @@ struct llm_graph_params {
     // friend.cpp: bumped whenever the model's LM head is swapped; graphs bake in the
     // head tensor pointer, so a different epoch must not reuse the previous graph
     uint64_t head_epoch;
+    const llama_adapter_head * adapter_head;
 
     std::map<llama_seq_id, llama_sampler *> samplers;
 
@@ -971,6 +972,7 @@ struct llm_graph_params {
             arch  == other.arch  &&
             gtype == other.gtype &&
             head_epoch == other.head_epoch &&
+            adapter_head == other.adapter_head &&
             cvec  == other.cvec  &&
             loras == other.loras &&
             cross == other.cross;
@@ -1089,6 +1091,8 @@ struct llm_graph_context {
     const llama_cparams & cparams;
     const llama_ubatch  & ubatch;
 
+    const llama_adapter_head * adapter_head;
+
     const int64_t n_embd;
     const int64_t n_layer;
     const int64_t n_layer_nextn;
@@ -1149,6 +1153,10 @@ struct llm_graph_context {
 
     llm_graph_context(const llm_graph_params & params);
     virtual ~llm_graph_context() = default;
+
+    ggml_tensor * head_tensor(ggml_tensor * base) const;
+    ggml_tensor * head_norm_tensor(ggml_tensor * base) const;
+    ggml_tensor * head_scale_tensor(ggml_tensor * base) const;
 
     void cb(ggml_tensor * cur, const char * name, int il) const;
 

@@ -32,6 +32,11 @@ No release binaries yet. Build from source, details below.
 | [Blue-noise sampling](#blue-noise-sampling) | Anti-correlated random rolls. 20--27% shorter unlucky-token streaks. Unbiased. Does not measurably change output quality -- it's a safety margin. |
 | [Metal small-batch kernels](#1-bit-and-ternary-models) | Batch-of-8 decode on the 27B Bonsai model: 190.6 ms down to 100.2 ms. Single-token and prefill unchanged. |
 | [Wider continuous batching](#continuous-batching) | Grammar, DRY, XTC, top-n-sigma, mirostat, and dynamic temperature all batch across concurrent requests. |
+| Decode-first scheduling | Ready decodes run before prompt work; `--prefill-tokens` bounds prompt work per round so long prompts do not freeze other requests. |
+| Priority scheduling and preemption | Per-request `priority` values, fair tie breaking, and bounded host snapshots let urgent work displace lower-priority sequences when all slots are full. |
+| Suffix speculation | `--suffix-draft N` proposes continuations from repeated prompt/history suffixes; it takes precedence over the fixed n-gram drafter. |
+| Batch logprobs | Concurrent requests can ask for per-token top alternatives with `logprobs`; results stay isolated per request. |
+| Serving metrics | Prometheus text at `/metrics`: queue time, TTFT, ITL, decode time, cache reuse, and batch counters. |
 
 ## Quick start
 
@@ -194,6 +199,91 @@ their KV for prefix reuse; new requests take the best-overlapping slot or share
 another sequence's cells. friend.cpp batches more request types than stock
 koboldcpp -- grammar, DRY, XTC, top-n-sigma, mirostat, and dynamic temperature all
 work across concurrent requests.
+
+Scheduling is decode-first, then chunked prefill. `--prefill-tokens N` limits how
+many prompt tokens can be admitted beside one decode round; `0` uses the normal
+backend batch size. Smaller values protect inter-token latency under long prompts,
+while larger values improve time to first token and throughput. `/metrics` exposes
+Prometheus-compatible queue, TTFT, inter-token, decode, batching, and cache-reuse
+counters for tuning this tradeoff.
+
+Requests may include `cache_salt` to isolate prefix reuse between tenants. The salt
+is hashed before it reaches the native cache key, and adapter/cache identities use
+SHA-256. Model/LoRA file identities still incorporate path, size and modification
+time rather than hashing entire weight files.
+
+Batch requests may include `priority`; lower values are scheduled first, while
+equal-priority requests retain fair round-robin ordering.
+
+`--schedule-tokens N` sets the unified token budget for each batch round. Decode
+tokens are admitted first, then prompt and speculative tokens spend the remainder;
+`0` keeps the backend batch size. This is useful when a large `--batchsize` would
+otherwise make long prefills harm inter-token latency.
+
+When every sequence slot is occupied, a waiting request with a strictly higher
+priority can evict one lower-priority sequence into the bounded compressed host
+snapshot tier. The request resumes with its sampler state and KV contents intact;
+equal-priority traffic is never churned. `/metrics` exposes
+`friend_batch_preemptions_total`.
+
+For prompt/history-driven workloads, `--suffix-draft N` uses repeated suffixes and
+frequency-weighted continuations to generate adaptive draft proposals. It is
+compatible with continuous batching and falls back to the existing n-gram drafter
+when unset. Requests can pass `"logprobs": K` (up to 20) to retain top-K token
+alternatives in the batch result without sharing the legacy process-wide buffer.
+
+Native callers that need concurrent personas can bind an LM head to an individual
+`llama_context` with `llama_set_adapter_head(ctx, head)` and inspect it with
+`llama_get_adapter_head`. The binding is included in graph reuse keys, so contexts
+sharing one model can decode in parallel without mutating the model's global head.
+Currently the context-local graph path covers LLaMA, Qwen3/Qwen3-MoE, and
+Qwen3.5/Qwen3.5-MoE. Freeing a head unbinds it from its contexts. Profile application uses this path where
+supported. The existing `llama_model_set_head` API remains the model-wide
+compatibility path for other architectures.
+
+For in-process parallel persona execution, `--profile-lanes N` creates N native
+contexts over the same model weights. Each lane owns independent KV, compute
+buffers, adapter bindings, and sampler state; requests are affinity-routed by
+LoRA/vector/head profile and then scheduled fairly within a lane. CPU thread
+counts are divided across lanes, while the backend weights remain shared. This
+mode currently requires ordinary continuous batching without a separate draft
+model, MTP, or CFG guidance context; use the process router below when those
+features or model-wide adapter architectures are required.
+
+For real model-replica parallelism, run the small process router alongside several
+full workers:
+
+```sh
+python tools/friend-bench/data_parallel_router.py --model model.gguf \
+  --replicas 2 --port 5001 --replica-arg=--gpulayers --replica-arg=99
+```
+
+Each worker owns its own context and device placement. Requests with the same
+`cache_salt` and adapter profile stay on one replica for prefix-cache locality;
+other requests go to the least-busy worker. LoRA, steering, and head profiles are
+therefore isolated in real worker lanes instead of being mutated mid-decode.
+The router namespaces request IDs as `router-epoch:worker:local-id`, aggregates
+request listings across healthy workers, retries only connection failures before
+the request is sent, and forwards SSE/NDJSON chunks as they arrive. Pause/resume
+controls use the namespaced ID, so they cannot target a request on another worker.
+This is the safe way to scale across devices without sharing mutable adapter or
+KV state.
+
+History-based speculation is available with `--ngram-draft N`. It proposes repeated
+continuations from the request's own token history and verifies them in the same
+target batch; it is opportunistic, so a request with no repeated suffix simply falls
+back to ordinary decoding. `/api/extra/requests` lists active batch requests, while
+`--suffix-draft N` searches both the prompt and generated history for repeated
+suffixes, chooses frequency-weighted continuations, and adapts the proposed length
+per request. It takes precedence over `--ngram-draft`.
+`POST /api/extra/requests/pause` and `/resume` suspend or continue a request at a
+worker boundary. Paused KV is bounded by a 512 MiB host-memory budget.
+Preempted and explicitly paused snapshots use the same lossless byte-plane/zstd
+codec as the prompt cache when compression saves space; `/metrics` exposes the
+current stored byte count as `friend_batch_offloaded_bytes`.
+
+`tools/friend-bench/lane_benchmark.py` measures end-to-end throughput for one or
+more native profile-lane counts and verifies every result is non-empty.
 
 ---
 

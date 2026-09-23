@@ -24,6 +24,9 @@ friend.cpp-specific features, described below:
 3. **Tiered prompt cache** -- RAM + disk caching of KV state with automatic prefix reuse
 4. **DSpark speculative drafters** -- PrismML's standalone drafters wired into `--draftmodel`, cache-aware
 5. **Fast 1-bit / ternary decode on old NVIDIA GPUs** -- a bit-plane mat-vec path for Q1_0 / PQ2_0 on GPUs without `dp4a` (Maxwell)
+6. **Priority-aware continuous batching** -- fair priority queues, bounded host KV snapshots for preemption, and per-request batch logprobs
+7. **Suffix speculation** -- prompt/history suffix matching with frequency-weighted adaptive drafts
+8. **Logical KV block tables** -- fixed-token blocks used for aligned llama sequence sharing and copy-on-write prefix reuse
 
 
 ---
@@ -249,14 +252,34 @@ The intended workflow: take a base model, fine-tune *only* the LM head (and opti
 
 ### Continuous batching
 
-With `--parallelrequests N` (which turns context shifting off automatically), requests are grouped by adapter profile per decode step. The worker sticks with a profile while it has work queued for it, then switches to a starved profile after 8 decode rounds.
+With `--parallelrequests N` (which turns context shifting off automatically), requests
+are grouped by adapter profile per decode step.
+
+`--profile-lanes N` adds N native execution lanes over the same model weights. Each
+lane has independent KV and compute buffers plus context-local adapter/head state;
+requests with different LoRA, steering, or head identities are affinity-routed to
+separate lanes when possible, and each lane retains the decode-first fair scheduler.
+The option is intended for high-parallelism persona serving and currently requires
+ordinary continuous batching without MTP, a separate draft model, or CFG guidance.
+CPU threads are divided across lanes, so raise N for concurrent work only when the
+device and memory budget can absorb the extra KV/compute state.
+
+`--schedule-tokens N` bounds the total tokens admitted to one scheduler round;
+decodes are admitted before prompt chunks, and `0` uses the backend batch size.
+Same-profile prefixes share complete 16-token blocks through llama's sequence-cell
+copy-on-write path. The share count is exposed as
+`friend_batch_kv_block_shares_total` in `/metrics`.
+
+Pause and priority-preemption snapshots are bounded by 512 MiB of host storage.
+They use the prompt-cache codec when compression reduces their size and restore
+with checksum validation. `friend_batch_offloaded_bytes` reports the stored bytes.
 
 ### What's been verified
 
 - Each adapter kind (LoRA, steering, head) changes greedy output and returns exactly to base output when removed.
 - A copy of the model's own head reproduces base output bit-for-bit.
 - Head-only switches don't trigger prompt reprocessing.
-- Concurrent mixed-profile requests match serial results.
+- Concurrent head-profile requests match serial results; LoRA/steering profiles are grouped and applied one execution profile at a time because llama adapter state is context-local.
 
 
 ---
