@@ -18,10 +18,11 @@ still works unchanged.
 
 friend.cpp is a testbed for engine-level features: caching strategies, speculative
 decoding, adapter management, sampling, steering, and GPU kernels. The ethos is
-build, measure honestly, keep what the numbers justify. The blue-noise sampler cuts
-unlucky-token streaks by 20--27%, but a blind judged comparison found no measurable
-quality preference -- and the README says so. Features that don't pan out under
-measurement get documented as what they are, not sold as what they aren't.
+build, measure honestly, keep what the numbers justify. Fixed-length speculative
+drafting nearly doubles speed on predictable text and loses 25% on chat, so the
+default adapts per round instead -- and the tables below show both sides. Features
+that don't pan out under measurement get documented as what they are, not sold as
+what they aren't.
 
 No release binaries yet. Build from source, details below.
 
@@ -34,7 +35,7 @@ No release binaries yet. Build from source, details below.
 | [Adaptive speculative decoding](#adaptive-speculative-decoding) | Draft length chosen per-round from live measurements. Fixed drafting loses ~25% on chat; adaptive stayed at or above the no-drafter baseline on every workload tested. |
 | [Steering vectors built in](#steering-vectors-built-in) | Build control vectors from contrastive prompts on the running model. 1.3 seconds from 12 pairs on a 1.7B model. |
 | [Wider continuous batching](#continuous-batching) | Grammar, DRY, XTC, top-n-sigma, mirostat, and dynamic temperature all batch across concurrent requests. |
-| [Blue-noise sampling](#blue-noise-sampling) | Anti-correlated random rolls. 20--27% shorter unlucky-token streaks. Unbiased. Does not measurably change output quality -- it's a safety margin. |
+| [Blue-noise sampling](#blue-noise-sampling) | Anti-correlated random rolls: fewer streaks at either end of the distribution, which the model would otherwise amplify into loops or derailing. Unbiased. |
 | [Low-bit models and kernels](#low-bit-models-and-kernels) | Q1_0, PQ2_0, PTQ1_0 with CPU/Metal/CUDA/Vulkan kernels. Metal batch-of-8 on 27B Bonsai Q1_0: 190.6 ms down to 100.2 ms. Maxwell GPUs without dp4a go from 25 to 63+ tok/s on Bonsai-8B Q1_0. |
 
 ## Quick start
@@ -159,12 +160,19 @@ work across concurrent requests.
 ### Blue-noise sampling
 
 `"blue_noise": true` in a request enables anti-correlated random rolls -- each
-individual roll stays uniform (unbiased), but unlucky streaks of low-probability
-tokens drop by roughly 20--27%. Mean surprisal is unchanged. You can also set
+individual roll stays uniform (unbiased), but streaks of rolls at the same end of the
+distribution get rarer. That matters because the model conditions on its own output:
+a run of top picks makes the next top pick likelier until the text locks into a loop
+(context collapse), and a run of bottom picks derails it. You can also set
 `"rng_type": "mt19937" | "lowbias32"` to pick the underlying generator.
 
-Honest disclosure: a blind judged comparison found no measurable preference in
-reply quality. This is a safety margin for higher temperatures, not a quality knob.
+Measured: tail-pick streaks 20--27% shorter with mean surprisal unchanged. On a base
+model (Qwen3-1.7B-Base, 768-token raw completions, 192 paired runs) blue noise cut
+collapse from 24.5% to 19.8% at T=0.7, with less repetitive text overall (paired
+t = 2.3); the effect is smaller at T=1.0 with min_p. kaetemi, whose sampler this is,
+reports a large reduction in collapse on base models and about 1% better
+reasoning-model output in preliminary benchmarks. Short chat replies from an instruct
+model showed no judged preference either way -- too short to collapse.
 
 More: [FRIEND.md -- blue-noise sampling](FRIEND.md#blue-noise-sampling).
 
@@ -251,8 +259,9 @@ generation, speech, story writing, all of it -- is intact and documented in
 - **`tools/friend-sync/smoke.py`** -- 24 end-to-end checks in about a minute:
   coherence, determinism, cache-on output must equal cache-off output, head swap,
   steering, batching, GPU vs CPU.
-- **`tools/friend-eval/sampler_lab.py`** and **`judge_lab.py`** -- sampler
-  measurement and judged comparison.
+- **`tools/friend-eval/sampler_lab.py`**, **`judge_lab.py`** and
+  **`collapse_eval.py`** -- sampler measurement, judged comparison, and
+  long-generation context collapse.
 - **`tools/friend-bench/`** -- kernel benchmarks.
 - **`tools/friend-heads/extract_head.py`** -- extract an LM head from any GGUF.
 
