@@ -9935,12 +9935,16 @@ std::string gpttype_friend_build_steering(const std::string & request_json)
 std::string gpttype_friend_metrics() {
     std::lock_guard<std::mutex> lock(batch_mutex);
     size_t waiting = 0, running = 0;
+    std::vector<size_t> lane_running(batch_lanes.size(), 0);
     for(const auto & req : batch_requests) {
         if(!req) continue;
         if(req->state == BatchState::WAITING) ++waiting;
-        else if(req->state == BatchState::PREFILL || req->state == BatchState::GENERATING) ++running;
+        else if(req->state == BatchState::PREFILL || req->state == BatchState::GENERATING) {
+            ++running;
+            if(req->lane >= 0 && (size_t) req->lane < lane_running.size()) ++lane_running[req->lane];
+        }
     }
-    std::string result = batch_metrics.render(waiting, running, batch_paused_bytes);
+    std::string result = batch_metrics.render(waiting, running, batch_paused_bytes, lane_running);
     return result;
 }
 

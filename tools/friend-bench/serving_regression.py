@@ -53,6 +53,10 @@ def run(model, draft, suffix=False, profile_lanes=1):
                     if proc.poll() is not None or time.monotonic() > deadline:
                         raise RuntimeError('server failed to start')
                     time.sleep(.1)
+            lane_metrics = request('/metrics')
+            for lane in range(profile_lanes):
+                assert f'friend_batch_lane_running{{lane="{lane}"}} ' in lane_metrics, \
+                    f'lane {lane} metric missing'
             prompt = 'Continue this repeating sequence without explanation: ' + 'alpha beta gamma delta ' * 80
             payload = dict(prompt=prompt, max_length=160, max_context_length=4096, temperature=0,
                            rep_pen=1, top_k=0, top_p=1, seed=123, cache_salt='test-A',
