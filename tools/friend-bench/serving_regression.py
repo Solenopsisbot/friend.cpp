@@ -62,6 +62,15 @@ def run(model, draft, suffix=False, profile_lanes=1):
             assert isinstance(lp.get('logprobs'), list) and lp['logprobs'], 'batch completion logprobs missing'
             assert isinstance(lp.get('prompt_logprobs'), list) and lp['prompt_logprobs'], 'batch prompt logprobs missing'
             assert len(lp['logprobs'][0]['top_logprobs']) == 3, 'batch logprobs top-k mismatch'
+            chat_lp = request('/v1/chat/completions', {
+                'messages': [{'role': 'user', 'content': 'Answer with one short word: hello'}],
+                'max_tokens': 4, 'temperature': 0, 'logprobs': True, 'top_logprobs': 2,
+                'prompt_logprobs': 2, 'cache_salt': 'chat-logprobs', 'stream': False,
+            })
+            chat_choice = chat_lp['choices'][0]
+            assert isinstance(chat_choice.get('logprobs'), dict), 'chat logprobs missing'
+            assert chat_choice['logprobs'].get('content'), 'chat completion logprobs missing'
+            assert chat_choice.get('prompt_logprobs'), 'chat prompt logprobs missing'
             # Different namespaces must not reuse live/retained KV, including base profiles.
             before = metric('friend_batch_reused_tokens_total')
             other = dict(payload, cache_salt='test-B', max_length=4)
