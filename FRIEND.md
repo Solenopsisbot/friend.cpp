@@ -276,6 +276,12 @@ With `--parallelrequests N` (which turns context shifting off automatically), re
 - Head-only switches don't trigger prompt reprocessing.
 - Concurrent mixed-profile requests match serial results.
 
+### LoRAs on Bonsai models
+
+LoRAs load in any type the file carries (f32, f16, bf16, q8_0) on the 1-bit and ternary Bonsai models, including the Hadamard-folded Ternary-Bonsai-2. A LoRA is applied to the model's *unrotated* activation, so on a folded model `W_folded * H * x + B * A * x = (W + B * A) * x` -- the same result as the LoRA on the unfolded model. Checked on Ternary-Bonsai-2-27B PQ2_0 with an fp16 adapter on `attn_qkv`, `attn_q`, `ffn_gate` and the two folded-with-extras tensors, `ssm_out` (head permutation) and `ffn_down`: it loads, scale 0 and "no LoRA" give byte-identical output, larger scales move the output progressively, and dropping it returns exactly to base.
+
+Train against unrotated weights and convert with `convert_lora_to_gguf.py --base <that checkpoint>`. For Bonsai 1, PrismML publishes them (`prism-ml/Bonsai-27B-unpacked`, `prism-ml/Ternary-Bonsai-27B-unpacked`). For Ternary-Bonsai-2 there's no unpacked release yet, and its F16 GGUF is folded too (`prism.hadamard.*` metadata), so it isn't a training base as-is; the rotation, signs and head permutation it records would have to be undone first.
+
 
 ---
 
@@ -534,6 +540,40 @@ What happened on the first run:
 | greedy output vs CPU | first ~60 tokens identical on the long prompt, all 128 on the short one | identical | identical |
 
 PTQ1_0 was produced losslessly from the PQ2_0 file (`quantize_gguf --allow-requantize ... PTQ1_0`) and gives the same text as PQ2_0 on every backend. Q1_0's small divergence is float summation order. CUDA diverges from the CPU at about the same point, just on the other prompt. Vulkan prefill runs at a third of CUDA's because its generic scalar matmul shader reaches ~1 TFLOP/s on this card, against cuBLAS's ~3.6. Tuning that shader for pre-Turing NVIDIA is open work.
+
+## Running under llama-swap
+
+[llama-swap](https://github.com/mostlygeek/llama-swap) starts and stops model servers on demand behind one OpenAI-compatible endpoint. friend.cpp works as a backend like llama-server, with one difference: its health endpoint is `/ping`, not `/health`, so set `checkEndpoint` (otherwise llama-swap waits out `healthCheckTimeout` and gives up).
+
+```yaml
+healthCheckTimeout: 300
+
+models:
+  "bonsai2-27b":
+    cmd: |
+      python3 /path/to/friend.cpp/koboldcpp.py
+        --model /models/Ternary-Bonsai-2-27B-PQ2_0.gguf
+        --gpulayers 99 --contextsize 32768 --flashattention
+        --host 127.0.0.1 --port ${PORT}
+        --skiplauncher --quiet
+        --cache-dir /var/cache/friendcpp/bonsai2
+    checkEndpoint: /ping
+    ttl: 600
+
+  "qwen3.5-0.8b":
+    cmd: |
+      python3 /path/to/friend.cpp/koboldcpp.py
+        --model /models/Qwen3.5-0.8B-Q4_0.gguf
+        --gpulayers 99 --host 127.0.0.1 --port ${PORT}
+        --skiplauncher --quiet
+    checkEndpoint: /ping
+```
+
+- The server answers only once the model is loaded, so `/ping` returning 200 means ready.
+- It serves whichever model it loaded and ignores the request's `model` field; llama-swap's routing is what picks the model.
+- A swap throws away the RAM tier of the prompt cache. `--cache-dir` (one directory per model) keeps a disk tier that survives the restart, so a swapped-back model resumes long system prompts instead of re-prefilling them.
+- `--parallelrequests N` needs `--contextsize` large enough for N concurrent requests: the context is split between the slots.
+- koboldcpp's own `--admin --routermode` also hot-swaps models from `.kcpps` configs, if you'd rather not run a proxy.
 
 ## Tools for maintaining the fork
 
