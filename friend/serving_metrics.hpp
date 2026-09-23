@@ -30,7 +30,7 @@ struct histogram {
 struct metrics {
     uint64_t submitted = 0, rejected = 0, completed = 0, failed = 0, cancelled = 0;
     uint64_t prompt_tokens = 0, reused_tokens = 0, generated_tokens = 0;
-    uint64_t rounds = 0, batch_tokens = 0, preemptions = 0, kv_block_shares = 0;
+    uint64_t rounds = 0, batch_tokens = 0, preemptions = 0, kv_block_shares = 0, watermark_stalls = 0;
     uint64_t draft_proposed = 0, draft_accepted = 0;
     histogram queue, first_token, inter_token, decode;
     std::string render(size_t waiting, size_t running, size_t offloaded_bytes = 0,
@@ -62,6 +62,7 @@ struct metrics {
         value("scheduled_tokens_total", "counter", batch_tokens);
         value("preemptions_total", "counter", preemptions);
         value("kv_block_shares_total", "counter", kv_block_shares);
+        value("kv_watermark_stalls_total", "counter", watermark_stalls);
         queue.write(out, "friend_batch_queue_seconds");
         first_token.write(out, "friend_batch_time_to_first_token_seconds");
         inter_token.write(out, "friend_batch_inter_token_seconds");

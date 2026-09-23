@@ -277,6 +277,10 @@ When profile lanes are enabled, `/metrics` also exposes the bounded live count p
 lane as `friend_batch_lane_running{lane="N"}`.
 `--max-queued-requests N` rejects new batch work once waiting, running and paused
 requests reach N; `friend_batch_requests_rejected_total` records those rejections.
+`--kv-watermark F` reserves a fraction of estimated sequence-token capacity for
+active decodes and defers prompt admission when the reserve would be consumed;
+`friend_batch_kv_watermark_stalls_total` reports those deferrals. This scheduler
+guard complements the future physical paged allocator.
 
 Pause and priority-preemption snapshots are bounded by 512 MiB of host storage.
 They use the prompt-cache codec when compression reduces their size and restore

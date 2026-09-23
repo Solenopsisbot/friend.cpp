@@ -225,6 +225,11 @@ waiting, running and paused work. A full queue returns a retryable overload erro
 instead of silently falling back to the legacy generator; `0` leaves the cap off.
 `friend_batch_requests_rejected_total` counts those admissions.
 
+`--kv-watermark F` reserves fraction `F` of the estimated sequence-token capacity
+for currently active decodes before admitting another prompt. It reduces KV
+thrash while the physical allocator is under pressure; `0` disables it.
+`friend_batch_kv_watermark_stalls_total` counts deferred admissions.
+
 When every sequence slot is occupied, a waiting request with a strictly higher
 priority can evict one lower-priority sequence into the bounded compressed host
 snapshot tier. The request resumes with its sampler state and KV contents intact;

@@ -106,6 +106,7 @@ static int friend_ngram_draft = 0;
 static int friend_suffix_draft = 0;
 static int friend_schedule_tokens = 0;
 static int friend_max_queued_requests = 0;
+static float friend_kv_watermark = 0.0f;
 
 llama_grammar *  grammar = nullptr; //currently used grammar
 llama_grammar_parser parsed_grammar;
@@ -3417,6 +3418,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     friend_suffix_draft = std::clamp(inputs.friend_suffix_draft, 0, 32);
     friend_schedule_tokens = std::max(0, inputs.friend_schedule_tokens);
     friend_max_queued_requests = std::max(0, inputs.friend_max_queued_requests);
+    friend_kv_watermark = std::clamp(inputs.friend_kv_watermark, 0.0f, 0.9f);
     if(continuous_batching_slots > 0)
     {
         printf("Continuous batching: prepared %d GGUF sequence slots.\n", continuous_batching_slots);
@@ -5755,6 +5757,31 @@ static int batch_seed_slot_locked(BatchGenerateRequest & req, int slot)
     return (int) reused;
 }
 
+// This is deliberately a scheduler-level watermark until the physical paged KV
+// allocator lands. llama.cpp allocates its context buffers up front, so use the
+// model context length and live sequence positions as a conservative estimate.
+// A request is allowed when no sequence is active; otherwise reserve the configured
+// fraction for the sequences already decoding and let priority preemption handle
+// urgent work that cannot fit.
+static bool batch_watermark_allows_locked(const BatchGenerateRequest & req)
+{
+    if(friend_kv_watermark <= 0.0f || !kcpp_data || continuous_batching_slots <= 0) return true;
+    size_t active = 0;
+    size_t used = 0;
+    for(const auto & other : batch_requests) {
+        if(!batch_owns(other.get()) || !other || other->slot < 0 || !batch_is_live_state(other->state)) continue;
+        ++active;
+        const llama_pos end = llama_memory_seq_pos_max(llama_get_memory(batch_context()), other->slot);
+        if(end >= 0) used += (size_t) end + 1;
+    }
+    if(active == 0) return true;
+    const size_t per_sequence = std::max(1, kcpp_data->n_ctx);
+    const size_t capacity = per_sequence * (size_t) continuous_batching_slots;
+    const size_t reserve = (size_t) std::ceil((double) capacity * friend_kv_watermark);
+    const size_t projected = used + req.prompt_tokens.size();
+    return projected + reserve <= capacity;
+}
+
 static bool batch_claim_waiting_locked()
 {
     bool claimed = false;
@@ -5787,6 +5814,12 @@ static bool batch_claim_waiting_locked()
         if(!batch_prepare_prompt_locked(*req))
         {
             batch_waiting.pop_front();
+            continue;
+        }
+        if(!batch_watermark_allows_locked(*req)) {
+            ++batch_metrics.watermark_stalls;
+            batch_waiting.pop_front();
+            batch_waiting.push_back(request_id);
             continue;
         }
         int slot = batch_pick_slot_locked(*req, slot_occupied);
