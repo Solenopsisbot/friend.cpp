@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -26,6 +27,8 @@ class Pool:
     def __init__(self, ports):
         self.ports = list(ports)
         self.active = [0] * len(self.ports)
+        self.failure_until = [0.0] * len(self.ports)
+        self.failure_count = [0] * len(self.ports)
         self.lock = threading.Lock()
         self.epoch = uuid.uuid4().hex[:12]
 
@@ -49,19 +52,36 @@ class Pool:
             available = [i for i in range(len(self.ports)) if i not in excluded]
             if not available:
                 raise ValueError("no untried replicas")
+            now = time.monotonic()
+            healthy = [i for i in available if self.failure_until[i] <= now]
+            # Keep probing when every replica is cooling down. This prevents a
+            # transient outage from becoming a permanent routing blackout.
+            candidates = healthy or available
             if sticky is not None:
                 digest = hashlib.sha256(str(sticky).encode()).digest()
                 index = int.from_bytes(digest[:8], "big") % len(self.ports)
-                if index in excluded:
-                    index = min(available, key=lambda i: self.active[i])
+                if index not in candidates:
+                    index = min(candidates, key=lambda i: self.active[i])
             else:
-                index = min(available, key=lambda i: self.active[i])
+                index = min(candidates, key=lambda i: self.active[i])
             self.active[index] += 1
             return index, self.ports[index]
 
     def done(self, index):
         with self.lock:
             self.active[index] = max(0, self.active[index] - 1)
+
+    def mark_failure(self, index):
+        """Temporarily stop sending new work to a failed replica."""
+        with self.lock:
+            self.failure_count[index] += 1
+            delay = min(30.0, 0.25 * (2 ** min(self.failure_count[index] - 1, 7)))
+            self.failure_until[index] = time.monotonic() + delay
+
+    def mark_success(self, index):
+        with self.lock:
+            self.failure_count[index] = 0
+            self.failure_until[index] = 0.0
 
     def request_id(self, index, local_id):
         return f"{self.epoch}:{index}:{local_id}"
@@ -124,6 +144,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.request('GET', self.path, headers=self.upstream_headers())
                 response = conn.getresponse()
                 body = response.read()
+                self.pool.mark_success(index)
                 if response.status != 200:
                     continue
                 alive += 1
@@ -135,6 +156,7 @@ class Handler(BaseHTTPRequestHandler):
                 # A dead replica should not hide the live workers' request
                 # state. Controls still fail explicitly when their owner is
                 # unavailable; the aggregate view remains useful for health.
+                self.pool.mark_failure(index)
                 continue
             finally:
                 conn.close()
@@ -188,11 +210,16 @@ class Handler(BaseHTTPRequestHandler):
                 return
             except (OSError, http.client.HTTPException) as exc:
                 if not connected and owner is None and len(attempted) < len(self.pool.ports):
+                    self.pool.mark_failure(index)
                     continue
+                if not connected:
+                    self.pool.mark_failure(index)
                 self.close_connection = True
                 if not headers_sent:
                     self.send_error(502, f'replica {port} unavailable: {exc}')
                 return
+            else:
+                self.pool.mark_success(index)
             finally:
                 conn.close()
                 self.pool.done(index)

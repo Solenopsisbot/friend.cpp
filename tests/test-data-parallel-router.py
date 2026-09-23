@@ -87,6 +87,11 @@ if __name__ == "__main__":
     retry, _ = pool.choose(json.dumps(dict(profile, cache_salt="tenant-a")).encode(), {failed})
     assert retry != failed
     pool.done(retry)
+    pool.mark_failure(0)
+    cooled, _ = pool.choose(b"{}")
+    assert cooled != 0
+    pool.done(cooled)
+    pool.mark_success(0)
     namespaced = pool.request_id(2, 41)
     assert pool.owner(namespaced) == (2, 41)
 
