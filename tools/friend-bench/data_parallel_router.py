@@ -29,8 +29,62 @@ class Pool:
         self.active = [0] * len(self.ports)
         self.failure_until = [0.0] * len(self.ports)
         self.failure_count = [0] * len(self.ports)
+        self.observed_running = [0] * len(self.ports)
+        self.observed_waiting = [0] * len(self.ports)
+        self.observed_kv_blocks = [0] * len(self.ports)
+        self.observed_at = [0.0] * len(self.ports)
         self.lock = threading.Lock()
         self.epoch = uuid.uuid4().hex[:12]
+        self._health_stop = threading.Event()
+        self._health_thread = None
+
+    def start_health_monitor(self, interval=0.5):
+        if self._health_thread and self._health_thread.is_alive():
+            return
+        self._health_stop.clear()
+        def run():
+            while not self._health_stop.wait(interval):
+                for index, port in enumerate(self.ports):
+                    self.refresh_worker(index, port)
+        self._health_thread = threading.Thread(target=run, name="friend-router-health", daemon=True)
+        self._health_thread.start()
+
+    def stop_health_monitor(self):
+        self._health_stop.set()
+        if self._health_thread:
+            self._health_thread.join(timeout=2)
+
+    def refresh_worker(self, index, port=None):
+        """Refresh bounded scheduler state used by the next routing decision."""
+        port = self.ports[index] if port is None else port
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=2)
+        try:
+            conn.request('GET', '/api/extra/requests')
+            response = conn.getresponse()
+            entries = json.loads(response.read()) if response.status == 200 else []
+            running = sum(item.get('state') in ('prefill', 'generating') for item in entries)
+            waiting = sum(item.get('state') == 'waiting' for item in entries)
+            kv_blocks = sum(int(item.get('kv_blocks', 0) or 0) for item in entries)
+            with self.lock:
+                self.observed_running[index] = running
+                self.observed_waiting[index] = waiting
+                self.observed_kv_blocks[index] = kv_blocks
+                self.observed_at[index] = time.monotonic()
+            self.mark_success(index)
+            return True
+        except (OSError, http.client.HTTPException, ValueError, TypeError, KeyError):
+            self.mark_failure(index)
+            return False
+        finally:
+            conn.close()
+
+    def set_observed(self, index, running=0, waiting=0, kv_blocks=0):
+        """Inject a state sample for deterministic tests and embedded callers."""
+        with self.lock:
+            self.observed_running[index] = max(0, int(running))
+            self.observed_waiting[index] = max(0, int(waiting))
+            self.observed_kv_blocks[index] = max(0, int(kv_blocks))
+            self.observed_at[index] = time.monotonic()
 
     def choose(self, body, exclude=()):
         excluded = set(exclude)
@@ -57,13 +111,20 @@ class Pool:
             # Keep probing when every replica is cooling down. This prevents a
             # transient outage from becoming a permanent routing blackout.
             candidates = healthy or available
+            def score(i):
+                observed = 0.0
+                if now - self.observed_at[i] <= 2.0:
+                    observed = (self.observed_running[i] +
+                                0.25 * self.observed_waiting[i] +
+                                0.001 * self.observed_kv_blocks[i])
+                return self.active[i] + observed
             if sticky is not None:
                 digest = hashlib.sha256(str(sticky).encode()).digest()
                 index = int.from_bytes(digest[:8], "big") % len(self.ports)
                 if index not in candidates:
-                    index = min(candidates, key=lambda i: self.active[i])
+                    index = min(candidates, key=score)
             else:
-                index = min(candidates, key=lambda i: self.active[i])
+                index = min(candidates, key=score)
             self.active[index] += 1
             return index, self.ports[index]
 
@@ -145,6 +206,11 @@ class Handler(BaseHTTPRequestHandler):
                 response = conn.getresponse()
                 body = response.read()
                 self.pool.mark_success(index)
+                entries = json.loads(body) if response.status == 200 else []
+                self.pool.set_observed(index,
+                                       running=sum(item.get('state') in ('prefill', 'generating') for item in entries),
+                                       waiting=sum(item.get('state') == 'waiting' for item in entries),
+                                       kv_blocks=sum(int(item.get('kv_blocks', 0) or 0) for item in entries))
                 if response.status != 200:
                     continue
                 alive += 1
@@ -248,6 +314,7 @@ def main():
         children.append(subprocess.Popen(common + ["--port", str(port)] + args.replica_arg, cwd=ROOT))
     pool = Pool(ports)
     Handler.pool = pool
+    pool.start_health_monitor()
     server = ThreadingHTTPServer(("", args.port), Handler)
     print(f"friend.cpp data-parallel router on :{args.port}; replicas: {', '.join(map(str, ports))}", flush=True)
     try:
@@ -256,6 +323,7 @@ def main():
         pass
     finally:
         server.server_close()
+        pool.stop_health_monitor()
         for child in children:
             child.terminate()
         for child in children:

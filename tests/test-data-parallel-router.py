@@ -92,6 +92,11 @@ if __name__ == "__main__":
     assert cooled != 0
     pool.done(cooled)
     pool.mark_success(0)
+    pool.set_observed(0, running=4, waiting=2, kv_blocks=512)
+    pool.set_observed(1, running=0, waiting=0, kv_blocks=0)
+    state_pick, _ = pool.choose(b"{}")
+    assert state_pick == 1
+    pool.done(state_pick)
     namespaced = pool.request_id(2, 41)
     assert pool.owner(namespaced) == (2, 41)
 
@@ -102,6 +107,7 @@ if __name__ == "__main__":
     worker_b, thread_b = start_fake(20)
     router = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     Handler.pool = Pool([worker_a.server_port, worker_b.server_port])
+    Handler.pool.start_health_monitor(interval=0.01)
     router_thread = threading.Thread(target=router.serve_forever, daemon=True)
     router_thread.start()
     try:
@@ -115,6 +121,7 @@ if __name__ == "__main__":
         # A connection failure before request bytes are sent is safe to retry
         # on another replica. Port 1 is deliberately closed in the test
         # environment; the healthy worker must receive the request.
+        Handler.pool.stop_health_monitor()
         Handler.pool = Pool([1, worker_b.server_port])
         conn, response = proxy_request(router, "GET", "/stream")
         assert response.status == 200
@@ -130,6 +137,7 @@ if __name__ == "__main__":
         assert FakeWorker.pause_ids[-1] == (20, 77)
         assert all(value == 0 for value in Handler.pool.active)
     finally:
+        Handler.pool.stop_health_monitor()
         router.shutdown()
         router.server_close()
         worker_a.shutdown()
