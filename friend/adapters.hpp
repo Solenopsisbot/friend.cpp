@@ -27,6 +27,7 @@
 //           "H <name>"           head
 
 #include "llama.h"
+#include "vendor/hash/hash.h"
 #include "llama-ext.h"
 #include "common/common.h"
 
@@ -45,15 +46,7 @@ namespace friend_adapters {
 // rebuilding "excited" or swapping a LoRA file under the same name must not let the prompt
 // cache reuse KV computed with the old weights (including across restarts, via the disk tier).
 inline std::string content_hash(const void * data, size_t n) {
-    uint64_t h = 1469598103934665603ull; // FNV-1a, stable across runs
-    const unsigned char * p = (const unsigned char *) data;
-    for (size_t i = 0; i < n; ++i) {
-        h ^= p[i];
-        h *= 1099511628211ull;
-    }
-    char buf[17];
-    snprintf(buf, sizeof(buf), "%016llx", (unsigned long long) h);
-    return std::string(buf, 8); // 32 bits is plenty to tell versions of one name apart
+    return hash_sha256_hex(data, n);
 }
 
 inline std::string file_ident(const std::string & path) {
@@ -90,6 +83,8 @@ struct profile {
     std::vector<std::pair<int, float>> cvecs; // (pool index, strength), sorted, non-zero only
     int head = -1;                            // pool index, -1 = model's own head
 
+    std::string cache_salt; // SHA-256 namespace supplied by the request
+    std::string execution_key; // adapter identity without cache namespace
     std::string kv_key;   // canonical LoRA+cvec identity; "" = plain base model
     std::string head_key; // "" = base head
 
@@ -139,7 +134,7 @@ inline std::vector<std::string> split(const std::string & s, char sep) {
 
 inline std::string fmt_scale(float v) {
     char buf[32];
-    snprintf(buf, sizeof(buf), "%.4g", v);
+    snprintf(buf, sizeof(buf), "%.9g", v);
     return buf;
 }
 
@@ -293,7 +288,8 @@ inline void finalize(profile & p) {
     for (const auto & [i, s] : p.cvecs) {
         k += "C:" + r.cvecs[i].name + "#" + r.cvecs[i].ident + "@" + fmt_scale(s) + ";";
     }
-    p.kv_key   = k;
+    p.execution_key = k;
+    p.kv_key = k + (p.cache_salt.empty() ? "" : "S:" + p.cache_salt + ";");
     p.head_key = p.head >= 0 ? r.heads[p.head].name : "";
 }
 
@@ -323,6 +319,9 @@ inline bool parse_profile_impl(const char * spec, profile & out, std::string & e
         }
         if (f[0] == "lora_explicit") {
             explicit_lora = true;
+        } else if (f[0] == "S" && f.size() == 2 && f[1].size() == 64 &&
+                   f[1].find_first_not_of("0123456789abcdef") == std::string::npos) {
+            out.cache_salt = f[1];
         } else if (f[0] == "L" && f.size() == 3) {
             const int i = find_by_name(r.loras, f[1]);
             if (i < 0) { err = "unknown lora '" + f[1] + "'"; return false; }
@@ -438,8 +437,28 @@ inline bool apply(const profile & p, const std::vector<llama_context *> & ctxs) 
         }
     }
 
-    // the head is model-wide
-    if (llama_model_set_head(r.model, p.head >= 0 ? r.heads[p.head].head : nullptr) != 0) {
+    // Supported architectures keep the head on each context. This lets another
+    // context sharing the same model decode with a different head at the same time.
+    // Other architectures still use the model-wide compatibility path.
+    llama_adapter_head * head = p.head >= 0 ? r.heads[p.head].head : nullptr;
+    bool context_local = !ctxs.empty();
+    for (llama_context * ctx : ctxs) {
+        if (!ctx) continue;
+        const int32_t rc = llama_set_adapter_head(ctx, head);
+        if (rc == -2) {
+            context_local = false;
+            break;
+        }
+        if (rc != 0) {
+            fprintf(stderr, "friend: failed to bind head '%s' to context\n", p.head_key.c_str());
+            return false;
+        }
+    }
+    if (context_local) {
+        if (llama_model_get_head(r.model) && llama_model_set_head(r.model, nullptr) != 0) {
+            return false;
+        }
+    } else if (llama_model_set_head(r.model, head) != 0) {
         fprintf(stderr, "friend: failed to apply head '%s'\n", p.head_key.c_str());
         return false;
     }

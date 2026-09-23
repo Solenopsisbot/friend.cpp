@@ -267,7 +267,7 @@ llama_model_qwen35::graph::graph(const llama_model & model, const llm_graph_para
         ggml_build_forward_expand(gf, cap);
     }
 
-    cur = build_norm(cur, model.output_norm, nullptr, LLM_NORM_RMS, -1);
+    cur = build_norm(cur, head_norm_tensor(model.output_norm), nullptr, LLM_NORM_RMS, -1);
 
     cb(cur, "h_nextn", -1);
     res->t_h_nextn = cur;
@@ -280,7 +280,7 @@ llama_model_qwen35::graph::graph(const llama_model & model, const llm_graph_para
     res->t_embd = cur;
 
     // LM head
-    cur = build_lora_mm(model.output, cur, model.output_s);
+    cur = build_lora_mm(head_tensor(model.output), cur, head_scale_tensor(model.output_s));
 
     cb(cur, "result_output", -1);
     res->t_logits = cur;
@@ -736,7 +736,7 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
 
     ggml_tensor * head_norm_w = layer.nextn.shared_head_norm
             ? layer.nextn.shared_head_norm
-            : model.output_norm;
+            : head_norm_tensor(model.output_norm);
     GGML_ASSERT(head_norm_w && "QWEN35 MTP: missing both nextn.shared_head_norm and output_norm");
     cur = build_norm(cur, head_norm_w, nullptr, LLM_NORM_RMS, -1);
 
@@ -746,8 +746,8 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
     cur = ggml_get_rows(ctx0, cur, inp_out_ids);
     cb(cur, "mtp_shared_head_norm", -1);
 
-    ggml_tensor * head_w = layer.nextn.shared_head_head ? layer.nextn.shared_head_head : model.output;
-    ggml_tensor * head_s = layer.nextn.shared_head_head ? layer.nextn.shared_head_head_s : model.output_s;
+    ggml_tensor * head_w = layer.nextn.shared_head_head ? layer.nextn.shared_head_head : head_tensor(model.output);
+    ggml_tensor * head_s = layer.nextn.shared_head_head ? layer.nextn.shared_head_head_s : head_scale_tensor(model.output_s);
     GGML_ASSERT(head_w && "QWEN35 MTP: missing LM head (nextn.shared_head_head or model.output)");
     cur = build_lora_mm(head_w, cur, head_s);
     cb(cur, "result_output", -1);

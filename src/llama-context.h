@@ -57,6 +57,9 @@ struct llama_context {
 
     void synchronize();
 
+    int32_t set_adapter_head(llama_adapter_head * head);
+    llama_adapter_head * get_adapter_head() const;
+
     const llama_model   & get_model()   const;
     const llama_cparams & get_cparams() const;
 
@@ -296,6 +299,8 @@ private:
     //
 
     const llama_model & model;
+
+    llama_adapter_head * adapter_head = nullptr;
 
     llama_cparams cparams;
 

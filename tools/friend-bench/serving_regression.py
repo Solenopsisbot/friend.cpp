@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Real-server regression checks for n-gram rollback, pause/resume and cache salts.
+
+Usage: python3 tools/friend-bench/serving_regression.py --model ~/models/Bonsai-1.7B-Q1_0.gguf
+Runs serial reference and speculative servers sequentially on a free local port.
+"""
+import argparse
+import concurrent.futures
+import json
+from pathlib import Path
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def run(model, draft, suffix=False, profile_lanes=1):
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+    base = f'http://127.0.0.1:{port}'
+
+    def request(path, data=None):
+        payload = None if data is None else json.dumps(data).encode()
+        req = urllib.request.Request(base + path, data=payload, headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=120) as response:
+            body = response.read().decode()
+            return body if path == '/metrics' else json.loads(body)
+
+    def metric(name):
+        return float(next(line.split()[1] for line in request('/metrics').splitlines() if line.startswith(name + ' ')))
+
+    with tempfile.TemporaryFile(mode='w+') as log:
+        draft_flag = '--suffix-draft' if suffix else '--ngram-draft'
+        slots = max(4, profile_lanes)
+        command = [sys.executable, str(ROOT / 'koboldcpp.py'), '--model', str(model),
+            '--port', str(port), '--contextsize', '4096', '--gpulayers', '99', '--skiplauncher',
+            '--quiet', '--parallelrequests', str(slots), '--prefill-tokens', '32', '--schedule-tokens', '64',
+            '--profile-lanes', str(profile_lanes), draft_flag, str(draft)]
+        proc = subprocess.Popen(command,
+            cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 90
+            while True:
+                try:
+                    request('/api/extra/requests')
+                    break
+                except (OSError, ValueError):
+                    if proc.poll() is not None or time.monotonic() > deadline:
+                        raise RuntimeError('server failed to start')
+                    time.sleep(.1)
+            prompt = 'Continue this repeating sequence without explanation: ' + 'alpha beta gamma delta ' * 80
+            payload = dict(prompt=prompt, max_length=160, max_context_length=4096, temperature=0,
+                           rep_pen=1, top_k=0, top_p=1, seed=123, cache_salt='test-A',
+                           grammar='root ::= "alpha beta gamma delta " root')
+            result = request('/api/v1/generate', payload)['results'][0]['text']
+            lp = request('/api/v1/generate', dict(payload, max_length=8, logprobs=3, prompt_logprobs=3, cache_salt='logprobs'))['results'][0]
+            assert isinstance(lp.get('logprobs'), list) and lp['logprobs'], 'batch completion logprobs missing'
+            assert isinstance(lp.get('prompt_logprobs'), list) and lp['prompt_logprobs'], 'batch prompt logprobs missing'
+            assert len(lp['logprobs'][0]['top_logprobs']) == 3, 'batch logprobs top-k mismatch'
+            # Different namespaces must not reuse live/retained KV, including base profiles.
+            before = metric('friend_batch_reused_tokens_total')
+            other = dict(payload, cache_salt='test-B', max_length=4)
+            request('/api/v1/generate', other)
+            assert metric('friend_batch_reused_tokens_total') == before, 'cross-salt reuse'
+            request('/api/v1/generate', other)
+            assert metric('friend_batch_reused_tokens_total') > before, 'same-salt reuse missing'
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(request, '/api/v1/generate', payload)
+                deadline = time.monotonic() + 10
+                target = None
+                while time.monotonic() < deadline:
+                    active = [r for r in request('/api/extra/requests') if r['state'] == 'generating']
+                    if active:
+                        target = active[0]['id']
+                        break
+                    time.sleep(.005)
+                assert target is not None, 'no active generation found'
+                assert request('/api/extra/requests/pause', {'id': target})['accepted']
+                while time.monotonic() < deadline:
+                    state = next(r for r in request('/api/extra/requests') if r['id'] == target)
+                    if state['state'] == 'paused':
+                        break
+                    time.sleep(.005)
+                assert state['state'] == 'paused', state
+                assert state['paused_bytes'] > 0, state
+                # Another request must make progress while the first has released its slot.
+                request('/api/v1/generate', dict(other, cache_salt='test-C'))
+                assert not future.done(), 'paused request completed'
+                assert request('/api/extra/requests/resume', {'id': target})['accepted']
+                resumed = future.result(timeout=120)['results'][0]['text']
+                assert resumed == result, 'pause/resume changed output'
+            # Four long, low-priority requests fill every sequence slot. A short
+            # urgent request must be admitted by snapshotting one victim.
+            if profile_lanes == 1:
+                preempt_before = metric('friend_batch_preemptions_total')
+                low_payload = dict(payload, max_length=128, grammar='', priority=100, bypass_eos_token=True,
+                                   cache_salt='preempt-low')
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                    low_futures = [pool.submit(request, '/api/v1/generate', dict(low_payload, seed=200 + i)) for i in range(4)]
+                    deadline = time.monotonic() + 10
+                    while time.monotonic() < deadline:
+                        active = [r for r in request('/api/extra/requests') if r['state'] == 'generating']
+                        if len(active) >= 4:
+                            break
+                        time.sleep(.01)
+                    urgent = request('/api/v1/generate', dict(payload, max_length=4, priority=-100,
+                                                             cache_salt='preempt-urgent'))
+                    assert urgent['results'][0]['text'], 'urgent request returned no output'
+                    assert metric('friend_batch_preemptions_total') > preempt_before, 'priority preemption missing'
+                    for future in low_futures:
+                        future.result(timeout=120)
+            if draft:
+                proposed = metric('friend_batch_draft_proposed_tokens_total')
+                accepted = metric('friend_batch_draft_accepted_tokens_total')
+                print(f'  speculation observed: proposed={proposed:.0f}, accepted={accepted:.0f}', flush=True)
+                assert proposed > 0 and accepted > 0, 'speculative path was not exercised'
+            print(f'PASS draft={draft}, lanes={profile_lanes}: namespace isolation, reuse, pause/resume', flush=True)
+            return result
+        except BaseException:
+            log.seek(0)
+            print(log.read()[-10000:], file=sys.stderr)
+            raise
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--model', type=Path, required=True)
+    parser.add_argument('--profile-lanes', type=int, default=1)
+    args = parser.parse_args()
+    if args.profile_lanes < 1 or args.profile_lanes > 32:
+        parser.error('--profile-lanes must be between 1 and 32')
+    reference = run(args.model.expanduser(), 0, profile_lanes=args.profile_lanes)
+    speculative = run(args.model.expanduser(), 4, suffix=True, profile_lanes=args.profile_lanes)
+    assert reference == speculative, 'speculation changed greedy output'
+    print('PASS speculative output matches no-drafter reference')

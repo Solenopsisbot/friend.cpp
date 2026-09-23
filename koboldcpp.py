@@ -154,6 +154,8 @@ cached_jinja_kwargs = None
 savedata_obj = None
 mcp_connections = [] #every element is linked to one mcp source, contains obj {"client":obj, "tools":[]}
 mcp_lock = threading.Lock()
+structured_grammar_lock = threading.Lock()
+structured_grammar_cache = {}
 multiplayer_story_data_compressed = None #stores the full compressed story of the current multiplayer session
 multiplayer_turn_major = 1 # to keep track of when a client needs to sync their stories
 multiplayer_turn_minor = 1
@@ -358,6 +360,7 @@ class load_model_inputs(ctypes.Structure):
                 ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int),
                 ("continuous_batching_slots", ctypes.c_int),
+                ("friend_prefill_tokens", ctypes.c_int),
                 ("rpc_mode", ctypes.c_int),
                 ("rpc_targets", ctypes.c_char_p),
                 ("friend_lora_pool", ctypes.c_char_p),
@@ -370,7 +373,12 @@ class load_model_inputs(ctypes.Structure):
                 ("friend_cache_capture_tokens", ctypes.c_int),
                 ("friend_cvec_dir", ctypes.c_char_p),
                 ("friend_draft_fixed", ctypes.c_bool),
-                ("friend_cache_idle_ms", ctypes.c_int)]
+                ("friend_cache_idle_ms", ctypes.c_int),
+                ("friend_ngram_draft", ctypes.c_int),
+                ("friend_suffix_draft", ctypes.c_int),
+                ("friend_schedule_tokens", ctypes.c_int),
+                ("friend_profile_lanes", ctypes.c_int),
+                ]
 
 class generation_inputs(ctypes.Structure):
     _fields_ = [("seed", ctypes.c_int),
@@ -432,14 +440,18 @@ class generation_inputs(ctypes.Structure):
                 ("blue_noise", ctypes.c_bool),
                 ("rng_type", ctypes.c_int),
                 ("adapter_profile", ctypes.c_char_p),
-                ("cache_pin_label", ctypes.c_char_p)]
+                ("cache_pin_label", ctypes.c_char_p),
+                ("priority", ctypes.c_int),
+                ("logprobs", ctypes.c_int),
+                ("prompt_logprobs", ctypes.c_int)]
 
 class generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
                 ("stopreason", ctypes.c_int),
                 ("prompt_tokens", ctypes.c_int),
                 ("completion_tokens", ctypes.c_int),
-                ("text", ctypes.c_char_p)]
+                ("text", ctypes.c_char_p),
+                ("logprobs_json", ctypes.c_char_p)]
 
 class sd_load_model_inputs(ctypes.Structure):
     _fields_ = [("model_filename", ctypes.c_char_p),
@@ -1022,6 +1034,8 @@ def init_library():
     handle.batch_generate_new_token.restype = ctypes.c_char_p
     handle.batch_generate_pending_output.argtypes = [ctypes.c_int]
     handle.batch_generate_pending_output.restype = ctypes.c_char_p
+    handle.batch_generate_logprobs.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+    handle.batch_generate_logprobs.restype = ctypes.c_char_p
     handle.batch_generate_result.argtypes = [ctypes.c_int]
     handle.batch_generate_result.restype = generation_outputs
     handle.batch_generate_abort.argtypes = [ctypes.c_int]
@@ -1060,6 +1074,12 @@ def init_library():
     handle.load_state_kv.argtypes = [ctypes.c_int]
     handle.load_state_kv.restype = ctypes.c_bool
     handle.clear_state_kv.restype = ctypes.c_bool
+    handle.friend_requests.argtypes = []
+    handle.friend_requests.restype = ctypes.c_char_p
+    handle.friend_request_control.argtypes = [ctypes.c_int, ctypes.c_bool]
+    handle.friend_request_control.restype = ctypes.c_bool
+    handle.friend_metrics.argtypes = []
+    handle.friend_metrics.restype = ctypes.c_char_p
     handle.friend_cache_list.restype = ctypes.c_char_p
     handle.friend_cache_clear.argtypes = [ctypes.c_bool]
     handle.friend_cache_clear.restype = ctypes.c_size_t
@@ -1534,6 +1554,24 @@ def convert_json_to_gbnf(json_obj):
     except Exception as e:
         print(f"JSON to GBNF failed: {e}")
         return ""
+
+def cached_json_to_gbnf(json_obj):
+    """Compile a schema once per process; grammar objects remain request-owned."""
+    try:
+        key = json.dumps(json_obj, sort_keys=True, separators=(',', ':'))
+    except Exception:
+        return convert_json_to_gbnf(json_obj)
+    with structured_grammar_lock:
+        cached = structured_grammar_cache.get(key)
+    if cached is not None:
+        return cached
+    compiled = convert_json_to_gbnf(json_obj)
+    if compiled:
+        with structured_grammar_lock:
+            structured_grammar_cache[key] = compiled
+            if len(structured_grammar_cache) > 256:
+                structured_grammar_cache.pop(next(iter(structured_grammar_cache)))
+    return compiled
 
 def get_capabilities():
     global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, musicllmmodelpath, has_audio_support, has_vision_support, mcp_connections
@@ -2168,6 +2206,14 @@ def _friend_weighted_names(value, kind):
 def friend_adapter_profile_spec(genparams):
     """Request fields -> C++ profile spec (see friend/adapters.hpp). Raises ValueError."""
     parts = []
+    salt = genparams.get("cache_salt")
+    if salt is not None:
+        if not isinstance(salt, str):
+            raise ValueError("cache_salt must be a string")
+        # Hash before putting it into the delimiter-based native wire format. Empty
+        # string is an explicit namespace, distinct from an omitted salt.
+        import hashlib
+        parts.append("S " + hashlib.sha256(salt.encode("utf-8")).hexdigest())
     if genparams.get("lora", None) is not None:
         parts.append("lora_explicit")  # the request's list replaces the default-on adapters
         parts += [f"L {n} {w!r}" for n, w in _friend_weighted_names(genparams.get("lora"), "lora")]
@@ -2320,6 +2366,11 @@ def load_model(model_filename):
     inputs.smartcacheslots = sclimit
     inputs.pipelineparallel = (not args.nopipelineparallel)
     inputs.continuous_batching_slots = args.parallelrequests if (args.parallelrequests>1) else 0
+    inputs.friend_prefill_tokens = args.prefilltokens
+    inputs.friend_ngram_draft = args.ngram_draft
+    inputs.friend_suffix_draft = args.suffix_draft
+    inputs.friend_schedule_tokens = args.schedule_tokens
+    inputs.friend_profile_lanes = args.profile_lanes
     inputs.rpc_mode = (2 if args.rpcmode=="host" else (1 if args.rpcmode=="connect" else 0))
     inputs.rpc_targets = (args.rpctargets if args.rpcmode=="connect" else "").encode("UTF-8")
 
@@ -2392,7 +2443,7 @@ def generate(genparams, stream_flag=False):
     #translate grammar if its json
     try:
         grammarjson = json.loads(grammar)
-        decoded = convert_json_to_gbnf(grammarjson)
+        decoded = cached_json_to_gbnf(grammarjson)
         if decoded:
             grammar = decoded
     except Exception:
@@ -2498,6 +2549,13 @@ def generate(genparams, stream_flag=False):
     inputs.rng_type = rng_type
     cache_pin = genparams.get("cache_pin", None)
     inputs.cache_pin_label = (str(cache_pin)[:128] if cache_pin else "").encode("UTF-8")
+    # vLLM-style priority scheduling: lower values are served first, with
+    # arrival/fairness ordering still breaking ties.
+    inputs.priority = max(-1000000, min(1000000, tryparseint(genparams.get("priority", 0), 0)))
+    # Batch requests keep their own top alternatives instead of sharing the
+    # legacy process-wide logprob history. Cap this at the native JSON size.
+    inputs.logprobs = requested_logprobs(genparams)
+    inputs.prompt_logprobs = max(-1, min(20, tryparseint(genparams.get("prompt_logprobs", -1), -1)))
     try:
         inputs.adapter_profile = friend_adapter_profile_spec(genparams).encode("UTF-8")
     except ValueError as e:
@@ -2628,7 +2686,16 @@ def generate(genparams, stream_flag=False):
                 sindex = outstr.find(trim_str)
                 if sindex != -1 and trim_str!="":
                     outstr = outstr[:sindex]
-        return {"text":outstr,"status":ret.status,"stopreason":ret.stopreason,"prompt_tokens":ret.prompt_tokens, "completion_tokens": ret.completion_tokens}
+        batch_logprobs = None
+        if batch_request_id >= 0 and ret.logprobs_json:
+            try:
+                batch_logprobs = json.loads(ret.logprobs_json.decode("UTF-8", "ignore"))
+            except Exception:
+                batch_logprobs = None
+        return {"text":outstr,"status":ret.status,"stopreason":ret.stopreason,"prompt_tokens":ret.prompt_tokens,
+                "completion_tokens": ret.completion_tokens, "logprobs": batch_logprobs,
+                "prompt_logprobs": batch_logprobs.get("prompt", []) if isinstance(batch_logprobs, dict) else None,
+                "completion_logprobs": batch_logprobs.get("completion", []) if isinstance(batch_logprobs, dict) else batch_logprobs}
 
 def continuous_batching_python_eligible(genparams, api_format):
     if not args.parallelrequests or args.parallelrequests <= 1 or api_format <= 0:
@@ -4425,6 +4492,34 @@ def extract_json_from_string(input_string, check_strict=False):
         pass
     return []
 
+def requested_logprobs(params):
+    """Normalize chat bool + top_logprobs and completion integer conventions."""
+    value = params.get("logprobs")
+    if value is None or value is False:
+        return -1
+    if value is True:
+        value = params.get("top_logprobs", 0)
+    return max(-1, min(20, tryparseint(value, -1)))
+
+
+def format_batch_logprobs(items, api_format, offset=0):
+    """Keep raw token bytes and return the endpoint's logprob shape."""
+    if items is None:
+        return None
+    if api_format == 4:
+        return {"content": items}
+    if api_format == 3:
+        offsets = []
+        for item in items:
+            offsets.append(offset)
+            offset += len(item["token"])
+        return {"tokens": [i["token"] for i in items],
+                "token_logprobs": [i["logprob"] for i in items],
+                "top_logprobs": [{t["token"]: t["logprob"] for t in i["top_logprobs"]} for i in items],
+                "text_offset": offsets}
+    return items
+
+
 def parse_last_logprobs(lastlogprobs):
     if not lastlogprobs:
         return None
@@ -4605,7 +4700,7 @@ def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_
                 temptoolnames.append("null")
                 custom_tools_prompt_json_format = "Respond with a JSON object using this structure:\r\n{\r\n    \"reasoning\": \"Your reasoning here\",\r\n    \"final_decision\": \"yes\" or \"no\",\r\n    \"tool_name\": \"exact_tool_name_here\" or \"null\"\r\n}\r\n\r\nRules:\r\n- Output only the JSON object. Do NOT add anything before or after the json object.\r\n- final_decision must be exactly \"yes\" or \"no\"\r\n- tool_name must be either an exact tool name, or if no tool is required, an empty string: \"\"\r\n- Keep reasoning short, maximum one or two sentences.\r\n- No unnecessary comments"
                 tempjson = {"type":"object","properties":{"reasoning":{"type":"string"},"final_decision":{"type":"string","enum":["yes","no","Yes","No","YES","NO"," yes"," no"," Yes"," No"," YES"," NO"]},"tool_name":{"type":"string","enum":temptoolnames}},"required":["reasoning","final_decision","tool_name"],"additionalProperties":False}
-            toolquerygrammar = convert_json_to_gbnf(tempjson)
+            toolquerygrammar = cached_json_to_gbnf(tempjson)
 
             if not is_followup_tool:
                 custom_tools_prompt = "Is calling one of the tools listed above absolutely essential to answer user's current request, or is a tool call optional?"
@@ -4816,7 +4911,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                     rt = respformat.get('type')
                     if rt.lower() == "json_schema":
                         schema = respformat.get('json_schema').get('schema')
-                        decoded = convert_json_to_gbnf(schema)
+                        decoded = cached_json_to_gbnf(schema)
                         if decoded:
                             genparams["grammar"] = decoded
                     elif rt.lower() == "json_object":
@@ -4828,7 +4923,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
             elif 'json_schema' in genparams:
                 try:
                     schema = genparams.get('json_schema')
-                    decoded = convert_json_to_gbnf(schema)
+                    decoded = cached_json_to_gbnf(schema)
                     if decoded:
                         genparams["grammar"] = decoded
                 except Exception:
@@ -4968,7 +5063,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                                 toolparamjson = used_tool_json.get('function').get('parameters')
                                 bettergrammarjson = {"type":"array","items":{"type":"object","properties":{"id":{"type":"string","enum":["call_001"]},"type":{"type":"string","enum":["function"]},"function":{"type":"object","properties":{"name":{"type":"string"},"arguments":{}},"required":["name","arguments"],"additionalProperties":False}},"required":["id","type","function"],"additionalProperties":False}}
                                 bettergrammarjson["items"]["properties"]["function"]["properties"]["arguments"] = toolparamjson
-                                decoded = convert_json_to_gbnf(bettergrammarjson)
+                                decoded = cached_json_to_gbnf(bettergrammarjson)
                                 if decoded:
                                     genparams["grammar"] = decoded
                             except Exception:
@@ -5796,9 +5891,21 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         # grab logprobs if not streaming
         logprobsdict = None
-        if not stream_flag and ("logprobs" in genparams and genparams["logprobs"]):
+        if genout.get("logprobs") is not None:
+            logprobsdict = genout["logprobs"]
+        elif not stream_flag and ("logprobs" in genparams and genparams["logprobs"]):
             lastlogprobs = handle.last_logprobs()
             logprobsdict = parse_last_logprobs(lastlogprobs)
+
+        # Batch-native logprobs are split by phase. Keep the established
+        # completion-shaped `logprobs` field while exposing both phases to
+        # callers that need prompt scoring.
+        prompt_logprobs = genout.get("prompt_logprobs")
+        completion_logprobs = genout.get("completion_logprobs")
+        if isinstance(logprobsdict, dict) and "prompt" in logprobsdict:
+            prompt_logprobs = logprobsdict.get("prompt", [])
+            completion_logprobs = logprobsdict.get("completion", [])
+            logprobsdict = format_batch_logprobs(completion_logprobs, api_format) if requested_logprobs(genparams) >= 0 else None
 
         # flag instance as non-idle for a while
         washordereq = genparams.get('genkey', '').startswith('HORDEREQ_')
@@ -5868,7 +5975,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         elif api_format == 3:
             res = {"id": cmpl_id, "object": "text_completion", "created": int(time.time()), "model": modelNameToReturn,
                    "usage": {"prompt_tokens": prompttokens, "completion_tokens": comptokens, "total_tokens": (prompttokens+comptokens)},
-                   "choices": [{"text": recvtxt, "index": 0, "finish_reason": currfinishreason, "logprobs":logprobsdict}]}
+                   "choices": [{"text": recvtxt, "index": 0, "finish_reason": currfinishreason, "logprobs":logprobsdict,
+                                "prompt_logprobs": prompt_logprobs, "completion_logprobs": completion_logprobs}]}
         elif api_format == 4: #chat completions
             ccmsg = {"role": "assistant", "content": recvtxt, "tool_calls": tool_calls}
             if reasoningtxt and genparams.get('encapsulate_thinking', True):
@@ -5877,7 +5985,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 ccmsg["content"] = reasoningtxt + (recvtxt if recvtxt else "")
             res = {"id": chatcmpl_id, "object": "chat.completion", "created": int(time.time()), "model": modelNameToReturn,
                    "usage": {"prompt_tokens": prompttokens, "completion_tokens": comptokens, "total_tokens": (prompttokens+comptokens)},
-                   "choices": [{"index": 0, "message": ccmsg, "finish_reason": currfinishreason, "logprobs":logprobsdict}]}
+                   "choices": [{"index": 0, "message": ccmsg, "finish_reason": currfinishreason, "logprobs":logprobsdict,
+                                "prompt_logprobs": prompt_logprobs, "completion_logprobs": completion_logprobs}]}
         elif api_format == 5:
             res = {"caption": end_trim_to_sentence(recvtxt)}
         elif api_format == 6:
@@ -5949,7 +6058,10 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "usage": {"input_tokens": prompttokens, "output_tokens": comptokens}
             }
         else: #kcpp format
-            res = {"results": [{"text": recvtxt, "tool_calls": tool_calls, "finish_reason": currfinishreason, "logprobs":logprobsdict, "prompt_tokens": prompttokens, "completion_tokens": comptokens}]}
+            res = {"results": [{"text": recvtxt, "tool_calls": tool_calls, "finish_reason": currfinishreason,
+                                 "logprobs":logprobsdict, "prompt_logprobs": prompt_logprobs,
+                                 "completion_logprobs": completion_logprobs,
+                                 "prompt_tokens": prompttokens, "completion_tokens": comptokens}]}
 
         try:
             return res
@@ -6033,6 +6145,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         await asyncio.sleep(0.35) #anti race condition, prevent check from overtaking generate
         batch_request_id = genparams.get('_batch_request_id', -1)
         batch_final_result = None
+        logprob_cursor = 0
+        logprob_offset = 0
+        batch_final_logprobs = {}
 
         try:
             tokenReserve = "" #keeps fully formed tokens that we cannot send out yet
@@ -6047,6 +6162,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 if streamDone:
                     if using_batch_stream and batch_final_result is None:
                         batch_final_result = handle.batch_generate_result(batch_request_id)
+                        if batch_final_result.logprobs_json:
+                            batch_final_logprobs = json.loads(batch_final_result.logprobs_json)
                     sr = batch_final_result.stopreason if using_batch_stream else handle.get_last_stop_reason()
                     currfinishreason = "error" if sr==-2 else ("length" if (sr!=1) else "stop")
                     prompttokens = batch_final_result.prompt_tokens if using_batch_stream else handle.get_last_input_count()
@@ -6067,6 +6184,31 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     if tokenSeg!="" and not badFragment:
                         incomplete_token_buffer.clear()
                         tokenStr += tokenSeg
+
+                # Each stream owns a cursor; scores cannot leak from another request.
+                if api_format in (3, 4):
+                    lp = None
+                    prompt_lp = None
+                    if using_batch_stream:
+                        end = batch_final_result.completion_tokens if streamDone else current_token
+                        items = json.loads(handle.batch_generate_logprobs(batch_request_id, logprob_cursor, end))
+                        if items:
+                            lp = format_batch_logprobs(items, api_format, logprob_offset)
+                            logprob_cursor += len(items)
+                            logprob_offset += sum(len(item['token']) for item in items)
+                        if streamDone and tryparseint(genparams.get('prompt_logprobs', -1), -1) >= 0:
+                            prompt_lp = batch_final_logprobs.get('prompt', [])
+                    elif streamDone and requested_logprobs(genparams) >= 0:
+                        lp = parse_last_logprobs(handle.last_logprobs())
+                    if lp is not None or prompt_lp is not None:
+                        choice = {'index': 0, 'finish_reason': None, 'logprobs': lp}
+                        choice['delta' if api_format == 4 else 'text'] = {'content': ''} if api_format == 4 else ''
+                        if prompt_lp is not None:
+                            choice['prompt_logprobs'] = prompt_lp
+                        await self.send_oai_sse_event(json.dumps({
+                            'id': chatcmpl_id if api_format == 4 else cmpl_id,
+                            'object': 'chat.completion.chunk' if api_format == 4 else 'text_completion',
+                            'created': int(time.time()), 'model': modelNameToReturn, 'choices': [choice]}))
 
                 if tokenStr!="" or streamDone:
                     # split think tag handling
@@ -6272,20 +6414,10 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                 if delta and 'role' in delta:
                                     delta = {'role':delta["role"],'content':''}
                             if api_format == 4:  # if oai chat, set format to expected openai streaming response
-                                if streamDone and ("logprobs" in genparams and genparams["logprobs"]): # this is a hack that sends an extra message containing ALL the logprobs
-                                    lastlogprobs = handle.last_logprobs()
-                                    logprobsdict = parse_last_logprobs(lastlogprobs)
-                                    addonstr = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":None,"delta":{'role':'assistant','content':''},"logprobs":logprobsdict}]})
-                                    await self.send_oai_sse_event(addonstr)
                                 event_str = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":currfinishreason,"delta":delta}]})
                                 genparams['sync_toolcall_first_role_sent'] = True
                                 await self.send_oai_sse_event(event_str)
                             elif api_format == 3:  # non chat completions
-                                if streamDone and ("logprobs" in genparams and genparams["logprobs"]): # this is a hack that sends an extra message containing ALL the logprobs
-                                    lastlogprobs = handle.last_logprobs()
-                                    logprobsdict = parse_last_logprobs(lastlogprobs)
-                                    addonstr = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":None,"text":"","logprobs":logprobsdict}]})
-                                    await self.send_oai_sse_event(addonstr)
                                 event_str = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":currfinishreason,"text":tokenStr}]})
                                 await self.send_oai_sse_event(event_str)
                             elif api_format == 6 or api_format == 7: # Ollama newline-delimited JSON streaming
@@ -6822,6 +6954,23 @@ Change Mode<br>
         elif clean_path.endswith(('/api/extra/adapters')): # friend.cpp: named LoRA / steering / head pools
             response_body = (json.dumps(friend_adapter_listing()).encode())
 
+        elif clean_path == '/api/extra/requests':
+            if not self.secure_endpoint():
+                return
+            response_body = handle.friend_requests() or b"[]"
+
+        elif clean_path == '/metrics':
+            if args.password and not self.check_header_password(args.password):
+                self.send_response(401)
+                self.end_headers()
+                return
+            response_body = handle.friend_metrics() or b""
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(response_body)))
+            self.end_headers(content_type='text/plain; version=0.0.4; charset=utf-8')
+            self.wfile.write(response_body)
+            return
+
         elif clean_path.endswith(('/api/extra/cache')): # friend.cpp: prompt cache contents
             response_body = (handle.friend_cache_list() or b"{}")
 
@@ -7211,6 +7360,27 @@ Change Mode<br>
         response_body = None
         response_code = 200
 
+        # Request controls must bypass the generation lock or a paused generation
+        # would hold that lock while waiting for its own resume request.
+        if clean_path in ('/api/extra/requests/pause', '/api/extra/requests/resume'):
+            if not self.secure_endpoint():
+                return
+            try:
+                params = json.loads(body)
+                request_id = params['id']
+                if type(request_id) is not int or not 0 < request_id <= 2147483647:
+                    raise ValueError("id must be a positive native request ID")
+                ok = handle.friend_request_control(request_id, clean_path.endswith('/pause'))
+                payload = json.dumps({"accepted": bool(ok)}).encode()
+                self.send_response(202 if ok else 404)
+            except (ValueError, TypeError, KeyError) as exc:
+                payload = json.dumps({"error": str(exc)}).encode()
+                self.send_response(400)
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers(content_type='application/json')
+            self.wfile.write(payload)
+            return
+
         if clean_path.endswith('/api/extra/tokencount') or clean_path.endswith('/api/extra/tokenize'):
             if not self.secure_endpoint():
                 return
@@ -7252,7 +7422,7 @@ Change Mode<br>
                 schema = genparams.get('schema', None)
                 if not schema:
                     schema = genparams
-                decoded = convert_json_to_gbnf(schema)
+                decoded = cached_json_to_gbnf(schema)
                 response_body = (json.dumps({"result": decoded,"success":(True if decoded else False)}).encode())
             except Exception as e:
                 utfprint("JSON to Grammar Error: " + str(e))
@@ -13250,6 +13420,11 @@ if __name__ == '__main__':
     advparser.add_argument("--overridenativecontext", help="Overrides the native trained context of the loaded model with a custom value to be used for Rope scaling.",metavar=('[trained context]'), type=int, default=0)
     advparser.add_argument("--overridetensors","--override-tensor","-ot", metavar=('[tensor name pattern=buffer type]'), help="Override selected backend for specific tensors matching tensor_name_regex_pattern=buffer_type, same as in llama.cpp.", default="")
     advparser.add_argument("--parallelrequests","--continuous-batching","--contbatch", help="Allows multiple requests to be batched and executed in parallel. Only works for basic text generation requests (Experimental, No media)", metavar=('[slots]'), type=check_range(int,0,32), default=1)
+    advparser.add_argument("--ngram-draft", type=check_range(int,0,32), default=0, help="Maximum history-based speculative tokens per batched request (attention-only models; 0 disables). Requires --parallelrequests greater than 1.")
+    advparser.add_argument("--suffix-draft", type=check_range(int,0,32), default=0, help="Maximum adaptive suffix-speculative tokens per batched request (0 disables; takes precedence over --ngram-draft).")
+    advparser.add_argument("--schedule-tokens", type=check_range(int,0,65536), default=0, help="Unified continuous-batching token budget per scheduler round (0 uses batch size; decodes are admitted before prompt tokens).")
+    advparser.add_argument("--profile-lanes", type=check_range(int,1,32), default=1, help="Native concurrent contexts sharing model weights. Each lane owns its KV/compute buffers and parallelrequests slots. CPU threads are divided across lanes; memory use increases.")
+    advparser.add_argument("--prefill-tokens", dest="prefilltokens", metavar='[tokens]', type=check_range(int,0,65536), default=0, help="friend.cpp: maximum prompt tokens admitted per continuous-batching round after ready decodes. Lower values protect inter-token latency; 0 uses the full batch size.")
     advparser.add_argument("--password", metavar=('[API key]'), help="Enter a password required to use this instance. This key will be required for all text endpoints. Image endpoints are not secured. Can also be set with env var KCPP_PASSWORD", default=os.getenv('KCPP_PASSWORD',None))
     advparser.add_argument("--preloadstory", metavar=('[savefile]'), help="Configures a prepared story json save file to be hosted on the server, which frontends (such as KoboldAI Lite) can access over the API.", default="")
     advparser.add_argument("--prompt","-p", metavar=('[prompt]'), help="Passing a prompt string triggers a direct inference, loading the model, outputs the response to stdout and exits. Can be used alone or with benchmark.", type=str, default="")

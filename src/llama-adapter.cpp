@@ -1,6 +1,7 @@
 #include "llama-adapter.h"
 
 #include "llama-impl.h"
+#include "llama-context.h"
 #include "llama-mmap.h"
 #include "llama-model.h"
 
@@ -659,6 +660,9 @@ void llama_adapter_head_free(llama_adapter_head * head) {
     }
     if (head->model && head->model->active_head == head) {
         llama_model_set_head(head->model, nullptr); // never leave the model pointing at freed tensors
+    }
+    while (!head->bound_contexts.empty()) {
+        (*head->bound_contexts.begin())->set_adapter_head(nullptr);
     }
     delete head;
 }

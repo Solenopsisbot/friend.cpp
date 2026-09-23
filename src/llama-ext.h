@@ -240,3 +240,9 @@ LLAMA_API void                        llama_adapter_head_free(struct llama_adapt
 // head == NULL restores the model's own head. Returns 0 on success.
 LLAMA_API int32_t                     llama_model_set_head(struct llama_model * model, struct llama_adapter_head * head);
 LLAMA_API struct llama_adapter_head * llama_model_get_head(const struct llama_model * model);
+
+// Bind an adapter head to one context. Freeing a head unbinds it from all contexts;
+// as with decode, callers must serialize binding/freeing against use of those contexts.
+// Returns -2 for architectures without context-local support.
+LLAMA_API int32_t                     llama_set_adapter_head(struct llama_context * ctx, struct llama_adapter_head * head);
+LLAMA_API struct llama_adapter_head * llama_get_adapter_head(const struct llama_context * ctx);
