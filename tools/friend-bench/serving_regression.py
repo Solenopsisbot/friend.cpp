@@ -95,6 +95,7 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
             stream_events = [line for line in stream_body.splitlines() if line.startswith('data: {')]
             assert stream_body.rstrip().endswith('data: [DONE]'), 'stream did not finish'
             assert 1 <= len(stream_events) <= 4, f'unexpected stream event count: {len(stream_events)}'
+            assert '"timing":' in stream_body, 'stream timing metadata missing'
             if max_queued_requests:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     long_future = pool.submit(request, '/api/v1/generate',

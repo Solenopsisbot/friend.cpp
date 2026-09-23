@@ -6195,6 +6195,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         logprob_cursor = 0
         logprob_offset = 0
         batch_final_logprobs = {}
+        batch_final_timing = {}
 
         try:
             tokenReserve = "" #keeps fully formed tokens that we cannot send out yet
@@ -6211,6 +6212,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                         batch_final_result = handle.batch_generate_result(batch_request_id)
                         if batch_final_result.logprobs_json:
                             batch_final_logprobs = json.loads(batch_final_result.logprobs_json)
+                        if batch_final_result.timing_json:
+                            batch_final_timing = json.loads(batch_final_result.timing_json)
                     sr = batch_final_result.stopreason if using_batch_stream else handle.get_last_stop_reason()
                     currfinishreason = "error" if sr==-2 else ("length" if (sr!=1) else "stop")
                     prompttokens = batch_final_result.prompt_tokens if using_batch_stream else handle.get_last_input_count()
@@ -6473,11 +6476,17 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                 if delta and 'role' in delta:
                                     delta = {'role':delta["role"],'content':''}
                             if api_format == 4:  # if oai chat, set format to expected openai streaming response
-                                event_str = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":currfinishreason,"delta":delta}]})
+                                final_choice = {"index":0,"finish_reason":currfinishreason,"delta":delta}
+                                if streamDone and batch_final_timing:
+                                    final_choice["timing"] = batch_final_timing
+                                event_str = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":modelNameToReturn,"choices":[final_choice]})
                                 genparams['sync_toolcall_first_role_sent'] = True
                                 await self.send_oai_sse_event(event_str)
                             elif api_format == 3:  # non chat completions
-                                event_str = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":currfinishreason,"text":tokenStr}]})
+                                final_choice = {"index":0,"finish_reason":currfinishreason,"text":tokenStr}
+                                if streamDone and batch_final_timing:
+                                    final_choice["timing"] = batch_final_timing
+                                event_str = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":modelNameToReturn,"choices":[final_choice]})
                                 await self.send_oai_sse_event(event_str)
                             elif api_format == 6 or api_format == 7: # Ollama newline-delimited JSON streaming
                                 created_at = str(datetime.now(timezone.utc).isoformat())
