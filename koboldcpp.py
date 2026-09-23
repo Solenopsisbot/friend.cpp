@@ -453,7 +453,8 @@ class generation_outputs(ctypes.Structure):
                 ("prompt_tokens", ctypes.c_int),
                 ("completion_tokens", ctypes.c_int),
                 ("text", ctypes.c_char_p),
-                ("logprobs_json", ctypes.c_char_p)]
+                ("logprobs_json", ctypes.c_char_p),
+                ("timing_json", ctypes.c_char_p)]
 
 class sd_load_model_inputs(ctypes.Structure):
     _fields_ = [("model_filename", ctypes.c_char_p),
@@ -2701,10 +2702,17 @@ def generate(genparams, stream_flag=False):
                 batch_logprobs = json.loads(ret.logprobs_json.decode("UTF-8", "ignore"))
             except Exception:
                 batch_logprobs = None
+        batch_timing = None
+        if batch_request_id >= 0 and ret.timing_json:
+            try:
+                batch_timing = json.loads(ret.timing_json.decode("UTF-8", "ignore"))
+            except Exception:
+                batch_timing = None
         return {"text":outstr,"status":ret.status,"stopreason":ret.stopreason,"prompt_tokens":ret.prompt_tokens,
                 "completion_tokens": ret.completion_tokens, "logprobs": batch_logprobs,
                 "prompt_logprobs": batch_logprobs.get("prompt", []) if isinstance(batch_logprobs, dict) else None,
-                "completion_logprobs": batch_logprobs.get("completion", []) if isinstance(batch_logprobs, dict) else batch_logprobs}
+                "completion_logprobs": batch_logprobs.get("completion", []) if isinstance(batch_logprobs, dict) else batch_logprobs,
+                "timing": batch_timing}
 
 def continuous_batching_python_eligible(genparams, api_format):
     if not args.parallelrequests or args.parallelrequests <= 1 or api_format <= 0:
@@ -5921,6 +5929,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         # callers that need prompt scoring.
         prompt_logprobs = genout.get("prompt_logprobs")
         completion_logprobs = genout.get("completion_logprobs")
+        timing = genout.get("timing")
         if isinstance(logprobsdict, dict) and "prompt" in logprobsdict:
             prompt_logprobs = logprobsdict.get("prompt", [])
             completion_logprobs = logprobsdict.get("completion", [])
@@ -5994,6 +6003,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         elif api_format == 3:
             res = {"id": cmpl_id, "object": "text_completion", "created": int(time.time()), "model": modelNameToReturn,
                    "usage": {"prompt_tokens": prompttokens, "completion_tokens": comptokens, "total_tokens": (prompttokens+comptokens)},
+                   "timing": timing,
                    "choices": [{"text": recvtxt, "index": 0, "finish_reason": currfinishreason, "logprobs":logprobsdict,
                                 "prompt_logprobs": prompt_logprobs, "completion_logprobs": completion_logprobs}]}
         elif api_format == 4: #chat completions
@@ -6004,6 +6014,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 ccmsg["content"] = reasoningtxt + (recvtxt if recvtxt else "")
             res = {"id": chatcmpl_id, "object": "chat.completion", "created": int(time.time()), "model": modelNameToReturn,
                    "usage": {"prompt_tokens": prompttokens, "completion_tokens": comptokens, "total_tokens": (prompttokens+comptokens)},
+                   "timing": timing,
                    "choices": [{"index": 0, "message": ccmsg, "finish_reason": currfinishreason, "logprobs":logprobsdict,
                                 "prompt_logprobs": prompt_logprobs, "completion_logprobs": completion_logprobs}]}
         elif api_format == 5:
@@ -6080,7 +6091,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             res = {"results": [{"text": recvtxt, "tool_calls": tool_calls, "finish_reason": currfinishreason,
                                  "logprobs":logprobsdict, "prompt_logprobs": prompt_logprobs,
                                  "completion_logprobs": completion_logprobs,
-                                 "prompt_tokens": prompttokens, "completion_tokens": comptokens}]}
+                                 "prompt_tokens": prompttokens, "completion_tokens": comptokens,
+                                 "timing": timing}]}
 
         try:
             return res

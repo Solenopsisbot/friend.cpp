@@ -202,6 +202,8 @@ struct generation_outputs
     // friend.cpp: JSON encoded per-request logprobs; valid until the next result call
     // on the same thread. Kept at the end for ABI compatibility with older callers.
     const char * logprobs_json = nullptr;
+    // friend.cpp: JSON encoded queue/prefill/TTFT/decode timing for batch requests.
+    const char * timing_json = nullptr;
 };
 struct token_count_outputs
 {
