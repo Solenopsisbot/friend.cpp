@@ -220,6 +220,11 @@ tokens are admitted first, then prompt and speculative tokens spend the remainde
 `0` keeps the backend batch size. This is useful when a large `--batchsize` would
 otherwise make long prefills harm inter-token latency.
 
+`--max-queued-requests N` bounds live continuous-batching requests, including
+waiting, running and paused work. A full queue returns a retryable overload error
+instead of silently falling back to the legacy generator; `0` leaves the cap off.
+`friend_batch_requests_rejected_total` counts those admissions.
+
 When every sequence slot is occupied, a waiting request with a strictly higher
 priority can evict one lower-priority sequence into the bounded compressed host
 snapshot tier. The request resumes with its sampler state and KV contents intact;

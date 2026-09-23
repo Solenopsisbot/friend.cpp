@@ -378,6 +378,7 @@ class load_model_inputs(ctypes.Structure):
                 ("friend_suffix_draft", ctypes.c_int),
                 ("friend_schedule_tokens", ctypes.c_int),
                 ("friend_profile_lanes", ctypes.c_int),
+                ("friend_max_queued_requests", ctypes.c_int),
                 ]
 
 class generation_inputs(ctypes.Structure):
@@ -2371,6 +2372,7 @@ def load_model(model_filename):
     inputs.friend_suffix_draft = args.suffix_draft
     inputs.friend_schedule_tokens = args.schedule_tokens
     inputs.friend_profile_lanes = args.profile_lanes
+    inputs.friend_max_queued_requests = args.max_queued_requests
     inputs.rpc_mode = (2 if args.rpcmode=="host" else (1 if args.rpcmode=="connect" else 0))
     inputs.rpc_targets = (args.rpctargets if args.rpcmode=="connect" else "").encode("UTF-8")
 
@@ -2667,6 +2669,11 @@ def generate(genparams, stream_flag=False):
                 batch_request_id = handle.batch_generate_submit(inputs)
             except Exception:
                 batch_request_id = -1
+        if batch_request_id == -2:
+            genparams['_batch_overloaded'] = True
+            return {"text":"", "status":0, "stopreason":-2, "prompt_tokens":0,
+                    "completion_tokens":0, "total_tokens":0,
+                    "error":"server is at its continuous-batching request capacity"}
         if batch_request_id >= 0:
             genparams['_batch_request_id'] = batch_request_id
             ret = handle.batch_generate_result(batch_request_id)
@@ -5882,6 +5889,16 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         else:
             genout = run_blocking()
 
+        if genout.get('error'):
+            error = {"message": genout['error'], "type": "server_overloaded", "code": 503}
+            if stream_flag:
+                # handle_sse_stream owns the response framing for streaming APIs;
+                # leave a marker for it rather than pretending legacy generation
+                # was started after native admission rejected the request.
+                genparams['_batch_overloaded'] = True
+            else:
+                return {"error": error}
+
         recvtxt = genout['text']
         if recvtxt is not None and not isinstance(recvtxt, str):
             recvtxt = recvtxt.decode("UTF-8", "ignore") if isinstance(recvtxt, bytes) else str(recvtxt)
@@ -6110,6 +6127,18 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("connection", "keep-alive")
         stream_content_type = 'application/x-ndjson' if api_format == 6 or api_format == 7 else 'text/event-stream'
         self.end_headers(content_type=stream_content_type)
+
+        if genparams.get('_batch_overloaded', False):
+            error = json.dumps({"error": {"message": "server is at its continuous-batching request capacity",
+                                            "type": "server_overloaded", "code": 503}})
+            if api_format in (3, 4):
+                await self.send_oai_sse_event(error)
+                await self.send_oai_sse_event("[DONE]")
+            elif api_format == 6 or api_format == 7:
+                await self.send_ollama_stream_event(error)
+            else:
+                await self.send_kai_sse_event(error)
+            return
 
         # if tools, do not send anything else - OAI tool calls will be handled with fakestreaming!
         # only exception is if we know the exact toolcall tag to segment!
@@ -13424,6 +13453,7 @@ if __name__ == '__main__':
     advparser.add_argument("--suffix-draft", type=check_range(int,0,32), default=0, help="Maximum adaptive suffix-speculative tokens per batched request (0 disables; takes precedence over --ngram-draft).")
     advparser.add_argument("--schedule-tokens", type=check_range(int,0,65536), default=0, help="Unified continuous-batching token budget per scheduler round (0 uses batch size; decodes are admitted before prompt tokens).")
     advparser.add_argument("--profile-lanes", type=check_range(int,1,32), default=1, help="Native concurrent contexts sharing model weights. Each lane owns its KV/compute buffers and parallelrequests slots. CPU threads are divided across lanes; memory use increases.")
+    advparser.add_argument("--max-queued-requests", type=check_range(int,0,1000000), default=0, help="friend.cpp: maximum live continuous-batching requests, including waiting/running/paused requests; overloads are rejected when full (0 disables).")
     advparser.add_argument("--prefill-tokens", dest="prefilltokens", metavar='[tokens]', type=check_range(int,0,65536), default=0, help="friend.cpp: maximum prompt tokens admitted per continuous-batching round after ready decodes. Lower values protect inter-token latency; 0 uses the full batch size.")
     advparser.add_argument("--password", metavar=('[API key]'), help="Enter a password required to use this instance. This key will be required for all text endpoints. Image endpoints are not secured. Can also be set with env var KCPP_PASSWORD", default=os.getenv('KCPP_PASSWORD',None))
     advparser.add_argument("--preloadstory", metavar=('[savefile]'), help="Configures a prepared story json save file to be hosted on the server, which frontends (such as KoboldAI Lite) can access over the API.", default="")

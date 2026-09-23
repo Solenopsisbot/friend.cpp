@@ -32,7 +32,7 @@ supported backends and remaining limitations as it progresses.
 
 | Done | Item | Required implementation and evidence |
 |---|---|---|
-| [ ] | 1. Admission control and KV watermarks | Bound queued/in-flight work, return retryable overload responses, reserve KV headroom, and account for cancellation and paused requests. Exercise concurrent admission, saturation, recovery and starvation behavior. |
+| [~] | 1. Admission control and KV watermarks | Queue cap, retryable overload response, rejection counter and saturation regression are implemented. KV headroom/watermark admission and cancellation/recovery/starvation coverage remain. |
 | [ ] | 2. Physical paged KV management | Backend-integrated physical allocation, block references, shared-prefix ownership, copy-on-write, eviction and recomputation. Reuse existing llama primitives where suitable; verify divergent sequences, reclamation, memory bounds and output equivalence under pressure. |
 | [ ] | 3. State-aware data-parallel routing | Balance measured worker backlog, KV pressure, latency and cache/profile affinity using bounded, freshness-aware telemetry. Verify failure cooldown/reset, recovery, stale stats, owner controls and no replay after submission. |
 | [ ] | 4. Asynchronous scheduling | Prepare future work while execution proceeds, with explicit buffer ownership and completion fences. Validate cancellation and adapter changes under overlap, and measure device idle time and latency. |

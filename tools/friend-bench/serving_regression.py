@@ -18,7 +18,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def run(model, draft, suffix=False, profile_lanes=1):
+def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -40,7 +40,8 @@ def run(model, draft, suffix=False, profile_lanes=1):
         command = [sys.executable, str(ROOT / 'koboldcpp.py'), '--model', str(model),
             '--port', str(port), '--contextsize', '4096', '--gpulayers', '99', '--skiplauncher',
             '--quiet', '--parallelrequests', str(slots), '--prefill-tokens', '32', '--schedule-tokens', '64',
-            '--profile-lanes', str(profile_lanes), draft_flag, str(draft)]
+            '--profile-lanes', str(profile_lanes), '--max-queued-requests', str(max_queued_requests),
+            draft_flag, str(draft)]
         proc = subprocess.Popen(command,
             cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
         try:
@@ -75,6 +76,21 @@ def run(model, draft, suffix=False, profile_lanes=1):
             assert isinstance(chat_choice.get('logprobs'), dict), 'chat logprobs missing'
             assert chat_choice['logprobs'].get('content'), 'chat completion logprobs missing'
             assert chat_choice.get('prompt_logprobs'), 'chat prompt logprobs missing'
+            if max_queued_requests:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    long_future = pool.submit(request, '/api/v1/generate',
+                                              dict(payload, max_length=96, cache_salt='queue-cap'))
+                    deadline = time.monotonic() + 10
+                    while time.monotonic() < deadline:
+                        active = [r for r in request('/api/extra/requests')
+                                  if r['state'] in ('prefill', 'generating')]
+                        if active:
+                            break
+                        time.sleep(.01)
+                    overloaded = request('/api/v1/generate',
+                                         dict(payload, max_length=4, cache_salt='queue-cap-2'))
+                    assert overloaded.get('error', {}).get('code') == 503, overloaded
+                    long_future.result(timeout=120)
             # Different namespaces must not reuse live/retained KV, including base profiles.
             before = metric('friend_batch_reused_tokens_total')
             other = dict(payload, cache_salt='test-B', max_length=4)
@@ -111,7 +127,7 @@ def run(model, draft, suffix=False, profile_lanes=1):
                 assert resumed == result, 'pause/resume changed output'
             # Four long, low-priority requests fill every sequence slot. A short
             # urgent request must be admitted by snapshotting one victim.
-            if profile_lanes == 1:
+            if profile_lanes == 1 and not max_queued_requests:
                 preempt_before = metric('friend_batch_preemptions_total')
                 low_payload = dict(payload, max_length=128, grammar='', priority=100, bypass_eos_token=True,
                                    cache_salt='preempt-low')
@@ -153,10 +169,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--model', type=Path, required=True)
     parser.add_argument('--profile-lanes', type=int, default=1)
+    parser.add_argument('--max-queued-requests', type=int, default=0)
     args = parser.parse_args()
     if args.profile_lanes < 1 or args.profile_lanes > 32:
         parser.error('--profile-lanes must be between 1 and 32')
-    reference = run(args.model.expanduser(), 0, profile_lanes=args.profile_lanes)
-    speculative = run(args.model.expanduser(), 4, suffix=True, profile_lanes=args.profile_lanes)
+    reference = run(args.model.expanduser(), 0, profile_lanes=args.profile_lanes,
+                    max_queued_requests=args.max_queued_requests)
+    speculative = run(args.model.expanduser(), 4, suffix=True, profile_lanes=args.profile_lanes,
+                      max_queued_requests=args.max_queued_requests)
     assert reference == speculative, 'speculation changed greedy output'
     print('PASS speculative output matches no-drafter reference')
