@@ -264,6 +264,10 @@ ordinary continuous batching without MTP, a separate draft model, or CFG guidanc
 CPU threads are divided across lanes, so raise N for concurrent work only when the
 device and memory budget can absorb the extra KV/compute state.
 
+The companion process router marks connection-failed workers unhealthy for a short
+exponential cooldown, resets the cooldown after a successful response, and keeps
+probing when all workers are cooling down so recovery is automatic.
+
 `--schedule-tokens N` bounds the total tokens admitted to one scheduler round;
 decodes are admitted before prompt chunks, and `0` uses the backend batch size.
 Same-profile prefixes share complete 16-token blocks through llama's sequence-cell
