@@ -73,6 +73,7 @@
 #include "friend/suffix_draft.hpp"
 #include "friend/serving_metrics.hpp"
 #include "friend/kv_blocks.hpp"
+#include "friend/paged_kv.hpp"
 #include "llama-vocab.h"
 #include "nlohmann/json.hpp"
 
@@ -4790,6 +4791,7 @@ struct BatchGenerateRequest
     std::vector<llama_token> prompt_tokens;
     std::vector<llama_token> kv_tokens; // friend.cpp: token ids in this slot's KV, in position order
     friend_kv::block_table kv_blocks;   // logical prefix blocks for reuse/eviction bookkeeping
+    std::vector<friend_kv::paged_allocator::page_id> physical_blocks; // scheduler-owned page references
     int reused_tokens = 0;              // friend.cpp: prompt tokens that came from a retained slot / cache
     bool capture_after_decode = false;  // friend.cpp: snapshot into the prompt cache once this prefill lands
     std::vector<int> checkpoints;       // friend.cpp: turn-boundary positions to snapshot at (recurrent models)
@@ -4907,6 +4909,7 @@ struct BatchRetainedSlot
     bool valid = false;
     std::vector<llama_token> tokens; // exactly the KV content of the slot
     friend_kv::block_table blocks;
+    std::vector<friend_kv::paged_allocator::page_id> physical_blocks;
     std::string kv_key;              // adapter identity it was computed under
     uint64_t retained_at = 0;        // batch_round when retained (for LRU victim choice)
 };
@@ -4918,6 +4921,7 @@ static uint64_t batch_round = 0;
 struct BatchLane {
     int id = 0;
     llama_context * ctx = nullptr;
+    friend_kv::paged_allocator pages;
     std::vector<BatchRetainedSlot> retained;
     std::string active_profile_key;
     uint64_t round = 0;
@@ -4928,6 +4932,41 @@ static std::vector<std::unique_ptr<BatchLane>> batch_lanes;
 static thread_local BatchLane * batch_lane = nullptr;
 static llama_context * batch_context() {
     return batch_lane ? batch_lane->ctx : llama_ctx_v4;
+}
+static friend_kv::paged_allocator & batch_pages_for() {
+    static friend_kv::paged_allocator fallback;
+    return batch_lane ? batch_lane->pages : fallback;
+}
+static uint64_t batch_physical_key(uint64_t hash, const std::string & profile_key) {
+    uint64_t key = hash ^ UINT64_C(0x9e3779b97f4a7c15);
+    for(unsigned char c : profile_key) {
+        key ^= c;
+        key *= UINT64_C(0x100000001b3);
+    }
+    return key;
+}
+static void batch_release_pages_locked(std::vector<friend_kv::paged_allocator::page_id> & pages) {
+    auto & allocator = batch_pages_for();
+    for(auto id : pages) allocator.release(id);
+    pages.clear();
+}
+static bool batch_assign_pages_locked(BatchGenerateRequest & req) {
+    batch_release_pages_locked(req.physical_blocks);
+    req.physical_blocks.reserve(req.kv_blocks.hashes.size());
+    for(uint64_t hash : req.kv_blocks.hashes) {
+        const auto id = batch_pages_for().acquire(batch_physical_key(hash, req.profile.kv_key));
+        if(id == friend_kv::paged_allocator::invalid_page) {
+            batch_release_pages_locked(req.physical_blocks);
+            return false;
+        }
+        req.physical_blocks.push_back(id);
+    }
+    return true;
+}
+static void batch_release_retained_pages_locked(BatchRetainedSlot & slot) {
+    auto & allocator = batch_pages_for();
+    for(auto id : slot.physical_blocks) allocator.release(id);
+    slot.physical_blocks.clear();
 }
 static std::vector<BatchRetainedSlot> & batch_retained_for() {
     return batch_lane && batch_lane->id > 0 ? batch_lane->retained : batch_retained;
@@ -4960,9 +4999,13 @@ static bool friend_init_batch_lanes(llama_model * model, llama_context_params pa
     }
     params.n_threads = std::max(1, params.n_threads / count);
     params.n_threads_batch = std::max(1, params.n_threads_batch / count);
+    const size_t page_capacity = std::max<size_t>(count * 4,
+        ((size_t) std::max(1, params.n_ctx ? (int) params.n_ctx : kcpp_data->n_ctx) *
+         (size_t) std::max(1, continuous_batching_slots)) / friend_kv::block_table::block_tokens);
     for(int i = 0; i < count; ++i) {
         auto lane = std::make_unique<BatchLane>();
         lane->id = i;
+        lane->pages.reset(page_capacity);
         lane->ctx = i == 0 ? llama_ctx_v4 : llama_init_from_model(model, params);
         if(!lane->ctx) {
             for(auto & previous : batch_lanes) if(previous->id) llama_free(previous->ctx);
@@ -5137,7 +5180,7 @@ static void batch_release_retained_locked(bool capture)
     for(int slot = 1; slot < (int) batch_retained_for().size(); ++slot)
     {
         BatchRetainedSlot & keep = batch_retained_for()[slot];
-        if(!keep.valid)
+        if(!keep.valid && keep.physical_blocks.empty())
         {
             continue;
         }
@@ -5149,6 +5192,7 @@ static void batch_release_retained_locked(bool capture)
         {
             llama_memory_seq_rm(llama_get_memory(batch_context()), slot, -1, -1);
         }
+        batch_release_retained_pages_locked(keep);
         keep = BatchRetainedSlot();
     }
 }
@@ -5504,21 +5548,25 @@ static void batch_finish_request_locked(BatchGenerateRequest & req, stop_reason 
             batch_retained_for().resize(req.slot + 1);
         }
         BatchRetainedSlot & keep = batch_retained_for()[req.slot];
+        batch_release_retained_pages_locked(keep);
         const llama_pos pmax = llama_memory_seq_pos_max(llama_get_memory(batch_context()), req.slot);
         if(reason != stop_reason::ERROR_ENCOUNTERED && pmax >= 0 && (size_t) pmax + 1 == req.kv_tokens.size())
         {
             keep.valid = true;
             keep.tokens = req.kv_tokens;
             keep.blocks.rebuild(keep.tokens);
+            keep.physical_blocks = std::move(req.physical_blocks);
             keep.kv_key = req.profile.kv_key;
             keep.retained_at = batch_round_for();
         }
         else
         {
+            batch_release_pages_locked(req.physical_blocks);
             keep = BatchRetainedSlot();
             llama_memory_seq_rm(llama_get_memory(batch_context()), req.slot, -1, -1);
         }
     }
+    if(req.slot < 0) batch_release_pages_locked(req.physical_blocks);
     batch_release_paused_bytes_locked(req);
     req.slot = -1;
     printf("\n[%s] BatchRequest:%d, Init:%.2fs, Processed:%d in %.2fs (%.2fT/s), Generated:%d/%d in %.2fs (%.2fT/s), Total:%.2fs, Stop:%d",
@@ -5669,6 +5717,7 @@ static int batch_seed_slot_locked(BatchGenerateRequest & req, int slot)
     // prompt token under this request's profile rather than returning holes.
     if(req.prompt_logprobs >= 0) {
         llama_memory_seq_rm(mem, slot, -1, -1);
+        batch_release_retained_pages_locked(own);
         own = BatchRetainedSlot();
         req.kv_tokens.clear();
         req.kv_blocks.clear();
@@ -5755,9 +5804,11 @@ static int batch_seed_slot_locked(BatchGenerateRequest & req, int slot)
     {
         llama_memory_seq_rm(mem, slot, -1, -1);
     }
+    batch_release_retained_pages_locked(own);
     own = BatchRetainedSlot(); // the slot now belongs to the live request
     req.kv_tokens.assign(req.prompt_tokens.begin(), req.prompt_tokens.begin() + reused);
     req.kv_blocks.rebuild(req.kv_tokens);
+    batch_assign_pages_locked(req);
     if(reused > 0 && !is_quiet)
     {
         printf("\n[Batch slot %d: reusing %zu of %zu prompt tokens (%s)]", slot, reused, req.prompt_tokens.size(),
@@ -5842,13 +5893,17 @@ static bool batch_claim_waiting_locked()
             // Restore exactly the evaluated tokens; pending output and sampler RNG
             // stayed on the request, so resumption consumes no extra sample.
             llama_memory_seq_rm(llama_get_memory(batch_context()), slot, -1, -1);
-            if((size_t) slot < batch_retained_for().size()) batch_retained_for()[slot] = BatchRetainedSlot();
+            if((size_t) slot < batch_retained_for().size()) {
+                batch_release_retained_pages_locked(batch_retained_for()[slot]);
+                batch_retained_for()[slot] = BatchRetainedSlot();
+            }
             const bool restored = batch_restore_paused_locked(*req, slot);
             batch_release_paused_bytes_locked(*req);
             if(!restored) {
                 batch_finish_request_locked(*req, stop_reason::ERROR_ENCOUNTERED);
                 continue;
             }
+            batch_assign_pages_locked(*req);
             req->state = req->resume_state;
             req->preempted = false;
             req->last_served_round = batch_round_for();
@@ -5946,7 +6001,11 @@ static bool batch_preempt_for_waiting_locked() {
     if (!victim) return false;
 
     if (!batch_snapshot_paused_locked(*victim, victim->slot)) return false;
-    if ((size_t) victim->slot < batch_retained_for().size()) batch_retained_for()[victim->slot] = BatchRetainedSlot();
+    batch_release_pages_locked(victim->physical_blocks);
+    if ((size_t) victim->slot < batch_retained_for().size()) {
+        batch_release_retained_pages_locked(batch_retained_for()[victim->slot]);
+        batch_retained_for()[victim->slot] = BatchRetainedSlot();
+    }
     victim->resume_state = victim->state;
     victim->state = BatchState::WAITING;
     victim->preempted = true;
@@ -6012,7 +6071,11 @@ static void batch_process_controls_locked() {
         req.resume_state = req.state;
         if(req.slot >= 0) {
             if(!batch_snapshot_paused_locked(req, req.slot)) continue;
-            if((size_t) req.slot < batch_retained_for().size()) batch_retained_for()[req.slot] = BatchRetainedSlot();
+            batch_release_pages_locked(req.physical_blocks);
+            if((size_t) req.slot < batch_retained_for().size()) {
+                batch_release_retained_pages_locked(batch_retained_for()[req.slot]);
+                batch_retained_for()[req.slot] = BatchRetainedSlot();
+            }
             req.slot = -1;
         }
         req.state = BatchState::PAUSED;
@@ -6343,6 +6406,7 @@ static void batch_worker_loop(BatchLane * lane)
             }
             if(req->slot >= 0) trim_draft();
             req->kv_blocks.rebuild(req->kv_tokens);
+            batch_assign_pages_locked(*req);
             req->i_batch = -1;
 
         }
@@ -9993,6 +10057,10 @@ std::string gpttype_friend_metrics() {
     std::lock_guard<std::mutex> lock(batch_mutex);
     size_t waiting = 0, running = 0;
     std::vector<size_t> lane_running(batch_lanes.size(), 0);
+    size_t kv_pages_used = 0, kv_pages_capacity = 0;
+    batch_metrics.kv_page_queries = 0;
+    batch_metrics.kv_page_hits = 0;
+    batch_metrics.kv_page_evictions = 0;
     for(const auto & req : batch_requests) {
         if(!req) continue;
         if(req->state == BatchState::WAITING) ++waiting;
@@ -10001,7 +10069,15 @@ std::string gpttype_friend_metrics() {
             if(req->lane >= 0 && (size_t) req->lane < lane_running.size()) ++lane_running[req->lane];
         }
     }
-    std::string result = batch_metrics.render(waiting, running, batch_paused_bytes, lane_running);
+    for(const auto & lane : batch_lanes) {
+        kv_pages_used += lane->pages.used();
+        kv_pages_capacity += lane->pages.capacity();
+        batch_metrics.kv_page_queries += lane->pages.queries();
+        batch_metrics.kv_page_hits += lane->pages.hits();
+        batch_metrics.kv_page_evictions += lane->pages.evictions();
+    }
+    std::string result = batch_metrics.render(waiting, running, batch_paused_bytes, lane_running,
+                                              kv_pages_used, kv_pages_capacity);
     return result;
 }
 
