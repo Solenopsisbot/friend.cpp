@@ -31,10 +31,12 @@ struct metrics {
     uint64_t submitted = 0, rejected = 0, completed = 0, failed = 0, cancelled = 0;
     uint64_t prompt_tokens = 0, reused_tokens = 0, generated_tokens = 0;
     uint64_t rounds = 0, batch_tokens = 0, preemptions = 0, kv_block_shares = 0, watermark_stalls = 0;
+    uint64_t kv_page_queries = 0, kv_page_hits = 0, kv_page_evictions = 0;
     uint64_t draft_proposed = 0, draft_accepted = 0;
     histogram queue, first_token, inter_token, decode;
     std::string render(size_t waiting, size_t running, size_t offloaded_bytes = 0,
-                       const std::vector<size_t> & lane_running = {}) const {
+                       const std::vector<size_t> & lane_running = {},
+                       size_t kv_pages_used = 0, size_t kv_pages_capacity = 0) const {
         std::ostringstream out;
         auto value = [&](const char * name, const char * type, uint64_t n) {
             out << "# TYPE friend_batch_" << name << ' ' << type << '\n';
@@ -63,6 +65,11 @@ struct metrics {
         value("preemptions_total", "counter", preemptions);
         value("kv_block_shares_total", "counter", kv_block_shares);
         value("kv_watermark_stalls_total", "counter", watermark_stalls);
+        value("kv_page_queries_total", "counter", kv_page_queries);
+        value("kv_page_hits_total", "counter", kv_page_hits);
+        value("kv_page_evictions_total", "counter", kv_page_evictions);
+        value("kv_pages_used", "gauge", kv_pages_used);
+        value("kv_pages_capacity", "gauge", kv_pages_capacity);
         queue.write(out, "friend_batch_queue_seconds");
         first_token.write(out, "friend_batch_time_to_first_token_seconds");
         inter_token.write(out, "friend_batch_inter_token_seconds");

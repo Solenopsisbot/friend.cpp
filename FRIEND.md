@@ -281,6 +281,9 @@ requests reach N; `friend_batch_requests_rejected_total` records those rejection
 active decodes and defers prompt admission when the reserve would be consumed;
 `friend_batch_kv_watermark_stalls_total` reports those deferrals. This scheduler
 guard complements the future physical paged allocator.
+The scheduler now also tracks refcounted physical page identities for each logical
+KV block and exports used/capacity, query, hit and eviction counters. llama.cpp
+still owns device tensor allocation until the backend paged-KV handoff is complete.
 
 Pause and priority-preemption snapshots are bounded by 512 MiB of host storage.
 They use the prompt-cache codec when compression reduces their size and restore

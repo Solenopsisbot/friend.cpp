@@ -296,6 +296,11 @@ codec as the prompt cache when compression saves space; `/metrics` exposes the
 current stored byte count as `friend_batch_offloaded_bytes`.
 With native profile lanes enabled, `friend_batch_lane_running{lane="N"}` shows
 the bounded live request count for each lane, making affinity imbalance visible.
+The scheduler's physical page table reports `friend_batch_kv_pages_used`,
+`friend_batch_kv_pages_capacity`, page queries/hits and evictions for tuning cache
+pressure. The current llama backend still owns the actual KV tensors; this table
+is the ownership layer used while the backend migration to true paged storage is
+completed.
 
 `tools/friend-bench/lane_benchmark.py` measures end-to-end throughput for one or
 more native profile-lane counts and verifies every result is non-empty.
