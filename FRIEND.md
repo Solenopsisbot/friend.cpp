@@ -273,6 +273,8 @@ decodes are admitted before prompt chunks, and `0` uses the backend batch size.
 Same-profile prefixes share complete 16-token blocks through llama's sequence-cell
 copy-on-write path. The share count is exposed as
 `friend_batch_kv_block_shares_total` in `/metrics`.
+When profile lanes are enabled, `/metrics` also exposes the bounded live count per
+lane as `friend_batch_lane_running{lane="N"}`.
 
 Pause and priority-preemption snapshots are bounded by 512 MiB of host storage.
 They use the prompt-cache codec when compression reduces their size and restore

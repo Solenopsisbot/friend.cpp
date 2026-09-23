@@ -284,6 +284,8 @@ worker boundary. Paused KV is bounded by a 512 MiB host-memory budget.
 Preempted and explicitly paused snapshots use the same lossless byte-plane/zstd
 codec as the prompt cache when compression saves space; `/metrics` exposes the
 current stored byte count as `friend_batch_offloaded_bytes`.
+With native profile lanes enabled, `friend_batch_lane_running{lane="N"}` shows
+the bounded live request count for each lane, making affinity imbalance visible.
 
 `tools/friend-bench/lane_benchmark.py` measures end-to-end throughput for one or
 more native profile-lane counts and verifies every result is non-empty.

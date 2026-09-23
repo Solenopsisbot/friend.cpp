@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace friend_serving {
 struct histogram {
@@ -32,7 +33,8 @@ struct metrics {
     uint64_t rounds = 0, batch_tokens = 0, preemptions = 0, kv_block_shares = 0;
     uint64_t draft_proposed = 0, draft_accepted = 0;
     histogram queue, first_token, inter_token, decode;
-    std::string render(size_t waiting, size_t running, size_t offloaded_bytes = 0) const {
+    std::string render(size_t waiting, size_t running, size_t offloaded_bytes = 0,
+                       const std::vector<size_t> & lane_running = {}) const {
         std::ostringstream out;
         auto value = [&](const char * name, const char * type, uint64_t n) {
             out << "# TYPE friend_batch_" << name << ' ' << type << '\n';
@@ -45,6 +47,11 @@ struct metrics {
         value("requests_waiting", "gauge", waiting);
         value("requests_running", "gauge", running);
         value("offloaded_bytes", "gauge", offloaded_bytes);
+        if(!lane_running.empty()) {
+            out << "# TYPE friend_batch_lane_running gauge\n";
+            for(size_t lane = 0; lane < lane_running.size(); ++lane)
+                out << "friend_batch_lane_running{lane=\"" << lane << "\"} " << lane_running[lane] << '\n';
+        }
         value("prefill_tokens_total", "counter", prompt_tokens);
         value("reused_tokens_total", "counter", reused_tokens);
         value("generated_tokens_total", "counter", generated_tokens);
