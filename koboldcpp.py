@@ -381,6 +381,7 @@ class load_model_inputs(ctypes.Structure):
                 ("friend_max_queued_requests", ctypes.c_int),
                 ("friend_kv_watermark", ctypes.c_float),
                 ("friend_max_lora_profiles", ctypes.c_int),
+                ("friend_disaggregated_prefill", ctypes.c_bool),
                 ]
 
 class generation_inputs(ctypes.Structure):
@@ -446,7 +447,8 @@ class generation_inputs(ctypes.Structure):
                 ("cache_pin_label", ctypes.c_char_p),
                 ("priority", ctypes.c_int),
                 ("logprobs", ctypes.c_int),
-                ("prompt_logprobs", ctypes.c_int)]
+                ("prompt_logprobs", ctypes.c_int),
+                ("disaggregated_prefill", ctypes.c_bool)]
 
 class generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2539,6 +2541,7 @@ def load_model(model_filename):
     inputs.friend_max_queued_requests = args.max_queued_requests
     inputs.friend_kv_watermark = args.kv_watermark
     inputs.friend_max_lora_profiles = args.max_lora_profiles
+    inputs.friend_disaggregated_prefill = args.disaggregated_prefill
     inputs.rpc_mode = (2 if args.rpcmode=="host" else (1 if args.rpcmode=="connect" else 0))
     inputs.rpc_targets = (args.rpctargets if args.rpcmode=="connect" else "").encode("UTF-8")
 
@@ -2724,6 +2727,7 @@ def generate(genparams, stream_flag=False):
     # legacy process-wide logprob history. Cap this at the native JSON size.
     inputs.logprobs = requested_logprobs(genparams)
     inputs.prompt_logprobs = max(-1, min(20, tryparseint(genparams.get("prompt_logprobs", -1), -1)))
+    inputs.disaggregated_prefill = bool(genparams.get("disaggregated_prefill", False))
     try:
         inputs.adapter_profile = friend_adapter_profile_spec(genparams).encode("UTF-8")
     except ValueError as e:
@@ -8541,6 +8545,17 @@ Change Mode<br>
                     self.end_headers(content_type='application/json')
                     self.wfile.write(payload)
                     return
+                if genparams.get("disaggregated_prefill", False) and (
+                        not getattr(args, "disaggregated_prefill", False) or
+                        getattr(args, "profile_lanes", 1) < 2):
+                    payload = json.dumps({"error": {
+                        "message": "disaggregated_prefill requires --disaggregated-prefill and --profile-lanes >= 2",
+                        "type": "invalid_request_error", "code": 400}}).encode()
+                    self.send_response(400)
+                    self.send_header('content-length', str(len(payload)))
+                    self.end_headers(content_type='application/json')
+                    self.wfile.write(payload)
+                    return
 
                 if args.debugmode >= 1:
                     printablegenparams = truncate_long_json(genparams,trunc_len)
@@ -13919,6 +13934,7 @@ if __name__ == '__main__':
     advparser.add_argument("--max-queued-requests", type=check_range(int,0,1000000), default=0, help="friend.cpp: maximum live continuous-batching requests, including waiting/running/paused requests; overloads are rejected when full (0 disables).")
     advparser.add_argument("--kv-watermark", type=check_range(float,0.0,0.9), default=0.0, help="friend.cpp: reserve this fraction of estimated continuous-batching KV capacity for active sequences (0 disables).")
     advparser.add_argument("--max-lora-profiles", type=check_range(int,0,1024), default=0, help="friend.cpp: cap distinct live LoRA/steering/head profiles admitted by native batching (0 disables).")
+    advparser.add_argument("--disaggregated-prefill", action='store_true', help="friend.cpp: prefill on lane 0 and hand serialized KV to a decode lane; requires --profile-lanes >= 2 and continuous batching.")
     advparser.add_argument("--stream-interval", type=check_range(int,1,64), default=1, help="friend.cpp: stream this many generated tokens per event when possible; final partial chunks always flush.")
     advparser.add_argument("--prefill-tokens", dest="prefilltokens", metavar='[tokens]', type=check_range(int,0,65536), default=0, help="friend.cpp: maximum prompt tokens admitted per continuous-batching round after ready decodes. Lower values protect inter-token latency; 0 uses the full batch size.")
     advparser.add_argument("--password", metavar=('[API key]'), help="Enter a password required to use this instance. This key will be required for all text endpoints. Image endpoints are not secured. Can also be set with env var KCPP_PASSWORD", default=os.getenv('KCPP_PASSWORD',None))

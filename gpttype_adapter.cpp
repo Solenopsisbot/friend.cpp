@@ -109,6 +109,7 @@ static int friend_schedule_tokens = 0;
 static int friend_max_queued_requests = 0;
 static float friend_kv_watermark = 0.0f;
 static int friend_max_lora_profiles = 0;
+static bool friend_disaggregated_prefill = false;
 
 llama_grammar *  grammar = nullptr; //currently used grammar
 llama_grammar_parser parsed_grammar;
@@ -3523,6 +3524,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     friend_schedule_tokens = std::max(0, inputs.friend_schedule_tokens);
     friend_max_queued_requests = std::max(0, inputs.friend_max_queued_requests);
     friend_max_lora_profiles = std::clamp(inputs.friend_max_lora_profiles, 0, 1024);
+    friend_disaggregated_prefill = inputs.friend_disaggregated_prefill;
     friend_kv_watermark = std::clamp(inputs.friend_kv_watermark, 0.0f, 0.9f);
     if(continuous_batching_slots > 0)
     {
@@ -4252,6 +4254,10 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             fprintf(stderr, "friend: profile lanes require batching without model speculation or CFG\n");
             return ModelLoadResult::FAIL;
         }
+        if(friend_disaggregated_prefill && inputs.friend_profile_lanes < 2) {
+            fprintf(stderr, "friend: --disaggregated-prefill requires --profile-lanes >= 2\n");
+            return ModelLoadResult::FAIL;
+        }
         if(!friend_init_batch_lanes(llamamodel, llama_ctx_params, inputs.friend_profile_lanes))
             return ModelLoadResult::FAIL;
         // The main context already has the default profile from above.  Extra
@@ -4938,6 +4944,7 @@ struct BatchGenerateRequest
     bool paused_kv_packed = false;
     size_t paused_kv_raw_size = 0;
     bool preempted = false;
+    bool disaggregated_prefill = false;
     uint32_t pause_count = 0;
     uint32_t preemption_count = 0;
     double paused_seconds = 0.0;
@@ -4966,7 +4973,7 @@ static llama_context * batch_context();
 // Serialize a sequence before releasing its device KV. Compression is optional
 // and lossless; the budget is charged against the stored representation, so a
 // large preemption burst cannot quietly consume unbounded host memory.
-static bool batch_snapshot_paused_locked(BatchGenerateRequest & req, int slot)
+static bool batch_snapshot_paused_locked(BatchGenerateRequest & req, int slot, bool count_pause = true)
 {
     const size_t size = llama_state_seq_get_size(batch_context(), slot);
     if(size == 0 || size > BATCH_PAUSED_LIMIT - batch_paused_bytes) return false;
@@ -4988,8 +4995,8 @@ static bool batch_snapshot_paused_locked(BatchGenerateRequest & req, int slot)
         return false;
     }
     batch_paused_bytes += req.paused_kv.size();
-    ++req.pause_count;
-    if(req.paused_start_time.time_since_epoch().count() == 0)
+    if(count_pause) ++req.pause_count;
+    if(count_pause && req.paused_start_time.time_since_epoch().count() == 0)
         req.paused_start_time = std::chrono::steady_clock::now();
     return true;
 }
@@ -5230,6 +5237,18 @@ static bool batch_has_live_locked()
         }
     }
     return false;
+}
+
+static int batch_choose_decode_lane_locked() {
+    if(batch_lanes.size() < 2) return -1;
+    std::vector<size_t> load(batch_lanes.size(), 0);
+    for(const auto & req : batch_requests)
+        if(req && batch_is_live_state(req->state) && req->lane >= 1 && req->lane < (int) load.size())
+            ++load[req->lane];
+    int best = 1;
+    for(int lane = 2; lane < (int) load.size(); ++lane)
+        if(load[lane] < load[best]) best = lane;
+    return best;
 }
 
 // Prefer the least-loaded context first so a hot profile cannot pin all of its
@@ -6530,6 +6549,27 @@ static void batch_worker_loop(BatchLane * lane)
             batch_assign_pages_locked(*req);
             req->i_batch = -1;
 
+            // Disaggregated mode evaluates the prompt on lane 0, samples the
+            // first token there, then hands the prompt KV plus pending token to
+            // a decode lane. The handoff is a real state snapshot; no prompt
+            // text is replayed on the decode side.
+            if(req->disaggregated_prefill && req->i_batch_is_prefill && req->state == BatchState::GENERATING) {
+                const int decode_lane = batch_choose_decode_lane_locked();
+                if(decode_lane < 0 || !batch_snapshot_paused_locked(*req, req->slot, false)) {
+                    batch_finish_request_locked(*req, stop_reason::ERROR_ENCOUNTERED);
+                    continue;
+                }
+                batch_release_pages_locked(req->physical_blocks);
+                req->resume_state = BatchState::GENERATING;
+                req->state = BatchState::WAITING;
+                req->slot = -1;
+                req->lane = decode_lane;
+                req->disaggregated_prefill = false;
+                req->preempted = false;
+                batch_waiting.push_back(req->id);
+                batch_cv.notify_all();
+            }
+
         }
     }
     llama_batch_free(batch);
@@ -6591,6 +6631,7 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     auto req = std::make_unique<BatchGenerateRequest>();
     req->id = batch_next_request_id++;
     req->priority = inputs.priority;
+    req->disaggregated_prefill = inputs.disaggregated_prefill && friend_disaggregated_prefill;
     req->logprobs = std::clamp(inputs.logprobs, -1, 20);
     req->prompt_logprobs = std::clamp(inputs.prompt_logprobs, -1, 20);
     ++batch_metrics.submitted;
@@ -6613,7 +6654,7 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     req->render_special = inputs.render_special;
     req->blue_noise = inputs.blue_noise;
     req->profile = profile;
-    req->lane = batch_choose_lane_locked(profile);
+    req->lane = req->disaggregated_prefill ? 0 : batch_choose_lane_locked(profile);
     req->profile_key = requested_profile_key;
     req->grammar = inputs.grammar ? inputs.grammar : "";
     if(!req->grammar.empty())

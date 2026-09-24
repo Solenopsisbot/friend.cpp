@@ -122,6 +122,8 @@ struct load_model_inputs
     const float friend_kv_watermark = 0.0f;
     // friend.cpp: maximum number of distinct live adapter profiles admitted at once; 0 disables.
     const int friend_max_lora_profiles = 0;
+    // friend.cpp: run prompt prefill on lane 0 and hand its serialized KV to a decode lane.
+    const bool friend_disaggregated_prefill = false;
 };
 struct generation_inputs
 {
@@ -193,6 +195,8 @@ struct generation_inputs
     // Zero keeps the fast path and the legacy global logprob buffer unchanged.
     const int logprobs = -1; // -1 disables; 0 reports selected token only
     const int prompt_logprobs = -1;
+    // friend.cpp: request opts into the prefill/decode lane handoff.
+    const bool disaggregated_prefill = false;
 };
 struct generation_outputs
 {
