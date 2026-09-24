@@ -119,6 +119,15 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0, disa
             assert parallel['usage']['completion_tokens'] >= 0
             assert parallel['usage']['total_tokens'] == (
                 parallel['usage']['prompt_tokens'] + parallel['usage']['completion_tokens'])
+            parallel_guided = request('/v1/chat/completions', {
+                'messages': [{'role': 'user', 'content': 'Answer yes or no.'}],
+                'max_tokens': 4, 'temperature': 0.8, 'seed': 902, 'n': 2,
+                'structured_outputs': {'choice': ['yes', 'no']},
+                'cache_salt': 'parallel-guided', 'stream': False,
+            })
+            assert len(parallel_guided.get('choices', [])) == 2, parallel_guided
+            assert all(choice['message']['content'].strip() in ('yes', 'no')
+                       for choice in parallel_guided['choices']), parallel_guided
             stream_payload = {'messages': [{'role': 'user', 'content': 'Answer with six short words.'}],
                               'max_tokens': 6, 'temperature': 0, 'stream': True,
                               'stream_interval': 3, 'cache_salt': 'stream-interval'}
