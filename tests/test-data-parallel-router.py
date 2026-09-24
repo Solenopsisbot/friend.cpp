@@ -97,6 +97,17 @@ if __name__ == "__main__":
     state_pick, _ = pool.choose(b"{}")
     assert state_pick == 1
     pool.done(state_pick)
+    latency_pool = Pool([5101, 5102])
+    latency_pool.set_observed(0, running=0, latency_ms=1000)
+    latency_pool.set_observed(1, running=0, latency_ms=1)
+    latency_pick, _ = latency_pool.choose(b"{}")
+    assert latency_pick == 1
+    latency_pool.done(latency_pick)
+    latency_pool.set_draining(1, True)
+    draining_pick, _ = latency_pool.choose(b"{}")
+    assert draining_pick != 1
+    latency_pool.done(draining_pick)
+    latency_pool.set_draining(1, False)
     namespaced = pool.request_id(2, 41)
     assert pool.owner(namespaced) == (2, 41)
 

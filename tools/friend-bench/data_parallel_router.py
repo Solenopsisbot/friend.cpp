@@ -33,6 +33,8 @@ class Pool:
         self.observed_waiting = [0] * len(self.ports)
         self.observed_kv_blocks = [0] * len(self.ports)
         self.observed_at = [0.0] * len(self.ports)
+        self.observed_latency_ms = [0.0] * len(self.ports)
+        self.draining = [False] * len(self.ports)
         self.lock = threading.Lock()
         self.epoch = uuid.uuid4().hex[:12]
         self._health_stop = threading.Event()
@@ -58,6 +60,7 @@ class Pool:
         """Refresh bounded scheduler state used by the next routing decision."""
         port = self.ports[index] if port is None else port
         conn = http.client.HTTPConnection('127.0.0.1', port, timeout=2)
+        started = time.monotonic()
         try:
             conn.request('GET', '/api/extra/requests')
             response = conn.getresponse()
@@ -65,11 +68,14 @@ class Pool:
             running = sum(item.get('state') in ('prefill', 'generating') for item in entries)
             waiting = sum(item.get('state') == 'waiting' for item in entries)
             kv_blocks = sum(int(item.get('kv_blocks', 0) or 0) for item in entries)
+            latency_ms = (time.monotonic() - started) * 1000.0
             with self.lock:
                 self.observed_running[index] = running
                 self.observed_waiting[index] = waiting
                 self.observed_kv_blocks[index] = kv_blocks
                 self.observed_at[index] = time.monotonic()
+                previous = self.observed_latency_ms[index]
+                self.observed_latency_ms[index] = latency_ms if previous <= 0 else (0.25 * latency_ms + 0.75 * previous)
             self.mark_success(index)
             return True
         except (OSError, http.client.HTTPException, ValueError, TypeError, KeyError):
@@ -78,13 +84,19 @@ class Pool:
         finally:
             conn.close()
 
-    def set_observed(self, index, running=0, waiting=0, kv_blocks=0):
+    def set_observed(self, index, running=0, waiting=0, kv_blocks=0, latency_ms=0.0):
         """Inject a state sample for deterministic tests and embedded callers."""
         with self.lock:
             self.observed_running[index] = max(0, int(running))
             self.observed_waiting[index] = max(0, int(waiting))
             self.observed_kv_blocks[index] = max(0, int(kv_blocks))
             self.observed_at[index] = time.monotonic()
+            self.observed_latency_ms[index] = max(0.0, float(latency_ms))
+
+    def set_draining(self, index, draining=True):
+        """Stop assigning new requests while preserving existing ownership."""
+        with self.lock:
+            self.draining[index] = bool(draining)
 
     def choose(self, body, exclude=()):
         excluded = set(exclude)
@@ -108,6 +120,9 @@ class Pool:
                 raise ValueError("no untried replicas")
             now = time.monotonic()
             healthy = [i for i in available if self.failure_until[i] <= now]
+            accepting = [i for i in healthy if not self.draining[i]]
+            if accepting:
+                healthy = accepting
             # Keep probing when every replica is cooling down. This prevents a
             # transient outage from becoming a permanent routing blackout.
             candidates = healthy or available
@@ -116,7 +131,8 @@ class Pool:
                 if now - self.observed_at[i] <= 2.0:
                     observed = (self.observed_running[i] +
                                 0.25 * self.observed_waiting[i] +
-                                0.001 * self.observed_kv_blocks[i])
+                                0.001 * self.observed_kv_blocks[i] +
+                                0.01 * self.observed_latency_ms[i])
                 return self.active[i] + observed
             if sticky is not None:
                 digest = hashlib.sha256(str(sticky).encode()).digest()
