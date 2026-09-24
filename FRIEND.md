@@ -276,6 +276,13 @@ continuous-batching queue, while requests using resident profiles keep running.
 profile-grouped execution across context lanes; llama's public API still does not
 permit different LoRA sets inside one `llama_decode` call.
 
+`--disaggregated-prefill --profile-lanes 2` moves each opted-in request through a
+real lane handoff: lane 0 evaluates the prompt and first token, then serializes
+the llama sequence state; a decode lane restores that state and continues without
+replaying the prompt. This is an in-process handoff over host memory. The KV
+connector can carry serialized payloads, but no network worker or device-tensor
+transport is assumed yet.
+
 The companion process router marks connection-failed workers unhealthy for a short
 exponential cooldown, resets the cooldown after a successful response, and keeps
 probing when all workers are cooling down so recovery is automatic.
