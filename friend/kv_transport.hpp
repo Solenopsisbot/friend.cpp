@@ -19,6 +19,20 @@
 
 namespace friend_kv {
 
+// Counters are deliberately transport-local.  A serving process can fold
+// these into its own metrics without making the framing layer depend on a
+// particular metrics registry or request lifetime.
+struct transport_stats {
+    uint64_t frames_sent = 0;
+    uint64_t frames_received = 0;
+    uint64_t payload_bytes_sent = 0;
+    uint64_t payload_bytes_received = 0;
+    uint64_t wire_bytes_sent = 0;
+    uint64_t wire_bytes_received = 0;
+    uint64_t send_failures = 0;
+    uint64_t receive_failures = 0;
+};
+
 class transport_frame {
 public:
     static constexpr uint32_t protocol_version = 1;
@@ -50,34 +64,61 @@ public:
         return checksum(payload) == expected_checksum;
     }
 
-    static bool write(std::ostream & stream, const std::vector<uint8_t> & payload) {
+    static bool write(std::ostream & stream, const std::vector<uint8_t> & payload,
+                      transport_stats * stats = nullptr) {
         const auto frame = encode(payload);
-        if(frame.empty() && !payload.empty()) return false;
+        if(frame.empty() && !payload.empty()) {
+            if(stats) ++stats->send_failures;
+            return false;
+        }
         stream.write((const char *) frame.data(), (std::streamsize) frame.size());
-        return stream.good();
+        if(!stream.good()) {
+            if(stats) ++stats->send_failures;
+            return false;
+        }
+        if(stats) {
+            ++stats->frames_sent;
+            stats->payload_bytes_sent += payload.size();
+            stats->wire_bytes_sent += frame.size();
+        }
+        return true;
     }
 
-    static bool read(std::istream & stream, std::vector<uint8_t> & payload) {
+    static bool read(std::istream & stream, std::vector<uint8_t> & payload,
+                     transport_stats * stats = nullptr) {
         uint8_t header[20] = {};
         stream.read((char *) header, sizeof(header));
         if(stream.gcount() != (std::streamsize) sizeof(header) ||
-           header[0] != 'F' || header[1] != 'K' || header[2] != 'V' || header[3] != 'T') return false;
+           header[0] != 'F' || header[1] != 'K' || header[2] != 'V' || header[3] != 'T') {
+            if(stats) ++stats->receive_failures;
+            return false;
+        }
         const uint32_t version = read_u32(header + 4);
         const uint64_t size = read_u64(header + 8);
         const uint32_t expected_checksum = read_u32(header + 16);
         if(version != protocol_version || size > max_payload ||
-           size > (uint64_t) std::numeric_limits<std::streamsize>::max()) return false;
+           size > (uint64_t) std::numeric_limits<std::streamsize>::max()) {
+            if(stats) ++stats->receive_failures;
+            return false;
+        }
         payload.resize((size_t) size);
         if(size) {
             stream.read((char *) payload.data(), (std::streamsize) size);
             if(stream.gcount() != (std::streamsize) size) {
                 payload.clear();
+                if(stats) ++stats->receive_failures;
                 return false;
             }
         }
         if(checksum(payload) != expected_checksum) {
             payload.clear();
+            if(stats) ++stats->receive_failures;
             return false;
+        }
+        if(stats) {
+            ++stats->frames_received;
+            stats->payload_bytes_received += payload.size();
+            stats->wire_bytes_received += sizeof(header) + payload.size();
         }
         return true;
     }
@@ -86,34 +127,60 @@ public:
     // The descriptor helpers intentionally operate on an already-connected
     // socket. Callers can use TCP, Unix sockets, or an encrypted wrapper while
     // retaining the same bounded frame and checksum validation.
-    static bool send_socket(int fd, const std::vector<uint8_t> & payload) {
+    static bool send_socket(int fd, const std::vector<uint8_t> & payload,
+                            transport_stats * stats = nullptr) {
         const auto frame = encode(payload);
-        if(frame.empty() && !payload.empty()) return false;
+        if(frame.empty() && !payload.empty()) {
+            if(stats) ++stats->send_failures;
+            return false;
+        }
         size_t offset = 0;
         while(offset < frame.size()) {
             const ssize_t sent = ::send(fd, frame.data() + offset, frame.size() - offset, MSG_NOSIGNAL);
-            if(sent <= 0) return false;
+            if(sent <= 0) {
+                if(stats) ++stats->send_failures;
+                return false;
+            }
             offset += (size_t) sent;
+        }
+        if(stats) {
+            ++stats->frames_sent;
+            stats->payload_bytes_sent += payload.size();
+            stats->wire_bytes_sent += frame.size();
         }
         return true;
     }
 
-    static bool receive_socket(int fd, std::vector<uint8_t> & payload) {
+    static bool receive_socket(int fd, std::vector<uint8_t> & payload,
+                               transport_stats * stats = nullptr) {
         uint8_t header[20] = {};
         if(!receive_all(fd, header, sizeof(header)) || header[0] != 'F' || header[1] != 'K' ||
-           header[2] != 'V' || header[3] != 'T') return false;
+           header[2] != 'V' || header[3] != 'T') {
+            if(stats) ++stats->receive_failures;
+            return false;
+        }
         const uint32_t version = read_u32(header + 4);
         const uint64_t size = read_u64(header + 8);
         const uint32_t expected_checksum = read_u32(header + 16);
-        if(version != protocol_version || size > max_payload) return false;
+        if(version != protocol_version || size > max_payload) {
+            if(stats) ++stats->receive_failures;
+            return false;
+        }
         payload.resize((size_t) size);
         if(size && !receive_all(fd, payload.data(), (size_t) size)) {
             payload.clear();
+            if(stats) ++stats->receive_failures;
             return false;
         }
         if(checksum(payload) != expected_checksum) {
             payload.clear();
+            if(stats) ++stats->receive_failures;
             return false;
+        }
+        if(stats) {
+            ++stats->frames_received;
+            stats->payload_bytes_received += payload.size();
+            stats->wire_bytes_received += sizeof(header) + payload.size();
         }
         return true;
     }

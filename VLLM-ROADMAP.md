@@ -1,9 +1,8 @@
 # vLLM-inspired serving implementation goal
 
 Status: active. Requested 2026-09-24. Commit coherent implementation checkpoints
-as work proceeds. All 16 items below are in scope; custom logits processors remain
-excluded under the earlier instruction. Item 8 in this list is beam search and is
-included.
+as work proceeds. All listed items except item 8 are in scope; custom logits
+processors and beam search remain excluded under the earlier instruction.
 
 ## Baseline and constraints
 
@@ -39,7 +38,7 @@ supported backends and remaining limitations as it progresses.
 | [~] | 5. Configurable stream batching | `stream_interval` buffering, final/error flushes and live SSE coverage are implemented. Parallel native fan-in now drains completion races and preserves split UTF-8 tokens. Reasoning/tool/logprob interaction and streamed-vs-unbatched text equivalence remain. |
 | [~] | 6. Multi-LoRA batching | Profile-grouped execution now runs concurrently across native context lanes, with `--max-lora-profiles` bounded residency/admission and a rejection metric. True per-sequence adapter selection inside one `llama_decode` remains unavailable because llama's public adapter API is context-wide; mixed-batch equivalence and throughput measurements remain. |
 | [~] | 7. Parallel sampling | OpenAI `n` now fans out bounded independent child requests into separate executor threads, so all children enter native continuous batching concurrently; nested request state is isolated, fixed seeds are offset, indexed choices and usage are preserved, native rejection cannot fall back to the singleton generator, failed children abort admitted siblings, and OpenAI streaming now fans in indexed native token cursors with disconnect cancellation, completion-tail draining and split-UTF-8 handling. Focused overlap/rejection/streaming tests and the live regression cover the path. A native branch object remains. |
-| [ ] | 8. Beam search | Deliberately not approximated with text replay: requests now fail clearly instead of silently becoming ordinary sampling (`2e08e37fb`). llama's public API does not expose a clonable sampler/sequence branch with grammar/EOS state, so a correct shared-KV implementation still requires native branch ownership. |
+| [ ] | 8. Beam search | Explicitly excluded per request. Requests fail clearly instead of silently becoming ordinary sampling (`2e08e37fb`). llama's public API does not expose a clonable sampler/sequence branch with grammar/EOS state, so a correct shared-KV implementation still requires native branch ownership. |
 | [~] | 9. Stronger speculative decoding | The legacy/native path already integrates separate draft models, built-in MTP, DFlash and DSpark with rollback checks; `friend/spec_tuner.hpp` adapts draft length from acceptance and measured draft/verify cost, and the live regression verifies suffix speculation/output equivalence. Batch-native model-draft scheduling, EAGLE-specific validation and per-request draft budgets remain. |
 | [~] | 10. Disaggregated prefill/decode | `--disaggregated-prefill` now evaluates a request on lane 0, samples its first pending token, serializes the live llama sequence state, and restores it on a decode lane with ownership transfer and cleanup. The connector carries bounded serialized payloads, and `friend/kv_socket_connector.hpp` moves those snapshots over connected POSIX sockets using bounded checksummed framing. Independently configured serving processes, device KV tensor attachment and transfer-overhead measurements remain. |
 | [~] | 11. Expanded structured outputs | Cached JSON Schema/object handling accepts vLLM-style structured/guided JSON, choices and a bounded guided-regex subset, with live choice and regex constraint coverage. Backend selection and concurrent/speculative/streaming interaction coverage remain. |
