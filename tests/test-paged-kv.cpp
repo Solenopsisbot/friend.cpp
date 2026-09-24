@@ -32,18 +32,24 @@ int main() {
     std::vector<friend_kv::connector_event_type> events;
     friend_kv::kv_connector source_connector(source, {7, 8, 9, "profile", "namespace"},
         [&](const friend_kv::connector_event & event) { events.push_back(event.type); });
+    assert(source_connector.set_payload(101, {1, 2, 3, 5, 8}));
+    assert(source_connector.payload(101) && source_connector.payload(101)->size() == 5);
     friend_kv::kv_connector destination_connector(destination, source_connector.discover());
     const auto wire = source_connector.export_wire();
     assert(destination_connector.import_wire(wire));
     assert(destination.entries().size() == 1 && destination.entries()[0].key == 101);
+    assert(destination_connector.payload(101) && (*destination_connector.payload(101))[2] == 3);
     assert(events.size() == 1 && events[0] == friend_kv::connector_event_type::exported);
     assert(!destination_connector.invalidate(101));
     destination.release(destination.entries()[0].id);
     destination.release(destination.entries()[0].id);
     assert(destination_connector.invalidate(101));
     auto corrupt = wire;
-    corrupt.back() ^= 0xff;
+    corrupt[0] ^= 0xff;
     assert(!destination_connector.import_wire(corrupt));
+    auto truncated = wire;
+    truncated.resize(truncated.size() - 1);
+    assert(!destination_connector.import_wire(truncated));
     friend_kv::kv_connector incompatible(destination, {8, 8, 9, "profile", "namespace"});
     assert(!incompatible.import_wire(wire));
     return 0;

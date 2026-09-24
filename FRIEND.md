@@ -309,9 +309,12 @@ aligned prompt KV when the native batch scheduler can reuse it, and return
 indexed choices. A failed child aborts its admitted siblings. Streaming `n`
 uses the same native child requests and emits indexed SSE chunks as each child
 advances. The
-`friend/kv_connector.hpp` contract provides a checked metadata handoff for
-future disaggregated KV transport; it rejects incompatible model/layout/dtype
-or profile namespaces and will not invalidate referenced pages.
+`friend/kv_connector.hpp` contract provides a versioned, bounded handoff for
+scheduler pages and serialized backend payloads. It rejects incompatible
+model/layout/dtype or profile namespaces, rolls back failed imports, and will
+not invalidate referenced pages. The serving path does not yet attach llama's
+device KV tensor bytes to this transport, so it is a connector contract rather
+than a live network prefill/decode split.
 
 ### What's been verified
 
