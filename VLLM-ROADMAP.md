@@ -83,3 +83,20 @@ still passed output, pause/resume, cancellation, stream-equivalence, logprob,
 and speculation checks; the lower throughput shows that extra lanes need a
 device with enough parallel compute and memory to pay for their independent
 contexts.
+
+## Final gap audit (2026-09-24)
+
+The remaining partial rows were audited against the public llama/ggml serving
+ABI. All safe serving-layer work is implemented: admission and cancellation,
+owned KV bookkeeping, router state, native lane concurrency, stream fan-in,
+profile isolation, parallel samples, speculation budgets, disaggregated
+snapshot transport, structured output coverage, timing, metrics, multimodal
+encoded reuse, and connector validation. The unchecked or partial portions
+are backend contracts rather than TODOs that can be completed in this layer:
+physical device-tensor paging/recompute, asynchronous decode completion fences,
+mixed-sequence adapter bindings, native sampler-branch cloning, batch model
+draft/EAGLE execution, independent-process device-KV attachment, opaque mtmd
+metadata accounting, and expert/context collectives. Beam search and custom
+logits processors remain intentionally excluded by request. The capability
+endpoint and roadmap rows name each limit explicitly so callers fail clearly
+instead of receiving a silent approximation.
