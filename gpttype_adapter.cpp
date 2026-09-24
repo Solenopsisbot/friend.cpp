@@ -4833,6 +4833,10 @@ struct BatchGenerateRequest
     bool paused_kv_packed = false;
     size_t paused_kv_raw_size = 0;
     bool preempted = false;
+    uint32_t pause_count = 0;
+    uint32_t preemption_count = 0;
+    double paused_seconds = 0.0;
+    std::chrono::steady_clock::time_point paused_start_time;
 
     generation_outputs result;
 
@@ -4879,6 +4883,9 @@ static bool batch_snapshot_paused_locked(BatchGenerateRequest & req, int slot)
         return false;
     }
     batch_paused_bytes += req.paused_kv.size();
+    ++req.pause_count;
+    if(req.paused_start_time.time_since_epoch().count() == 0)
+        req.paused_start_time = std::chrono::steady_clock::now();
     return true;
 }
 
@@ -4892,7 +4899,12 @@ static bool batch_restore_paused_locked(BatchGenerateRequest & req, int slot)
         data = raw.data();
         size = raw.size();
     }
-    return llama_state_seq_set_data(batch_context(), data, size, slot) == req.paused_kv_raw_size;
+    const bool restored = llama_state_seq_set_data(batch_context(), data, size, slot) == req.paused_kv_raw_size;
+    if(req.paused_start_time.time_since_epoch().count() != 0) {
+        req.paused_seconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - req.paused_start_time).count();
+        req.paused_start_time = std::chrono::steady_clock::time_point();
+    }
+    return restored;
 }
 
 static void batch_release_paused_bytes_locked(BatchGenerateRequest & req)
@@ -5537,6 +5549,9 @@ static void batch_finish_request_locked(BatchGenerateRequest & req, stop_reason 
         {"time_to_first_token_seconds", req.generation_start_time.time_since_epoch().count() == 0 ? 0.0 : std::chrono::duration<double>(req.generation_start_time - req.start_time).count()},
         {"decode_seconds", gen_time},
         {"total_seconds", total_time},
+        {"paused_seconds", req.paused_seconds},
+        {"pause_count", req.pause_count},
+        {"preemptions", req.preemption_count},
     }).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
     req.result.timing_json = req.timing_json.c_str();
     req.state = reason == stop_reason::ERROR_ENCOUNTERED ? BatchState::FAILED : (reason == stop_reason::INVALID ? BatchState::ABORTED : BatchState::FINISHED);
@@ -6009,6 +6024,7 @@ static bool batch_preempt_for_waiting_locked() {
     victim->resume_state = victim->state;
     victim->state = BatchState::WAITING;
     victim->preempted = true;
+    ++victim->preemption_count;
     victim->slot = -1;
     batch_waiting.push_back(victim->id);
     ++batch_metrics.preemptions;
@@ -10091,6 +10107,8 @@ std::string gpttype_friend_requests() {
             {"tokens", req->completion_token_count}, {"paused_bytes", req->paused_kv.size()},
             {"profile", req->profile_key}, {"kv_blocks", req->kv_blocks.hashes.size()},
             {"preempted", req->preempted},
+            {"pause_count", req->pause_count}, {"preemptions", req->preemption_count},
+            {"paused_seconds", req->paused_seconds},
             {"pause_requested", req->pause_requested}});
     }
     return result.dump();

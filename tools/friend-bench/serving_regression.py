@@ -160,8 +160,11 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
                 request('/api/v1/generate', dict(other, cache_salt='test-C'))
                 assert not future.done(), 'paused request completed'
                 assert request('/api/extra/requests/resume', {'id': target})['accepted']
-                resumed = future.result(timeout=120)['results'][0]['text']
-                assert resumed == result, 'pause/resume changed output'
+                resumed_obj = future.result(timeout=120)['results'][0]
+                assert resumed_obj['text'] == result, 'pause/resume changed output'
+                resumed_timing = resumed_obj.get('timing', {})
+                assert resumed_timing.get('pause_count', 0) >= 1, resumed_timing
+                assert resumed_timing.get('paused_seconds', -1) >= 0, resumed_timing
             # Four long, low-priority requests fill every sequence slot. A short
             # urgent request must be admitted by snapshotting one victim.
             if profile_lanes == 1 and not max_queued_requests:
