@@ -12,6 +12,11 @@
 #include <ostream>
 #include <vector>
 
+#if !defined(_WIN32)
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
+
 namespace friend_kv {
 
 class transport_frame {
@@ -77,6 +82,43 @@ public:
         return true;
     }
 
+#if !defined(_WIN32)
+    // The descriptor helpers intentionally operate on an already-connected
+    // socket. Callers can use TCP, Unix sockets, or an encrypted wrapper while
+    // retaining the same bounded frame and checksum validation.
+    static bool send_socket(int fd, const std::vector<uint8_t> & payload) {
+        const auto frame = encode(payload);
+        if(frame.empty() && !payload.empty()) return false;
+        size_t offset = 0;
+        while(offset < frame.size()) {
+            const ssize_t sent = ::send(fd, frame.data() + offset, frame.size() - offset, MSG_NOSIGNAL);
+            if(sent <= 0) return false;
+            offset += (size_t) sent;
+        }
+        return true;
+    }
+
+    static bool receive_socket(int fd, std::vector<uint8_t> & payload) {
+        uint8_t header[20] = {};
+        if(!receive_all(fd, header, sizeof(header)) || header[0] != 'F' || header[1] != 'K' ||
+           header[2] != 'V' || header[3] != 'T') return false;
+        const uint32_t version = read_u32(header + 4);
+        const uint64_t size = read_u64(header + 8);
+        const uint32_t expected_checksum = read_u32(header + 16);
+        if(version != protocol_version || size > max_payload) return false;
+        payload.resize((size_t) size);
+        if(size && !receive_all(fd, payload.data(), (size_t) size)) {
+            payload.clear();
+            return false;
+        }
+        if(checksum(payload) != expected_checksum) {
+            payload.clear();
+            return false;
+        }
+        return true;
+    }
+#endif
+
 private:
     static uint32_t checksum(const std::vector<uint8_t> & bytes) {
         uint32_t hash = UINT32_C(2166136261);
@@ -120,6 +162,17 @@ private:
         for(int i = 0; i < 8; ++i) value |= (uint64_t) bytes[i] << (i * 8);
         return value;
     }
+#if !defined(_WIN32)
+    static bool receive_all(int fd, uint8_t * data, size_t size) {
+        size_t offset = 0;
+        while(offset < size) {
+            const ssize_t received = ::recv(fd, data + offset, size - offset, 0);
+            if(received <= 0) return false;
+            offset += (size_t) received;
+        }
+        return true;
+    }
+#endif
 };
 
 } // namespace friend_kv

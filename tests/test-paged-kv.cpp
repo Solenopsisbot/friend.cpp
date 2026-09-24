@@ -5,6 +5,10 @@
 
 #include <cassert>
 #include <sstream>
+#if !defined(_WIN32)
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 int main() {
     friend_kv::paged_allocator pages(2);
@@ -52,6 +56,15 @@ int main() {
     auto short_frame = framed;
     short_frame.pop_back();
     assert(!friend_kv::transport_frame::decode(short_frame, unframed));
+#if !defined(_WIN32)
+    int sockets[2] = {-1, -1};
+    assert(::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0);
+    assert(friend_kv::transport_frame::send_socket(sockets[0], wire));
+    unframed.clear();
+    assert(friend_kv::transport_frame::receive_socket(sockets[1], unframed) && unframed == wire);
+    ::close(sockets[0]);
+    ::close(sockets[1]);
+#endif
     assert(destination_connector.import_wire(wire));
     assert(destination.entries().size() == 1 && destination.entries()[0].key == 101);
     assert(destination_connector.payload(101) && (*destination_connector.payload(101))[2] == 3);
