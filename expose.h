@@ -90,6 +90,9 @@ struct load_model_inputs
     const bool quiet = false;
     const int debugmode = 0;
     const int continuous_batching_slots = 0;
+    // friend.cpp: maximum number of prefill tokens admitted alongside one decode round.
+    // Zero selects the backend batch size. Lower values protect inter-token latency.
+    const int friend_prefill_tokens = 0;
     const int rpc_mode = 0; //0=disabled, 1=connect, 2=host
     const char * rpc_targets = nullptr;
     // friend.cpp: named adapter pools, see friend/adapters.hpp for the wire format
@@ -108,6 +111,19 @@ struct load_model_inputs
     const bool friend_draft_fixed = false;
     // friend.cpp: snapshot the live context after this many ms of idle (0 = off)
     const int friend_cache_idle_ms = 300;
+    const int friend_ngram_draft = 0;
+    const int friend_suffix_draft = 0;
+    // friend.cpp: unified per-round token budget; zero uses batchsize.
+    const int friend_schedule_tokens = 0;
+    const int friend_profile_lanes = 1;
+    // friend.cpp: cap live continuous-batching requests (waiting/running/paused); 0 disables.
+    const int friend_max_queued_requests = 0;
+    // friend.cpp: fraction of estimated KV capacity kept free for active sequences; 0 disables.
+    const float friend_kv_watermark = 0.0f;
+    // friend.cpp: maximum number of distinct live adapter profiles admitted at once; 0 disables.
+    const int friend_max_lora_profiles = 0;
+    // friend.cpp: run prompt prefill on lane 0 and hand its serialized KV to a decode lane.
+    const bool friend_disaggregated_prefill = false;
 };
 struct generation_inputs
 {
@@ -173,6 +189,17 @@ struct generation_inputs
     const char * adapter_profile = nullptr;
     // friend.cpp: if set, snapshot the processed prompt into the prompt cache, pinned, under this label
     const char * cache_pin_label = nullptr;
+    // friend.cpp: lower values run first; ties use the existing fair round clock.
+    const int priority = 0;
+    // friend.cpp: number of top alternatives to retain for batch-native logprobs.
+    // Zero keeps the fast path and the legacy global logprob buffer unchanged.
+    const int logprobs = -1; // -1 disables; 0 reports selected token only
+    const int prompt_logprobs = -1;
+    // friend.cpp: request opts into the prefill/decode lane handoff.
+    const bool disaggregated_prefill = false;
+    // friend.cpp: per-request cap for history-based speculative tokens.
+    // -1 uses the server flag, 0 disables it for this request.
+    const int friend_draft_max = -1;
 };
 struct generation_outputs
 {
@@ -181,6 +208,11 @@ struct generation_outputs
     int prompt_tokens = 0;
     int completion_tokens = 0;
     const char * text; //response will now be stored in c++ allocated memory
+    // friend.cpp: JSON encoded per-request logprobs; valid until the next result call
+    // on the same thread. Kept at the end for ABI compatibility with older callers.
+    const char * logprobs_json = nullptr;
+    // friend.cpp: JSON encoded queue/prefill/TTFT/decode timing for batch requests.
+    const char * timing_json = nullptr;
 };
 struct token_count_outputs
 {

@@ -36,6 +36,8 @@
 // the store unlocked.
 
 #include "state_codec.hpp"
+#include "kv_blocks.hpp"
+#include "vendor/hash/hash.h"
 
 #include <algorithm>
 #include <atomic>
@@ -82,6 +84,7 @@ inline bool worth_packing(size_t raw, size_t packed) { return packed + raw / 20 
 struct entry {
     uint64_t id = 0;
     std::vector<int32_t> tokens;     // exactly what is in the state (no trailing un-decoded token)
+    friend_kv::block_table blocks;   // content-addressed prefix blocks for fast rejection
     std::string kv_key;              // adapter identity (adapters.hpp profile::kv_key)
     std::string media_hash;          // "" if the entry contains no media placeholder tokens
     bool exact_only = false;         // recurrent/hybrid snapshot: usable only as a full prefix
@@ -184,8 +187,17 @@ public:
     match find(const std::vector<int32_t> & prompt, const std::string & kv_key, const std::string & media_hash, bool recurrent) {
         std::lock_guard<std::mutex> lk(mu);
         match best;
+        friend_kv::block_table prompt_blocks;
+        prompt_blocks.rebuild(prompt);
         for (auto & e : entries) {
             if (e->kv_key != kv_key) {
+                continue;
+            }
+            // A complete first block mismatch proves there is no usable prefix.
+            // Short prompts and partial first blocks still use the exact LCP path.
+            if (prompt.size() >= friend_kv::block_table::block_tokens &&
+                e->tokens.size() >= friend_kv::block_table::block_tokens &&
+                e->blocks.common_blocks(prompt_blocks) == 0) {
                 continue;
             }
             // every entry under this fingerprint came from the same model, so whether the
@@ -216,8 +228,15 @@ public:
     // as redundant anyway. Touches the covering entry so it stays warm.
     bool covers(const std::vector<int32_t> & tokens, const std::string & kv_key, const std::string & media_hash, bool recurrent) {
         std::lock_guard<std::mutex> lk(mu);
+        friend_kv::block_table query_blocks;
+        query_blocks.rebuild(tokens);
         for (auto & e : entries) {
             if (e->kv_key != kv_key || e->media_hash != media_hash) {
+                continue;
+            }
+            if (tokens.size() >= friend_kv::block_table::block_tokens &&
+                e->tokens.size() >= friend_kv::block_table::block_tokens &&
+                e->blocks.common_blocks(query_blocks) == 0) {
                 continue;
             }
             if (e->tokens == tokens || (!recurrent && !e->exact_only && is_prefix(tokens, e->tokens))) {
@@ -236,6 +255,7 @@ public:
             return false;
         }
         n->state.size = n->state.raw ? n->state.raw->size() : 0;
+        n->blocks.rebuild(n->tokens);
         n->draft.size = n->draft.raw ? n->draft.raw->size() : 0;
         n->state.packed_size = n->draft.packed_size = 0;
         n->packing = true;
@@ -707,6 +727,7 @@ private:
             if (!f || nt > (1u << 24)) continue;
             e->tokens.resize(nt);
             f.read((char *) e->tokens.data(), nt * 4);
+            e->blocks.rebuild(e->tokens);
             const uint64_t nl = r64();
             if (!f || nl > (1u << 24)) continue;
             e->logits.resize(nl);
@@ -726,16 +747,9 @@ inline store & global() {
     return s;
 }
 
-// FNV-1a, for fingerprints and media hashes (stable across runs, unlike std::hash)
+// Cryptographic identities also isolate the new cache directory from older weak hashes.
 inline std::string hash_hex(const std::string & s) {
-    uint64_t h = 1469598103934665603ull;
-    for (unsigned char c : s) {
-        h ^= c;
-        h *= 1099511628211ull;
-    }
-    char buf[17];
-    snprintf(buf, sizeof(buf), "%016llx", (unsigned long long) h);
-    return buf;
+    return hash_sha256_hex(s.data(), s.size());
 }
 
 } // namespace friend_cache

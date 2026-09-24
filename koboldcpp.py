@@ -14,6 +14,7 @@ try:
 except Exception:
     pass
 import copy
+import codecs
 import ctypes
 import multiprocessing
 import math
@@ -154,6 +155,8 @@ cached_jinja_kwargs = None
 savedata_obj = None
 mcp_connections = [] #every element is linked to one mcp source, contains obj {"client":obj, "tools":[]}
 mcp_lock = threading.Lock()
+structured_grammar_lock = threading.Lock()
+structured_grammar_cache = {}
 multiplayer_story_data_compressed = None #stores the full compressed story of the current multiplayer session
 multiplayer_turn_major = 1 # to keep track of when a client needs to sync their stories
 multiplayer_turn_minor = 1
@@ -358,6 +361,7 @@ class load_model_inputs(ctypes.Structure):
                 ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int),
                 ("continuous_batching_slots", ctypes.c_int),
+                ("friend_prefill_tokens", ctypes.c_int),
                 ("rpc_mode", ctypes.c_int),
                 ("rpc_targets", ctypes.c_char_p),
                 ("friend_lora_pool", ctypes.c_char_p),
@@ -370,7 +374,16 @@ class load_model_inputs(ctypes.Structure):
                 ("friend_cache_capture_tokens", ctypes.c_int),
                 ("friend_cvec_dir", ctypes.c_char_p),
                 ("friend_draft_fixed", ctypes.c_bool),
-                ("friend_cache_idle_ms", ctypes.c_int)]
+                ("friend_cache_idle_ms", ctypes.c_int),
+                ("friend_ngram_draft", ctypes.c_int),
+                ("friend_suffix_draft", ctypes.c_int),
+                ("friend_schedule_tokens", ctypes.c_int),
+                ("friend_profile_lanes", ctypes.c_int),
+                ("friend_max_queued_requests", ctypes.c_int),
+                ("friend_kv_watermark", ctypes.c_float),
+                ("friend_max_lora_profiles", ctypes.c_int),
+                ("friend_disaggregated_prefill", ctypes.c_bool),
+                ]
 
 class generation_inputs(ctypes.Structure):
     _fields_ = [("seed", ctypes.c_int),
@@ -432,14 +445,21 @@ class generation_inputs(ctypes.Structure):
                 ("blue_noise", ctypes.c_bool),
                 ("rng_type", ctypes.c_int),
                 ("adapter_profile", ctypes.c_char_p),
-                ("cache_pin_label", ctypes.c_char_p)]
+                ("cache_pin_label", ctypes.c_char_p),
+                ("priority", ctypes.c_int),
+                ("logprobs", ctypes.c_int),
+                ("prompt_logprobs", ctypes.c_int),
+                ("disaggregated_prefill", ctypes.c_bool),
+                ("friend_draft_max", ctypes.c_int)]
 
 class generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
                 ("stopreason", ctypes.c_int),
                 ("prompt_tokens", ctypes.c_int),
                 ("completion_tokens", ctypes.c_int),
-                ("text", ctypes.c_char_p)]
+                ("text", ctypes.c_char_p),
+                ("logprobs_json", ctypes.c_char_p),
+                ("timing_json", ctypes.c_char_p)]
 
 class sd_load_model_inputs(ctypes.Structure):
     _fields_ = [("model_filename", ctypes.c_char_p),
@@ -1022,6 +1042,8 @@ def init_library():
     handle.batch_generate_new_token.restype = ctypes.c_char_p
     handle.batch_generate_pending_output.argtypes = [ctypes.c_int]
     handle.batch_generate_pending_output.restype = ctypes.c_char_p
+    handle.batch_generate_logprobs.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+    handle.batch_generate_logprobs.restype = ctypes.c_char_p
     handle.batch_generate_result.argtypes = [ctypes.c_int]
     handle.batch_generate_result.restype = generation_outputs
     handle.batch_generate_abort.argtypes = [ctypes.c_int]
@@ -1060,6 +1082,12 @@ def init_library():
     handle.load_state_kv.argtypes = [ctypes.c_int]
     handle.load_state_kv.restype = ctypes.c_bool
     handle.clear_state_kv.restype = ctypes.c_bool
+    handle.friend_requests.argtypes = []
+    handle.friend_requests.restype = ctypes.c_char_p
+    handle.friend_request_control.argtypes = [ctypes.c_int, ctypes.c_bool]
+    handle.friend_request_control.restype = ctypes.c_bool
+    handle.friend_metrics.argtypes = []
+    handle.friend_metrics.restype = ctypes.c_char_p
     handle.friend_cache_list.restype = ctypes.c_char_p
     handle.friend_cache_clear.argtypes = [ctypes.c_bool]
     handle.friend_cache_clear.restype = ctypes.c_size_t
@@ -1535,6 +1563,185 @@ def convert_json_to_gbnf(json_obj):
         print(f"JSON to GBNF failed: {e}")
         return ""
 
+def cached_json_to_gbnf(json_obj):
+    """Compile a schema once per process; grammar objects remain request-owned."""
+    try:
+        key = json.dumps(json_obj, sort_keys=True, separators=(',', ':'))
+    except Exception:
+        return convert_json_to_gbnf(json_obj)
+    with structured_grammar_lock:
+        cached = structured_grammar_cache.get(key)
+    if cached is not None:
+        return cached
+    compiled = convert_json_to_gbnf(json_obj)
+    if compiled:
+        with structured_grammar_lock:
+            structured_grammar_cache[key] = compiled
+            if len(structured_grammar_cache) > 256:
+                structured_grammar_cache.pop(next(iter(structured_grammar_cache)))
+    return compiled
+
+def choices_to_gbnf(choices):
+    """Compile vLLM-style guided_choice values into a native GBNF root."""
+    if not isinstance(choices, list) or not choices or not all(isinstance(value, str) for value in choices):
+        return ""
+    # JSON string escaping is also the escaping accepted by llama.cpp's grammar
+    # parser for quoted terminals. Preserve order while removing duplicates so
+    # clients get deterministic grammar cache keys and output alternatives.
+    unique = list(dict.fromkeys(choices))
+    return "root ::= " + " | ".join(json.dumps(value, ensure_ascii=False) for value in unique) + "\n"
+
+def regex_to_gbnf(pattern):
+    """Compile the portable guided-regex subset understood by llama grammars.
+
+    Regex engines have features (lookarounds, backreferences and anchors that
+    inspect generated history) that a token grammar cannot represent. Reject
+    those forms explicitly; accepting them and emitting a weaker grammar would
+    make a structured-output request look successful while violating its
+    contract. Character classes, groups, alternation and repetition are
+    translated to GBNF terminals/operators.
+    """
+    if not isinstance(pattern, str) or not pattern or len(pattern) > 2048:
+        return ""
+    text = pattern
+    if text.startswith('^'):
+        text = text[1:]
+    if text.endswith('$') and not text.endswith('\\$'):
+        text = text[:-1]
+    pos = 0
+
+    def class_body():
+        nonlocal pos
+        start = pos
+        escaped = False
+        while pos < len(text):
+            char = text[pos]
+            pos += 1
+            if escaped:
+                escaped = False
+                continue
+            if char == '\\':
+                escaped = True
+            elif char == ']':
+                return text[start:pos - 1]
+        raise ValueError("unterminated character class")
+
+    def normalize_class(value):
+        value = value.replace('\\d', '0-9').replace('\\w', 'A-Za-z0-9_')
+        value = value.replace('\\s', ' \\t\\n\\r')
+        if '\\b' in value or '\\B' in value:
+            raise ValueError("word-boundary classes are unsupported")
+        return value
+
+    def parse_alt(stop=None):
+        nonlocal pos
+        alternatives = []
+        current = []
+        while pos < len(text):
+            char = text[pos]
+            if stop and char == stop:
+                break
+            if char == '|':
+                pos += 1
+                alternatives.append(current)
+                current = []
+                continue
+            if char == ')':
+                if stop:
+                    break
+                raise ValueError("unmatched closing group")
+            if char == '(':
+                pos += 1
+                if text[pos:pos + 2] == '?:':
+                    pos += 2
+                elif text[pos:pos + 1] == '?':
+                    raise ValueError("lookarounds and named groups are unsupported")
+                inner = parse_alt(')')
+                if pos >= len(text) or text[pos] != ')':
+                    raise ValueError("unterminated group")
+                pos += 1
+                atom = '(' + ' | '.join(' '.join(part) for part in inner) + ')' if len(inner) > 1 else '(' + ' '.join(inner[0]) + ')'
+            elif char == '[':
+                pos += 1
+                atom = '[' + normalize_class(class_body()) + ']'
+            elif char == '.':
+                pos += 1
+                atom = '[^\\n]'
+            elif char == '\\':
+                pos += 1
+                if pos >= len(text):
+                    raise ValueError("trailing escape")
+                escaped = text[pos]
+                pos += 1
+                atom = {'d': '[0-9]', 'w': '[A-Za-z0-9_]', 's': '[ \\t\\n\\r]'}.get(escaped)
+                if atom is None:
+                    if escaped in 'AbBZzG':
+                        raise ValueError("regex boundary is unsupported")
+                    atom = json.dumps(escaped, ensure_ascii=False)
+            else:
+                pos += 1
+                if char in '^$':
+                    raise ValueError("anchors are only supported at the pattern edges")
+                atom = json.dumps(char, ensure_ascii=False)
+
+            minimum, maximum = 1, 1
+            if pos < len(text):
+                quantifier = text[pos]
+                if quantifier in '*+?':
+                    pos += 1
+                    minimum, maximum = (0, None) if quantifier == '*' else ((1, None) if quantifier == '+' else (0, 1))
+                elif quantifier == '{':
+                    end = text.find('}', pos + 1)
+                    if end < 0:
+                        raise ValueError("unterminated repetition")
+                    bounds = text[pos + 1:end].split(',', 1)
+                    if not bounds[0].isdigit() or (len(bounds) == 2 and bounds[1] and not bounds[1].isdigit()):
+                        raise ValueError("invalid repetition bounds")
+                    minimum = int(bounds[0])
+                    maximum = minimum if len(bounds) == 1 else (None if not bounds[1] else int(bounds[1]))
+                    if maximum is not None and maximum < minimum:
+                        raise ValueError("repetition maximum precedes minimum")
+                    if maximum is not None and maximum > 64:
+                        raise ValueError("repetition bound is too large")
+                    pos = end + 1
+            repeated = ' '.join(atom for _ in range(minimum))
+            if maximum is None:
+                rendered = repeated + (' ' if repeated else '') + '(' + atom + ')*'
+            else:
+                optional = ' '.join('(' + atom + ')?' for _ in range(maximum - minimum))
+                rendered = ' '.join(part for part in (repeated, optional) if part)
+            current.append(rendered)
+        alternatives.append(current)
+        return alternatives
+
+    try:
+        alternatives = parse_alt()
+        if pos != len(text) or not alternatives or any(not part for part in alternatives):
+            return ""
+        return "root ::= " + " | ".join(' '.join(part) for part in alternatives) + "\n"
+    except (ValueError, IndexError) as exc:
+        print(f"guided_regex rejected: {exc}")
+        return ""
+
+def cached_regex_to_gbnf(pattern):
+    key = "regex:" + pattern if isinstance(pattern, str) else "regex:<invalid>"
+    with structured_grammar_lock:
+        cached = structured_grammar_cache.get(key)
+    if cached is not None:
+        return cached
+    try:
+        from friend.guided_regex import compile_regex
+        compiled = compile_regex(pattern)
+    except Exception as exc:
+        print(f"guided_regex rejected: {exc}")
+        compiled = ""
+    if compiled:
+        with structured_grammar_lock:
+            structured_grammar_cache[key] = compiled
+            if len(structured_grammar_cache) > 256:
+                structured_grammar_cache.pop(next(iter(structured_grammar_cache)))
+    return compiled
+
 def get_capabilities():
     global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, musicllmmodelpath, has_audio_support, has_vision_support, mcp_connections
     global autoswapmode, textName, sttName, ttsName, embedName, musicName, imageName, mmprojName
@@ -1554,6 +1761,63 @@ def get_capabilities():
     admin_type = (2 if args.admin and args.admindir and args.adminpassword else (1 if args.admin and args.admindir else 0))
     has_router = True if args.routermode else False
     return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":visionSupport,"audio":audioSupport,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts, "embeddings":has_embeddings, "music":has_music, "savedata":(savedata_obj is not None), "admin": admin_type, "router":has_router, "guidance": has_guidance, "jinja": has_jinja, "mcp":has_mcp}
+
+
+def get_friend_serving_capabilities():
+    """Return the explicit backend support matrix for friend.cpp features."""
+    lanes = max(1, int(getattr(args, "profile_lanes", 1) or 1))
+    parallel = max(1, int(getattr(args, "parallelrequests", 1) or 1))
+    # Keep this machine-readable and honest. ``implemented`` means the request
+    # path is live in this process; ``partial`` means a scheduler/host contract
+    # exists but the bundled llama backend owns the missing device primitive.
+    support = {
+        "admission_control": "implemented",
+        "request_cancellation": "implemented",
+        "stream_batching": "implemented",
+        "parallel_sampling": "implemented" if parallel > 1 else "available_when_continuous_batching_enabled",
+        "structured_outputs": "implemented",
+        "speculative_request_budget": "implemented",
+        "multimodal_encoded_cache": "implemented_when_mmproj_loaded",
+        "scheduler_paged_kv": "partial",
+        "physical_kv_recompute": "unsupported",
+        "backend_paged_kv": "unsupported",
+        "async_prefetch_fences": "unsupported",
+        "mixed_sequence_lora": "unsupported",
+        "native_sampling_branches": "partial",
+        "batch_model_speculation": "unsupported",
+        "reasoning_tool_stream_interaction": "available_with_legacy_path",
+        "device_kv_transport": "unsupported",
+        "expert_parallel": "unsupported",
+        "context_parallel": "unsupported",
+        "beam_search": "excluded",
+    }
+    return {
+        "continuous_batching": parallel > 1,
+        "profile_lanes": lanes,
+        "parallel_sampling": parallel > 1,
+        "scheduler_paged_kv": True,
+        "backend_paged_kv": False,
+        "kv_connector": True,
+        "kv_socket_transport": True,
+        "device_kv_transport": False,
+        "disaggregated_prefill": bool(getattr(args, "disaggregated_prefill", False) and lanes >= 2),
+        "expert_parallel": False,
+        "context_parallel": False,
+        "beam_search": False,
+        "support": support,
+        "reasons": {
+            "async_prefetch_fences": "llama_decode is synchronous and does not expose a graph submission handle through the serving ABI",
+            "physical_kv_recompute": "the scheduler cannot evict referenced backend KV cells and llama exposes no recompute callback for a live sequence",
+            "mixed_sequence_lora": "llama adapter state is context-wide for one decode",
+            "native_sampling_branches": "parallel samples share scheduler KV prefixes, but no public branch object clones sampler and grammar state after decode",
+            "batch_model_speculation": "draft contexts are owned by the legacy speculative path and are not safe to multiplex through native batch lanes",
+            "backend_paged_kv": "llama owns KV tensor allocation; friend.cpp only tracks scheduler page identities",
+            "device_kv_transport": "llama exposes sequence state serialization, not backend tensor attachment",
+            "expert_parallel": "the bundled backend exposes no expert placement or collective-routing API",
+            "context_parallel": "the bundled backend exposes no KV sharding or cross-device attention collective",
+            "beam_search": "native branch ownership is not wired into the serving scheduler",
+        },
+    }
 
 
 def scan_directory(dirpath, valid_exts, depth):
@@ -2168,6 +2432,14 @@ def _friend_weighted_names(value, kind):
 def friend_adapter_profile_spec(genparams):
     """Request fields -> C++ profile spec (see friend/adapters.hpp). Raises ValueError."""
     parts = []
+    salt = genparams.get("cache_salt")
+    if salt is not None:
+        if not isinstance(salt, str):
+            raise ValueError("cache_salt must be a string")
+        # Hash before putting it into the delimiter-based native wire format. Empty
+        # string is an explicit namespace, distinct from an omitted salt.
+        import hashlib
+        parts.append("S " + hashlib.sha256(salt.encode("utf-8")).hexdigest())
     if genparams.get("lora", None) is not None:
         parts.append("lora_explicit")  # the request's list replaces the default-on adapters
         parts += [f"L {n} {w!r}" for n, w in _friend_weighted_names(genparams.get("lora"), "lora")]
@@ -2320,6 +2592,15 @@ def load_model(model_filename):
     inputs.smartcacheslots = sclimit
     inputs.pipelineparallel = (not args.nopipelineparallel)
     inputs.continuous_batching_slots = args.parallelrequests if (args.parallelrequests>1) else 0
+    inputs.friend_prefill_tokens = args.prefilltokens
+    inputs.friend_ngram_draft = args.ngram_draft
+    inputs.friend_suffix_draft = args.suffix_draft
+    inputs.friend_schedule_tokens = args.schedule_tokens
+    inputs.friend_profile_lanes = args.profile_lanes
+    inputs.friend_max_queued_requests = args.max_queued_requests
+    inputs.friend_kv_watermark = args.kv_watermark
+    inputs.friend_max_lora_profiles = args.max_lora_profiles
+    inputs.friend_disaggregated_prefill = args.disaggregated_prefill
     inputs.rpc_mode = (2 if args.rpcmode=="host" else (1 if args.rpcmode=="connect" else 0))
     inputs.rpc_targets = (args.rpctargets if args.rpcmode=="connect" else "").encode("UTF-8")
 
@@ -2392,7 +2673,7 @@ def generate(genparams, stream_flag=False):
     #translate grammar if its json
     try:
         grammarjson = json.loads(grammar)
-        decoded = convert_json_to_gbnf(grammarjson)
+        decoded = cached_json_to_gbnf(grammarjson)
         if decoded:
             grammar = decoded
     except Exception:
@@ -2498,6 +2779,18 @@ def generate(genparams, stream_flag=False):
     inputs.rng_type = rng_type
     cache_pin = genparams.get("cache_pin", None)
     inputs.cache_pin_label = (str(cache_pin)[:128] if cache_pin else "").encode("UTF-8")
+    # vLLM-style priority scheduling: lower values are served first, with
+    # arrival/fairness ordering still breaking ties.
+    inputs.priority = max(-1000000, min(1000000, tryparseint(genparams.get("priority", 0), 0)))
+    # Batch requests keep their own top alternatives instead of sharing the
+    # legacy process-wide logprob history. Cap this at the native JSON size.
+    inputs.logprobs = requested_logprobs(genparams)
+    inputs.prompt_logprobs = max(-1, min(20, tryparseint(genparams.get("prompt_logprobs", -1), -1)))
+    inputs.disaggregated_prefill = bool(genparams.get("disaggregated_prefill", False))
+    # Per-request speculation budget: omitted uses the server's configured
+    # ngram/suffix draft length, zero disables drafting for this request.
+    draft_budget = genparams.get("speculative_tokens", genparams.get("num_speculative_tokens", None))
+    inputs.friend_draft_max = -1 if draft_budget is None else max(0, min(32, tryparseint(draft_budget, 0)))
     try:
         inputs.adapter_profile = friend_adapter_profile_spec(genparams).encode("UTF-8")
     except ValueError as e:
@@ -2609,10 +2902,25 @@ def generate(genparams, stream_flag=False):
                 batch_request_id = handle.batch_generate_submit(inputs)
             except Exception:
                 batch_request_id = -1
+        if batch_request_id == -2:
+            genparams['_batch_overloaded'] = True
+            return {"text":"", "status":0, "stopreason":-2, "prompt_tokens":0,
+                    "completion_tokens":0, "total_tokens":0,
+                    "error":"server is at its continuous-batching request capacity"}
         if batch_request_id >= 0:
             genparams['_batch_request_id'] = batch_request_id
+            # Cancellation may arrive while native admission is still in flight.
+            # Remember it on the child so late submissions cannot escape cleanup.
+            if genparams.get('_batch_cancel_requested', False):
+                handle.batch_generate_abort(batch_request_id)
             ret = handle.batch_generate_result(batch_request_id)
         else:
+            if genparams.get('_parallel_sample_native', False):
+                # Concurrent samples must never enter the singleton legacy
+                # generator together if native admission rejects a feature.
+                return {"text":"", "status":0, "stopreason":-2, "prompt_tokens":0,
+                        "completion_tokens":0, "total_tokens":0,
+                        "error":"native continuous batching is unavailable for this parallel sample"}
             genparams['_batch_fallback'] = True
             ret = handle.generate(inputs)
         outstr = ""
@@ -2630,7 +2938,23 @@ def generate(genparams, stream_flag=False):
                 sindex = outstr.find(trim_str)
                 if sindex != -1 and trim_str!="":
                     outstr = outstr[:sindex]
-        return {"text":outstr,"status":ret.status,"stopreason":ret.stopreason,"prompt_tokens":ret.prompt_tokens, "completion_tokens": ret.completion_tokens}
+        batch_logprobs = None
+        if batch_request_id >= 0 and ret.logprobs_json:
+            try:
+                batch_logprobs = json.loads(ret.logprobs_json.decode("UTF-8", "ignore"))
+            except Exception:
+                batch_logprobs = None
+        batch_timing = None
+        if batch_request_id >= 0 and ret.timing_json:
+            try:
+                batch_timing = json.loads(ret.timing_json.decode("UTF-8", "ignore"))
+            except Exception:
+                batch_timing = None
+        return {"text":outstr,"status":ret.status,"stopreason":ret.stopreason,"prompt_tokens":ret.prompt_tokens,
+                "completion_tokens": ret.completion_tokens, "logprobs": batch_logprobs,
+                "prompt_logprobs": batch_logprobs.get("prompt", []) if isinstance(batch_logprobs, dict) else None,
+                "completion_logprobs": batch_logprobs.get("completion", []) if isinstance(batch_logprobs, dict) else batch_logprobs,
+                "timing": batch_timing}
 
 def continuous_batching_python_eligible(genparams, api_format):
     if not args.parallelrequests or args.parallelrequests <= 1 or api_format <= 0:
@@ -4427,6 +4751,34 @@ def extract_json_from_string(input_string, check_strict=False):
         pass
     return []
 
+def requested_logprobs(params):
+    """Normalize chat bool + top_logprobs and completion integer conventions."""
+    value = params.get("logprobs")
+    if value is None or value is False:
+        return -1
+    if value is True:
+        value = params.get("top_logprobs", 0)
+    return max(-1, min(20, tryparseint(value, -1)))
+
+
+def format_batch_logprobs(items, api_format, offset=0):
+    """Keep raw token bytes and return the endpoint's logprob shape."""
+    if items is None:
+        return None
+    if api_format == 4:
+        return {"content": items}
+    if api_format == 3:
+        offsets = []
+        for item in items:
+            offsets.append(offset)
+            offset += len(item["token"])
+        return {"tokens": [i["token"] for i in items],
+                "token_logprobs": [i["logprob"] for i in items],
+                "top_logprobs": [{t["token"]: t["logprob"] for t in i["top_logprobs"]} for i in items],
+                "text_offset": offsets}
+    return items
+
+
 def parse_last_logprobs(lastlogprobs):
     if not lastlogprobs:
         return None
@@ -4607,7 +4959,7 @@ def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_
                 temptoolnames.append("null")
                 custom_tools_prompt_json_format = "Respond with a JSON object using this structure:\r\n{\r\n    \"reasoning\": \"Your reasoning here\",\r\n    \"final_decision\": \"yes\" or \"no\",\r\n    \"tool_name\": \"exact_tool_name_here\" or \"null\"\r\n}\r\n\r\nRules:\r\n- Output only the JSON object. Do NOT add anything before or after the json object.\r\n- final_decision must be exactly \"yes\" or \"no\"\r\n- tool_name must be either an exact tool name, or if no tool is required, an empty string: \"\"\r\n- Keep reasoning short, maximum one or two sentences.\r\n- No unnecessary comments"
                 tempjson = {"type":"object","properties":{"reasoning":{"type":"string"},"final_decision":{"type":"string","enum":["yes","no","Yes","No","YES","NO"," yes"," no"," Yes"," No"," YES"," NO"]},"tool_name":{"type":"string","enum":temptoolnames}},"required":["reasoning","final_decision","tool_name"],"additionalProperties":False}
-            toolquerygrammar = convert_json_to_gbnf(tempjson)
+            toolquerygrammar = cached_json_to_gbnf(tempjson)
 
             if not is_followup_tool:
                 custom_tools_prompt = "Is calling one of the tools listed above absolutely essential to answer user's current request, or is a tool call optional?"
@@ -4813,12 +5165,18 @@ ws ::= | " " | "\n" [ \t]{0,20}
 
             # handle structured outputs
             respformat = genparams.get('response_format', None)
+            structured = genparams.get('structured_outputs')
+            if not isinstance(structured, dict):
+                structured = {}
+            guided_json = genparams.get('guided_json', structured.get('json', structured.get('json_schema')))
+            guided_choice = genparams.get('guided_choice', structured.get('choice'))
+            guided_regex = genparams.get('guided_regex', structured.get('regex'))
             if respformat:
                 try:
                     rt = respformat.get('type')
                     if rt.lower() == "json_schema":
                         schema = respformat.get('json_schema').get('schema')
-                        decoded = convert_json_to_gbnf(schema)
+                        decoded = cached_json_to_gbnf(schema)
                         if decoded:
                             genparams["grammar"] = decoded
                     elif rt.lower() == "json_object":
@@ -4827,10 +5185,28 @@ ws ::= | " " | "\n" [ \t]{0,20}
                     # In case of any issues, just do normal gen
                     print("Structured Output not valid - discarded")
                     pass
+            elif guided_json is not None:
+                try:
+                    schema = guided_json.get('schema') if isinstance(guided_json, dict) and 'schema' in guided_json else guided_json
+                    decoded = cached_json_to_gbnf(schema)
+                    if decoded:
+                        genparams["grammar"] = decoded
+                except Exception:
+                    print("Structured Outputs JSON not valid - discarded")
+            elif guided_choice is not None:
+                decoded = choices_to_gbnf(guided_choice)
+                if decoded:
+                    genparams["grammar"] = decoded
+            elif guided_regex is not None:
+                decoded = cached_regex_to_gbnf(guided_regex)
+                if decoded:
+                    genparams["grammar"] = decoded
+                else:
+                    genparams["_guided_regex_error"] = "guided_regex is invalid or uses unsupported features"
             elif 'json_schema' in genparams:
                 try:
                     schema = genparams.get('json_schema')
-                    decoded = convert_json_to_gbnf(schema)
+                    decoded = cached_json_to_gbnf(schema)
                     if decoded:
                         genparams["grammar"] = decoded
                 except Exception:
@@ -4970,7 +5346,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                                 toolparamjson = used_tool_json.get('function').get('parameters')
                                 bettergrammarjson = {"type":"array","items":{"type":"object","properties":{"id":{"type":"string","enum":["call_001"]},"type":{"type":"string","enum":["function"]},"function":{"type":"object","properties":{"name":{"type":"string"},"arguments":{}},"required":["name","arguments"],"additionalProperties":False}},"required":["id","type","function"],"additionalProperties":False}}
                                 bettergrammarjson["items"]["properties"]["function"]["properties"]["arguments"] = toolparamjson
-                                decoded = convert_json_to_gbnf(bettergrammarjson)
+                                decoded = cached_json_to_gbnf(bettergrammarjson)
                                 if decoded:
                                     genparams["grammar"] = decoded
                             except Exception:
@@ -5767,6 +6143,94 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         global friendlymodelname, chatcompl_adapter, currfinishreason, thinkformats
         global autoswapmode, textName, sttName, ttsName, embedName, musicName, imageName, mmprojName
 
+        # Do not silently treat a beam request as ordinary sampling. Correct
+        # beams need native sequence-branch ownership so grammar, EOS and KV
+        # state are cloned together; the public llama API does not provide that
+        # contract yet.
+        beam_width = tryparseint(genparams.get("beam_width", 1), 1)
+        if genparams.get("use_beam_search", False) or beam_width > 1:
+            return {"error": {"message": "beam search requires native branch ownership and is not available yet",
+                               "type": "invalid_request_error", "code": 400}}
+
+        # OpenAI's `n` asks for independent samples from one prompt. Native
+        # continuous batching schedules these children together; prompt prefix
+        # sharing keeps the common attention KV in one sequence-cell range,
+        # while every child has its own sampler and RNG state.
+        sample_count = max(1, min(16, tryparseint(genparams.get("n", 1), 1)))
+        if sample_count > 1 and not genparams.get("_parallel_sample_child"):
+            if stream_flag:
+                return {"error": {"message": "streaming parallel samples are not enabled for this backend", "type": "invalid_request_error", "code": 400}}
+            if api_format not in (3, 4):
+                return {"error": {"message": "parallel samples require an OpenAI completion endpoint", "type": "invalid_request_error", "code": 400}}
+            parent = dict(genparams)
+            parent.pop("n", None)
+            parent["_parallel_sample_child"] = True
+            parent["_parallel_sample_native"] = continuous_batching_python_eligible(parent, api_format)
+            base_seed = tryparseint(parent.get("sampler_seed", parent.get("seed", -1)), -1)
+            children = []
+            for index in range(sample_count):
+                # Input normalization can mutate nested maps such as logit_bias.
+                # Each concurrently running sample needs its own copy.
+                child = copy.deepcopy(parent)
+                child["oai_uniqueid"] = f"{genparams.get('oai_uniqueid', 1)}-{index}"
+                if base_seed >= 0:
+                    child["sampler_seed"] = base_seed + index
+                    child["seed"] = base_seed + index
+                children.append(child)
+            tasks = {asyncio.create_task(self.generate_text(child, api_format, False)): child
+                     for child in children}
+            pending = set(tasks)
+            results_by_task = {}
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                failure = None
+                for task in done:
+                    try:
+                        result = task.result()
+                    except Exception as exc:
+                        failure = {"error": {"message": str(exc), "type": "server_error", "code": 500}}
+                        break
+                    results_by_task[task] = result
+                    if result.get("error"):
+                        failure = result
+                        break
+                if failure:
+                    # A cancelled to_thread wrapper cannot stop a running C++
+                    # call by itself. Abort each admitted child explicitly,
+                    # then cancel the Python waiters and drain their futures.
+                    abort = getattr(handle, "batch_generate_abort", None)
+                    if abort is not None:
+                        for child in tasks.values():
+                            request_id = child.get("_batch_request_id", -1)
+                            if isinstance(request_id, int) and request_id >= 0:
+                                try:
+                                    abort(request_id)
+                                except Exception:
+                                    pass
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                    return failure
+            results = [results_by_task[task] for task in tasks]
+            merged = dict(results[0])
+            merged["id"] = f"chatcmpl-A{genparams.get('oai_uniqueid', 1)}" if api_format == 4 else f"cmpl-A{genparams.get('oai_uniqueid', 1)}"
+            merged["choices"] = []
+            completion_total = 0
+            prompt_tokens = 0
+            for index, result in enumerate(results):
+                choice = dict(result.get("choices", [{}])[0])
+                choice["index"] = index
+                merged["choices"].append(choice)
+                completion_total += int(result.get("usage", {}).get("completion_tokens", 0) or 0)
+                prompt_tokens = max(prompt_tokens, int(result.get("usage", {}).get("prompt_tokens", 0) or 0))
+            if isinstance(merged.get("usage"), dict):
+                merged["usage"] = dict(merged["usage"])
+                merged["usage"]["prompt_tokens"] = prompt_tokens
+                merged["usage"]["completion_tokens"] = completion_total
+                merged["usage"]["total_tokens"] = prompt_tokens + completion_total
+            merged["parallel_samples"] = sample_count
+            return merged
+
         currfinishreason = None
         req_id_suffix = genparams.get('oai_uniqueid',1)
         chatcmpl_id = f"chatcmpl-A{req_id_suffix}"
@@ -5782,12 +6246,27 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             return generate(genparams=genparams,stream_flag=stream_flag)
 
         genout = {"text": "", "status": -1, "stopreason": -1, "prompt_tokens":0, "completion_tokens": 0, "total_tokens": 0}
-        if stream_flag:
+        if genparams.get('_parallel_sample_native', False):
+            # gather() alone cannot overlap coroutines that block before their
+            # first await. Submit native children from separate executor threads
+            # so all of them can enter the scheduler before waiting for results.
+            genout = await asyncio.to_thread(run_blocking)
+        elif stream_flag:
             loop = asyncio.get_event_loop()
             executor = ThreadPoolExecutor()
             genout = await loop.run_in_executor(executor, run_blocking)
         else:
             genout = run_blocking()
+
+        if genout.get('error'):
+            error = {"message": genout['error'], "type": "server_overloaded", "code": 503}
+            if stream_flag and not genparams.get('_parallel_sample_child', False):
+                # handle_sse_stream owns the response framing for streaming APIs;
+                # leave a marker for it rather than pretending legacy generation
+                # was started after native admission rejected the request.
+                genparams['_batch_overloaded'] = True
+            else:
+                return {"error": error}
 
         recvtxt = genout['text']
         if recvtxt is not None and not isinstance(recvtxt, str):
@@ -5798,9 +6277,22 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         # grab logprobs if not streaming
         logprobsdict = None
-        if not stream_flag and ("logprobs" in genparams and genparams["logprobs"]):
+        if genout.get("logprobs") is not None:
+            logprobsdict = genout["logprobs"]
+        elif not stream_flag and ("logprobs" in genparams and genparams["logprobs"]):
             lastlogprobs = handle.last_logprobs()
             logprobsdict = parse_last_logprobs(lastlogprobs)
+
+        # Batch-native logprobs are split by phase. Keep the established
+        # completion-shaped `logprobs` field while exposing both phases to
+        # callers that need prompt scoring.
+        prompt_logprobs = genout.get("prompt_logprobs")
+        completion_logprobs = genout.get("completion_logprobs")
+        timing = genout.get("timing")
+        if isinstance(logprobsdict, dict) and "prompt" in logprobsdict:
+            prompt_logprobs = logprobsdict.get("prompt", [])
+            completion_logprobs = logprobsdict.get("completion", [])
+            logprobsdict = format_batch_logprobs(completion_logprobs, api_format) if requested_logprobs(genparams) >= 0 else None
 
         # flag instance as non-idle for a while
         washordereq = genparams.get('genkey', '').startswith('HORDEREQ_')
@@ -5870,7 +6362,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         elif api_format == 3:
             res = {"id": cmpl_id, "object": "text_completion", "created": int(time.time()), "model": modelNameToReturn,
                    "usage": {"prompt_tokens": prompttokens, "completion_tokens": comptokens, "total_tokens": (prompttokens+comptokens)},
-                   "choices": [{"text": recvtxt, "index": 0, "finish_reason": currfinishreason, "logprobs":logprobsdict}]}
+                   "timing": timing,
+                   "choices": [{"text": recvtxt, "index": 0, "finish_reason": currfinishreason, "logprobs":logprobsdict,
+                                "prompt_logprobs": prompt_logprobs, "completion_logprobs": completion_logprobs}]}
         elif api_format == 4: #chat completions
             ccmsg = {"role": "assistant", "content": recvtxt, "tool_calls": tool_calls}
             if reasoningtxt and genparams.get('encapsulate_thinking', True):
@@ -5879,7 +6373,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 ccmsg["content"] = reasoningtxt + (recvtxt if recvtxt else "")
             res = {"id": chatcmpl_id, "object": "chat.completion", "created": int(time.time()), "model": modelNameToReturn,
                    "usage": {"prompt_tokens": prompttokens, "completion_tokens": comptokens, "total_tokens": (prompttokens+comptokens)},
-                   "choices": [{"index": 0, "message": ccmsg, "finish_reason": currfinishreason, "logprobs":logprobsdict}]}
+                   "timing": timing,
+                   "choices": [{"index": 0, "message": ccmsg, "finish_reason": currfinishreason, "logprobs":logprobsdict,
+                                "prompt_logprobs": prompt_logprobs, "completion_logprobs": completion_logprobs}]}
         elif api_format == 5:
             res = {"caption": end_trim_to_sentence(recvtxt)}
         elif api_format == 6:
@@ -5951,7 +6447,11 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "usage": {"input_tokens": prompttokens, "output_tokens": comptokens}
             }
         else: #kcpp format
-            res = {"results": [{"text": recvtxt, "tool_calls": tool_calls, "finish_reason": currfinishreason, "logprobs":logprobsdict, "prompt_tokens": prompttokens, "completion_tokens": comptokens}]}
+            res = {"results": [{"text": recvtxt, "tool_calls": tool_calls, "finish_reason": currfinishreason,
+                                 "logprobs":logprobsdict, "prompt_logprobs": prompt_logprobs,
+                                 "completion_logprobs": completion_logprobs,
+                                 "prompt_tokens": prompttokens, "completion_tokens": comptokens,
+                                 "timing": timing}]}
 
         try:
             return res
@@ -5972,6 +6472,171 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
     async def send_anthropic_sse_event(self, eventname, data):
         self.wfile.write(f'event: {eventname}\ndata: {data}\n\n'.encode())
         self.wfile.flush()
+
+    async def handle_parallel_sse_stream(self, genparams, api_format):
+        """Fan in native child streams for OpenAI ``n`` requests.
+
+        ``generate`` leaves a batch request live while a streaming request is
+        being consumed. Each child therefore exposes an independent native
+        request id in its copied parameter map; this loop polls those cursors
+        and emits indexed SSE chunks as soon as tokens are available.
+        """
+        if api_format not in (3, 4):
+            return {"error": {"message": "streaming parallel samples require an OpenAI endpoint",
+                               "type": "invalid_request_error", "code": 400}}
+        sample_count = max(1, min(16, tryparseint(genparams.get("n", 1), 1)))
+        parent = dict(genparams)
+        parent.pop("n", None)
+        parent["_parallel_sample_child"] = True
+        parent["_parallel_sample_native"] = continuous_batching_python_eligible(parent, api_format)
+        if not parent["_parallel_sample_native"]:
+            return {"error": {"message": "streaming parallel samples require native continuous batching",
+                               "type": "invalid_request_error", "code": 400}}
+        base_seed = tryparseint(parent.get("sampler_seed", parent.get("seed", -1)), -1)
+        children = []
+        for index in range(sample_count):
+            child = copy.deepcopy(parent)
+            child["oai_uniqueid"] = f"{genparams.get('oai_uniqueid', 1)}-{index}"
+            if base_seed >= 0:
+                child["sampler_seed"] = base_seed + index
+                child["seed"] = base_seed + index
+            children.append(child)
+
+        model_name = friendlymodelname
+        if autoswapmode and textName is not None:
+            model_name = textName
+        request_id = f"chatcmpl-A{genparams.get('oai_uniqueid', 1)}" if api_format == 4 else f"cmpl-A{genparams.get('oai_uniqueid', 1)}"
+        self.send_response(200)
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("cache-control", "no-cache")
+        self.send_header("connection", "keep-alive")
+        self.end_headers(content_type="text/event-stream")
+
+        tasks = {asyncio.create_task(self.generate_text(child, api_format, True)): (index, child)
+                 for index, child in enumerate(children)}
+        pending = set(tasks)
+        monitor_task = None
+        cursors = {index: 0 for index in range(sample_count)}
+        decoders = [codecs.getincrementaldecoder("utf-8")("ignore") for _ in children]
+        roles_sent = set()
+        disconnected = False
+
+        def abort_children():
+            abort = getattr(handle, "batch_generate_abort", None)
+            for child in children:
+                child['_batch_cancel_requested'] = True
+                request_id = child.get("_batch_request_id", -1)
+                if abort is not None and isinstance(request_id, int) and request_id >= 0:
+                    try:
+                        abort(request_id)
+                    except Exception:
+                        pass
+
+        def on_disconnect():
+            nonlocal disconnected
+            disconnected = True
+            abort_children()
+
+        async def drain_child(index, child, final=False):
+            native_id = child.get("_batch_request_id", -1)
+            if not isinstance(native_id, int) or native_id < 0:
+                return
+            text = ""
+            count = handle.batch_generate_stream_count(native_id)
+            while cursors[index] < count:
+                token = handle.batch_generate_new_token(native_id, cursors[index])
+                if token is None:
+                    break
+                cursors[index] += 1
+                text += decoders[index].decode(ctypes.string_at(token))
+            if final:
+                text += decoders[index].decode(b"", final=True)
+            if not text:
+                return
+            choice = {"index": index, "finish_reason": None}
+            if api_format == 4:
+                choice["delta"] = {"content": text}
+                if index not in roles_sent:
+                    choice["delta"]["role"] = "assistant"
+                    roles_sent.add(index)
+            else:
+                choice["text"] = text
+            await self.send_oai_sse_event(json.dumps({
+                "id": request_id, "object": "chat.completion.chunk" if api_format == 4 else "text_completion",
+                "created": int(time.time()), "model": model_name, "choices": [choice]}))
+
+        try:
+            # The ordinary streaming path watches the socket for disconnects;
+            # parallel fan-in must do the same or orphaned children can keep
+            # occupying native slots after a client disappears.  Unit capture
+            # handlers do not expose a socket, so they keep the deterministic
+            # polling path without a monitor task.
+            if getattr(self, "connection", None) is not None:
+                monitor_task = asyncio.create_task(self.monitor_connection(on_disconnect))
+            while pending:
+                if disconnected:
+                    return
+                for task, (index, child) in tasks.items():
+                    await drain_child(index, child)
+
+                done, pending = await asyncio.wait(pending, timeout=0.02,
+                                                   return_when=asyncio.FIRST_COMPLETED)
+                if disconnected:
+                    return
+                for task in done:
+                    index, child = tasks[task]
+                    try:
+                        result = task.result()
+                    except Exception as exc:
+                        abort_children()
+                        await self.send_oai_sse_event(json.dumps({"error": {
+                            "message": str(exc), "type": "server_error", "code": 500}}))
+                        await self.send_oai_sse_event("[DONE]")
+                        return
+                    if result.get("error"):
+                        abort_children()
+                        await self.send_oai_sse_event(json.dumps(result))
+                        await self.send_oai_sse_event("[DONE]")
+                        return
+                    # Completion can race the preceding cursor poll. Drain again
+                    # before release so the final token is never discarded.
+                    await drain_child(index, child, final=True)
+                    finish = (result.get("choices") or [{}])[0]
+                    if api_format == 4:
+                        payload = {"id": request_id, "object": "chat.completion.chunk",
+                                   "created": int(time.time()), "model": model_name,
+                                   "choices": [{"index": index, "delta": {},
+                                                "finish_reason": finish.get("finish_reason", "stop")}]}
+                    else:
+                        payload = {"id": request_id, "object": "text_completion",
+                                   "created": int(time.time()), "model": model_name,
+                                   "choices": [{"index": index, "text": "",
+                                                "finish_reason": finish.get("finish_reason", "stop")}]}
+                    timing = finish.get("timing") or result.get("timing")
+                    if timing:
+                        payload["choices"][0]["timing"] = timing
+                    await self.send_oai_sse_event(json.dumps(payload))
+                    native_id = child.get("_batch_request_id", -1)
+                    if isinstance(native_id, int) and native_id >= 0:
+                        handle.batch_generate_release(native_id)
+                        child.pop("_batch_request_id", None)
+            await self.send_oai_sse_event("[DONE]")
+        except Exception:
+            abort_children()
+            raise
+        finally:
+            # Cancelling an asyncio wrapper does not stop its native executor
+            # thread. Abort first, join the children, then release their IDs.
+            # The sticky flag also catches submissions that finish after abort.
+            abort_children()
+            if monitor_task and not monitor_task.done():
+                monitor_task.cancel()
+                await asyncio.gather(monitor_task, return_exceptions=True)
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for child in children:
+                native_id = child.pop("_batch_request_id", -1)
+                if isinstance(native_id, int) and native_id >= 0:
+                    handle.batch_generate_release(native_id)
 
     async def send_kai_sse_event(self, data):
         self.wfile.write('event: message\n'.encode())
@@ -6001,6 +6666,18 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         stream_content_type = 'application/x-ndjson' if api_format == 6 or api_format == 7 else 'text/event-stream'
         self.end_headers(content_type=stream_content_type)
 
+        if genparams.get('_batch_overloaded', False):
+            error = json.dumps({"error": {"message": "server is at its continuous-batching request capacity",
+                                            "type": "server_overloaded", "code": 503}})
+            if api_format in (3, 4):
+                await self.send_oai_sse_event(error)
+                await self.send_oai_sse_event("[DONE]")
+            elif api_format == 6 or api_format == 7:
+                await self.send_ollama_stream_event(error)
+            else:
+                await self.send_kai_sse_event(error)
+            return
+
         # if tools, do not send anything else - OAI tool calls will be handled with fakestreaming!
         # only exception is if we know the exact toolcall tag to segment!
         tool_segment_tag = ""
@@ -6029,12 +6706,20 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         anthropic_block_index = 0              # current content block index for Anthropic SSE
         rseq_num = 0
         current_token = 0
+        emitted_token = 0
+        stream_token_buffer = ""
+        default_stream_interval = getattr(args, "stream_interval", 1)
+        stream_interval = max(1, min(64, tryparseint(genparams.get("stream_interval", default_stream_interval), default_stream_interval)))
         prompttokens = 0
         incomplete_token_buffer = bytearray()
         async_sleep_short = 0.02
         await asyncio.sleep(0.35) #anti race condition, prevent check from overtaking generate
         batch_request_id = genparams.get('_batch_request_id', -1)
         batch_final_result = None
+        logprob_cursor = 0
+        logprob_offset = 0
+        batch_final_logprobs = {}
+        batch_final_timing = {}
 
         try:
             tokenReserve = "" #keeps fully formed tokens that we cannot send out yet
@@ -6049,6 +6734,10 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 if streamDone:
                     if using_batch_stream and batch_final_result is None:
                         batch_final_result = handle.batch_generate_result(batch_request_id)
+                        if batch_final_result.logprobs_json:
+                            batch_final_logprobs = json.loads(batch_final_result.logprobs_json)
+                        if batch_final_result.timing_json:
+                            batch_final_timing = json.loads(batch_final_result.timing_json)
                     sr = batch_final_result.stopreason if using_batch_stream else handle.get_last_stop_reason()
                     currfinishreason = "error" if sr==-2 else ("length" if (sr!=1) else "stop")
                     prompttokens = batch_final_result.prompt_tokens if using_batch_stream else handle.get_last_input_count()
@@ -6069,6 +6758,43 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     if tokenSeg!="" and not badFragment:
                         incomplete_token_buffer.clear()
                         tokenStr += tokenSeg
+
+                # Buffer a configurable number of generated tokens before
+                # emitting an event. Completion/error paths always flush the
+                # final partial chunk; logprob cursors advance only when that
+                # chunk is actually sent.
+                stream_token_buffer += tokenStr
+                if not streamDone and current_token - emitted_token < stream_interval:
+                    await asyncio.sleep(async_sleep_short)
+                    continue
+                tokenStr = stream_token_buffer
+                stream_token_buffer = ""
+                emitted_token = current_token
+
+                # Each stream owns a cursor; scores cannot leak from another request.
+                if api_format in (3, 4):
+                    lp = None
+                    prompt_lp = None
+                    if using_batch_stream:
+                        end = batch_final_result.completion_tokens if streamDone else current_token
+                        items = json.loads(handle.batch_generate_logprobs(batch_request_id, logprob_cursor, end))
+                        if items:
+                            lp = format_batch_logprobs(items, api_format, logprob_offset)
+                            logprob_cursor += len(items)
+                            logprob_offset += sum(len(item['token']) for item in items)
+                        if streamDone and tryparseint(genparams.get('prompt_logprobs', -1), -1) >= 0:
+                            prompt_lp = batch_final_logprobs.get('prompt', [])
+                    elif streamDone and requested_logprobs(genparams) >= 0:
+                        lp = parse_last_logprobs(handle.last_logprobs())
+                    if lp is not None or prompt_lp is not None:
+                        choice = {'index': 0, 'finish_reason': None, 'logprobs': lp}
+                        choice['delta' if api_format == 4 else 'text'] = {'content': ''} if api_format == 4 else ''
+                        if prompt_lp is not None:
+                            choice['prompt_logprobs'] = prompt_lp
+                        await self.send_oai_sse_event(json.dumps({
+                            'id': chatcmpl_id if api_format == 4 else cmpl_id,
+                            'object': 'chat.completion.chunk' if api_format == 4 else 'text_completion',
+                            'created': int(time.time()), 'model': modelNameToReturn, 'choices': [choice]}))
 
                 if tokenStr!="" or streamDone:
                     # split think tag handling
@@ -6274,21 +7000,17 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                 if delta and 'role' in delta:
                                     delta = {'role':delta["role"],'content':''}
                             if api_format == 4:  # if oai chat, set format to expected openai streaming response
-                                if streamDone and ("logprobs" in genparams and genparams["logprobs"]): # this is a hack that sends an extra message containing ALL the logprobs
-                                    lastlogprobs = handle.last_logprobs()
-                                    logprobsdict = parse_last_logprobs(lastlogprobs)
-                                    addonstr = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":None,"delta":{'role':'assistant','content':''},"logprobs":logprobsdict}]})
-                                    await self.send_oai_sse_event(addonstr)
-                                event_str = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":currfinishreason,"delta":delta}]})
+                                final_choice = {"index":0,"finish_reason":currfinishreason,"delta":delta}
+                                if streamDone and batch_final_timing:
+                                    final_choice["timing"] = batch_final_timing
+                                event_str = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":modelNameToReturn,"choices":[final_choice]})
                                 genparams['sync_toolcall_first_role_sent'] = True
                                 await self.send_oai_sse_event(event_str)
                             elif api_format == 3:  # non chat completions
-                                if streamDone and ("logprobs" in genparams and genparams["logprobs"]): # this is a hack that sends an extra message containing ALL the logprobs
-                                    lastlogprobs = handle.last_logprobs()
-                                    logprobsdict = parse_last_logprobs(lastlogprobs)
-                                    addonstr = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":None,"text":"","logprobs":logprobsdict}]})
-                                    await self.send_oai_sse_event(addonstr)
-                                event_str = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":currfinishreason,"text":tokenStr}]})
+                                final_choice = {"index":0,"finish_reason":currfinishreason,"text":tokenStr}
+                                if streamDone and batch_final_timing:
+                                    final_choice["timing"] = batch_final_timing
+                                event_str = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":modelNameToReturn,"choices":[final_choice]})
                                 await self.send_oai_sse_event(event_str)
                             elif api_format == 6 or api_format == 7: # Ollama newline-delimited JSON streaming
                                 created_at = str(datetime.now(timezone.utc).isoformat())
@@ -6467,6 +7189,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 return
 
     async def handle_request(self, genparams, api_format, stream_flag):
+        if stream_flag and tryparseint(genparams.get("n", 1), 1) > 1:
+            return await self.handle_parallel_sse_stream(genparams, api_format)
         tasks = []
         genparams["oai_uniqueid"] = random.randint(100000, 999999)
         monitor_task = None
@@ -6821,8 +7545,28 @@ Change Mode<br>
             caps = get_capabilities()
             response_body = (json.dumps(caps).encode())
 
+        elif clean_path == '/api/extra/capabilities':
+            response_body = json.dumps(get_friend_serving_capabilities()).encode()
+
         elif clean_path.endswith(('/api/extra/adapters')): # friend.cpp: named LoRA / steering / head pools
             response_body = (json.dumps(friend_adapter_listing()).encode())
+
+        elif clean_path == '/api/extra/requests':
+            if not self.secure_endpoint():
+                return
+            response_body = handle.friend_requests() or b"[]"
+
+        elif clean_path == '/metrics':
+            if args.password and not self.check_header_password(args.password):
+                self.send_response(401)
+                self.end_headers()
+                return
+            response_body = handle.friend_metrics() or b""
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(response_body)))
+            self.end_headers(content_type='text/plain; version=0.0.4; charset=utf-8')
+            self.wfile.write(response_body)
+            return
 
         elif clean_path.endswith(('/api/extra/cache')): # friend.cpp: prompt cache contents
             response_body = (handle.friend_cache_list() or b"{}")
@@ -7213,6 +7957,30 @@ Change Mode<br>
         response_body = None
         response_code = 200
 
+        # Request controls must bypass the generation lock or a paused generation
+        # would hold that lock while waiting for its own resume request.
+        if clean_path in ('/api/extra/requests/pause', '/api/extra/requests/resume', '/api/extra/requests/cancel'):
+            if not self.secure_endpoint():
+                return
+            try:
+                params = json.loads(body)
+                request_id = params['id']
+                if type(request_id) is not int or not 0 < request_id <= 2147483647:
+                    raise ValueError("id must be a positive native request ID")
+                if clean_path.endswith('/cancel'):
+                    ok = handle.batch_generate_abort(request_id)
+                else:
+                    ok = handle.friend_request_control(request_id, clean_path.endswith('/pause'))
+                payload = json.dumps({"accepted": bool(ok)}).encode()
+                self.send_response(202 if ok else 404)
+            except (ValueError, TypeError, KeyError) as exc:
+                payload = json.dumps({"error": str(exc)}).encode()
+                self.send_response(400)
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers(content_type='application/json')
+            self.wfile.write(payload)
+            return
+
         if clean_path.endswith('/api/extra/tokencount') or clean_path.endswith('/api/extra/tokenize'):
             if not self.secure_endpoint():
                 return
@@ -7254,7 +8022,7 @@ Change Mode<br>
                 schema = genparams.get('schema', None)
                 if not schema:
                     schema = genparams
-                decoded = convert_json_to_gbnf(schema)
+                decoded = cached_json_to_gbnf(schema)
                 response_body = (json.dumps({"result": decoded,"success":(True if decoded else False)}).encode())
             except Exception as e:
                 utfprint("JSON to Grammar Error: " + str(e))
@@ -7881,6 +8649,26 @@ Change Mode<br>
 
                 # transform genparams (only used for text gen) first
                 genparams = transform_genparams(genparams, api_format, use_jinja)
+
+                if genparams.get("_guided_regex_error"):
+                    payload = json.dumps({"error": {"message": genparams["_guided_regex_error"],
+                                                       "type": "invalid_request_error", "code": 400}}).encode()
+                    self.send_response(400)
+                    self.send_header('content-length', str(len(payload)))
+                    self.end_headers(content_type='application/json')
+                    self.wfile.write(payload)
+                    return
+                if genparams.get("disaggregated_prefill", False) and (
+                        not getattr(args, "disaggregated_prefill", False) or
+                        getattr(args, "profile_lanes", 1) < 2):
+                    payload = json.dumps({"error": {
+                        "message": "disaggregated_prefill requires --disaggregated-prefill and --profile-lanes >= 2",
+                        "type": "invalid_request_error", "code": 400}}).encode()
+                    self.send_response(400)
+                    self.send_header('content-length', str(len(payload)))
+                    self.end_headers(content_type='application/json')
+                    self.wfile.write(payload)
+                    return
 
                 if args.debugmode >= 1:
                     printablegenparams = truncate_long_json(genparams,trunc_len)
@@ -13252,6 +14040,16 @@ if __name__ == '__main__':
     advparser.add_argument("--overridenativecontext", help="Overrides the native trained context of the loaded model with a custom value to be used for Rope scaling.",metavar=('[trained context]'), type=int, default=0)
     advparser.add_argument("--overridetensors","--override-tensor","-ot", metavar=('[tensor name pattern=buffer type]'), help="Override selected backend for specific tensors matching tensor_name_regex_pattern=buffer_type, same as in llama.cpp.", default="")
     advparser.add_argument("--parallelrequests","--continuous-batching","--contbatch", help="Allows multiple requests to be batched and executed in parallel. Only works for basic text generation requests (Experimental, No media)", metavar=('[slots]'), type=check_range(int,0,32), default=1)
+    advparser.add_argument("--ngram-draft", type=check_range(int,0,32), default=0, help="Maximum history-based speculative tokens per batched request (attention-only models; 0 disables). Requires --parallelrequests greater than 1.")
+    advparser.add_argument("--suffix-draft", type=check_range(int,0,32), default=0, help="Maximum adaptive suffix-speculative tokens per batched request (0 disables; takes precedence over --ngram-draft).")
+    advparser.add_argument("--schedule-tokens", type=check_range(int,0,65536), default=0, help="Unified continuous-batching token budget per scheduler round (0 uses batch size; decodes are admitted before prompt tokens).")
+    advparser.add_argument("--profile-lanes", type=check_range(int,1,32), default=1, help="Native concurrent contexts sharing model weights. Each lane owns its KV/compute buffers and parallelrequests slots. CPU threads are divided across lanes; memory use increases.")
+    advparser.add_argument("--max-queued-requests", type=check_range(int,0,1000000), default=0, help="friend.cpp: maximum live continuous-batching requests, including waiting/running/paused requests; overloads are rejected when full (0 disables).")
+    advparser.add_argument("--kv-watermark", type=check_range(float,0.0,0.9), default=0.0, help="friend.cpp: reserve this fraction of estimated continuous-batching KV capacity for active sequences (0 disables).")
+    advparser.add_argument("--max-lora-profiles", type=check_range(int,0,1024), default=0, help="friend.cpp: cap distinct live LoRA/steering/head profiles admitted by native batching (0 disables).")
+    advparser.add_argument("--disaggregated-prefill", action='store_true', help="friend.cpp: prefill on lane 0 and hand serialized KV to a decode lane; requires --profile-lanes >= 2 and continuous batching.")
+    advparser.add_argument("--stream-interval", type=check_range(int,1,64), default=1, help="friend.cpp: stream this many generated tokens per event when possible; final partial chunks always flush.")
+    advparser.add_argument("--prefill-tokens", dest="prefilltokens", metavar='[tokens]', type=check_range(int,0,65536), default=0, help="friend.cpp: maximum prompt tokens admitted per continuous-batching round after ready decodes. Lower values protect inter-token latency; 0 uses the full batch size.")
     advparser.add_argument("--password", metavar=('[API key]'), help="Enter a password required to use this instance. This key will be required for all text endpoints. Image endpoints are not secured. Can also be set with env var KCPP_PASSWORD", default=os.getenv('KCPP_PASSWORD',None))
     advparser.add_argument("--preloadstory", metavar=('[savefile]'), help="Configures a prepared story json save file to be hosted on the server, which frontends (such as KoboldAI Lite) can access over the API.", default="")
     advparser.add_argument("--prompt","-p", metavar=('[prompt]'), help="Passing a prompt string triggers a direct inference, loading the model, outputs the response to stdout and exits. Can be used alone or with benchmark.", type=str, default="")

@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -518,6 +519,9 @@ struct media_chunk
     int32_t clp_image_tokens = 0; //holds number of tokens used in this chunk
     int32_t nx = 0; //only used for 2d roped images
     int32_t ny = 0;
+    // Immutable encoder output. Shared copies let the bounded multimodal cache
+    // reuse the expensive projector result without copying opaque mtmd state.
+    std::shared_ptr<const std::vector<float>> encoded_embd;
 };
 struct media_object
 {

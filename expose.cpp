@@ -293,6 +293,9 @@ extern "C"
     const char * batch_generate_new_token(int request_id, int idx) {
         return gpttype_batch_generate_new_token(request_id, idx);
     }
+    const char * batch_generate_logprobs(int request_id, int begin, int end) {
+        return gpttype_batch_generate_logprobs(request_id, begin, end);
+    }
     const char * batch_generate_pending_output(int request_id) {
         return gpttype_batch_generate_pending_output(request_id);
     }
@@ -471,6 +474,20 @@ extern "C"
     }
 
     // friend.cpp: prompt cache management. The returned string stays valid until the next call.
+    const char * friend_requests() {
+        static thread_local std::string buffer;
+        buffer = gpttype_friend_requests();
+        return buffer.c_str();
+    }
+    bool friend_request_control(int id, bool pause) {
+        return gpttype_friend_request_control(id, pause);
+    }
+    const char * friend_metrics()
+    {
+        static thread_local std::string buffer;
+        buffer = gpttype_friend_metrics();
+        return buffer.c_str();
+    }
     static std::string friend_cache_list_buf;
     const char * friend_cache_list()
     {
