@@ -2924,7 +2924,9 @@ def generate(genparams, stream_flag=False):
             genparams['_batch_fallback'] = True
             ret = handle.generate(inputs)
         outstr = ""
-        if ret.status==1:
+        # friend.cpp: a request that fails mid-generation (e.g. the KV cache runs out of room
+        # for --parallelrequests slots) keeps what it generated; finish_reason says "error"
+        if ret.status==1 or (ret.stopreason == -2 and ret.text):
             outstr = ret.text.decode("UTF-8","ignore")
         if batch_request_id >= 0 and not stream_flag:
             handle.batch_generate_release(batch_request_id)

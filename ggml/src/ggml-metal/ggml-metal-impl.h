@@ -137,6 +137,7 @@
 #define FC_GATED_DELTA_NET             1600
 #define FC_GATED_DELTA_NET_WRITE_ROWS  (FC_GATED_DELTA_NET + 4)
 #define FC_GATED_DELTA_NET_RAW_GATES   (FC_GATED_DELTA_NET + 5)
+#define FC_GATED_DELTA_NET_QK_L2       (FC_GATED_DELTA_NET + 6) // friend.cpp
 
 // op-specific constants
 #define OP_FLASH_ATTN_EXT_NQPSG 8
@@ -1033,6 +1034,7 @@ typedef struct {
     uint64_t nb2;
     uint64_t nb3;
     uint64_t nb_out; // 0 => snapshots are appended after the attn scores (unfused)
+    float    qk_l2_eps; // friend.cpp: eps of the folded q/k l2 norm (FC_GATED_DELTA_NET_QK_L2)
 } ggml_metal_kargs_gated_delta_net;
 
 typedef struct {
@@ -1293,6 +1295,43 @@ typedef struct {
     int32_t nrows;
     int32_t n_blk; // sign rows per activation row (K / N); 0 = no sign flip fused in
 } ggml_metal_kargs_fwht;
+
+// friend.cpp: [ADD +] RMS_NORM + MUL(weight) + MUL(signs) + FWHT in one kernel -- the input side
+// of a Hadamard-folded matmul. One threadgroup per (block of N, row); the ADD is only fused when
+// its output does not alias an input (see ggml_metal_op_can_fuse_norm_fwht).
+typedef struct {
+    int32_t  ne0;      // row width (a multiple of the transform size N)
+    int32_t  nrows;
+    int32_t  has_add;  // src a + b (the residual ADD fused in) or just a
+    float    eps;
+} ggml_metal_kargs_norm_fwht;
+
+// friend.cpp: SWIGLU (+ per-head RMS_NORM * weight on the value side, + head permutation)
+// + MUL(signs) + FWHT -- the input side of a Hadamard-folded down / output projection.
+typedef struct {
+    int32_t  ne0;      // row width of the transform input (the folded matmul's K)
+    int32_t  nrows;
+    int32_t  norm;     // value side is rms_norm(x per head of hd) * w
+    int32_t  hd;       // head dim for the norm and the permutation (128)
+    int32_t  perm_nk;  // tiled [hd, nk, rep] -> grouped [hd, rep, nk]; rep == 1: no permutation
+    int32_t  perm_rep;
+    int64_t  nbg;      // row stride of the gate, in floats
+    int64_t  nbx;      // row stride of the value side, in floats
+    float    eps;
+} ggml_metal_kargs_glu_fwht;
+
+// friend.cpp: one decode step of the short causal conv (d_conv = 4): CONCAT(state, x) +
+// CPY(new state -> cache) + SSM_CONV + SILU. Strides in floats.
+typedef struct {
+    int32_t  C;        // channels
+    int32_t  n_seqs;
+    int64_t  st_c;     // gathered state: channel stride (d_conv - 1 = 3 when contiguous)
+    int64_t  st_s;     //                 seq stride
+    int64_t  x_c;      // new input column: channel stride
+    int64_t  x_s;      //                   seq stride
+    int64_t  out_s;    // conv output: seq stride
+    int64_t  dst_s;    // state cache destination: seq stride (channel stride 3)
+} ggml_metal_kargs_ssm_conv_step;
 
 typedef struct {
     int64_t  ne0;

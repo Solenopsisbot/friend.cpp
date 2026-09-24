@@ -6,6 +6,7 @@ constant short FC_gated_delta_net_K    [[function_constant(FC_GATED_DELTA_NET + 
 constant bool  FC_gated_delta_net_rows       [[function_constant(FC_GATED_DELTA_NET + 3)]];
 constant bool  FC_gated_delta_net_write_rows [[function_constant(FC_GATED_DELTA_NET_WRITE_ROWS)]];
 constant bool  FC_gated_delta_net_raw_gates  [[function_constant(FC_GATED_DELTA_NET_RAW_GATES)]];
+constant bool  FC_gated_delta_net_qk_l2      [[function_constant(FC_GATED_DELTA_NET_QK_L2)]];
 
 #if 1
 template<short NSG>
@@ -33,6 +34,7 @@ kernel void kernel_gated_delta_net_impl(
 #define HAS_ROWS   FC_gated_delta_net_rows
 #define WRITE_ROWS FC_gated_delta_net_write_rows
 #define RAW_GATES  FC_gated_delta_net_raw_gates
+#define QK_L2      FC_gated_delta_net_qk_l2
 
     const uint tx = tpitg.x;
     const uint ty = tpitg.y;
@@ -96,6 +98,35 @@ kernel void kernel_gated_delta_net_impl(
     for (short t = 0; t < args.ne22; t++) {
         float s_k = 0.0f;
 
+        // friend.cpp: this lane's slice of the head's q and k, l2-normalised in place when the
+        // norm is folded in -- the simdgroup holds the whole head row (32 lanes x NSG), so the
+        // norm is one simd_sum each, with the arithmetic of scale(rms_norm(x, eps/n), 1/sqrt(n))
+        float kv[NSG];
+        float qv[NSG];
+        FOR_UNROLL (short j = 0; j < NSG; j++) {
+            const short is = tx*NSG + j;
+            kv[j] = k_ptr[is];
+            qv[j] = q_ptr[is];
+        }
+        if (QK_L2) {
+            float sk = 0.0f;
+            float sq = 0.0f;
+            FOR_UNROLL (short j = 0; j < NSG; j++) {
+                sk += kv[j]*kv[j];
+                sq += qv[j]*qv[j];
+            }
+            sk = simd_sum(sk);
+            sq = simd_sum(sq);
+            const float n  = (float) (32*NSG);
+            const float rk = 1.0f/sqrt(sk/n + args.qk_l2_eps/n);
+            const float rq = 1.0f/sqrt(sq/n + args.qk_l2_eps/n);
+            const float s2 = 1.0f/sqrt(n);
+            FOR_UNROLL (short j = 0; j < NSG; j++) {
+                kv[j] = (kv[j]*rk)*s2;
+                qv[j] = (qv[j]*rq)*s2;
+            }
+        }
+
         if (G == 1) {
             float g0 = g_ptr[0];
             if (RAW_GATES) {
@@ -108,7 +139,7 @@ kernel void kernel_gated_delta_net_impl(
                 const short is = tx*NSG + j;
                 ls[j] *= g_exp;
 
-                s_k += ls[j]*k_ptr[is];
+                s_k += ls[j]*kv[j];
             }
         } else {
             // KDA
@@ -116,7 +147,7 @@ kernel void kernel_gated_delta_net_impl(
                 const short is = tx*NSG + j;
                 ls[j] *= exp(g_ptr[is]);
 
-                s_k += ls[j]*k_ptr[is];
+                s_k += ls[j]*kv[j];
             }
         }
 
@@ -133,9 +164,9 @@ kernel void kernel_gated_delta_net_impl(
 
         FOR_UNROLL (short j = 0; j < NSG; j++) {
             const short is = tx*NSG + j;
-            ls[j] += k_ptr[is]*d;
+            ls[j] += kv[j]*d;
 
-            y += ls[j]*q_ptr[is];
+            y += ls[j]*qv[j];
         }
 
         y = simd_sum(y);
@@ -207,6 +238,7 @@ kernel void kernel_gated_delta_net_impl(
 #undef HAS_ROWS
 #undef WRITE_ROWS
 #undef RAW_GATES
+#undef QK_L2
 }
 
 typedef decltype(kernel_gated_delta_net_impl<4>) kernel_gated_delta_net_t;

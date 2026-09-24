@@ -195,6 +195,58 @@ static bool ggml_metal_fusion_check_snake(
     return types_ok && shape_ok && dim_ok && contig_ok && x_in_add == x;
 }
 
+// friend.cpp: [ADD] RMS_NORM MUL MUL MUL_MAT / [RMS_NORM MUL] GLU [CONT] MUL MUL_MAT ending in a
+// Hadamard-hinted MUL_MAT that consumes the chain (through views). Structural mode only: this
+// entry exists so ggml_graph_optimize keeps the chain adjacent; the Metal encoders do the full
+// match (ggml_metal_op_can_fuse_norm_fwht / _glu_fwht), so FULL mode always declines.
+static bool ggml_metal_fusion_check_hadamard_input(
+        const ggml_metal_fusion      * fusion,
+        const ggml_tensor * const    * nodes,
+              ggml_metal_fusion_mode   mode) {
+    if (mode == GGML_METAL_FUSION_FULL) {
+        return false;
+    }
+
+    const int n = fusion->n_ops;
+    const ggml_tensor * mm = nodes[n - 1];
+    if (mm->op != GGML_OP_MUL_MAT || ggml_get_op_params_i32(mm, 1) != GGML_HINT_SRC0_IS_HADAMARD) {
+        return false;
+    }
+
+    const auto skip = [](const ggml_tensor * t) {
+        while (t && (t->op == GGML_OP_RESHAPE || t->op == GGML_OP_VIEW || t->op == GGML_OP_PERMUTE)) {
+            t = t->src[0];
+        }
+        return t;
+    };
+
+    // each node feeds the next one (through views), as src0 or src1
+    for (int j = 1; j < n; j++) {
+        const ggml_tensor * a = skip(nodes[j]->src[0]);
+        const ggml_tensor * b = skip(nodes[j]->src[1]);
+        if (a != nodes[j - 1] && b != nodes[j - 1]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// friend.cpp: CONCAT -> CPY(view of it) + SSM_CONV(it) -> SILU, the decode conv step. Packing
+// hint only (see ggml_metal_op_can_fuse_ssm_conv_step); FULL mode declines.
+static bool ggml_metal_fusion_check_conv_step(
+        const ggml_metal_fusion      * fusion,
+        const ggml_tensor * const    * nodes,
+              ggml_metal_fusion_mode   mode) {
+    GGML_UNUSED(fusion);
+    if (mode == GGML_METAL_FUSION_FULL) {
+        return false;
+    }
+    const ggml_tensor * cat = nodes[0];
+    const ggml_tensor * cpy = nodes[1];
+    return cpy->src[0] && cpy->src[0]->view_src == cat && nodes[2]->src[0] == cat && nodes[3]->src[0] == nodes[2];
+}
+
 // ---- patterns ------------------------------------------------------------
 
 static const ggml_op ops_norm_mul[]         = { GGML_OP_NORM, GGML_OP_MUL };
@@ -212,6 +264,14 @@ static const ggml_op ops_snake[] = { GGML_OP_MUL, GGML_OP_SIN, GGML_OP_SQR, GGML
 
 static const ggml_op ops_gdn_cache[] = { GGML_OP_GATED_DELTA_NET, GGML_OP_CPY };
 
+static const ggml_op ops_conv_step[]         = { GGML_OP_CONCAT, GGML_OP_CPY, GGML_OP_SSM_CONV, GGML_OP_UNARY };
+static const ggml_op ops_hi_add_norm[]      = { GGML_OP_ADD, GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_MUL, GGML_OP_MUL_MAT };
+static const ggml_op ops_hi_norm[]          = { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_MUL, GGML_OP_MUL_MAT };
+static const ggml_op ops_hi_glu[]           = { GGML_OP_GLU, GGML_OP_MUL, GGML_OP_MUL_MAT };
+static const ggml_op ops_hi_glu_perm[]      = { GGML_OP_GLU, GGML_OP_CONT, GGML_OP_MUL, GGML_OP_MUL_MAT };
+static const ggml_op ops_hi_norm_glu[]      = { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_GLU, GGML_OP_MUL, GGML_OP_MUL_MAT };
+static const ggml_op ops_hi_norm_glu_perm[] = { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_GLU, GGML_OP_CONT, GGML_OP_MUL, GGML_OP_MUL_MAT };
+
 static const ggml_metal_fusion ggml_metal_fusions[] = {
     { GGML_METAL_FUSION_NORM_MUL,     ops_norm_mul,         2, false, ggml_metal_fusion_check_norm },
     { GGML_METAL_FUSION_NORM_MUL_ADD, ops_norm_mul_add,     3, false, ggml_metal_fusion_check_norm },
@@ -225,6 +285,13 @@ static const ggml_metal_fusion ggml_metal_fusions[] = {
     { GGML_METAL_FUSION_ADD_CHAIN,    ops_add_7,            7, false, ggml_metal_fusion_check_add_chain },
     { GGML_METAL_FUSION_SNAKE,        ops_snake,            5, false, ggml_metal_fusion_check_snake },
     { GGML_METAL_FUSION_GDN_CACHE,    ops_gdn_cache,        2, true,  ggml_metal_fusion_check_gdn_cache },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_conv_step,        4, true, ggml_metal_fusion_check_conv_step },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_hi_add_norm,      5, true, ggml_metal_fusion_check_hadamard_input },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_hi_norm,          4, true, ggml_metal_fusion_check_hadamard_input },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_hi_glu,           3, true, ggml_metal_fusion_check_hadamard_input },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_hi_glu_perm,      4, true, ggml_metal_fusion_check_hadamard_input },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_hi_norm_glu,      5, true, ggml_metal_fusion_check_hadamard_input },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_hi_norm_glu_perm, 6, true, ggml_metal_fusion_check_hadamard_input },
 };
 
 const ggml_metal_fusion * ggml_metal_fusion_all(int * n) {

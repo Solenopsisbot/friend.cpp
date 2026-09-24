@@ -152,6 +152,9 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argmax   
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argsort           (ggml_metal_library_t lib, const struct ggml_tensor * op);
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_argsort_merge     (ggml_metal_library_t lib, const struct ggml_tensor * op);
 struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_fwht              (ggml_metal_library_t lib, int n, bool src_f16);
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_norm_fwht         (ggml_metal_library_t lib, int n);
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_glu_fwht          (ggml_metal_library_t lib, int n);
+struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_ssm_conv_step     (ggml_metal_library_t lib);
 
 // FWHT block widths with dedicated Metal kernels; the Hadamard matmul hint
 // falls back to a plain mul_mat for other widths, which has no F16-input pipeline.
