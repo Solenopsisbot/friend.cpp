@@ -5904,6 +5904,51 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         global friendlymodelname, chatcompl_adapter, currfinishreason, thinkformats
         global autoswapmode, textName, sttName, ttsName, embedName, musicName, imageName, mmprojName
 
+        # OpenAI's `n` asks for independent samples from one prompt. Native
+        # continuous batching schedules these children together; prompt prefix
+        # sharing keeps the common attention KV in one sequence-cell range,
+        # while every child has its own sampler and RNG state.
+        sample_count = max(1, min(16, tryparseint(genparams.get("n", 1), 1)))
+        if sample_count > 1 and not genparams.get("_parallel_sample_child"):
+            if stream_flag:
+                return {"error": {"message": "streaming parallel samples are not enabled for this backend", "type": "invalid_request_error", "code": 400}}
+            if api_format not in (3, 4):
+                return {"error": {"message": "parallel samples require an OpenAI completion endpoint", "type": "invalid_request_error", "code": 400}}
+            parent = dict(genparams)
+            parent.pop("n", None)
+            parent["_parallel_sample_child"] = True
+            base_seed = tryparseint(parent.get("sampler_seed", parent.get("seed", -1)), -1)
+            children = []
+            for index in range(sample_count):
+                child = dict(parent)
+                child["oai_uniqueid"] = f"{genparams.get('oai_uniqueid', 1)}-{index}"
+                if base_seed >= 0:
+                    child["sampler_seed"] = base_seed + index
+                    child["seed"] = base_seed + index
+                children.append(child)
+            results = await asyncio.gather(*(self.generate_text(child, api_format, False) for child in children))
+            first_error = next((result for result in results if result.get("error")), None)
+            if first_error:
+                return first_error
+            merged = dict(results[0])
+            merged["id"] = f"chatcmpl-A{genparams.get('oai_uniqueid', 1)}" if api_format == 4 else f"cmpl-A{genparams.get('oai_uniqueid', 1)}"
+            merged["choices"] = []
+            completion_total = 0
+            prompt_tokens = 0
+            for index, result in enumerate(results):
+                choice = dict(result.get("choices", [{}])[0])
+                choice["index"] = index
+                merged["choices"].append(choice)
+                completion_total += int(result.get("usage", {}).get("completion_tokens", 0) or 0)
+                prompt_tokens = max(prompt_tokens, int(result.get("usage", {}).get("prompt_tokens", 0) or 0))
+            if isinstance(merged.get("usage"), dict):
+                merged["usage"] = dict(merged["usage"])
+                merged["usage"]["prompt_tokens"] = prompt_tokens
+                merged["usage"]["completion_tokens"] = completion_total
+                merged["usage"]["total_tokens"] = prompt_tokens + completion_total
+            merged["parallel_samples"] = sample_count
+            return merged
+
         currfinishreason = None
         req_id_suffix = genparams.get('oai_uniqueid',1)
         chatcmpl_id = f"chatcmpl-A{req_id_suffix}"

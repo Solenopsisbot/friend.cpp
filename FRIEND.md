@@ -28,6 +28,8 @@ friend.cpp-specific features, described below:
 7. **Suffix speculation** -- prompt/history suffix matching with frequency-weighted adaptive drafts
 8. **Logical KV block tables** -- fixed-token blocks used for aligned llama sequence sharing and copy-on-write prefix reuse
 9. **Structured output aliases** -- cached JSON Schema and choice grammars through the OpenAI/vLLM request forms
+10. **Parallel sampling** -- bounded OpenAI `n` fan-out with independent RNG state, indexed choices, shared prompt KV and aggregated usage
+11. **KV connector contract** -- versioned compatibility discovery, metadata export/import, invalidation and ownership events
 
 
 ---
@@ -291,6 +293,14 @@ still owns device tensor allocation until the backend paged-KV handoff is comple
 Pause and priority-preemption snapshots are bounded by 512 MiB of host storage.
 They use the prompt-cache codec when compression reduces their size and restore
 with checksum validation. `friend_batch_offloaded_bytes` reports the stored bytes.
+
+OpenAI `/v1/completions` and `/v1/chat/completions` requests may set `n` up to
+16. Samples are submitted together, share aligned prompt KV when the native
+batch scheduler can reuse it, and return indexed choices. Streaming `n` is
+rejected until the endpoint has an indexed SSE fan-in path. The
+`friend/kv_connector.hpp` contract provides a checked metadata handoff for
+future disaggregated KV transport; it rejects incompatible model/layout/dtype
+or profile namespaces and will not invalidate referenced pages.
 
 ### What's been verified
 

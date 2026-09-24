@@ -313,6 +313,19 @@ JSON Schema and JSON object responses. vLLM-style `structured_outputs: {"json":
 ...}` / `{"json_schema": ...}` and `{"choice": [...]}` forms, plus
 `guided_json` and `guided_choice`, are accepted as aliases.
 
+OpenAI completion and chat requests may set `n` up to 16 for parallel sampling.
+Each sample gets an independent RNG/sampler state and indexed choice; native
+continuous batching shares complete prompt KV blocks between siblings and
+aggregates usage across the returned choices. Streaming `n` is rejected clearly
+until indexed SSE fan-in is available.
+
+The scheduler-owned page table also has a versioned metadata connector in
+`friend/kv_connector.hpp`. Peers discover model/layout/dtype/profile/namespace
+compatibility before importing, receive export/import/invalidation events, and
+cannot invalidate pages that still have live references. The current llama
+backend has no device-KV transport hook, so the connector carries ownership
+metadata and leaves tensor payload transfer to the future paged backend.
+
 ---
 
 ## Status and tested hardware
