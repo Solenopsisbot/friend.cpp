@@ -7849,7 +7849,7 @@ Change Mode<br>
 
         # Request controls must bypass the generation lock or a paused generation
         # would hold that lock while waiting for its own resume request.
-        if clean_path in ('/api/extra/requests/pause', '/api/extra/requests/resume'):
+        if clean_path in ('/api/extra/requests/pause', '/api/extra/requests/resume', '/api/extra/requests/cancel'):
             if not self.secure_endpoint():
                 return
             try:
@@ -7857,7 +7857,10 @@ Change Mode<br>
                 request_id = params['id']
                 if type(request_id) is not int or not 0 < request_id <= 2147483647:
                     raise ValueError("id must be a positive native request ID")
-                ok = handle.friend_request_control(request_id, clean_path.endswith('/pause'))
+                if clean_path.endswith('/cancel'):
+                    ok = handle.batch_generate_abort(request_id)
+                else:
+                    ok = handle.friend_request_control(request_id, clean_path.endswith('/pause'))
                 payload = json.dumps({"accepted": bool(ok)}).encode()
                 self.send_response(202 if ok else 404)
             except (ValueError, TypeError, KeyError) as exc:

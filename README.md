@@ -300,7 +300,9 @@ back to ordinary decoding. `/api/extra/requests` lists active batch requests, wh
 suffixes, chooses frequency-weighted continuations, and adapts the proposed length
 per request. It takes precedence over `--ngram-draft`.
 `POST /api/extra/requests/pause` and `/resume` suspend or continue a request at a
-worker boundary. Paused KV is bounded by a 512 MiB host-memory budget.
+worker boundary, while `/cancel` asks the native scheduler to abort it and
+release its KV ownership at the next safe boundary. Paused KV is bounded by a
+512 MiB host-memory budget.
 Preempted and explicitly paused snapshots use the same lossless byte-plane/zstd
 codec as the prompt cache when compression saves space; `/metrics` exposes the
 current stored byte count as `friend_batch_offloaded_bytes`.
