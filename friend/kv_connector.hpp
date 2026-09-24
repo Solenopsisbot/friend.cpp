@@ -15,6 +15,7 @@
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -115,7 +116,12 @@ public:
             return false;
         }
         size_t total_payload = 0;
+        std::unordered_set<uint64_t> keys;
         for(const auto & item : snapshot.entries) {
+            if(!keys.insert(item.key).second) {
+                emit({connector_event_type::rejected, item.key, 0, "duplicate key"});
+                return false;
+            }
             if(item.payload.size() > max_payload ||
                item.payload.size() > max_total_payload - std::min(total_payload, max_total_payload)) {
                 emit({connector_event_type::rejected, item.key, 0, "payload too large"});
@@ -132,18 +138,24 @@ public:
         // keys are reference counted by acquire, so importing is idempotent for
         // a peer that reconnects after a lost acknowledgement.
         std::vector<paged_allocator::page_id> acquired;
+        auto rollback = [&]() {
+            for(auto id = acquired.rbegin(); id != acquired.rend(); ++id)
+                allocator_.release(*id);
+            acquired.clear();
+        };
         for(const auto & item : snapshot.entries) {
             if(item.references > (1u << 20)) {
-                emit({connector_event_type::rejected, item.key, acquired.size(), "invalid references"});
+                rollback();
+                emit({connector_event_type::rejected, item.key, 0, "invalid references"});
                 return false;
             }
             if(item.references == 0) continue;
             for(uint32_t i = 0; i < item.references; ++i) {
                 const paged_allocator::page_id id = allocator_.acquire(item.key);
                 if(id == paged_allocator::invalid_page) {
-                    for(auto rollback = acquired.rbegin(); rollback != acquired.rend(); ++rollback)
-                        allocator_.release(*rollback);
-                    emit({connector_event_type::rejected, item.key, acquired.size(), "capacity"});
+                    const size_t acquired_count = acquired.size();
+                    rollback();
+                    emit({connector_event_type::rejected, item.key, acquired_count, "capacity"});
                     return false;
                 }
                 acquired.push_back(id);
