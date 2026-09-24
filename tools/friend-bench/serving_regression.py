@@ -123,7 +123,10 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     long_future = pool.submit(request, '/api/v1/generate',
                                               dict(payload, max_length=96, cache_salt='queue-cap'))
-                    deadline = time.monotonic() + 10
+                    # Metal can spend tens of seconds decoding the preceding
+                    # long request.  Wait for the scheduler state rather than
+                    # making this check depend on a fast host.
+                    deadline = time.monotonic() + 90
                     while time.monotonic() < deadline:
                         active = [r for r in request('/api/extra/requests')
                                   if r['state'] in ('prefill', 'generating')]
@@ -143,7 +146,7 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
             assert metric('friend_batch_reused_tokens_total') > before, 'same-salt reuse missing'
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(request, '/api/v1/generate', payload)
-                deadline = time.monotonic() + 10
+                deadline = time.monotonic() + 90
                 target = None
                 while time.monotonic() < deadline:
                     active = [r for r in request('/api/extra/requests') if r['state'] == 'generating']
@@ -154,6 +157,7 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
                 assert target is not None, 'no active generation found'
                 offload_before = metric('friend_batch_offloaded_bytes')
                 assert request('/api/extra/requests/pause', {'id': target})['accepted']
+                deadline = time.monotonic() + 30
                 while time.monotonic() < deadline:
                     state = next(r for r in request('/api/extra/requests') if r['id'] == target)
                     if state['state'] == 'paused':
@@ -179,7 +183,7 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
                                    cache_salt='preempt-low')
                 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
                     low_futures = [pool.submit(request, '/api/v1/generate', dict(low_payload, seed=200 + i)) for i in range(4)]
-                    deadline = time.monotonic() + 10
+                    deadline = time.monotonic() + 90
                     while time.monotonic() < deadline:
                         active = [r for r in request('/api/extra/requests') if r['state'] == 'generating']
                         if len(active) >= 4:
