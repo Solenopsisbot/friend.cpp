@@ -14,6 +14,7 @@ try:
 except Exception:
     pass
 import copy
+import codecs
 import ctypes
 import multiprocessing
 import math
@@ -2846,6 +2847,10 @@ def generate(genparams, stream_flag=False):
                     "error":"server is at its continuous-batching request capacity"}
         if batch_request_id >= 0:
             genparams['_batch_request_id'] = batch_request_id
+            # Cancellation may arrive while native admission is still in flight.
+            # Remember it on the child so late submissions cannot escape cleanup.
+            if genparams.get('_batch_cancel_requested', False):
+                handle.batch_generate_abort(batch_request_id)
             ret = handle.batch_generate_result(batch_request_id)
         else:
             if genparams.get('_parallel_sample_native', False):
@@ -6191,7 +6196,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         if genout.get('error'):
             error = {"message": genout['error'], "type": "server_overloaded", "code": 503}
-            if stream_flag:
+            if stream_flag and not genparams.get('_parallel_sample_child', False):
                 # handle_sse_stream owns the response framing for streaming APIs;
                 # leave a marker for it rather than pretending legacy generation
                 # was started after native admission rejected the request.
@@ -6420,6 +6425,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         parent.pop("n", None)
         parent["_parallel_sample_child"] = True
         parent["_parallel_sample_native"] = continuous_batching_python_eligible(parent, api_format)
+        if not parent["_parallel_sample_native"]:
+            return {"error": {"message": "streaming parallel samples require native continuous batching",
+                               "type": "invalid_request_error", "code": 400}}
         base_seed = tryparseint(parent.get("sampler_seed", parent.get("seed", -1)), -1)
         children = []
         for index in range(sample_count):
@@ -6443,50 +6451,74 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         tasks = {asyncio.create_task(self.generate_text(child, api_format, True)): (index, child)
                  for index, child in enumerate(children)}
         pending = set(tasks)
+        monitor_task = None
         cursors = {index: 0 for index in range(sample_count)}
+        decoders = [codecs.getincrementaldecoder("utf-8")("ignore") for _ in children]
         roles_sent = set()
+        disconnected = False
 
         def abort_children():
             abort = getattr(handle, "batch_generate_abort", None)
-            if abort is None:
-                return
             for child in children:
+                child['_batch_cancel_requested'] = True
                 request_id = child.get("_batch_request_id", -1)
-                if isinstance(request_id, int) and request_id >= 0:
+                if abort is not None and isinstance(request_id, int) and request_id >= 0:
                     try:
                         abort(request_id)
                     except Exception:
                         pass
 
+        def on_disconnect():
+            nonlocal disconnected
+            disconnected = True
+            abort_children()
+
+        async def drain_child(index, child, final=False):
+            native_id = child.get("_batch_request_id", -1)
+            if not isinstance(native_id, int) or native_id < 0:
+                return
+            text = ""
+            count = handle.batch_generate_stream_count(native_id)
+            while cursors[index] < count:
+                token = handle.batch_generate_new_token(native_id, cursors[index])
+                if token is None:
+                    break
+                cursors[index] += 1
+                text += decoders[index].decode(ctypes.string_at(token))
+            if final:
+                text += decoders[index].decode(b"", final=True)
+            if not text:
+                return
+            choice = {"index": index, "finish_reason": None}
+            if api_format == 4:
+                choice["delta"] = {"content": text}
+                if index not in roles_sent:
+                    choice["delta"]["role"] = "assistant"
+                    roles_sent.add(index)
+            else:
+                choice["text"] = text
+            await self.send_oai_sse_event(json.dumps({
+                "id": request_id, "object": "chat.completion.chunk" if api_format == 4 else "text_completion",
+                "created": int(time.time()), "model": model_name, "choices": [choice]}))
+
         try:
+            # The ordinary streaming path watches the socket for disconnects;
+            # parallel fan-in must do the same or orphaned children can keep
+            # occupying native slots after a client disappears.  Unit capture
+            # handlers do not expose a socket, so they keep the deterministic
+            # polling path without a monitor task.
+            if getattr(self, "connection", None) is not None:
+                monitor_task = asyncio.create_task(self.monitor_connection(on_disconnect))
             while pending:
+                if disconnected:
+                    return
                 for task, (index, child) in tasks.items():
-                    request_id_native = child.get("_batch_request_id", -1)
-                    if not isinstance(request_id_native, int) or request_id_native < 0:
-                        continue
-                    count = handle.batch_generate_stream_count(request_id_native)
-                    while cursors[index] < count:
-                        token = handle.batch_generate_new_token(request_id_native, cursors[index])
-                        if token is None:
-                            break
-                        cursors[index] += 1
-                        token_text = ctypes.string_at(token).decode("UTF-8", "ignore")
-                        if api_format == 4:
-                            delta = {"content": token_text}
-                            if index not in roles_sent:
-                                delta["role"] = "assistant"
-                                roles_sent.add(index)
-                            payload = {"id": request_id, "object": "chat.completion.chunk",
-                                       "created": int(time.time()), "model": model_name,
-                                       "choices": [{"index": index, "delta": delta, "finish_reason": None}]}
-                        else:
-                            payload = {"id": request_id, "object": "text_completion",
-                                       "created": int(time.time()), "model": model_name,
-                                       "choices": [{"index": index, "text": token_text, "finish_reason": None}]}
-                        await self.send_oai_sse_event(json.dumps(payload))
+                    await drain_child(index, child)
 
                 done, pending = await asyncio.wait(pending, timeout=0.02,
                                                    return_when=asyncio.FIRST_COMPLETED)
+                if disconnected:
+                    return
                 for task in done:
                     index, child = tasks[task]
                     try:
@@ -6502,6 +6534,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                         await self.send_oai_sse_event(json.dumps(result))
                         await self.send_oai_sse_event("[DONE]")
                         return
+                    # Completion can race the preceding cursor poll. Drain again
+                    # before release so the final token is never discarded.
+                    await drain_child(index, child, final=True)
                     finish = (result.get("choices") or [{}])[0]
                     if api_format == 4:
                         payload = {"id": request_id, "object": "chat.completion.chunk",
@@ -6513,7 +6548,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                    "created": int(time.time()), "model": model_name,
                                    "choices": [{"index": index, "text": "",
                                                 "finish_reason": finish.get("finish_reason", "stop")}]}
-                    timing = finish.get("timing")
+                    timing = finish.get("timing") or result.get("timing")
                     if timing:
                         payload["choices"][0]["timing"] = timing
                     await self.send_oai_sse_event(json.dumps(payload))
@@ -6526,10 +6561,18 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             abort_children()
             raise
         finally:
-            for task in pending:
-                task.cancel()
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
+            # Cancelling an asyncio wrapper does not stop its native executor
+            # thread. Abort first, join the children, then release their IDs.
+            # The sticky flag also catches submissions that finish after abort.
+            abort_children()
+            if monitor_task and not monitor_task.done():
+                monitor_task.cancel()
+                await asyncio.gather(monitor_task, return_exceptions=True)
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for child in children:
+                native_id = child.pop("_batch_request_id", -1)
+                if isinstance(native_id, int) and native_id >= 0:
+                    handle.batch_generate_release(native_id)
 
     async def send_kai_sse_event(self, data):
         self.wfile.write('event: message\n'.encode())

@@ -1,4 +1,5 @@
 import json
+import socket
 import sys
 import threading
 import time
@@ -23,6 +24,7 @@ class FakeWorker(BaseHTTPRequestHandler):
     worker_id = 0
     fail_connect = False
     pause_ids = []
+    generation_ids = []
 
     def do_GET(self):
         if self.path == "/api/extra/requests":
@@ -46,6 +48,13 @@ class FakeWorker(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         body = json.loads(self.rfile.read(length) or b"{}")
+        if body.get('drop_after_submit'):
+            # The worker has consumed the request, but its response is lost.
+            # Retrying here could execute a generation twice.
+            self.generation_ids.append(self.worker_id)
+            self.connection.shutdown(socket.SHUT_RDWR)
+            self.close_connection = True
+            return
         self.pause_ids.append((self.worker_id, body.get("id")))
         response = json.dumps({"accepted": True, "worker": self.worker_id,
                                "id": body.get("id")}).encode()
@@ -108,6 +117,17 @@ if __name__ == "__main__":
     assert draining_pick != 1
     latency_pool.done(draining_pick)
     latency_pool.set_draining(1, False)
+    drained_pool = Pool([5101, 5102])
+    drained_pool.set_draining(0)
+    drained_pool.mark_failure(1)
+    assert pick(drained_pool, {}) == 1, 'cooldown fallback resurrected a drained replica'
+    drained_pool.set_draining(1)
+    try:
+        drained_pool.choose(b'{}')
+        raise AssertionError('all-draining pool accepted new work')
+    except ValueError:
+        pass
+    assert drained_pool.active == [0, 0]
     namespaced = pool.request_id(2, 41)
     assert pool.owner(namespaced) == (2, 41)
 
@@ -153,6 +173,41 @@ if __name__ == "__main__":
         conn.close()
         assert FakeWorker.pause_ids[-1] == (20, 77)
         assert all(value == 0 for value in Handler.pool.active)
+
+        # Owner controls keep working through drain while new requests receive
+        # a retryable response. Never reroute a control to a different owner.
+        Handler.pool.set_draining(0)
+        Handler.pool.set_draining(1)
+        conn, response = proxy_request(router, 'POST', '/api/extra/requests/cancel',
+                                       json.dumps({'id': owner_id}).encode())
+        assert response.status == 200
+        assert json.loads(response.read())['worker'] == 20
+        conn.close()
+        conn, response = proxy_request(router, 'POST', '/v1/completions', b'{}')
+        assert response.status == 503
+        response.read()
+        conn.close()
+
+        Handler.pool = Pool([worker_b.server_port])
+        Handler.pool.mark_failure(0)
+        conn, response = proxy_request(router, 'GET', '/stream')
+        assert response.read().endswith(b'[DONE]\n\n')
+        conn.close()
+        # Response delivery and the handler's finally block can race the client.
+        deadline = time.monotonic() + 2
+        while Handler.pool.active[0] and time.monotonic() < deadline:
+            time.sleep(.001)
+        assert Handler.pool.failure_count == [0], 'successful response did not clear cooldown'
+        assert Handler.pool.failure_until == [0.0]
+
+        Handler.pool = Pool([worker_a.server_port, worker_b.server_port])
+        FakeWorker.generation_ids.clear()
+        conn, response = proxy_request(router, 'POST', '/v1/completions',
+                                       b'{"drop_after_submit": true}')
+        assert response.status == 502
+        response.read()
+        conn.close()
+        assert FakeWorker.generation_ids == [10], 'router replayed a submitted generation'
     finally:
         Handler.pool.stop_health_monitor()
         router.shutdown()
