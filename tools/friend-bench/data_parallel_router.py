@@ -56,6 +56,7 @@ class Pool:
         for index, port in enumerate(self.ports):
             thread = threading.Thread(target=self.refresh_worker, args=(index, port),
                                       name=f"friend-router-probe-{index}")
+            thread.daemon = True
             thread.start()
             probes.append(thread)
         for thread in probes:
