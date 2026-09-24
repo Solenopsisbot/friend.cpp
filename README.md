@@ -279,6 +279,8 @@ controls use the namespaced ID, so they cannot target a request on another worke
 The router also samples each worker's running/waiting requests and KV-block count;
 fresh samples influence least-load selection, while samples older than two seconds
 expire back to the local in-flight counter.
+Probe latency is folded into that score with an EWMA, and a worker can be marked
+draining so existing request owners finish while new work moves elsewhere.
 Connection failures put a replica on a short exponential health cooldown, while
 successful responses restore it immediately; if every replica is cooling down the
 router still probes one so a recovered worker can rejoin.
