@@ -1,6 +1,7 @@
 #include "friend/paged_kv.hpp"
 #include "friend/kv_connector.hpp"
 #include "friend/kv_transport.hpp"
+#include "friend/kv_socket_connector.hpp"
 #include "friend/serving_metrics.hpp"
 
 #include <cassert>
@@ -64,11 +65,22 @@ int main() {
     assert(friend_kv::transport_frame::receive_socket(sockets[1], unframed) && unframed == wire);
     ::close(sockets[0]);
     ::close(sockets[1]);
+
+    int connector_sockets[2] = {-1, -1};
+    assert(::socketpair(AF_UNIX, SOCK_STREAM, 0, connector_sockets) == 0);
+    friend_kv::paged_allocator network_destination(4);
+    friend_kv::kv_connector network_connector(network_destination, source_connector.discover());
+    friend_kv::socket_connector sender(source_connector), receiver(network_connector);
+    assert(sender.export_to(connector_sockets[0]));
+    assert(receiver.import_from(connector_sockets[1]));
+    assert(network_destination.entries().size() == 1);
+    ::close(connector_sockets[0]);
+    ::close(connector_sockets[1]);
 #endif
     assert(destination_connector.import_wire(wire));
     assert(destination.entries().size() == 1 && destination.entries()[0].key == 101);
     assert(destination_connector.payload(101) && (*destination_connector.payload(101))[2] == 3);
-    assert(events.size() == 1 && events[0] == friend_kv::connector_event_type::exported);
+    assert(events.size() >= 1 && events[0] == friend_kv::connector_event_type::exported);
     assert(!destination_connector.invalidate(101));
     destination.release(destination.entries()[0].id);
     destination.release(destination.entries()[0].id);
