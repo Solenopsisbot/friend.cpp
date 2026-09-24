@@ -164,6 +164,108 @@ static int current_media_identifier = MEDIA_TOKEN_IDENTIFIER_A;
 static int vision_max_res = 2048;
 static bool use_mrope = false;
 
+// friend.cpp: encoder-side multimodal cache.  llama KV reuse cannot avoid the
+// expensive image/audio encoder, so retain a small number of deep-copied mtmd
+// chunks keyed by bytes plus encoder/preprocessing identity.  The limit is by
+// media object count because mtmd owns opaque backend buffers whose byte size is
+// not exposed through its public API.
+struct multimodal_cache_entry {
+    std::string key;
+    std::vector<media_chunk> chunks;
+    std::vector<int> chunk_start_seq;
+    std::vector<int> chunk_end_seq;
+    int token_count = 0;
+    uint64_t last_used = 0;
+};
+static std::vector<multimodal_cache_entry> multimodal_cache;
+static uint64_t multimodal_cache_tick = 0;
+static uint64_t multimodal_cache_hits = 0;
+static uint64_t multimodal_cache_misses = 0;
+static uint64_t multimodal_cache_evictions = 0;
+static constexpr size_t MULTIMODAL_CACHE_LIMIT = 8;
+
+static void free_media_chunks(std::vector<media_chunk> & chunks)
+{
+    for(auto & chunk : chunks) {
+        if(chunk.mtmd_chunk) {
+            mtmd_input_chunk_free(static_cast<mtmd_input_chunk *>(chunk.mtmd_chunk));
+            chunk.mtmd_chunk = nullptr;
+        }
+    }
+    chunks.clear();
+}
+
+static bool copy_media_chunks(const std::vector<media_chunk> & source, std::vector<media_chunk> & destination)
+{
+    destination.clear();
+    destination.reserve(source.size());
+    for(const auto & chunk : source) {
+        media_chunk copy = chunk;
+        copy.mtmd_chunk = chunk.mtmd_chunk
+            ? mtmd_input_chunk_copy(static_cast<const mtmd_input_chunk *>(chunk.mtmd_chunk)) : nullptr;
+        if(chunk.mtmd_chunk && !copy.mtmd_chunk) {
+            free_media_chunks(destination);
+            return false;
+        }
+        destination.push_back(copy);
+    }
+    return true;
+}
+
+static std::string multimodal_cache_key(const std::string & data, bool audio)
+{
+    const std::string identity = "mtmd-v1|" + std::to_string(reinterpret_cast<uintptr_t>(mtmd_ctx)) +
+        "|max=" + std::to_string(vision_max_res) + "|audio=" + (audio ? "1" : "0") + "|" + data;
+    return friend_cache::hash_hex(identity);
+}
+
+static void clear_multimodal_cache()
+{
+    for(auto & entry : multimodal_cache) free_media_chunks(entry.chunks);
+    multimodal_cache.clear();
+    multimodal_cache_tick = 0;
+}
+
+static multimodal_cache_entry * find_multimodal_cache(const std::string & key)
+{
+    for(auto & entry : multimodal_cache) {
+        if(entry.key == key) {
+            entry.last_used = ++multimodal_cache_tick;
+            ++multimodal_cache_hits;
+            return &entry;
+        }
+    }
+    ++multimodal_cache_misses;
+    return nullptr;
+}
+
+static void store_multimodal_cache(const std::string & key, const media_object & object, int token_count)
+{
+    multimodal_cache_entry entry;
+    entry.key = key;
+    entry.chunk_start_seq = object.chunk_start_seq;
+    entry.chunk_end_seq = object.chunk_end_seq;
+    entry.token_count = token_count;
+    entry.last_used = ++multimodal_cache_tick;
+    if(!copy_media_chunks(object.mediachunks, entry.chunks)) return;
+    for(auto & old : multimodal_cache) {
+        if(old.key == key) {
+            free_media_chunks(old.chunks);
+            old = std::move(entry);
+            return;
+        }
+    }
+    if(multimodal_cache.size() >= MULTIMODAL_CACHE_LIMIT) {
+        auto victim = std::min_element(multimodal_cache.begin(), multimodal_cache.end(),
+            [](const auto & a, const auto & b) { return a.last_used < b.last_used; });
+        free_media_chunks(victim->chunks);
+        *victim = std::move(entry);
+        ++multimodal_cache_evictions;
+    } else {
+        multimodal_cache.push_back(std::move(entry));
+    }
+}
+
 static kcpp_params * kcpp_data = nullptr;
 static int max_context_limit_at_load = 0;
 static int n_past = 0;
@@ -3456,6 +3558,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     guidance_ctx = nullptr;
     if(mtmd_ctx)
     {
+        clear_multimodal_cache();
         mtmd_free(mtmd_ctx);
         mtmd_ctx = nullptr;
     }
@@ -7017,6 +7120,20 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
         for(int i=0;i<media_objects.size();++i)
         {
             std::string media_obj = media_objects[i].b64data;
+            const std::string cache_key = multimodal_cache_key(media_obj, media_objects[i].is_audio);
+            if(auto * cached = find_multimodal_cache(cache_key)) {
+                if(copy_media_chunks(cached->chunks, media_objects[i].mediachunks)) {
+                    media_objects[i].chunk_start_seq = cached->chunk_start_seq;
+                    media_objects[i].chunk_end_seq = cached->chunk_end_seq;
+                    media_object_token_counts.push_back(cached->token_count);
+                    int cached_tokens = cached->token_count;
+                    if(i == 0) cached_tokens += introsize + outrosize;
+                    const int media_token = kcpp_media_token_for_index(i);
+                    for(int n=0; n<cached_tokens; ++n) last_media_mem.push_back(media_token);
+                    if(debugmode==1 && !is_quiet) printf("\nMTMD media %d encoder cache hit", i);
+                    continue;
+                }
+            }
             const std::vector<uint8_t> media_data_buffer = kcpp_base64_decode(media_obj);
             mtmd::bitmap bitmap(media_objects[i].is_audio
                 ? mtmd_helper_bitmap_init_from_buf(mtmd_ctx, media_data_buffer.data(), media_data_buffer.size(), false, mtmd_helper_init_opt_default()).bitmap
@@ -7103,6 +7220,7 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
             if(mediatokensneeded>0 && mediatokensneeded < nctx)
             {
                 media_object_token_counts.push_back(mediatokensneeded);
+                store_multimodal_cache(cache_key, media_objects[i], mediatokensneeded);
                 int tokcnt = mediatokensneeded;
                 if(i==0)
                 {
@@ -7852,6 +7970,13 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         {
             printf("\nAttached media changed, existing multimodal cache invalidated");
         }
+        media_data_changed = true;
+    }
+    else if(!media_objects.empty())
+    {
+        // The request wrapper rebuilds media_objects for every generation; the
+        // encoder chunks must therefore be restored from the bounded cache even
+        // when the composite content signature is unchanged.
         media_data_changed = true;
     }
 
@@ -10094,6 +10219,10 @@ std::string gpttype_friend_metrics() {
     }
     std::string result = batch_metrics.render(waiting, running, batch_paused_bytes, lane_running,
                                               kv_pages_used, kv_pages_capacity);
+    result += "# TYPE friend_multimodal_encoder_cache_hits_total counter\nfriend_multimodal_encoder_cache_hits_total " + std::to_string(multimodal_cache_hits) + "\n";
+    result += "# TYPE friend_multimodal_encoder_cache_misses_total counter\nfriend_multimodal_encoder_cache_misses_total " + std::to_string(multimodal_cache_misses) + "\n";
+    result += "# TYPE friend_multimodal_encoder_cache_evictions_total counter\nfriend_multimodal_encoder_cache_evictions_total " + std::to_string(multimodal_cache_evictions) + "\n";
+    result += "# TYPE friend_multimodal_encoder_cache_entries gauge\nfriend_multimodal_encoder_cache_entries " + std::to_string(multimodal_cache.size()) + "\n";
     return result;
 }
 

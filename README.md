@@ -326,6 +326,13 @@ cannot invalidate pages that still have live references. The current llama
 backend has no device-KV transport hook, so the connector carries ownership
 metadata and leaves tensor payload transfer to the future paged backend.
 
+Multimodal requests retain up to eight preprocessed mtmd encoder results. The
+cache key includes media bytes, encoder identity, audio/image mode and the
+vision resize limit; replacing the encoder drops all entries. Prometheus exposes
+`friend_multimodal_encoder_cache_hits_total`, misses, evictions and current
+entry count. The public mtmd API does not expose opaque buffer byte sizes, so
+the bound is by entry count until that accounting is available.
+
 ---
 
 ## Status and tested hardware
