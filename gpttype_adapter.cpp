@@ -186,6 +186,7 @@ static uint64_t multimodal_cache_hits = 0;
 static uint64_t multimodal_cache_misses = 0;
 static uint64_t multimodal_cache_evictions = 0;
 static size_t multimodal_cache_bytes = 0;
+static std::mutex multimodal_cache_mutex;
 static constexpr size_t MULTIMODAL_CACHE_LIMIT = 8;
 
 static void free_media_chunks(std::vector<media_chunk> & chunks)
@@ -225,6 +226,7 @@ static std::string multimodal_cache_key(const std::string & data, bool audio)
 
 static void clear_multimodal_cache()
 {
+    std::lock_guard<std::mutex> lock(multimodal_cache_mutex);
     for(auto & entry : multimodal_cache) free_media_chunks(entry.chunks);
     multimodal_cache.clear();
     multimodal_cache_bytes = 0;
@@ -7267,6 +7269,7 @@ static mtmd_bitmap * kcpp_mtmd_bitmap_init_image_from_buf(const unsigned char * 
 //this function prepares the mtmd chunks for media. it's only needed when media changes
 static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_intro, const std::vector<int> & media_outro)
 {
+    std::lock_guard<std::mutex> cache_lock(multimodal_cache_mutex);
     if (mtmd_ctx)
     {
         int introsize = media_intro.size();
@@ -10361,6 +10364,7 @@ std::string gpttype_friend_build_steering(const std::string & request_json)
 // Safe to scrape concurrently with generation; no llama state reads are needed.
 std::string gpttype_friend_metrics() {
     std::lock_guard<std::mutex> lock(batch_mutex);
+    std::lock_guard<std::mutex> cache_lock(multimodal_cache_mutex);
     size_t waiting = 0, running = 0;
     std::vector<size_t> lane_running(batch_lanes.size(), 0);
     size_t kv_pages_used = 0, kv_pages_capacity = 0;
