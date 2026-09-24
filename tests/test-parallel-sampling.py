@@ -116,6 +116,24 @@ class ParallelSamplingTests(unittest.TestCase):
                 result = self.run_request(NativeBackend(3, reject=code))
                 self.assertEqual(result["error"]["code"], 503)
 
+    def test_per_request_speculative_budget_is_passed_to_native(self):
+        seen = []
+        class BudgetBackend(NativeBackend):
+            def batch_generate_submit(self, inputs):
+                seen.append(inputs.friend_draft_max)
+                return super().batch_generate_submit(inputs)
+        for params, expected in (({}, -1), ({'speculative_tokens': 0}, 0),
+                                 ({'speculative_tokens': 3}, 3),
+                                 ({'num_speculative_tokens': 2}, 2),
+                                 ({'speculative_tokens': 100}, 32)):
+            with self.subTest(params=params):
+                seen.clear()
+                self.params.update(params)
+                self.run_request(BudgetBackend(3))
+                self.assertEqual(seen, [expected] * 3)
+                for key in params:
+                    self.params.pop(key)
+
     def test_legacy_samples_stay_on_calling_thread(self):
         self.args.parallelrequests = 1
         caller = threading.get_ident()

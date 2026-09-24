@@ -31,7 +31,7 @@ friend.cpp-specific features, described below:
 10. **Parallel sampling** -- bounded OpenAI `n` fan-out with independent RNG state, indexed choices, shared prompt KV and aggregated usage
 11. **KV connector contract** -- versioned compatibility discovery, metadata export/import, invalidation and ownership events
 12. **Guided regex constraints** -- bounded full-match regex subset compiled to named GBNF rules, with explicit 400 errors for unsupported assertions and backreferences
-13. **Multimodal encoder cache** -- bounded deep copies of mtmd image/audio chunks keyed by bytes and preprocessing identity
+13. **Multimodal encoder cache** -- bounded reuse of mtmd image/audio chunks and immutable projector embeddings keyed by bytes and preprocessing identity
 
 
 ---
@@ -298,6 +298,10 @@ serialize health updates for the rest of the pool.
 
 `--schedule-tokens N` bounds the total tokens admitted to one scheduler round;
 decodes are admitted before prompt chunks, and `0` uses the backend batch size.
+Requests may set `speculative_tokens` (or `num_speculative_tokens`) to a value
+from `0` to `32` to cap history-based suffix/ngram speculation for that request;
+`0` disables it while an omitted field uses the server flag. This keeps a
+latency-sensitive request from inheriting an aggressive global draft budget.
 Same-profile prefixes share complete 16-token blocks through llama's sequence-cell
 copy-on-write path. The share count is exposed as
 `friend_batch_kv_block_shares_total` in `/metrics`.
