@@ -6068,6 +6068,15 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         global friendlymodelname, chatcompl_adapter, currfinishreason, thinkformats
         global autoswapmode, textName, sttName, ttsName, embedName, musicName, imageName, mmprojName
 
+        # Do not silently treat a beam request as ordinary sampling. Correct
+        # beams need native sequence-branch ownership so grammar, EOS and KV
+        # state are cloned together; the public llama API does not provide that
+        # contract yet.
+        beam_width = tryparseint(genparams.get("beam_width", 1), 1)
+        if genparams.get("use_beam_search", False) or beam_width > 1:
+            return {"error": {"message": "beam search requires native branch ownership and is not available yet",
+                               "type": "invalid_request_error", "code": 400}}
+
         # OpenAI's `n` asks for independent samples from one prompt. Native
         # continuous batching schedules these children together; prompt prefix
         # sharing keeps the common attention KV in one sequence-cell range,

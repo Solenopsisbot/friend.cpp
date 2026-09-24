@@ -100,6 +100,12 @@ class ParallelSamplingTests(unittest.TestCase):
         self.assertEqual(threads, [caller] * 3)
         self.assertEqual(len(result["choices"]), 3)
 
+    def test_beam_request_is_explicitly_rejected(self):
+        with patch.object(server, "args", self.args), patch.object(server, "utfprint"):
+            result = asyncio.run(self.handler.generate_text(
+                {"prompt": "Hello", "use_beam_search": True}, 4, False))
+        self.assertEqual(result["error"]["code"], 400)
+
 
 if __name__ == "__main__":
     unittest.main()
