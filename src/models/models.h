@@ -98,6 +98,9 @@ struct llm_build_delta_net_base : public llm_graph_context {
     // pre-activation beta / alpha and folds sigmoid / softplus into its prologue
     // (ggml_gated_delta_net_set_raw_gates); the non-fused paths keep the activated g / b
     ggml_tensor * gdn_raw_beta    = nullptr;
+    // friend.cpp: >= 0: the q/k handed to build_recurrent_attn are un-normalised and the fused
+    // op l2-normalises them with this eps (ggml_gated_delta_net_set_qk_l2)
+    float         gdn_qk_l2_eps   = -1.0f;
     ggml_tensor * gdn_raw_alpha   = nullptr;
     ggml_tensor * gdn_raw_dt_bias = nullptr;
     ggml_tensor * gdn_raw_a       = nullptr;
@@ -2355,6 +2358,7 @@ struct llama_model_qwen35 : public llama_model_base {
         // device-dependent path choices, scanned once per graph build (not per layer)
         bool gdn_state_rows_dev_ok = true; // every GPU device is Metal: fused GDN may read state rows in place
         bool gdn_raw_gates_dev_ok  = true; // every device is CPU/Metal/CUDA/ROCm/MUSA: fused GDN takes raw gates
+        bool gdn_qk_l2_dev_ok      = true; // friend.cpp: every device is CPU/Metal: fused GDN folds the q/k l2 norm
     private:
         ggml_tensor * build_layer_attn(
         llm_graph_input_attn_kv * inp_attn,

@@ -551,7 +551,8 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
     const int64_t n_seqs       = v->ne[3];
     const int64_t n_seq_tokens = q->ne[2];
 
-    const bool keep = cparams.n_rs_seq > 0;
+    // rows mode implies the snapshot (ring) layout; with n_rs_seq == 0 that is one slot, K = 1
+    const bool keep = cparams.n_rs_seq > 0 || state_rows != nullptr;
 
     GGML_ASSERT(state_rows == nullptr || keep); // rows mode is a ring-path optimization
 
@@ -588,6 +589,9 @@ ggml_tensor * llm_build_delta_net_base::build_recurrent_attn(
     }
     if (raw) {
         ggml_gated_delta_net_set_raw_gates(gdn_out, gdn_raw_dt_bias, gdn_raw_a);
+    }
+    if (gdn_qk_l2_eps >= 0.0f) {
+        ggml_gated_delta_net_set_qk_l2(gdn_out, gdn_qk_l2_eps);
     }
     if (n_seq_tokens > 1) {
         res->add_fused_node({LLM_FUSED_OP_GDN_CH, gdn_out, il});

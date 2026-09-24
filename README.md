@@ -1,8 +1,8 @@
 # friend.cpp
 
-A local LLM inference engine that does more with less -- 1-bit models on old GPUs,
-adaptive speculative decoding, per-request adapter swapping, and a prompt cache
-that actually remembers.
+A local inference engine for trying things -- adaptive speculative decoding,
+per-request adapter hot-swap, a prompt cache that actually remembers, and whatever else
+earns its place under honest measurement.
 
 By [Solenopsisbot](https://github.com/Solenopsisbot).
 
@@ -14,10 +14,15 @@ An independent downstream fork of [koboldcpp](docs/KOBOLDCPP.md), itself built o
 llama.cpp and ggml, with [PrismML](https://github.com/PrismML-Eng/llama.cpp)'s llama.cpp fork
 merged in. Everything koboldcpp already does -- its bundled KoboldAI Lite UI,
 KoboldCpp/OpenAI/Ollama-compatible APIs, image generation, speech, all of it --
-still works unchanged. friend.cpp adds engine-level work on top: better kernels for
-small models, smarter drafting, hot-swappable adapters and LM heads, and a
-multi-tier prompt cache. The design pressure came partly from multi-persona chat
-servers, but nothing here is chat-specific; it's a general-purpose inference engine.
+still works unchanged.
+
+friend.cpp is a testbed for engine-level features: caching strategies, speculative
+decoding, adapter management, sampling, steering, and GPU kernels. The ethos is
+build, measure honestly, keep what the numbers justify. Fixed-length speculative
+drafting nearly doubles speed on predictable text and loses 25% on chat, so the
+default adapts per round instead -- and the tables below show both sides. Features
+that don't pan out under measurement get documented as what they are, not sold as
+what they aren't.
 
 No release binaries yet. Build from source, details below.
 
@@ -25,18 +30,18 @@ No release binaries yet. Build from source, details below.
 
 | Feature | What you get |
 |---|---|
-| [1-bit / ternary on old GPUs](#1-bit-and-ternary-models) | Q1_0, PQ2_0, PTQ1_0 with CPU/Metal/CUDA/Vulkan kernels. Maxwell GPUs without dp4a go from 25 to 63+ tok/s on Bonsai-8B Q1_0. |
-| [Adaptive speculative decoding](#adaptive-speculative-decoding) | Draft length chosen per-round from live measurements. Fixed drafting loses ~25% on chat; adaptive stayed at or above the no-drafter baseline on every workload tested. |
-| [Per-request adapters](#per-request-adapter-profiles) | LoRA, steering vectors, and LM heads selected per request. Head swaps keep the KV cache valid -- nearly free. |
 | [Tiered prompt cache](#tiered-prompt-cache) | RAM + optional disk. Returning to a previous conversation restores 1057/1074 tokens; prefill drops from 0.35 s to 0.06 s. On by default. |
-| [Blue-noise sampling](#blue-noise-sampling) | Anti-correlated random rolls. 20--27% shorter unlucky-token streaks. Unbiased. Does not measurably change output quality -- it's a safety margin. |
-| [Metal small-batch kernels](#1-bit-and-ternary-models) | Batch-of-8 decode on the 27B Bonsai model: 190.6 ms down to 100.2 ms. Single-token and prefill unchanged. |
+| [Per-request adapters](#per-request-adapter-profiles) | LoRA, steering vectors, and LM heads selected per request. Head swaps keep the KV cache valid -- nearly free. |
+| [Adaptive speculative decoding](#adaptive-speculative-decoding) | Draft length chosen per-round from live measurements. Fixed drafting loses ~25% on chat; adaptive stayed at or above the no-drafter baseline on every workload tested. |
+| [Steering vectors built in](#steering-vectors-built-in) | Build control vectors from contrastive prompts on the running model. 1.3 seconds from 12 pairs on a 1.7B model. |
 | [Wider continuous batching](#continuous-batching) | Grammar, DRY, XTC, top-n-sigma, mirostat, and dynamic temperature all batch across concurrent requests. |
 | Decode-first scheduling | Ready decodes run before prompt work; `--prefill-tokens` bounds prompt work per round so long prompts do not freeze other requests. |
 | Priority scheduling and preemption | Per-request `priority` values, fair tie breaking, and bounded host snapshots let urgent work displace lower-priority sequences when all slots are full. |
 | Suffix speculation | `--suffix-draft N` proposes continuations from repeated prompt/history suffixes; it takes precedence over the fixed n-gram drafter. |
 | Batch logprobs | Concurrent requests can ask for per-token top alternatives with `logprobs`; results stay isolated per request. |
 | Serving metrics | Prometheus text at `/metrics`: queue time, TTFT, ITL, decode time, cache reuse, and batch counters. |
+| [Blue-noise sampling](#blue-noise-sampling) | Anti-correlated random rolls: fewer streaks at either end of the distribution, which the model would otherwise amplify into loops or derailing. Unbiased. |
+| [Low-bit models and kernels](#low-bit-models-and-kernels) | Q1_0, PQ2_0, PTQ1_0 with CPU/Metal/CUDA/Vulkan kernels. Metal batch-of-8 on 27B Bonsai Q1_0: 190.6 ms down to 100.2 ms. Maxwell GPUs without dp4a go from 25 to 63+ tok/s on Bonsai-8B Q1_0. |
 
 ## Quick start
 
@@ -68,61 +73,24 @@ detail.
 
 ## Feature tour
 
-### 1-bit and ternary models
+### Tiered prompt cache
 
-GGUF types Q1_0 (upstream llama.cpp), PQ2_0, and PTQ1_0 (PrismML-specific, used
-by models like `prism-ml/Ternary-Bonsai-*-gguf`) with kernels for CPU, Metal,
-CUDA, and Vulkan.
+On by default. Snapshots of processed context (KV + recurrent state) are reused by
+longest common prefix -- any later prompt starting with the same system prompt
+picks up where the last one left off. RAM budget via `--cache-ram` (default
+2048 MiB), optional disk tier via `--cache-dir` that survives restarts.
 
-friend.cpp-specific kernel work falls in two places:
+Hybrid and recurrent models (e.g. Qwen3.5) get checkpoints at conversation-turn
+boundaries so they can resume from a shared prefix. Snapshots are taken in idle
+time (`--cache-idle-ms`, default 300 ms), so switching conversations after any pause
+doesn't pay for them.
+Snapshots are zstd-compressed losslessly (~1.2x). Outputs are identical to running
+without the cache in every tested scenario.
 
-**Metal small-batch kernels.** Decoding a batch of n tokens on the 27B Bonsai Q1_0
-model (milliseconds per batch, Apple M5):
+API: `GET /api/extra/cache`, `POST /api/extra/cache/warm` (prefill + pin a
+prompt), `/pin`, `/clear`.
 
-| Batch size | Stock | friend.cpp |
-|---|---|---|
-| 1 | 42.5 | 42.4 |
-| 2 | 57.1 | 52.2 |
-| 4 | 101.3 | 65.9 |
-| 8 | 190.6 | 100.2 |
-| 16 | 377.6 | 179.2 |
-
-Single-token decode and prefill are unchanged. The wins matter for speculative
-decoding verification and concurrent-request batches.
-
-**Maxwell dp4a-free path.** Old NVIDIA GPUs that lack dp4a (compute capability
-< 6.1) get a multiply-free bit-plane dot product for Q1_0 and PQ2_0. On a GTX 970
-running Bonsai-8B, generation speed: Q1_0 jumps from 25--29 to 63--72 tok/s,
-PQ2_0 from 24--26 to 46--48 tok/s. Output is bit-identical to the standard path.
-Auto-selected at runtime; you do not need to do anything.
-
-More: [FRIEND.md -- 1-bit / ternary](FRIEND.md#1-bit--ternary-decode-on-gpus-without-dp4a)
-and [FRIEND.md -- small-batch Bonsai kernels](FRIEND.md#small-batch-bonsai-kernels-metal).
-
-### Adaptive speculative decoding
-
-`--draftamount` is now a maximum, not a fixed count. Each round, the engine picks
-the draft length (including 0, meaning "don't draft this round") that maximises
-expected tokens per millisecond, calculated from live measurements of acceptance
-rate, drafter time, and verify time.
-
-27B Bonsai Q1_0 with its DSpark drafter on Apple M5, tokens/s:
-
-| Workload | No drafter | Fixed draft of 3 | Adaptive |
-|---|---|---|---|
-| Counting | 21.7 | 39.0 | 36.6 |
-| Code | 21.6 | 36.6 | 35.7 |
-| Surreal haiku | 16.4 | 14.7 | 16.3 |
-| Chat | 21.5 | 15.8 | 22.0 |
-
-Fixed drafting wins big on predictable sequences and loses ~25% on chat. Adaptive
-stayed at or above the no-drafter baseline on every workload tested. `--draft-fixed` restores the old
-behaviour if you want it.
-
-PrismML's standalone DSpark drafters work via `--draftmodel`
-(Qwen3.5/3.6-family targets).
-
-More: [FRIEND.md -- DSpark](FRIEND.md#speculative-decoding-with-dspark-drafters).
+More: [FRIEND.md -- prompt cache](FRIEND.md#tiered-prompt-cache).
 
 ### Per-request adapter profiles
 
@@ -161,36 +129,30 @@ noticeably / clearly / over-the-top shifted output while staying coherent.
 
 Vectors save to `--cvec-dir` and reload at startup.
 
-### Tiered prompt cache
+### Adaptive speculative decoding
 
-On by default. Snapshots of processed context (KV + recurrent state) are reused by
-longest common prefix -- any later prompt starting with the same system prompt
-picks up where the last one left off. RAM budget via `--cache-ram` (default
-2048 MiB), optional disk tier via `--cache-dir` that survives restarts.
+`--draftamount` is now a maximum, not a fixed count. Each round, the engine picks
+the draft length (including 0, meaning "don't draft this round") that maximises
+expected tokens per millisecond, calculated from live measurements of acceptance
+rate, drafter time, and verify time.
 
-Hybrid and recurrent models (e.g. Qwen3.5) get checkpoints at conversation-turn
-boundaries so they can resume from a shared prefix. Snapshots are taken in idle
-time (`--cache-idle-ms`, default 300 ms), so switching conversations after any pause
-doesn't pay for them.
-Snapshots are zstd-compressed losslessly (~1.2x). Outputs are identical to running
-without the cache in every tested scenario.
+27B Bonsai Q1_0 with its DSpark drafter on Apple M5, tokens/s:
 
-API: `GET /api/extra/cache`, `POST /api/extra/cache/warm` (prefill + pin a
-prompt), `/pin`, `/clear`.
+| Workload | No drafter | Fixed draft of 3 | Adaptive |
+|---|---|---|---|
+| Counting | 21.7 | 39.0 | 36.6 |
+| Code | 21.6 | 36.6 | 35.7 |
+| Surreal haiku | 16.4 | 14.7 | 16.3 |
+| Chat | 21.5 | 15.8 | 22.0 |
 
-More: [FRIEND.md -- prompt cache](FRIEND.md#tiered-prompt-cache).
+Fixed drafting wins big on predictable sequences and loses ~25% on chat. Adaptive
+stayed at or above the no-drafter baseline on every workload tested. `--draft-fixed` restores the old
+behaviour if you want it.
 
-### Blue-noise sampling
+PrismML's standalone DSpark drafters work via `--draftmodel`
+(Qwen3.5/3.6-family targets).
 
-`"blue_noise": true` in a request enables anti-correlated random rolls -- each
-individual roll stays uniform (unbiased), but unlucky streaks of low-probability
-tokens drop by roughly 20--27%. Mean surprisal is unchanged. You can also set
-`"rng_type": "mt19937" | "lowbias32"` to pick the underlying generator.
-
-Honest disclosure: a blind judged comparison found no measurable preference in
-reply quality. This is a safety margin for higher temperatures, not a quality knob.
-
-More: [FRIEND.md -- blue-noise sampling](FRIEND.md#blue-noise-sampling).
+More: [FRIEND.md -- DSpark](FRIEND.md#speculative-decoding-with-dspark-drafters).
 
 ### Continuous batching
 
@@ -325,8 +287,8 @@ JSON Schema and JSON object responses. vLLM-style `structured_outputs: {"json":
 OpenAI completion and chat requests may set `n` up to 16 for parallel sampling.
 Each sample gets an independent RNG/sampler state and indexed choice; native
 continuous batching shares complete prompt KV blocks between siblings and
-aggregates usage across the returned choices. Streaming `n` is rejected clearly
-until indexed SSE fan-in is available.
+aggregates usage across the returned choices. Streaming `n` uses indexed SSE
+fan-in, drains completion races, and preserves split UTF-8 tokens.
 
 The scheduler-owned page table also has a versioned metadata connector in
 `friend/kv_connector.hpp`. Peers discover model/layout/dtype/profile/namespace
@@ -338,9 +300,76 @@ metadata and leaves tensor payload transfer to the future paged backend.
 Multimodal requests retain up to eight preprocessed mtmd encoder results. The
 cache key includes media bytes, encoder identity, audio/image mode and the
 vision resize limit; replacing the encoder drops all entries. Prometheus exposes
-`friend_multimodal_encoder_cache_hits_total`, misses, evictions and current
-entry count. The public mtmd API does not expose opaque buffer byte sizes, so
-the bound is by entry count until that accounting is available.
+`friend_multimodal_encoder_cache_hits_total`, misses, evictions, current entry
+count, and encoded embedding bytes. Opaque mtmd metadata remains outside the
+byte gauge because the public API does not expose its storage size.
+### Blue-noise sampling
+
+`"blue_noise": true` in a request enables anti-correlated random rolls -- each
+individual roll stays uniform (unbiased), but streaks of rolls at the same end of the
+distribution get rarer. That matters because the model conditions on its own output:
+a run of top picks makes the next top pick likelier until the text locks into a loop
+(context collapse), and a run of bottom picks derails it. You can also set
+`"rng_type": "mt19937" | "lowbias32"` to pick the underlying generator.
+
+Measured: tail-pick streaks 20--27% shorter with mean surprisal unchanged. On a base
+model (Qwen3-1.7B-Base, 768-token raw completions, 192 paired runs) blue noise cut
+collapse from 24.5% to 19.8% at T=0.7, with less repetitive text overall (paired
+t = 2.3); the effect is smaller at T=1.0 with min_p. kaetemi, whose sampler this is,
+reports a large reduction in collapse on base models and about 1% better
+reasoning-model output in preliminary benchmarks. Short chat replies from an instruct
+model showed no judged preference either way -- too short to collapse.
+
+More: [FRIEND.md -- blue-noise sampling](FRIEND.md#blue-noise-sampling).
+
+### Low-bit models and kernels
+
+GGUF types Q1_0 (upstream llama.cpp), PQ2_0, and PTQ1_0 (PrismML-specific, used
+by models like `prism-ml/Ternary-Bonsai-*-gguf`) with kernels for CPU, Metal,
+CUDA, and Vulkan.
+
+friend.cpp-specific kernel work falls in two places:
+
+**Metal small-batch kernels.** Decoding a batch of n tokens on the 27B Bonsai Q1_0
+model (milliseconds per batch, Apple M5):
+
+| Batch size | Stock | friend.cpp |
+|---|---|---|
+| 1 | 42.5 | 42.4 |
+| 2 | 57.1 | 52.2 |
+| 4 | 101.3 | 65.9 |
+| 8 | 190.6 | 100.2 |
+| 16 | 377.6 | 179.2 |
+
+Single-token decode and prefill are unchanged. The wins matter for speculative
+decoding verification and concurrent-request batches.
+
+**Maxwell dp4a-free path.** Old NVIDIA GPUs that lack dp4a (compute capability
+< 6.1) get a multiply-free bit-plane dot product for Q1_0 and PQ2_0. On a GTX 970
+running Bonsai-8B, generation speed: Q1_0 jumps from 25--29 to 63--72 tok/s,
+PQ2_0 from 24--26 to 46--48 tok/s. Output is bit-identical to the standard path.
+Auto-selected at runtime; you do not need to do anything.
+
+More: [FRIEND.md -- 1-bit / ternary](FRIEND.md#1-bit--ternary-decode-on-gpus-without-dp4a)
+and [FRIEND.md -- small-batch Bonsai kernels](FRIEND.md#small-batch-bonsai-kernels-metal).
+
+---
+
+## Experimental features
+
+Most of friend.cpp's additions can be turned off individually for A/B comparisons
+or if something misbehaves:
+
+- **Prompt cache:** `--cache-ram 0` disables it entirely.
+- **Adaptive drafting:** `--draft-fixed` restores fixed-length drafting.
+- **Blue-noise sampling:** opt-in per request (`"blue_noise": true`); off by
+  default.
+- **Metal small-batch kernels:** `GGML_METAL_BONSAI_SB_DISABLE=1` restores the
+  stock kernels.
+- **CUDA bit-plane path:** `FRIEND_CUDA_NO_BITPLANES=1` forces the stock dot
+  product.
+
+Things may move between releases. The knobs exist so you can isolate what changed.
 
 ---
 
@@ -353,7 +382,10 @@ This is a build-from-source project with no release binaries.
 - **CUDA (Maxwell / GTX 970):** built and run. The 1-bit dp4a-free kernels are
   verified here. The CUDA code also compiles for sm_61 through sm_120, but only
   the 970 (sm_52) has been run on real hardware so far.
-- **Vulkan:** builds, but has not been run on real hardware yet.
+- **Vulkan:** run on a GTX 970 (Maxwell): Q1_0 and PQ2_0 about
+  32 tok/s generation on Bonsai-8B, PTQ1_0 about 14; test-backend-ops
+  passes, and PQ2_0 greedy output matches CUDA. CUDA is still faster on
+  that card for Q1_0 and PQ2_0; Vulkan wins for PTQ1_0.
 - **HIP (AMD):** not built yet.
 
 See [FRIEND.md -- limits](FRIEND.md#limits-and-not-yet-verified) for the honest
@@ -373,8 +405,9 @@ generation, speech, story writing, all of it -- is intact and documented in
 - **`tools/friend-sync/smoke.py`** -- 24 end-to-end checks in about a minute:
   coherence, determinism, cache-on output must equal cache-off output, head swap,
   steering, batching, GPU vs CPU.
-- **`tools/friend-eval/sampler_lab.py`** and **`judge_lab.py`** -- sampler
-  measurement and judged comparison.
+- **`tools/friend-eval/sampler_lab.py`**, **`judge_lab.py`** and
+  **`collapse_eval.py`** -- sampler measurement, judged comparison, and
+  long-generation context collapse.
 - **`tools/friend-bench/`** -- kernel benchmarks.
 - **`tools/friend-heads/extract_head.py`** -- extract an LM head from any GGUF.
 

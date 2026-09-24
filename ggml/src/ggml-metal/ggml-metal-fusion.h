@@ -35,6 +35,10 @@ typedef enum ggml_metal_fusion_id {
     GGML_METAL_FUSION_ADD_CHAIN,    // ADD x N (N in [2, 7])
     GGML_METAL_FUSION_SNAKE,        // MUL + SIN + SQR + MUL + ADD
     GGML_METAL_FUSION_GDN_CACHE,    // GATED_DELTA_NET + CPY (write snapshots into the recurrent cache)
+    // friend.cpp: packing hints only -- these keep the Hadamard-input chains adjacent through
+    // the graph optimizer; the encoders match and validate them themselves (kernel_norm_fwht,
+    // kernel_glu_fwht), so the table never reports them in FULL mode
+    GGML_METAL_FUSION_HADAMARD_INPUT,
 } ggml_metal_fusion_id;
 
 struct ggml_metal_fusion {

@@ -448,6 +448,14 @@ bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t
         return true;
     }
 
+    // friend.cpp: measurement knob. Pre-Pascal GPUs never pick MMQ for dense matmuls (dp4a is
+    // emulated there, see below), so FRIEND_CUDA_FORCE_MMQ=1 is the only way to A/B it against
+    // dequantize + cuBLAS on such a card. Off by default; no effect unless set.
+    static const bool force_mmq = getenv("FRIEND_CUDA_FORCE_MMQ") != nullptr;
+    if (force_mmq) {
+        return true;
+    }
+
     if (ggml_cuda_highest_compiled_arch(cc) < GGML_CUDA_CC_DP4A) {
         // for MoE, mmq is faster even without native dp4a
         // TODO: check if cards older than pascal might benefit from this as well

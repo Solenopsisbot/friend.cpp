@@ -1562,6 +1562,66 @@ ggml_tensor * llm_graph_context::build_cvec(
     return cvec->apply_to(ctx0, cur, il);
 }
 
+// friend.cpp: keep the inputs of the fused activation -> Hadamard chain alive until the
+// transform's output is allocated. The Metal backend fuses [ADD] + RMS_NORM + MUL(w) and
+// [RMS_NORM + MUL(w)] + SWIGLU (+ head permutation) with the sign MUL and the FWHT into one
+// kernel whose threadgroups read the whole input row while writing their block of the output.
+// Unfused, the allocator may place the FWHT output over those (by then consumed) inputs, or
+// run the residual ADD in place -- both harmless for the separate kernels, a race for the
+// fused one, which then has to fall back. Listing the chain's inputs as extra (unread) sources
+// of the transform's MUL_MAT extends their lifetime past it, so neither happens. Backends read
+// only src[0] / src[1] of a MUL_MAT. LLAMA_HADAMARD_KEEPALIVE_DISABLE=1 turns this off.
+static void llama_hadamard_keepalive(ggml_tensor * rot_out, ggml_tensor * act) {
+    static const bool disabled = getenv("LLAMA_HADAMARD_KEEPALIVE_DISABLE") != nullptr;
+    if (disabled) {
+        return;
+    }
+
+    const auto skip_views = [](ggml_tensor * t) {
+        while (t && (t->op == GGML_OP_RESHAPE || t->op == GGML_OP_VIEW || t->op == GGML_OP_CONT ||
+                     t->op == GGML_OP_PERMUTE)) {
+            t = t->src[0];
+        }
+        return t;
+    };
+
+    ggml_tensor * mm = rot_out;
+    while (mm && mm->op == GGML_OP_RESHAPE) {
+        mm = mm->src[0];
+    }
+    if (mm == nullptr || mm->op != GGML_OP_MUL_MAT) {
+        return;
+    }
+
+    std::vector<ggml_tensor *> keep;
+    ggml_tensor * a = skip_views(act);
+    if (a && a->op == GGML_OP_GLU && a->src[1]) {
+        keep.push_back(a->src[0]);
+        keep.push_back(a->src[1]);
+        a = skip_views(a->src[1]);      // a gated norm: follow the value side
+    }
+    if (a && a->op == GGML_OP_MUL && a->src[0] && a->src[0]->op == GGML_OP_RMS_NORM) {
+        ggml_tensor * x = a->src[0]->src[0];
+        keep.push_back(x);
+        ggml_tensor * xa = skip_views(x);
+        if (xa && xa->op == GGML_OP_ADD) {
+            keep.push_back(xa->src[0]);
+            keep.push_back(xa->src[1]);
+        }
+    }
+
+    int slot = 2;
+    for (ggml_tensor * t : keep) {
+        while (slot < GGML_MAX_SRC && mm->src[slot] != nullptr) {
+            slot++;
+        }
+        if (slot >= GGML_MAX_SRC || t == nullptr) {
+            break;
+        }
+        mm->src[slot++] = t;
+    }
+}
+
 ggml_tensor * llm_graph_context::build_lora_mm(
           ggml_tensor * w,
           ggml_tensor * cur,
@@ -1589,6 +1649,7 @@ ggml_tensor * llm_graph_context::build_lora_mm(
                 cur_mm = ggml_mul(ctx0, cur_mm, t.signs);
             }
             cur_mm = llama_mul_mat_hadamard(ctx0, cur_mm, t.rot);
+            llama_hadamard_keepalive(cur_mm, cur);
             hadamard_memo[memo_key] = cur_mm;
             }
         }
@@ -1649,6 +1710,7 @@ ggml_tensor * llm_graph_context::build_lora_mm_id(
                 cur_mm = ggml_mul(ctx0, cur_mm, t.signs);
             }
             cur_mm = llama_mul_mat_hadamard(ctx0, cur_mm, t.rot);
+            llama_hadamard_keepalive(cur_mm, cur);
             hadamard_memo[memo_key] = cur_mm;
             }
         }

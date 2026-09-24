@@ -2708,6 +2708,13 @@ extern "C" {
             struct ggml_tensor  * dt_bias,
             struct ggml_tensor  * a);
 
+    // friend.cpp: q and k arrive un-normalised; the op l2-normalises each head row itself,
+    // exactly as scale(rms_norm(x, eps/S_k), 1/sqrt(S_k)) would -- two dependent graph ops
+    // fewer per layer. Backends: CPU and Metal (callers must gate on that).
+    GGML_API void ggml_gated_delta_net_set_qk_l2(
+            struct ggml_tensor  * gdn,
+            float                 eps);
+
     // DSA lightning indexer
     //
     // q:       [n_embd_idx, n_head_idx, n_batch, ne3 ]

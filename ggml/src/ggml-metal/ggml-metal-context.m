@@ -461,6 +461,17 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
         return GGML_STATUS_FAILED;
     }
 
+    // friend.cpp: GGML_METAL_TIMING=1 waits for every graph and logs, averaged over 32 graphs,
+    // how long the CPU took to encode it vs how long the GPU was busy running it. Tells a
+    // launch-bound decode (GPU busy ~= wall) from an encode-bound one (GPU idles waiting for
+    // command buffers). Debug only: the wait serializes submission.
+    static int timing_env = -1;
+    if (timing_env < 0) {
+        timing_env = getenv("GGML_METAL_TIMING") != NULL;
+    }
+    const bool timing = timing_env;
+    const int64_t t_start_us = timing ? ggml_time_us() : 0;
+
     // number of nodes encoded by the main thread (empirically determined)
     const int n_main = MAX(64, 0.1*gf->n_nodes);
 
@@ -575,6 +586,32 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
         }
 
         dispatch_apply(n_cb, ctx->d_queue, ctx->encode_async);
+
+        if (timing) {
+            static double acc_enc = 0, acc_span = 0, acc_busy = 0, acc_wall = 0;
+            static int    acc_n   = 0;
+
+            const int64_t t_enc_us = ggml_time_us();
+            double gpu_first = 1e30, gpu_last = 0, gpu_busy = 0;
+            for (int i = 0; i <= n_cb; ++i) {
+                id<MTLCommandBuffer> cb = ctx->cmd_bufs[i].obj;
+                [cb waitUntilCompleted];
+                gpu_first = MIN(gpu_first, cb.GPUStartTime);
+                gpu_last  = MAX(gpu_last,  cb.GPUEndTime);
+                gpu_busy += cb.GPUEndTime - cb.GPUStartTime;
+            }
+            acc_enc  += (t_enc_us - t_start_us) / 1000.0;
+            acc_span += (gpu_last - gpu_first) * 1000.0;
+            acc_busy += gpu_busy * 1000.0;
+            acc_wall += (ggml_time_us() - t_start_us) / 1000.0;
+            if (++acc_n == 32) {
+                fprintf(stderr, "%s: %d nodes, n_cb %d: encode %.2f ms, gpu span %.2f ms, gpu busy %.2f ms, wall %.2f ms (avg of 32)\n",
+                    __func__, gf->n_nodes, n_cb, acc_enc/32, acc_span/32, acc_busy/32, acc_wall/32);
+                ggml_metal_op_stats_dump(32);
+                acc_enc = acc_span = acc_busy = acc_wall = 0;
+                acc_n = 0;
+            }
+        }
 
         // for debugging: block until graph is computed
         //[ctx->cmd_buf_last waitUntilCompleted];

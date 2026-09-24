@@ -225,11 +225,19 @@ struct block_ptq1_0
     float16_t d;
 };
 
+// friend.cpp: 32-bit view of the same 28-byte block, so decoders can fetch four qs bytes (or qh
+// plus d) in one load: w[0..5] = qs, w[6] = qh[0] | qh[1] << 8 | d << 16 (little endian).
+struct block_ptq1_0_packed32
+{
+    uint32_t w[7];
+};
+
 #if defined(DATA_A_PTQ1_0)
 #define QUANT_K QUANT_K_PTQ1_0
 #define QUANT_R QUANT_R_PTQ1_0
 #define QUANT_AUXF 1
 #define A_TYPE block_ptq1_0
+#define A_TYPE_PACKED32 block_ptq1_0_packed32
 #endif
 
 #define QUANT_K_Q2_0 64
@@ -254,6 +262,26 @@ struct block_q2_0_packed16
 #define A_TYPE block_q2_0
 #define A_TYPE_PACKED16 block_q2_0_packed16
 #define DATA_A_QUANT_LEGACY
+#endif
+
+// friend.cpp: PQ2_0 -- Prism's Q2_0 at group size 128. Same 2-bit codec as Q2_0 (code c at bits
+// 2*(j%4) of byte j/4, value (c - 1) * d) with one fp16 scale per 128 weights. Field order mirrors
+// block_pq2_0 in ggml-common.h (d first). Compiled as a standalone per-type matmul shader like
+// PTQ1_0, not through the unified MULMAT_QUANT switch.
+#define QUANT_K_PQ2_0 128
+#define QUANT_R_PQ2_0 1
+
+struct block_pq2_0
+{
+    float16_t d;
+    uint8_t qs[QUANT_K_PQ2_0 / 4];
+};
+
+#if defined(DATA_A_PQ2_0)
+#define QUANT_K QUANT_K_PQ2_0
+#define QUANT_R QUANT_R_PQ2_0
+#define QUANT_AUXF 1
+#define A_TYPE block_pq2_0
 #endif
 
 #define QUANT_K_Q8_1 32

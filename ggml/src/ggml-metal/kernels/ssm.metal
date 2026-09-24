@@ -474,3 +474,41 @@ kernel void kernel_ssm_scan_ssd_mma_f32(
         threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
     }
 }
+
+// friend.cpp: single-token step of the d_conv = 4 causal conv with its state bookkeeping, one
+// thread per channel: reads the 3 stored columns and the new input, writes silu(conv) and the
+// shifted state (s1, s2, x) to the cache. Replaces CONCAT + CPY + SSM_CONV + SILU (the stock
+// conv kernel also runs one single-thread threadgroup per channel). Each thread touches only
+// its own channel, so an in-place state update is race-free.
+kernel void kernel_ssm_conv_step_f32(
+        constant ggml_metal_kargs_ssm_conv_step & args,
+        device const float * st,
+        device const float * x,
+        device const float * kern,
+        device       float * out,
+        device       float * dst,
+        uint3 tgpig[[threadgroup_position_in_grid]],
+        uint  tpitg[[thread_index_in_threadgroup]],
+        uint3   ntg[[threads_per_threadgroup]]) {
+    const int     c = tgpig.x * ntg.x + tpitg;
+    const int64_t s = tgpig.y;
+    if (c >= args.C) {
+        return;
+    }
+
+    device const float * sc = st + s*args.st_s + c*args.st_c;
+    const float s0 = sc[0];
+    const float s1 = sc[1];
+    const float s2 = sc[2];
+    const float xv = x[s*args.x_s + c*args.x_c];
+    const float4 k = ((device const float4 *) kern)[c];
+
+    const float sumf = dot(float4(s0, s1, s2, xv), k);
+
+    out[s*args.out_s + c] = sumf / (1.0f + exp(-sumf));
+
+    device float * d = dst + s*args.dst_s + c*3;
+    d[0] = s1;
+    d[1] = s2;
+    d[2] = xv;
+}

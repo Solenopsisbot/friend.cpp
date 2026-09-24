@@ -27,6 +27,12 @@ int ggml_metal_op_n_nodes(ggml_metal_op_t ctx);
 
 int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx);
 
+// friend.cpp: GGML_METAL_TIMING=1 launch statistics -- every encoded kernel is counted by the
+// op chain it covers (e.g. RMS_NORM+MUL when fused), plus memory barriers. dump prints the
+// per-graph averages over n_graphs graphs and resets.
+bool ggml_metal_op_stats_enabled(void);
+void ggml_metal_op_stats_dump(int n_graphs);
+
 //
 // available ops:
 //

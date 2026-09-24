@@ -10962,11 +10962,17 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
     const int64_t state_seq_stride = src_rows ? 0 : (int64_t) (src_state->nb[3] / sizeof(float));
     const int64_t state_row_size   = src_rows ? (int64_t) (src_state->nb[1] / sizeof(float)) : 0;
 
-    const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0);
+    // friend.cpp: q/k l2 normalisation folded in (ggml_gated_delta_net_set_qk_l2)
+    const bool  qk_l2     = ggml_get_op_params_i32(dst, 2) != 0;
+    const float qk_l2_eps = qk_l2 ? ggml_get_op_params_f32(dst, 3) : 0.0f;
+    const int64_t S_k     = src_q->ne[0];
+
+    const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0) + (qk_l2 ? 2*S_k : 0);
     const int ith = params->ith;
 
     float * delta       = (float *)params->wdata + ith * per_thread + CACHE_LINE_SIZE_F32;
     float * state_work  = K > 1 ? (delta + S_v) : nullptr;
+    float * qk_work     = qk_l2 ? (delta + S_v + (K > 1 ? S_v * S_v : 0)) : nullptr;
 
     // output layout: [attn_scores | new_states]
     // attn_scores: S_v * H * n_tokens * n_seqs    floats
@@ -11018,6 +11024,25 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
         for (int64_t t = 0; t < n_tokens; t++) {
             const float * q_d = (const float *)((const char *)src_q->data + iq3 * nbq3 + t * nbq2 + iq1 * nbq1);
             const float * k_d = (const float *)((const char *)src_k->data + ik3 * nbk3 + t * nbk2 + ik1 * nbk1);
+
+            if (qk_l2) {
+                // same arithmetic as scale(rms_norm(x, eps/S_k), 1/sqrt(S_k))
+                const float * src2[2] = { q_d, k_d };
+                for (int w = 0; w < 2; ++w) {
+                    float sum = 0.0f;
+                    for (int64_t i = 0; i < S_k; ++i) {
+                        sum += src2[w][i]*src2[w][i];
+                    }
+                    const float r  = 1.0f/sqrtf(sum/S_k + qk_l2_eps/S_k);
+                    const float s2 = 1.0f/sqrtf((float) S_k);
+                    float * o = qk_work + w*S_k;
+                    for (int64_t i = 0; i < S_k; ++i) {
+                        o[i] = (src2[w][i]*r)*s2;
+                    }
+                }
+                q_d = qk_work;
+                k_d = qk_work + S_k;
+            }
             const float * v_d = (const float *)((const char *)src_v->data + iv3 * nbv3 + t * nbv2 + iv1 * nbv1);
 
             float beta_val    = *(const float *)((const char *)src_beta->data + iv3 * nbb3 + t * nbb2 + iv1 * nbb1);
