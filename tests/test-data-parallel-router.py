@@ -144,6 +144,10 @@ if __name__ == "__main__":
     try:
         conn, response = proxy_request(router, "GET", "/stream")
         assert response.status == 200
+        assert response.getheader("X-Friend-Router-Epoch") == Handler.pool.epoch
+        assert response.getheader("X-Friend-Router-Worker") in ("0", "1")
+        assert float(response.getheader("X-Friend-Router-Queue-Ms", "-1")) >= 0
+        assert float(response.getheader("X-Friend-Router-Upstream-Header-Ms", "-1")) >= 0
         assert response.read(11) == b"data: one\n\n"
         assert response.read(11) == b"data: two\n\n"
         assert response.read(len(b"data: [DONE]\n\n")) == b"data: [DONE]\n\n"

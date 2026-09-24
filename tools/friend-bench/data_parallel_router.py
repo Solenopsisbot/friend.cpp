@@ -252,6 +252,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def forward(self, body, owner=None):
+        route_started = time.monotonic()
         attempted = set()
         for _ in range(len(self.pool.ports)):
             if len(attempted) >= len(self.pool.ports):
@@ -276,6 +277,7 @@ class Handler(BaseHTTPRequestHandler):
                 # after request() may mean generation has already started.
                 conn.connect()
                 connected = True
+                upstream_started = time.monotonic()
                 headers = self.upstream_headers()
                 if body:
                     headers["Content-Length"] = str(len(body))
@@ -287,6 +289,18 @@ class Handler(BaseHTTPRequestHandler):
                 for key, value in response.getheaders():
                     if key.lower() not in hop:
                         self.send_header(key, value)
+                # These headers make the worker boundary visible to clients
+                # collecting per-request timings. The epoch changes whenever
+                # the router starts, so a route ID cannot be mistaken for a
+                # request owner after a restart. Header latency ends when the
+                # upstream sends response headers; streaming body time remains
+                # represented by the response's own timing fields.
+                self.send_header('X-Friend-Router-Epoch', self.pool.epoch)
+                self.send_header('X-Friend-Router-Worker', str(index))
+                self.send_header('X-Friend-Router-Queue-Ms',
+                                 f'{max(0.0, (upstream_started - route_started) * 1000.0):.3f}')
+                self.send_header('X-Friend-Router-Upstream-Header-Ms',
+                                 f'{max(0.0, (time.monotonic() - upstream_started) * 1000.0):.3f}')
                 self.send_header('Connection', 'close')
                 self.end_headers()
                 headers_sent = True

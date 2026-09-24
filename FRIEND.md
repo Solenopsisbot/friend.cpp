@@ -280,12 +280,17 @@ permit different LoRA sets inside one `llama_decode` call.
 real lane handoff: lane 0 evaluates the prompt and first token, then serializes
 the llama sequence state; a decode lane restores that state and continues without
 replaying the prompt. This is an in-process handoff over host memory. The KV
-connector can carry serialized payloads, but no network worker or device-tensor
-transport is assumed yet.
+connector can carry serialized payloads, and its live socket wrapper exposes
+frame, payload-byte, wire-byte, and failure counters. No network worker or
+device-tensor transport is assumed yet.
 
 The companion process router marks connection-failed workers unhealthy for a short
 exponential cooldown, resets the cooldown after a successful response, and keeps
 probing when all workers are cooling down so recovery is automatic.
+Responses include `X-Friend-Router-Epoch`, `X-Friend-Router-Worker`,
+`X-Friend-Router-Queue-Ms`, and `X-Friend-Router-Upstream-Header-Ms` headers so
+client timing traces can identify the replica and separate routing overhead from
+upstream response-header latency.
 It periodically samples worker request states and KV-block counts, using fresh
 observations in its load score and ignoring samples older than two seconds.
 
