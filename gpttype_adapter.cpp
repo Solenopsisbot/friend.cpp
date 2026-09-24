@@ -4970,6 +4970,7 @@ struct BatchGenerateRequest
     size_t paused_kv_raw_size = 0;
     bool preempted = false;
     bool disaggregated_prefill = false;
+    bool transfer_pending = false;
     uint32_t pause_count = 0;
     uint32_t preemption_count = 0;
     double paused_seconds = 0.0;
@@ -6103,9 +6104,12 @@ static bool batch_claim_waiting_locked()
             const bool restored = batch_restore_paused_locked(*req, slot);
             batch_release_paused_bytes_locked(*req);
             if(!restored) {
+                if(req->transfer_pending) ++batch_metrics.kv_transfer_failures;
+                req->transfer_pending = false;
                 batch_finish_request_locked(*req, stop_reason::ERROR_ENCOUNTERED);
                 continue;
             }
+            req->transfer_pending = false;
             if(!batch_assign_pages_locked(*req)) {
                 ++batch_metrics.kv_page_stalls;
                 batch_finish_request_locked(*req, stop_reason::ERROR_ENCOUNTERED);
@@ -6644,9 +6648,13 @@ static void batch_worker_loop(BatchLane * lane)
             if(req->disaggregated_prefill && req->i_batch_is_prefill && req->state == BatchState::GENERATING) {
                 const int decode_lane = batch_choose_decode_lane_locked();
                 if(decode_lane < 0 || !batch_snapshot_paused_locked(*req, req->slot, false)) {
+                    ++batch_metrics.kv_transfer_failures;
                     batch_finish_request_locked(*req, stop_reason::ERROR_ENCOUNTERED);
                     continue;
                 }
+                batch_metrics.kv_transfer_bytes += req->paused_kv.size();
+                ++batch_metrics.kv_transfer_count;
+                req->transfer_pending = true;
                 batch_release_pages_locked(req->physical_blocks);
                 req->resume_state = BatchState::GENERATING;
                 req->state = BatchState::WAITING;

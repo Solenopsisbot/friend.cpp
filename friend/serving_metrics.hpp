@@ -32,6 +32,7 @@ struct metrics {
     uint64_t prompt_tokens = 0, reused_tokens = 0, generated_tokens = 0;
     uint64_t rounds = 0, batch_tokens = 0, preemptions = 0, kv_block_shares = 0, watermark_stalls = 0;
     uint64_t kv_page_queries = 0, kv_page_hits = 0, kv_page_evictions = 0, kv_page_stalls = 0;
+    uint64_t kv_transfer_bytes = 0, kv_transfer_count = 0, kv_transfer_failures = 0;
     uint64_t lora_profile_rejections = 0;
     uint64_t draft_proposed = 0, draft_accepted = 0;
     histogram queue, first_token, inter_token, decode;
@@ -70,6 +71,9 @@ struct metrics {
         value("kv_page_hits_total", "counter", kv_page_hits);
         value("kv_page_evictions_total", "counter", kv_page_evictions);
         value("kv_page_stalls_total", "counter", kv_page_stalls);
+        value("kv_transfer_bytes_total", "counter", kv_transfer_bytes);
+        value("kv_transfers_total", "counter", kv_transfer_count);
+        value("kv_transfer_failures_total", "counter", kv_transfer_failures);
         value("lora_profile_rejections_total", "counter", lora_profile_rejections);
         value("kv_pages_used", "gauge", kv_pages_used);
         value("kv_pages_capacity", "gauge", kv_pages_capacity);
