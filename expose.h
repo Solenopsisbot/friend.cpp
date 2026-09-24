@@ -120,6 +120,8 @@ struct load_model_inputs
     const int friend_max_queued_requests = 0;
     // friend.cpp: fraction of estimated KV capacity kept free for active sequences; 0 disables.
     const float friend_kv_watermark = 0.0f;
+    // friend.cpp: maximum number of distinct live adapter profiles admitted at once; 0 disables.
+    const int friend_max_lora_profiles = 0;
 };
 struct generation_inputs
 {

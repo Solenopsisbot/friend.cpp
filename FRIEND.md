@@ -269,6 +269,13 @@ ordinary continuous batching without MTP, a separate draft model, or CFG guidanc
 CPU threads are divided across lanes, so raise N for concurrent work only when the
 device and memory budget can absorb the extra KV/compute state.
 
+`--max-lora-profiles N` bounds the number of distinct live adapter profiles. A new
+profile over the cap receives the same retryable overload response as a full
+continuous-batching queue, while requests using resident profiles keep running.
+`friend_batch_lora_profile_rejections_total` counts these admissions. This is
+profile-grouped execution across context lanes; llama's public API still does not
+permit different LoRA sets inside one `llama_decode` call.
+
 The companion process router marks connection-failed workers unhealthy for a short
 exponential cooldown, resets the cooldown after a successful response, and keeps
 probing when all workers are cooling down so recovery is automatic.

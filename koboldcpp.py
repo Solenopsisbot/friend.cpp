@@ -380,6 +380,7 @@ class load_model_inputs(ctypes.Structure):
                 ("friend_profile_lanes", ctypes.c_int),
                 ("friend_max_queued_requests", ctypes.c_int),
                 ("friend_kv_watermark", ctypes.c_float),
+                ("friend_max_lora_profiles", ctypes.c_int),
                 ]
 
 class generation_inputs(ctypes.Structure):
@@ -2537,6 +2538,7 @@ def load_model(model_filename):
     inputs.friend_profile_lanes = args.profile_lanes
     inputs.friend_max_queued_requests = args.max_queued_requests
     inputs.friend_kv_watermark = args.kv_watermark
+    inputs.friend_max_lora_profiles = args.max_lora_profiles
     inputs.rpc_mode = (2 if args.rpcmode=="host" else (1 if args.rpcmode=="connect" else 0))
     inputs.rpc_targets = (args.rpctargets if args.rpcmode=="connect" else "").encode("UTF-8")
 
@@ -13916,6 +13918,7 @@ if __name__ == '__main__':
     advparser.add_argument("--profile-lanes", type=check_range(int,1,32), default=1, help="Native concurrent contexts sharing model weights. Each lane owns its KV/compute buffers and parallelrequests slots. CPU threads are divided across lanes; memory use increases.")
     advparser.add_argument("--max-queued-requests", type=check_range(int,0,1000000), default=0, help="friend.cpp: maximum live continuous-batching requests, including waiting/running/paused requests; overloads are rejected when full (0 disables).")
     advparser.add_argument("--kv-watermark", type=check_range(float,0.0,0.9), default=0.0, help="friend.cpp: reserve this fraction of estimated continuous-batching KV capacity for active sequences (0 disables).")
+    advparser.add_argument("--max-lora-profiles", type=check_range(int,0,1024), default=0, help="friend.cpp: cap distinct live LoRA/steering/head profiles admitted by native batching (0 disables).")
     advparser.add_argument("--stream-interval", type=check_range(int,1,64), default=1, help="friend.cpp: stream this many generated tokens per event when possible; final partial chunks always flush.")
     advparser.add_argument("--prefill-tokens", dest="prefilltokens", metavar='[tokens]', type=check_range(int,0,65536), default=0, help="friend.cpp: maximum prompt tokens admitted per continuous-batching round after ready decodes. Lower values protect inter-token latency; 0 uses the full batch size.")
     advparser.add_argument("--password", metavar=('[API key]'), help="Enter a password required to use this instance. This key will be required for all text endpoints. Image endpoints are not secured. Can also be set with env var KCPP_PASSWORD", default=os.getenv('KCPP_PASSWORD',None))
