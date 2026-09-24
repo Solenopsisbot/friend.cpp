@@ -319,7 +319,9 @@ OpenAI `/v1/completions` and `/v1/chat/completions` requests may set `n` up to
 aligned prompt KV when the native batch scheduler can reuse it, and return
 indexed choices. A failed child aborts its admitted siblings. Streaming `n`
 uses the same native child requests and emits indexed SSE chunks as each child
-advances. The
+advances; client disconnects abort all children, completion races drain their
+last token, and incremental UTF-8 decoding preserves split multibyte pieces.
+The
 `friend/kv_connector.hpp` contract provides a versioned, bounded handoff for
 scheduler pages and serialized backend payloads. It rejects incompatible
 model/layout/dtype or profile namespaces, rolls back failed imports, and will
