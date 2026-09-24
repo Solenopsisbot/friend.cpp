@@ -1,8 +1,10 @@
 #include "friend/paged_kv.hpp"
 #include "friend/kv_connector.hpp"
+#include "friend/kv_transport.hpp"
 #include "friend/serving_metrics.hpp"
 
 #include <cassert>
+#include <sstream>
 
 int main() {
     friend_kv::paged_allocator pages(2);
@@ -37,6 +39,19 @@ int main() {
     assert(source_connector.payload(101) && source_connector.payload(101)->size() == 5);
     friend_kv::kv_connector destination_connector(destination, source_connector.discover());
     const auto wire = source_connector.export_wire();
+    const auto framed = friend_kv::transport_frame::encode(wire);
+    std::vector<uint8_t> unframed;
+    assert(friend_kv::transport_frame::decode(framed, unframed) && unframed == wire);
+    std::stringstream stream;
+    assert(friend_kv::transport_frame::write(stream, wire));
+    unframed.clear();
+    assert(friend_kv::transport_frame::read(stream, unframed) && unframed == wire);
+    auto bad_frame = framed;
+    bad_frame.back() ^= 1;
+    assert(!friend_kv::transport_frame::decode(bad_frame, unframed));
+    auto short_frame = framed;
+    short_frame.pop_back();
+    assert(!friend_kv::transport_frame::decode(short_frame, unframed));
     assert(destination_connector.import_wire(wire));
     assert(destination.entries().size() == 1 && destination.entries()[0].key == 101);
     assert(destination_connector.payload(101) && (*destination_connector.payload(101))[2] == 3);
