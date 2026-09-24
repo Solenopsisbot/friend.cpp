@@ -94,6 +94,12 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
                 'cache_salt': 'guided-choice', 'stream': False,
             })
             assert guided['choices'][0]['message']['content'].strip() in ('yes', 'no'), guided
+            guided_regex = request('/v1/chat/completions', {
+                'messages': [{'role': 'user', 'content': 'Reply with exactly yes.'}],
+                'max_tokens': 4, 'temperature': 0, 'guided_regex': r'^yes$',
+                'cache_salt': 'guided-regex', 'stream': False,
+            })
+            assert guided_regex['choices'][0]['message']['content'].strip() == 'yes', guided_regex
             parallel = request('/v1/chat/completions', {
                 'messages': [{'role': 'user', 'content': 'Write one short, creative greeting.'}],
                 'max_tokens': 8, 'temperature': 0.8, 'seed': 901, 'n': 2,
