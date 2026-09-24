@@ -82,6 +82,36 @@ public:
     uint64_t hits() const { return hits_; }
     uint64_t evictions() const { return evictions_; }
 
+    struct entry {
+        uint64_t key = 0;
+        uint32_t references = 0;
+        page_id id = invalid_page;
+    };
+
+    std::vector<entry> entries() const {
+        std::vector<entry> result;
+        result.reserve(by_key_.size());
+        for(const auto & item : by_key_) {
+            const page_id id = item.second;
+            if(id < pages_.size() && pages_[id].occupied)
+                result.push_back({item.first, pages_[id].references, id});
+        }
+        std::sort(result.begin(), result.end(), [](const entry & a, const entry & b) {
+            return a.key < b.key;
+        });
+        return result;
+    }
+
+    bool invalidate(uint64_t key) {
+        auto found = by_key_.find(key);
+        if(found == by_key_.end()) return false;
+        const page_id id = found->second;
+        if(id >= pages_.size() || !pages_[id].occupied || pages_[id].references != 0) return false;
+        by_key_.erase(found);
+        pages_[id] = page{};
+        return true;
+    }
+
 private:
     struct page {
         uint64_t key = 0;
