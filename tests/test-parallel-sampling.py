@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Exercise real Python fan-out and native submission without loading weights."""
 import asyncio
+import ctypes
 import json
 from pathlib import Path
 import sys
 import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -48,11 +50,41 @@ class NativeBackend:
         raise AssertionError("parallel child entered the singleton legacy generator")
 
 
+class StreamingBackend:
+    def __init__(self):
+        self.next_id = 0
+        self.tokens = {}
+        self.released = []
+
+    def batch_generate_submit(self, inputs):
+        request_id = self.next_id
+        self.next_id += 1
+        self.tokens[request_id] = [ctypes.c_char_p(f"tok-{request_id}".encode())]
+        return request_id
+
+    def batch_generate_stream_count(self, request_id):
+        return len(self.tokens[request_id])
+
+    def batch_generate_new_token(self, request_id, index):
+        return self.tokens[request_id][index]
+
+    def batch_generate_result(self, request_id):
+        time.sleep(0.03)
+        return SimpleNamespace(status=1, stopreason=1, text=self.tokens[request_id][0].value,
+                               prompt_tokens=3, completion_tokens=1,
+                               logprobs_json=None, timing_json=b'{"total_seconds": 0.1}')
+
+    def batch_generate_release(self, request_id):
+        self.released.append(request_id)
+
+
 class ParallelSamplingTests(unittest.TestCase):
     def setUp(self):
         self.handler = object.__new__(server.KcppServerRequestHandler)
         self.args = SimpleNamespace(parallelrequests=4, noshift=True,
-                                    defaultgenamt=8, genlimit=0)
+                                    defaultgenamt=8, genlimit=0, quiet=True,
+                                    smartcontext=False, draftmodel="", usemtp=False,
+                                    enableguidance=False, model_param="")
         self.params = {"prompt": "Hello", "n": 3, "seed": 100, "max_length": 8}
 
     def run_request(self, backend, api_format=4):
@@ -105,6 +137,34 @@ class ParallelSamplingTests(unittest.TestCase):
             result = asyncio.run(self.handler.generate_text(
                 {"prompt": "Hello", "use_beam_search": True}, 4, False))
         self.assertEqual(result["error"]["code"], 400)
+
+    def test_streaming_parallel_fan_in_has_indexed_chunks(self):
+        backend = StreamingBackend()
+        events = []
+        handler = object.__new__(server.KcppServerRequestHandler)
+        handler.send_response = lambda *_args: None
+        handler.send_header = lambda *_args: None
+        handler.end_headers = lambda **_kwargs: None
+
+        async def capture(data):
+            events.append(data)
+
+        handler.send_oai_sse_event = capture
+        params = {"prompt": "Hello", "n": 2, "seed": 100, "max_length": 1,
+                  "oai_uniqueid": 77}
+        with patch.object(server, "args", self.args), \
+             patch.object(server, "handle", backend), \
+             patch.object(server, "friendlymodelname", "test-model"), \
+             patch.object(server, "autoswapmode", False):
+            asyncio.run(handler.handle_parallel_sse_stream(params, 4))
+        payloads = [json.loads(event) for event in events if event != "[DONE]"]
+        token_chunks = [item for item in payloads if item.get("choices", [{}])[0].get("delta", {}).get("content")]
+        assert [item["choices"][0]["index"] for item in token_chunks] == [0, 1]
+        finish_chunks = [item for item in payloads if item.get("choices") and
+                         item["choices"][0]["finish_reason"] == "stop"]
+        assert len(finish_chunks) == 2
+        assert events[-1] == "[DONE]"
+        assert set(backend.released) == {0, 1}
 
 
 if __name__ == "__main__":

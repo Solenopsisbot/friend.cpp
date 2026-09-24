@@ -6398,6 +6398,133 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(f'event: {eventname}\ndata: {data}\n\n'.encode())
         self.wfile.flush()
 
+    async def handle_parallel_sse_stream(self, genparams, api_format):
+        """Fan in native child streams for OpenAI ``n`` requests.
+
+        ``generate`` leaves a batch request live while a streaming request is
+        being consumed. Each child therefore exposes an independent native
+        request id in its copied parameter map; this loop polls those cursors
+        and emits indexed SSE chunks as soon as tokens are available.
+        """
+        if api_format not in (3, 4):
+            return {"error": {"message": "streaming parallel samples require an OpenAI endpoint",
+                               "type": "invalid_request_error", "code": 400}}
+        sample_count = max(1, min(16, tryparseint(genparams.get("n", 1), 1)))
+        parent = dict(genparams)
+        parent.pop("n", None)
+        parent["_parallel_sample_child"] = True
+        parent["_parallel_sample_native"] = continuous_batching_python_eligible(parent, api_format)
+        base_seed = tryparseint(parent.get("sampler_seed", parent.get("seed", -1)), -1)
+        children = []
+        for index in range(sample_count):
+            child = copy.deepcopy(parent)
+            child["oai_uniqueid"] = f"{genparams.get('oai_uniqueid', 1)}-{index}"
+            if base_seed >= 0:
+                child["sampler_seed"] = base_seed + index
+                child["seed"] = base_seed + index
+            children.append(child)
+
+        model_name = friendlymodelname
+        if autoswapmode and textName is not None:
+            model_name = textName
+        request_id = f"chatcmpl-A{genparams.get('oai_uniqueid', 1)}" if api_format == 4 else f"cmpl-A{genparams.get('oai_uniqueid', 1)}"
+        self.send_response(200)
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("cache-control", "no-cache")
+        self.send_header("connection", "keep-alive")
+        self.end_headers(content_type="text/event-stream")
+
+        tasks = {asyncio.create_task(self.generate_text(child, api_format, True)): (index, child)
+                 for index, child in enumerate(children)}
+        pending = set(tasks)
+        cursors = {index: 0 for index in range(sample_count)}
+        roles_sent = set()
+
+        def abort_children():
+            abort = getattr(handle, "batch_generate_abort", None)
+            if abort is None:
+                return
+            for child in children:
+                request_id = child.get("_batch_request_id", -1)
+                if isinstance(request_id, int) and request_id >= 0:
+                    try:
+                        abort(request_id)
+                    except Exception:
+                        pass
+
+        try:
+            while pending:
+                for task, (index, child) in tasks.items():
+                    request_id_native = child.get("_batch_request_id", -1)
+                    if not isinstance(request_id_native, int) or request_id_native < 0:
+                        continue
+                    count = handle.batch_generate_stream_count(request_id_native)
+                    while cursors[index] < count:
+                        token = handle.batch_generate_new_token(request_id_native, cursors[index])
+                        if token is None:
+                            break
+                        cursors[index] += 1
+                        token_text = ctypes.string_at(token).decode("UTF-8", "ignore")
+                        if api_format == 4:
+                            delta = {"content": token_text}
+                            if index not in roles_sent:
+                                delta["role"] = "assistant"
+                                roles_sent.add(index)
+                            payload = {"id": request_id, "object": "chat.completion.chunk",
+                                       "created": int(time.time()), "model": model_name,
+                                       "choices": [{"index": index, "delta": delta, "finish_reason": None}]}
+                        else:
+                            payload = {"id": request_id, "object": "text_completion",
+                                       "created": int(time.time()), "model": model_name,
+                                       "choices": [{"index": index, "text": token_text, "finish_reason": None}]}
+                        await self.send_oai_sse_event(json.dumps(payload))
+
+                done, pending = await asyncio.wait(pending, timeout=0.02,
+                                                   return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    index, child = tasks[task]
+                    try:
+                        result = task.result()
+                    except Exception as exc:
+                        abort_children()
+                        await self.send_oai_sse_event(json.dumps({"error": {
+                            "message": str(exc), "type": "server_error", "code": 500}}))
+                        await self.send_oai_sse_event("[DONE]")
+                        return
+                    if result.get("error"):
+                        abort_children()
+                        await self.send_oai_sse_event(json.dumps(result))
+                        await self.send_oai_sse_event("[DONE]")
+                        return
+                    finish = (result.get("choices") or [{}])[0]
+                    if api_format == 4:
+                        payload = {"id": request_id, "object": "chat.completion.chunk",
+                                   "created": int(time.time()), "model": model_name,
+                                   "choices": [{"index": index, "delta": {},
+                                                "finish_reason": finish.get("finish_reason", "stop")}]}
+                    else:
+                        payload = {"id": request_id, "object": "text_completion",
+                                   "created": int(time.time()), "model": model_name,
+                                   "choices": [{"index": index, "text": "",
+                                                "finish_reason": finish.get("finish_reason", "stop")}]}
+                    timing = finish.get("timing")
+                    if timing:
+                        payload["choices"][0]["timing"] = timing
+                    await self.send_oai_sse_event(json.dumps(payload))
+                    native_id = child.get("_batch_request_id", -1)
+                    if isinstance(native_id, int) and native_id >= 0:
+                        handle.batch_generate_release(native_id)
+                        child.pop("_batch_request_id", None)
+            await self.send_oai_sse_event("[DONE]")
+        except Exception:
+            abort_children()
+            raise
+        finally:
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+
     async def send_kai_sse_event(self, data):
         self.wfile.write('event: message\n'.encode())
         self.wfile.write(f'data: {data}\n\n'.encode())
@@ -6949,6 +7076,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 return
 
     async def handle_request(self, genparams, api_format, stream_flag):
+        if stream_flag and tryparseint(genparams.get("n", 1), 1) > 1:
+            return await self.handle_parallel_sse_stream(genparams, api_format)
         tasks = []
         genparams["oai_uniqueid"] = random.randint(100000, 999999)
         monitor_task = None
