@@ -275,6 +275,20 @@ class ParallelSamplingTests(unittest.TestCase):
             result = asyncio.run(self.handler.handle_parallel_sse_stream(self.params, 4))
         self.assertEqual(result['error']['code'], 400)
 
+    def test_serving_capabilities_report_backend_boundaries(self):
+        self.args.profile_lanes = 2
+        self.args.disaggregated_prefill = True
+        with patch.object(server, 'args', self.args):
+            capabilities = server.get_friend_serving_capabilities()
+        self.assertTrue(capabilities['continuous_batching'])
+        self.assertTrue(capabilities['scheduler_paged_kv'])
+        self.assertTrue(capabilities['kv_socket_transport'])
+        self.assertTrue(capabilities['disaggregated_prefill'])
+        self.assertFalse(capabilities['backend_paged_kv'])
+        self.assertFalse(capabilities['device_kv_transport'])
+        self.assertFalse(capabilities['expert_parallel'])
+        self.assertFalse(capabilities['context_parallel'])
+
 
 if __name__ == "__main__":
     unittest.main()
