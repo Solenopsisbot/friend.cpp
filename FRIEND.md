@@ -30,6 +30,8 @@ friend.cpp-specific features, described below:
 9. **Structured output aliases** -- cached JSON Schema and choice grammars through the OpenAI/vLLM request forms
 10. **Parallel sampling** -- bounded OpenAI `n` fan-out with independent RNG state, indexed choices, shared prompt KV and aggregated usage
 11. **KV connector contract** -- versioned compatibility discovery, metadata export/import, invalidation and ownership events
+12. **Guided regex constraints** -- bounded full-match regex subset compiled to named GBNF rules, with explicit 400 errors for unsupported assertions and backreferences
+13. **Multimodal encoder cache** -- bounded deep copies of mtmd image/audio chunks keyed by bytes and preprocessing identity
 
 
 ---
