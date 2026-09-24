@@ -1767,6 +1767,26 @@ def get_friend_serving_capabilities():
     """Return the explicit backend support matrix for friend.cpp features."""
     lanes = max(1, int(getattr(args, "profile_lanes", 1) or 1))
     parallel = max(1, int(getattr(args, "parallelrequests", 1) or 1))
+    # Keep this machine-readable and honest. ``implemented`` means the request
+    # path is live in this process; ``partial`` means a scheduler/host contract
+    # exists but the bundled llama backend owns the missing device primitive.
+    support = {
+        "admission_control": "implemented",
+        "request_cancellation": "implemented",
+        "stream_batching": "implemented",
+        "parallel_sampling": "implemented" if parallel > 1 else "available_when_continuous_batching_enabled",
+        "structured_outputs": "implemented",
+        "speculative_request_budget": "implemented",
+        "multimodal_encoded_cache": "implemented_when_mmproj_loaded",
+        "scheduler_paged_kv": "partial",
+        "backend_paged_kv": "unsupported",
+        "async_prefetch_fences": "unsupported",
+        "mixed_sequence_lora": "unsupported",
+        "device_kv_transport": "unsupported",
+        "expert_parallel": "unsupported",
+        "context_parallel": "unsupported",
+        "beam_search": "excluded",
+    }
     return {
         "continuous_batching": parallel > 1,
         "profile_lanes": lanes,
@@ -1780,7 +1800,10 @@ def get_friend_serving_capabilities():
         "expert_parallel": False,
         "context_parallel": False,
         "beam_search": False,
+        "support": support,
         "reasons": {
+            "async_prefetch_fences": "llama_decode is synchronous and does not expose a graph submission handle through the serving ABI",
+            "mixed_sequence_lora": "llama adapter state is context-wide for one decode",
             "backend_paged_kv": "llama owns KV tensor allocation; friend.cpp only tracks scheduler page identities",
             "device_kv_transport": "llama exposes sequence state serialization, not backend tensor attachment",
             "expert_parallel": "the bundled backend exposes no expert placement or collective-routing API",

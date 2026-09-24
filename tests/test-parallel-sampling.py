@@ -134,6 +134,15 @@ class ParallelSamplingTests(unittest.TestCase):
                 for key in params:
                     self.params.pop(key)
 
+    def test_capability_matrix_explains_backend_boundaries(self):
+        with patch.object(server, "args", self.args):
+            capabilities = server.get_friend_serving_capabilities()
+        self.assertEqual(capabilities["support"]["request_cancellation"], "implemented")
+        self.assertEqual(capabilities["support"]["speculative_request_budget"], "implemented")
+        self.assertEqual(capabilities["support"]["async_prefetch_fences"], "unsupported")
+        self.assertEqual(capabilities["support"]["mixed_sequence_lora"], "unsupported")
+        self.assertEqual(capabilities["support"]["beam_search"], "excluded")
+
     def test_legacy_samples_stay_on_calling_thread(self):
         self.args.parallelrequests = 1
         caller = threading.get_ident()
