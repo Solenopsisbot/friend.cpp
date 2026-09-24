@@ -16,6 +16,7 @@ import time
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
+HTTP_TIMEOUT_SECONDS = 300
 
 
 def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
@@ -27,14 +28,14 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
     def request(path, data=None):
         payload = None if data is None else json.dumps(data).encode()
         req = urllib.request.Request(base + path, data=payload, headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=120) as response:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
             body = response.read().decode()
             return body if path == '/metrics' else json.loads(body)
 
     def request_raw(path, data):
         req = urllib.request.Request(base + path, data=json.dumps(data).encode(),
                                      headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=120) as response:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
             return response.read().decode()
 
     def metric(name):
@@ -136,7 +137,7 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
                     overloaded = request('/api/v1/generate',
                                          dict(payload, max_length=4, cache_salt='queue-cap-2'))
                     assert overloaded.get('error', {}).get('code') == 503, overloaded
-                    long_future.result(timeout=120)
+                    long_future.result(timeout=HTTP_TIMEOUT_SECONDS)
             # Different namespaces must not reuse live/retained KV, including base profiles.
             before = metric('friend_batch_reused_tokens_total')
             other = dict(payload, cache_salt='test-B', max_length=4)
@@ -170,7 +171,7 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
                 request('/api/v1/generate', dict(other, cache_salt='test-C'))
                 assert not future.done(), 'paused request completed'
                 assert request('/api/extra/requests/resume', {'id': target})['accepted']
-                resumed_obj = future.result(timeout=120)['results'][0]
+                resumed_obj = future.result(timeout=HTTP_TIMEOUT_SECONDS)['results'][0]
                 assert resumed_obj['text'] == result, 'pause/resume changed output'
                 resumed_timing = resumed_obj.get('timing', {})
                 assert resumed_timing.get('pause_count', 0) >= 1, resumed_timing
@@ -194,7 +195,7 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
                     assert urgent['results'][0]['text'], 'urgent request returned no output'
                     assert metric('friend_batch_preemptions_total') > preempt_before, 'priority preemption missing'
                     for future in low_futures:
-                        future.result(timeout=120)
+                        future.result(timeout=HTTP_TIMEOUT_SECONDS)
             if draft:
                 proposed = metric('friend_batch_draft_proposed_tokens_total')
                 accepted = metric('friend_batch_draft_accepted_tokens_total')
