@@ -67,6 +67,11 @@ public:
         return id < pages_.size() && pages_[id].occupied;
     }
 
+    page_id find(uint64_t key) const {
+        auto found = by_key_.find(key);
+        return found == by_key_.end() ? invalid_page : found->second;
+    }
+
     size_t capacity() const { return pages_.size(); }
     size_t used() const {
         size_t n = 0;

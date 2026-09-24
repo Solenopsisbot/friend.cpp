@@ -14,6 +14,7 @@
 #include <functional>
 #include <limits>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -49,6 +50,7 @@ struct connector_event {
 struct connector_entry {
     uint64_t key = 0;
     uint32_t references = 0;
+    std::vector<uint8_t> payload;
 };
 
 struct connector_snapshot {
@@ -58,9 +60,11 @@ struct connector_snapshot {
 
 class kv_connector {
 public:
-    static constexpr uint32_t protocol_version = 1;
+    static constexpr uint32_t protocol_version = 2;
     static constexpr size_t max_string = 4096;
     static constexpr size_t max_entries = 1u << 20;
+    static constexpr size_t max_payload = size_t(64) << 20;
+    static constexpr size_t max_total_payload = size_t(256) << 20;
     using event_callback = std::function<void(const connector_event &)>;
 
     kv_connector(paged_allocator & allocator, connector_descriptor descriptor,
@@ -70,6 +74,24 @@ public:
     const connector_descriptor & descriptor() const { return descriptor_; }
     uint32_t version() const { return protocol_version; }
 
+    // Backend integrations attach serialized KV bytes after allocating a page.
+    // The scheduler still owns references; payloads are bounded and never make
+    // an otherwise-dead page appear live.
+    bool set_payload(uint64_t key, std::vector<uint8_t> payload) {
+        if(!allocator_.alive(allocator_.find(key)) || payload.size() > max_payload) return false;
+        size_t total = payload.size();
+        for(const auto & item : payloads_)
+            if(item.first != key) total += item.second.size();
+        if(total > max_total_payload) return false;
+        payloads_[key] = std::move(payload);
+        return true;
+    }
+
+    const std::vector<uint8_t> * payload(uint64_t key) const {
+        auto found = payloads_.find(key);
+        return found == payloads_.end() ? nullptr : &found->second;
+    }
+
     // Discovery is intentionally small and immutable: peers can compare it
     // before attempting an import, avoiding partial ownership transfers.
     connector_descriptor discover() const { return descriptor_; }
@@ -77,8 +99,12 @@ public:
     connector_snapshot export_snapshot() const {
         connector_snapshot snapshot;
         snapshot.descriptor = descriptor_;
-        for(const auto & entry : allocator_.entries())
-            snapshot.entries.push_back({entry.key, entry.references});
+        for(const auto & entry : allocator_.entries()) {
+            connector_entry item{entry.key, entry.references, {}};
+            auto found = payloads_.find(entry.key);
+            if(found != payloads_.end()) item.payload = found->second;
+            snapshot.entries.push_back(std::move(item));
+        }
         emit({connector_event_type::exported, 0, snapshot.entries.size(), nullptr});
         return snapshot;
     }
@@ -87,6 +113,20 @@ public:
         if(!compatible(snapshot.descriptor) || snapshot.entries.size() > max_entries) {
             emit({connector_event_type::rejected, 0, snapshot.entries.size(), "incompatible snapshot"});
             return false;
+        }
+        size_t total_payload = 0;
+        for(const auto & item : snapshot.entries) {
+            if(item.payload.size() > max_payload ||
+               item.payload.size() > max_total_payload - std::min(total_payload, max_total_payload)) {
+                emit({connector_event_type::rejected, item.key, 0, "payload too large"});
+                return false;
+            }
+            total_payload += item.payload.size();
+            auto found = payloads_.find(item.key);
+            if(found != payloads_.end() && found->second != item.payload) {
+                emit({connector_event_type::rejected, item.key, 0, "payload conflict"});
+                return false;
+            }
         }
         // Acquire all entries first and roll back on capacity failure. Existing
         // keys are reference counted by acquire, so importing is idempotent for
@@ -109,6 +149,8 @@ public:
                 acquired.push_back(id);
             }
         }
+        for(const auto & item : snapshot.entries)
+            if(item.references > 0 && !item.payload.empty()) payloads_[item.key] = item.payload;
         emit({connector_event_type::imported, 0, snapshot.entries.size(), nullptr});
         return true;
     }
@@ -127,6 +169,8 @@ public:
         for(const auto & item : snapshot.entries) {
             put_u64(wire, item.key);
             put_u32(wire, item.references);
+            put_u64(wire, item.payload.size());
+            wire.insert(wire.end(), item.payload.begin(), item.payload.end());
         }
         return wire;
     }
@@ -153,8 +197,16 @@ public:
         snapshot.entries.reserve(count);
         for(uint32_t i = 0; i < count; ++i) {
             connector_entry item;
-            if(!get_u64(wire, offset, item.key) || !get_u32(wire, offset, item.references)) {
+            uint64_t payload_size = 0;
+            if(!get_u64(wire, offset, item.key) || !get_u32(wire, offset, item.references) ||
+               !get_u64(wire, offset, payload_size) || payload_size > max_payload ||
+               payload_size > wire.size() - std::min(offset, wire.size())) {
                 emit({connector_event_type::rejected, item.key, i, "truncated entries"});
+                return false;
+            }
+            item.payload.resize((size_t) payload_size);
+            if(payload_size && !get_bytes(wire, offset, payload_size, item.payload.data())) {
+                emit({connector_event_type::rejected, item.key, i, "truncated payload"});
                 return false;
             }
             snapshot.entries.push_back(item);
@@ -168,6 +220,7 @@ public:
 
     bool invalidate(uint64_t key) {
         const bool ok = allocator_.invalidate(key);
+        if(ok) payloads_.erase(key);
         emit({ok ? connector_event_type::invalidated : connector_event_type::rejected,
               key, ok ? 1u : 0u, ok ? nullptr : "page is still referenced"});
         return ok;
@@ -216,6 +269,7 @@ private:
     paged_allocator & allocator_;
     connector_descriptor descriptor_;
     event_callback callback_;
+    std::unordered_map<uint64_t, std::vector<uint8_t>> payloads_;
 };
 
 } // namespace friend_kv
