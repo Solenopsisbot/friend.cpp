@@ -140,6 +140,9 @@ class ParallelSamplingTests(unittest.TestCase):
         self.assertEqual(capabilities["support"]["request_cancellation"], "implemented")
         self.assertEqual(capabilities["support"]["speculative_request_budget"], "implemented")
         self.assertEqual(capabilities["support"]["async_prefetch_fences"], "unsupported")
+        self.assertEqual(capabilities["support"]["physical_kv_recompute"], "unsupported")
+        self.assertEqual(capabilities["support"]["native_sampling_branches"], "partial")
+        self.assertEqual(capabilities["support"]["batch_model_speculation"], "unsupported")
         self.assertEqual(capabilities["support"]["mixed_sequence_lora"], "unsupported")
         self.assertEqual(capabilities["support"]["beam_search"], "excluded")
 
