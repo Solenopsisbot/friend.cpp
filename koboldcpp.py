@@ -1586,6 +1586,152 @@ def choices_to_gbnf(choices):
     unique = list(dict.fromkeys(choices))
     return "root ::= " + " | ".join(json.dumps(value, ensure_ascii=False) for value in unique) + "\n"
 
+def regex_to_gbnf(pattern):
+    """Compile the portable guided-regex subset understood by llama grammars.
+
+    Regex engines have features (lookarounds, backreferences and anchors that
+    inspect generated history) that a token grammar cannot represent. Reject
+    those forms explicitly; accepting them and emitting a weaker grammar would
+    make a structured-output request look successful while violating its
+    contract. Character classes, groups, alternation and repetition are
+    translated to GBNF terminals/operators.
+    """
+    if not isinstance(pattern, str) or not pattern or len(pattern) > 2048:
+        return ""
+    text = pattern
+    if text.startswith('^'):
+        text = text[1:]
+    if text.endswith('$') and not text.endswith('\\$'):
+        text = text[:-1]
+    pos = 0
+
+    def class_body():
+        nonlocal pos
+        start = pos
+        escaped = False
+        while pos < len(text):
+            char = text[pos]
+            pos += 1
+            if escaped:
+                escaped = False
+                continue
+            if char == '\\':
+                escaped = True
+            elif char == ']':
+                return text[start:pos - 1]
+        raise ValueError("unterminated character class")
+
+    def normalize_class(value):
+        value = value.replace('\\d', '0-9').replace('\\w', 'A-Za-z0-9_')
+        value = value.replace('\\s', ' \\t\\n\\r')
+        if '\\b' in value or '\\B' in value:
+            raise ValueError("word-boundary classes are unsupported")
+        return value
+
+    def parse_alt(stop=None):
+        nonlocal pos
+        alternatives = []
+        current = []
+        while pos < len(text):
+            char = text[pos]
+            if stop and char == stop:
+                break
+            if char == '|':
+                pos += 1
+                alternatives.append(current)
+                current = []
+                continue
+            if char == ')':
+                if stop:
+                    break
+                raise ValueError("unmatched closing group")
+            if char == '(':
+                pos += 1
+                if text[pos:pos + 2] == '?:':
+                    pos += 2
+                elif text[pos:pos + 1] == '?':
+                    raise ValueError("lookarounds and named groups are unsupported")
+                inner = parse_alt(')')
+                if pos >= len(text) or text[pos] != ')':
+                    raise ValueError("unterminated group")
+                pos += 1
+                atom = '(' + ' | '.join(' '.join(part) for part in inner) + ')' if len(inner) > 1 else '(' + ' '.join(inner[0]) + ')'
+            elif char == '[':
+                pos += 1
+                atom = '[' + normalize_class(class_body()) + ']'
+            elif char == '.':
+                pos += 1
+                atom = '[^\\n]'
+            elif char == '\\':
+                pos += 1
+                if pos >= len(text):
+                    raise ValueError("trailing escape")
+                escaped = text[pos]
+                pos += 1
+                atom = {'d': '[0-9]', 'w': '[A-Za-z0-9_]', 's': '[ \\t\\n\\r]'}.get(escaped)
+                if atom is None:
+                    if escaped in 'AbBZzG':
+                        raise ValueError("regex boundary is unsupported")
+                    atom = json.dumps(escaped, ensure_ascii=False)
+            else:
+                pos += 1
+                if char in '^$':
+                    raise ValueError("anchors are only supported at the pattern edges")
+                atom = json.dumps(char, ensure_ascii=False)
+
+            minimum, maximum = 1, 1
+            if pos < len(text):
+                quantifier = text[pos]
+                if quantifier in '*+?':
+                    pos += 1
+                    minimum, maximum = (0, None) if quantifier == '*' else ((1, None) if quantifier == '+' else (0, 1))
+                elif quantifier == '{':
+                    end = text.find('}', pos + 1)
+                    if end < 0:
+                        raise ValueError("unterminated repetition")
+                    bounds = text[pos + 1:end].split(',', 1)
+                    if not bounds[0].isdigit() or (len(bounds) == 2 and bounds[1] and not bounds[1].isdigit()):
+                        raise ValueError("invalid repetition bounds")
+                    minimum = int(bounds[0])
+                    maximum = minimum if len(bounds) == 1 else (None if not bounds[1] else int(bounds[1]))
+                    if maximum is not None and maximum < minimum:
+                        raise ValueError("repetition maximum precedes minimum")
+                    if maximum is not None and maximum > 64:
+                        raise ValueError("repetition bound is too large")
+                    pos = end + 1
+            repeated = ' '.join(atom for _ in range(minimum))
+            if maximum is None:
+                rendered = repeated + (' ' if repeated else '') + '(' + atom + ')*'
+            else:
+                optional = ' '.join('(' + atom + ')?' for _ in range(maximum - minimum))
+                rendered = ' '.join(part for part in (repeated, optional) if part)
+            current.append(rendered)
+        alternatives.append(current)
+        return alternatives
+
+    try:
+        alternatives = parse_alt()
+        if pos != len(text) or not alternatives or any(not part for part in alternatives):
+            return ""
+        return "root ::= " + " | ".join(' '.join(part) for part in alternatives) + "\n"
+    except (ValueError, IndexError) as exc:
+        print(f"guided_regex rejected: {exc}")
+        return ""
+
+def cached_regex_to_gbnf(pattern):
+    key = "regex:" + pattern if isinstance(pattern, str) else "regex:<invalid>"
+    with structured_grammar_lock:
+        cached = structured_grammar_cache.get(key)
+    if cached is not None:
+        return cached
+    compiled = regex_to_gbnf(pattern)
+    if compiled:
+        with structured_grammar_lock:
+            structured_grammar_cache[key] = compiled
+            if len(structured_grammar_cache) > 256:
+                structured_grammar_cache.pop(next(iter(structured_grammar_cache)))
+    return compiled
+
 def get_capabilities():
     global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, musicllmmodelpath, has_audio_support, has_vision_support, mcp_connections
     global autoswapmode, textName, sttName, ttsName, embedName, musicName, imageName, mmprojName
@@ -4938,6 +5084,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 structured = {}
             guided_json = genparams.get('guided_json', structured.get('json', structured.get('json_schema')))
             guided_choice = genparams.get('guided_choice', structured.get('choice'))
+            guided_regex = genparams.get('guided_regex', structured.get('regex'))
             if respformat:
                 try:
                     rt = respformat.get('type')
@@ -4962,6 +5109,10 @@ ws ::= | " " | "\n" [ \t]{0,20}
                     print("Structured Outputs JSON not valid - discarded")
             elif guided_choice is not None:
                 decoded = choices_to_gbnf(guided_choice)
+                if decoded:
+                    genparams["grammar"] = decoded
+            elif guided_regex is not None:
+                decoded = cached_regex_to_gbnf(guided_regex)
                 if decoded:
                     genparams["grammar"] = decoded
             elif 'json_schema' in genparams:
