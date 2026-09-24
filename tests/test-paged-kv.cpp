@@ -102,6 +102,18 @@ int main() {
     assert(!destination_connector.import_wire(truncated));
     friend_kv::kv_connector incompatible(destination, {8, 8, 9, "profile", "namespace"});
     assert(!incompatible.import_wire(wire));
+    friend_kv::paged_allocator malformed_pages(4);
+    friend_kv::kv_connector malformed(malformed_pages, source_connector.discover());
+    friend_kv::connector_snapshot duplicate = source_connector.export_snapshot();
+    duplicate.entries.push_back(duplicate.entries.front());
+    assert(!malformed.import_snapshot(duplicate));
+    assert(malformed_pages.entries().empty());
+    friend_kv::connector_snapshot invalid_references = source_connector.export_snapshot();
+    invalid_references.entries.push_back({202, (1u << 20) + 1u, {}});
+    assert(!malformed.import_snapshot(invalid_references));
+    assert(malformed_pages.used() == 1 && malformed_pages.referenced() == 0);
+    assert(malformed.invalidate(101));
+    assert(malformed_pages.entries().empty());
     friend_serving::metrics metrics;
     metrics.kv_page_stalls = 2;
     assert(metrics.render(0, 0).find("friend_batch_kv_page_stalls_total 2") != std::string::npos);
