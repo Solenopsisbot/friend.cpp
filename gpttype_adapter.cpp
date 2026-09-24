@@ -177,6 +177,7 @@ struct multimodal_cache_entry {
     std::vector<int> chunk_start_seq;
     std::vector<int> chunk_end_seq;
     int token_count = 0;
+    size_t encoded_bytes = 0;
     uint64_t last_used = 0;
 };
 static std::vector<multimodal_cache_entry> multimodal_cache;
@@ -184,6 +185,7 @@ static uint64_t multimodal_cache_tick = 0;
 static uint64_t multimodal_cache_hits = 0;
 static uint64_t multimodal_cache_misses = 0;
 static uint64_t multimodal_cache_evictions = 0;
+static size_t multimodal_cache_bytes = 0;
 static constexpr size_t MULTIMODAL_CACHE_LIMIT = 8;
 
 static void free_media_chunks(std::vector<media_chunk> & chunks)
@@ -225,6 +227,7 @@ static void clear_multimodal_cache()
 {
     for(auto & entry : multimodal_cache) free_media_chunks(entry.chunks);
     multimodal_cache.clear();
+    multimodal_cache_bytes = 0;
     multimodal_cache_tick = 0;
 }
 
@@ -250,20 +253,27 @@ static void store_multimodal_cache(const std::string & key, const media_object &
     entry.token_count = token_count;
     entry.last_used = ++multimodal_cache_tick;
     if(!copy_media_chunks(object.mediachunks, entry.chunks)) return;
+    for(const auto & chunk : entry.chunks)
+        if(chunk.encoded_embd) entry.encoded_bytes += chunk.encoded_embd->size() * sizeof(float);
     for(auto & old : multimodal_cache) {
         if(old.key == key) {
+            multimodal_cache_bytes -= std::min(multimodal_cache_bytes, old.encoded_bytes);
             free_media_chunks(old.chunks);
             old = std::move(entry);
+            multimodal_cache_bytes += old.encoded_bytes;
             return;
         }
     }
     if(multimodal_cache.size() >= MULTIMODAL_CACHE_LIMIT) {
         auto victim = std::min_element(multimodal_cache.begin(), multimodal_cache.end(),
             [](const auto & a, const auto & b) { return a.last_used < b.last_used; });
+        multimodal_cache_bytes -= std::min(multimodal_cache_bytes, victim->encoded_bytes);
         free_media_chunks(victim->chunks);
         *victim = std::move(entry);
+        multimodal_cache_bytes += victim->encoded_bytes;
         ++multimodal_cache_evictions;
     } else {
+        multimodal_cache_bytes += entry.encoded_bytes;
         multimodal_cache.push_back(std::move(entry));
     }
 }
@@ -2984,9 +2994,17 @@ static void load_grammar(const std::string & gammarstr)
 static bool kcpp_eval_media(llama_context * ctx_llama, const media_chunk & mediachunk, int n_batch, int * n_past) {
     if (mtmd_ctx && mediachunk.mtmd_chunk) {
         llama_pos new_n_past = *n_past;
-        int32_t   result     = mtmd_helper_eval_chunk_single(mtmd_ctx, ctx_llama,
-                                                             static_cast<const mtmd_input_chunk *>(mediachunk.mtmd_chunk),
-                                                             *n_past, 0, n_batch, false, &new_n_past);
+        const auto * mtmd_chunk = static_cast<const mtmd_input_chunk *>(mediachunk.mtmd_chunk);
+        int32_t result = 0;
+        if(mediachunk.encoded_embd && !mediachunk.encoded_embd->empty()) {
+            result = mtmd_helper_decode_image_chunk(mtmd_ctx, ctx_llama, mtmd_chunk,
+                                                    const_cast<float *>(mediachunk.encoded_embd->data()),
+                                                    *n_past, 0, n_batch, &new_n_past,
+                                                    nullptr, nullptr);
+        } else {
+            result = mtmd_helper_eval_chunk_single(mtmd_ctx, ctx_llama, mtmd_chunk,
+                                                    *n_past, 0, n_batch, false, &new_n_past);
+        }
         if (result != 0) {
             fprintf(stderr, "\n%s : failed to eval mtmd media chunk, status %d\n", __func__, result);
             return false;
@@ -4868,6 +4886,8 @@ struct BatchGenerateRequest
     std::vector<llama_logit_bias> logit_biases;
     int max_context_length = 0;
     int max_length = 0;
+    // -1 uses the process-wide draft setting; zero disables history drafting.
+    int draft_max = -1;
     int seed = 0;
     float temperature = 0.0f;
     int top_k = 0;
@@ -4942,6 +4962,7 @@ struct BatchGenerateRequest
     float process_time = 0.0f;
     stop_reason finish_reason = stop_reason::INVALID;
     bool abort_requested = false;
+    std::chrono::steady_clock::time_point cancel_requested_time;
     bool pause_requested = false;
     BatchState resume_state = BatchState::WAITING;
     std::vector<uint8_t> paused_kv;
@@ -5645,6 +5666,10 @@ static llama_sampler * batch_build_sampler(const BatchGenerateRequest & req)
 static void batch_finish_request_locked(BatchGenerateRequest & req, stop_reason reason)
 {
     auto finish_time = std::chrono::steady_clock::now();
+    if(req.paused_start_time.time_since_epoch().count() != 0) {
+        req.paused_seconds += std::chrono::duration<double>(finish_time - req.paused_start_time).count();
+        req.paused_start_time = {};
+    }
     if(reason == stop_reason::ERROR_ENCOUNTERED) ++batch_metrics.failed;
     else if(reason == stop_reason::INVALID) ++batch_metrics.cancelled;
     else ++batch_metrics.completed;
@@ -5673,11 +5698,16 @@ static void batch_finish_request_locked(BatchGenerateRequest & req, stop_reason 
         req.result.logprobs_json = req.logprobs_json.c_str();
     }
     req.timing_json = nlohmann::json({
-        {"queue_seconds", req.start_time.time_since_epoch().count() == 0 ? 0.0 : std::chrono::duration<double>(req.start_time - req.submitted_time).count()},
+        {"queue_seconds", std::chrono::duration<double>((req.start_time.time_since_epoch().count() == 0 ? finish_time : req.start_time) - req.submitted_time).count()},
         {"prefill_seconds", process_time},
         {"time_to_first_token_seconds", req.generation_start_time.time_since_epoch().count() == 0 ? 0.0 : std::chrono::duration<double>(req.generation_start_time - req.start_time).count()},
         {"decode_seconds", gen_time},
         {"total_seconds", total_time},
+        {"end_to_end_seconds", std::chrono::duration<double>(finish_time - req.submitted_time).count()},
+        {"request_id", req.id},
+        {"lane", req.lane},
+        {"cancelled", reason == stop_reason::INVALID},
+        {"cancellation_seconds", req.cancel_requested_time.time_since_epoch().count() == 0 ? 0.0 : std::chrono::duration<double>(finish_time - req.cancel_requested_time).count()},
         {"paused_seconds", req.paused_seconds},
         {"pause_count", req.pause_count},
         {"preemptions", req.preemption_count},
@@ -6127,6 +6157,8 @@ static bool batch_claim_waiting_locked()
             // request execute after its logical blocks could not be admitted.
             ++batch_metrics.kv_page_stalls;
             llama_memory_seq_rm(llama_get_memory(batch_context()), slot, -1, -1);
+            llama_sampler_free(req->sampler);
+            req->sampler = nullptr;
             req->slot = -1;
             req->state = BatchState::WAITING;
             batch_mark_waiting_locked(*req);
@@ -6358,7 +6390,8 @@ static void batch_worker_loop(BatchLane * lane)
                 scheduled_ids.push_back(req.id);
                 if((friend_ngram_draft > 0 || friend_suffix_draft > 0) && !friend_batch_recurrent()) {
                     const int context_limit = req.max_context_length > 0 ? std::min(req.max_context_length, kcpp_data->n_ctx) : kcpp_data->n_ctx;
-                    const int configured = friend_suffix_draft > 0 ? friend_suffix_draft : friend_ngram_draft;
+                    const int configured_global = friend_suffix_draft > 0 ? friend_suffix_draft : friend_ngram_draft;
+                    const int configured = req.draft_max >= 0 ? std::min(configured_global, req.draft_max) : configured_global;
                     const int remaining = req.max_length > 0 ? req.max_length - req.completion_token_count - 1 : configured;
                     const int cap = std::max(0, std::min({configured, remaining, context_limit - req.n_past - 1}));
                     if(cap > 0) {
@@ -6695,6 +6728,7 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     req->prompt_added_memory = inputs.memory ? inputs.memory : "";
     req->max_context_length = inputs.max_context_length;
     req->max_length = inputs.max_length;
+    req->draft_max = std::clamp(inputs.friend_draft_max, -1, 32);
     req->seed = inputs.seed;
     req->temperature = inputs.temperature;
     req->top_k = inputs.top_k;
@@ -6870,10 +6904,11 @@ bool gpttype_batch_generate_abort(int request_id)
 {
     std::lock_guard<std::mutex> lock(batch_mutex);
     BatchGenerateRequest * req = batch_find_request_locked(request_id);
-    if(!req)
+    if(!req || !batch_is_live_state(req->state))
     {
         return false;
     }
+    if(!req->abort_requested) req->cancel_requested_time = std::chrono::steady_clock::now();
     req->abort_requested = true;
     batch_cv.notify_all();
     return true;
@@ -7306,6 +7341,14 @@ static void PrepareMediaEmbds(const int nctx, const std::vector<int> & media_int
                 chunk.is_audio = media_objects[i].is_audio;
                 chunk.mtmd_chunk = mtmd_input_chunk_copy(mtmdchunk);
                 chunk.clp_image_tokens = mtmd_input_chunk_get_n_pos(mtmdchunk);
+                if(chunk.mtmd_chunk && mtmd_input_chunk_get_type(mtmdchunk) != MTMD_INPUT_CHUNK_TYPE_TEXT &&
+                   mtmd_encode_chunk(mtmd_ctx, static_cast<const mtmd_input_chunk *>(chunk.mtmd_chunk)) == 0) {
+                    const size_t n_embd = (size_t) llama_model_n_embd_inp(llama_get_model(llama_ctx_v4));
+                    const size_t n_values = n_embd * (size_t) mtmd_input_chunk_get_n_tokens(mtmdchunk);
+                    const float * encoded = mtmd_get_output_embd(mtmd_ctx);
+                    if(encoded && n_values > 0)
+                        chunk.encoded_embd = std::make_shared<const std::vector<float>>(encoded, encoded + n_values);
+                }
                 mediatokensneeded += chunk.clp_image_tokens;
                 media_objects[i].mediachunks.push_back(chunk);
                 if(mtmd_input_chunk_get_type(mtmdchunk) != MTMD_INPUT_CHUNK_TYPE_TEXT)
@@ -10337,6 +10380,7 @@ std::string gpttype_friend_metrics() {
     result += "# TYPE friend_multimodal_encoder_cache_misses_total counter\nfriend_multimodal_encoder_cache_misses_total " + std::to_string(multimodal_cache_misses) + "\n";
     result += "# TYPE friend_multimodal_encoder_cache_evictions_total counter\nfriend_multimodal_encoder_cache_evictions_total " + std::to_string(multimodal_cache_evictions) + "\n";
     result += "# TYPE friend_multimodal_encoder_cache_entries gauge\nfriend_multimodal_encoder_cache_entries " + std::to_string(multimodal_cache.size()) + "\n";
+    result += "# TYPE friend_multimodal_encoder_cache_bytes gauge\nfriend_multimodal_encoder_cache_bytes " + std::to_string(multimodal_cache_bytes) + "\n";
     return result;
 }
 

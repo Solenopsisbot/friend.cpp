@@ -449,7 +449,8 @@ class generation_inputs(ctypes.Structure):
                 ("priority", ctypes.c_int),
                 ("logprobs", ctypes.c_int),
                 ("prompt_logprobs", ctypes.c_int),
-                ("disaggregated_prefill", ctypes.c_bool)]
+                ("disaggregated_prefill", ctypes.c_bool),
+                ("friend_draft_max", ctypes.c_int)]
 
 class generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2756,6 +2757,10 @@ def generate(genparams, stream_flag=False):
     inputs.logprobs = requested_logprobs(genparams)
     inputs.prompt_logprobs = max(-1, min(20, tryparseint(genparams.get("prompt_logprobs", -1), -1)))
     inputs.disaggregated_prefill = bool(genparams.get("disaggregated_prefill", False))
+    # Per-request speculation budget: omitted uses the server's configured
+    # ngram/suffix draft length, zero disables drafting for this request.
+    draft_budget = genparams.get("speculative_tokens", genparams.get("num_speculative_tokens", None))
+    inputs.friend_draft_max = -1 if draft_budget is None else max(0, min(32, tryparseint(draft_budget, 0)))
     try:
         inputs.adapter_profile = friend_adapter_profile_spec(genparams).encode("UTF-8")
     except ValueError as e:

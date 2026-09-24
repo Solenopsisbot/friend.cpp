@@ -120,6 +120,19 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
             assert stream_body.rstrip().endswith('data: [DONE]'), 'stream did not finish'
             assert 1 <= len(stream_events) <= 4, f'unexpected stream event count: {len(stream_events)}'
             assert '"timing":' in stream_body, 'stream timing metadata missing'
+            # A grammar fixes the output independently of cache warmth. Exercise
+            # batching with native logprobs and (on the second run) speculation.
+            constrained = dict(stream_payload, max_tokens=20, guided_regex='^yes yes yes$',
+                               logprobs=True, top_logprobs=2)
+            reference_text = request('/v1/chat/completions', dict(constrained, stream=False))['choices'][0]['message']['content']
+            for interval in (1, 4):
+                raw = request_raw('/v1/chat/completions', dict(constrained, stream_interval=interval))
+                choices = [json.loads(line[6:])['choices'][0] for line in raw.splitlines()
+                           if line.startswith('data: {') and json.loads(line[6:]).get('choices')]
+                text = ''.join(choice.get('delta', {}).get('content', '') for choice in choices)
+                assert text == reference_text, (interval, text, reference_text)
+                assert any(choice.get('logprobs', {}).get('content') for choice in choices
+                           if isinstance(choice.get('logprobs'), dict)), 'stream logprobs missing'
             if max_queued_requests:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                     long_future = pool.submit(request, '/api/v1/generate',
@@ -176,6 +189,36 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
                 resumed_timing = resumed_obj.get('timing', {})
                 assert resumed_timing.get('pause_count', 0) >= 1, resumed_timing
                 assert resumed_timing.get('paused_seconds', -1) >= 0, resumed_timing
+            # Abort a paused request: this must reclaim the host snapshot, finish
+            # its waiter, preserve pause timing and leave the scheduler usable.
+            cancelled_before = metric('friend_batch_requests_cancelled_total')
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(request, '/api/v1/generate', dict(payload, max_length=512))
+                deadline = time.monotonic() + 90
+                target = None
+                while time.monotonic() < deadline:
+                    active = [r for r in request('/api/extra/requests') if r['state'] == 'generating']
+                    if active:
+                        target = active[0]['id']
+                        break
+                    time.sleep(.005)
+                assert target is not None, 'no request to cancel'
+                assert request('/api/extra/requests/pause', {'id': target})['accepted']
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    state = next(r for r in request('/api/extra/requests') if r['id'] == target)
+                    if state['state'] == 'paused':
+                        break
+                    time.sleep(.005)
+                assert state['state'] == 'paused', state
+                assert request('/api/extra/requests/cancel', {'id': target})['accepted']
+                cancelled = future.result(timeout=HTTP_TIMEOUT_SECONDS)['results'][0]['timing']
+                assert cancelled['cancelled'] and cancelled['request_id'] == target, cancelled
+                assert cancelled['cancellation_seconds'] >= 0 and cancelled['paused_seconds'] > 0, cancelled
+                assert cancelled['end_to_end_seconds'] >= cancelled['total_seconds'], cancelled
+            assert metric('friend_batch_requests_cancelled_total') == cancelled_before + 1
+            assert metric('friend_batch_offloaded_bytes') == 0, 'cancelled snapshot leaked'
+            request('/api/v1/generate', dict(payload, max_length=4))
             # Four long, low-priority requests fill every sequence slot. A short
             # urgent request must be admitted by snapshotting one victim.
             if profile_lanes == 1 and not max_queued_requests:
@@ -201,6 +244,9 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
                 accepted = metric('friend_batch_draft_accepted_tokens_total')
                 print(f'  speculation observed: proposed={proposed:.0f}, accepted={accepted:.0f}', flush=True)
                 assert proposed > 0 and accepted > 0, 'speculative path was not exercised'
+                disabled = request('/api/v1/generate', dict(payload, speculative_tokens=0))['results'][0]
+                assert disabled['text'] == result, 'disabling request speculation changed greedy output'
+                assert metric('friend_batch_draft_proposed_tokens_total') == proposed, 'request draft cap was ignored'
             print(f'PASS draft={draft}, lanes={profile_lanes}: namespace isolation, reuse, pause/resume', flush=True)
             return result
         except BaseException:

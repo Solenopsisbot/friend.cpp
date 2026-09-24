@@ -197,6 +197,9 @@ struct generation_inputs
     const int prompt_logprobs = -1;
     // friend.cpp: request opts into the prefill/decode lane handoff.
     const bool disaggregated_prefill = false;
+    // friend.cpp: per-request cap for history-based speculative tokens.
+    // -1 uses the server flag, 0 disables it for this request.
+    const int friend_draft_max = -1;
 };
 struct generation_outputs
 {
