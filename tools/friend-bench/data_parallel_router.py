@@ -195,7 +195,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = self.rfile.read(length)
         owner = None
-        if self.path in ('/api/extra/requests/pause', '/api/extra/requests/resume'):
+        if self.path in ('/api/extra/requests/pause', '/api/extra/requests/resume', '/api/extra/requests/cancel'):
             try:
                 value = json.loads(body)
                 owner, local_id = self.pool.owner(value['id'])

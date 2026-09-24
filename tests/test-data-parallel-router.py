@@ -146,6 +146,12 @@ if __name__ == "__main__":
         assert json.loads(response.read())["worker"] == 20
         conn.close()
         assert FakeWorker.pause_ids[-1] == (20, 77)
+        conn, response = proxy_request(router, "POST", "/api/extra/requests/cancel",
+                                       json.dumps({"id": owner_id}).encode())
+        assert response.status == 200
+        assert json.loads(response.read())["worker"] == 20
+        conn.close()
+        assert FakeWorker.pause_ids[-1] == (20, 77)
         assert all(value == 0 for value in Handler.pool.active)
     finally:
         Handler.pool.stop_health_monitor()
