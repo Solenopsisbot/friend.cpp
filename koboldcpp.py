@@ -1724,7 +1724,12 @@ def cached_regex_to_gbnf(pattern):
         cached = structured_grammar_cache.get(key)
     if cached is not None:
         return cached
-    compiled = regex_to_gbnf(pattern)
+    try:
+        from friend.guided_regex import compile_regex
+        compiled = compile_regex(pattern)
+    except Exception as exc:
+        print(f"guided_regex rejected: {exc}")
+        compiled = ""
     if compiled:
         with structured_grammar_lock:
             structured_grammar_cache[key] = compiled
@@ -5115,6 +5120,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 decoded = cached_regex_to_gbnf(guided_regex)
                 if decoded:
                     genparams["grammar"] = decoded
+                else:
+                    genparams["_guided_regex_error"] = "guided_regex is invalid or uses unsupported features"
             elif 'json_schema' in genparams:
                 try:
                     schema = genparams.get('json_schema')
@@ -8340,6 +8347,15 @@ Change Mode<br>
 
                 # transform genparams (only used for text gen) first
                 genparams = transform_genparams(genparams, api_format, use_jinja)
+
+                if genparams.get("_guided_regex_error"):
+                    payload = json.dumps({"error": {"message": genparams["_guided_regex_error"],
+                                                       "type": "invalid_request_error", "code": 400}}).encode()
+                    self.send_response(400)
+                    self.send_header('content-length', str(len(payload)))
+                    self.end_headers(content_type='application/json')
+                    self.wfile.write(payload)
+                    return
 
                 if args.debugmode >= 1:
                     printablegenparams = truncate_long_json(genparams,trunc_len)
