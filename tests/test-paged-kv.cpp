@@ -1,5 +1,6 @@
 #include "friend/paged_kv.hpp"
 #include "friend/kv_connector.hpp"
+#include "friend/serving_metrics.hpp"
 
 #include <cassert>
 
@@ -52,5 +53,8 @@ int main() {
     assert(!destination_connector.import_wire(truncated));
     friend_kv::kv_connector incompatible(destination, {8, 8, 9, "profile", "namespace"});
     assert(!incompatible.import_wire(wire));
+    friend_serving::metrics metrics;
+    metrics.kv_page_stalls = 2;
+    assert(metrics.render(0, 0).find("friend_batch_kv_page_stalls_total 2") != std::string::npos);
     return 0;
 }

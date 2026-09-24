@@ -308,7 +308,9 @@ epoch is shared by native lanes, so a continuous stream on one lane cannot starv
 an older request handed to another lane.
 The scheduler now also tracks refcounted physical page identities for each logical
 KV block and exports used/capacity, query, hit and eviction counters. llama.cpp
-still owns device tensor allocation until the backend paged-KV handoff is complete.
+still owns device tensor allocation until the backend paged-KV handoff is complete;
+if the scheduler page table cannot acquire ownership, the request waits or fails
+at a safe boundary and `friend_batch_kv_page_stalls_total` records the pressure.
 
 Pause and priority-preemption snapshots are bounded by 512 MiB of host storage.
 They use the prompt-cache codec when compression reduces their size and restore

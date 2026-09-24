@@ -5952,7 +5952,7 @@ static int batch_seed_slot_locked(BatchGenerateRequest & req, int slot)
     own = BatchRetainedSlot(); // the slot now belongs to the live request
     req.kv_tokens.assign(req.prompt_tokens.begin(), req.prompt_tokens.begin() + reused);
     req.kv_blocks.rebuild(req.kv_tokens);
-    batch_assign_pages_locked(req);
+    if(!batch_assign_pages_locked(req)) return -1;
     if(reused > 0 && !is_quiet)
     {
         printf("\n[Batch slot %d: reusing %zu of %zu prompt tokens (%s)]", slot, reused, req.prompt_tokens.size(),
@@ -6076,7 +6076,11 @@ static bool batch_claim_waiting_locked()
                 batch_finish_request_locked(*req, stop_reason::ERROR_ENCOUNTERED);
                 continue;
             }
-            batch_assign_pages_locked(*req);
+            if(!batch_assign_pages_locked(*req)) {
+                ++batch_metrics.kv_page_stalls;
+                batch_finish_request_locked(*req, stop_reason::ERROR_ENCOUNTERED);
+                continue;
+            }
             req->state = req->resume_state;
             req->preempted = false;
             req->last_served_round = batch_round_for();
@@ -6118,6 +6122,17 @@ static bool batch_claim_waiting_locked()
         // friend.cpp: start from the longest reusable prefix (retained slot, another
         // sequence, or the prompt cache) instead of an empty sequence
         const int reuse = batch_seed_slot_locked(*req, slot);
+        if(reuse < 0) {
+            // The scheduler page table is an ownership guard. Do not let a
+            // request execute after its logical blocks could not be admitted.
+            ++batch_metrics.kv_page_stalls;
+            llama_memory_seq_rm(llama_get_memory(batch_context()), slot, -1, -1);
+            req->slot = -1;
+            req->state = BatchState::WAITING;
+            batch_mark_waiting_locked(*req);
+            batch_waiting.push_back(req->id);
+            break;
+        }
         req->prompt_pos = reuse;
         req->n_past = reuse;
         req->reused_tokens = reuse;
@@ -6582,7 +6597,11 @@ static void batch_worker_loop(BatchLane * lane)
             }
             if(req->slot >= 0) trim_draft();
             req->kv_blocks.rebuild(req->kv_tokens);
-            batch_assign_pages_locked(*req);
+            if(!batch_assign_pages_locked(*req)) {
+                ++batch_metrics.kv_page_stalls;
+                batch_finish_request_locked(*req, stop_reason::ERROR_ENCOUNTERED);
+                continue;
+            }
             req->i_batch = -1;
 
             // Disaggregated mode evaluates the prompt on lane 0, samples the
