@@ -292,7 +292,9 @@ Responses include `X-Friend-Router-Epoch`, `X-Friend-Router-Worker`,
 client timing traces can identify the replica and separate routing overhead from
 upstream response-header latency.
 It periodically samples worker request states and KV-block counts, using fresh
-observations in its load score and ignoring samples older than two seconds.
+observations in its load score and ignoring samples older than two seconds. A
+health cycle probes replicas concurrently, so one dead worker's timeout does not
+serialize health updates for the rest of the pool.
 
 `--schedule-tokens N` bounds the total tokens admitted to one scheduler round;
 decodes are admitted before prompt chunks, and `0` uses the backend batch size.

@@ -88,6 +88,22 @@ def proxy_request(server, method, path, body=b""):
 
 if __name__ == "__main__":
     pool = Pool([5101, 5102, 5103, 5104])
+    overlap_pool = Pool([5101, 5102, 5103])
+    overlap_lock = threading.Lock()
+    overlap_gate = threading.Barrier(3)
+    overlap = {"active": 0, "peak": 0}
+    def probe(index, port):
+        del index, port
+        with overlap_lock:
+            overlap["active"] += 1
+            overlap["peak"] = max(overlap["peak"], overlap["active"])
+        overlap_gate.wait(timeout=2)
+        with overlap_lock:
+            overlap["active"] -= 1
+    overlap_pool.refresh_worker = probe
+    overlap_pool.refresh_all()
+    assert overlap["peak"] == 3, 'health probes were serialized'
+
     profile = {"lora": {"rook": 0.8}, "head": "rook"}
     assert pick(pool, dict(profile, cache_salt="tenant-a")) == pick(pool, dict(profile, cache_salt="tenant-a"))
     assert pick(pool, {"head": "mira", "cache_salt": "tenant-a"}) in range(4)

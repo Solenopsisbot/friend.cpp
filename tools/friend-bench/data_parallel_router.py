@@ -46,10 +46,20 @@ class Pool:
         self._health_stop.clear()
         def run():
             while not self._health_stop.wait(interval):
-                for index, port in enumerate(self.ports):
-                    self.refresh_worker(index, port)
+                self.refresh_all()
         self._health_thread = threading.Thread(target=run, name="friend-router-health", daemon=True)
         self._health_thread.start()
+
+    def refresh_all(self):
+        """Probe every replica concurrently so one timeout cannot serialize health."""
+        probes = []
+        for index, port in enumerate(self.ports):
+            thread = threading.Thread(target=self.refresh_worker, args=(index, port),
+                                      name=f"friend-router-probe-{index}")
+            thread.start()
+            probes.append(thread)
+        for thread in probes:
+            thread.join()
 
     def stop_health_monitor(self):
         self._health_stop.set()
