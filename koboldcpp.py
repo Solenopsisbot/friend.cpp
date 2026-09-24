@@ -2842,6 +2842,12 @@ def generate(genparams, stream_flag=False):
             genparams['_batch_request_id'] = batch_request_id
             ret = handle.batch_generate_result(batch_request_id)
         else:
+            if genparams.get('_parallel_sample_native', False):
+                # Concurrent samples must never enter the singleton legacy
+                # generator together if native admission rejects a feature.
+                return {"text":"", "status":0, "stopreason":-2, "prompt_tokens":0,
+                        "completion_tokens":0, "total_tokens":0,
+                        "error":"native continuous batching is unavailable for this parallel sample"}
             genparams['_batch_fallback'] = True
             ret = handle.generate(inputs)
         outstr = ""
@@ -6075,10 +6081,13 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             parent = dict(genparams)
             parent.pop("n", None)
             parent["_parallel_sample_child"] = True
+            parent["_parallel_sample_native"] = continuous_batching_python_eligible(parent, api_format)
             base_seed = tryparseint(parent.get("sampler_seed", parent.get("seed", -1)), -1)
             children = []
             for index in range(sample_count):
-                child = dict(parent)
+                # Input normalization can mutate nested maps such as logit_bias.
+                # Each concurrently running sample needs its own copy.
+                child = copy.deepcopy(parent)
                 child["oai_uniqueid"] = f"{genparams.get('oai_uniqueid', 1)}-{index}"
                 if base_seed >= 0:
                     child["sampler_seed"] = base_seed + index
@@ -6122,7 +6131,12 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             return generate(genparams=genparams,stream_flag=stream_flag)
 
         genout = {"text": "", "status": -1, "stopreason": -1, "prompt_tokens":0, "completion_tokens": 0, "total_tokens": 0}
-        if stream_flag:
+        if genparams.get('_parallel_sample_native', False):
+            # gather() alone cannot overlap coroutines that block before their
+            # first await. Submit native children from separate executor threads
+            # so all of them can enter the scheduler before waiting for results.
+            genout = await asyncio.to_thread(run_blocking)
+        elif stream_flag:
             loop = asyncio.get_event_loop()
             executor = ThreadPoolExecutor()
             genout = await loop.run_in_executor(executor, run_blocking)
