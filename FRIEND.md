@@ -330,9 +330,10 @@ model/layout/dtype or profile namespaces, rolls back failed imports, and will
 not invalidate referenced pages. The serving path does not yet attach llama's
 device KV tensor bytes to this transport, so it is a connector contract rather
 than a live network prefill/decode split.
-`friend/kv_transport.hpp` wraps that wire in a bounded checksummed frame suitable
-for a socket or RPC implementation; it does not claim to serialize llama's
-backend-owned device tensors.
+`friend/kv_transport.hpp` wraps that wire in a bounded checksummed frame, with
+stream and POSIX socket helpers suitable for TCP, Unix sockets, or an RPC
+implementation; it does not claim to serialize llama's backend-owned device
+tensors.
 
 ### What's been verified
 
