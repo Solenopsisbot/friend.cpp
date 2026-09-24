@@ -337,6 +337,9 @@ tensors.
 `friend/kv_socket_connector.hpp` uses that frame to export/import a connector
 snapshot over an already-authenticated connected socket, preserving the same
 descriptor, payload, and refcount checks.
+`GET /api/extra/capabilities` reports this serving support matrix and explains
+why backend tensor paging, device-KV attachment, expert parallelism, context
+parallelism, and beam branching are not advertised by this build.
 
 ### What's been verified
 

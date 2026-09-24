@@ -1762,6 +1762,33 @@ def get_capabilities():
     return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":visionSupport,"audio":audioSupport,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts, "embeddings":has_embeddings, "music":has_music, "savedata":(savedata_obj is not None), "admin": admin_type, "router":has_router, "guidance": has_guidance, "jinja": has_jinja, "mcp":has_mcp}
 
 
+def get_friend_serving_capabilities():
+    """Return the explicit backend support matrix for friend.cpp features."""
+    lanes = max(1, int(getattr(args, "profile_lanes", 1) or 1))
+    parallel = max(1, int(getattr(args, "parallelrequests", 1) or 1))
+    return {
+        "continuous_batching": parallel > 1,
+        "profile_lanes": lanes,
+        "parallel_sampling": parallel > 1,
+        "scheduler_paged_kv": True,
+        "backend_paged_kv": False,
+        "kv_connector": True,
+        "kv_socket_transport": True,
+        "device_kv_transport": False,
+        "disaggregated_prefill": bool(getattr(args, "disaggregated_prefill", False) and lanes >= 2),
+        "expert_parallel": False,
+        "context_parallel": False,
+        "beam_search": False,
+        "reasons": {
+            "backend_paged_kv": "llama owns KV tensor allocation; friend.cpp only tracks scheduler page identities",
+            "device_kv_transport": "llama exposes sequence state serialization, not backend tensor attachment",
+            "expert_parallel": "the bundled backend exposes no expert placement or collective-routing API",
+            "context_parallel": "the bundled backend exposes no KV sharding or cross-device attention collective",
+            "beam_search": "native branch ownership is not wired into the serving scheduler",
+        },
+    }
+
+
 def scan_directory(dirpath, valid_exts, depth):
     files = []
     for entry in sorted(os.listdir(dirpath)): # Scan top-level directory
@@ -7480,6 +7507,9 @@ Change Mode<br>
         elif clean_path.endswith(('/api/extra/version')):
             caps = get_capabilities()
             response_body = (json.dumps(caps).encode())
+
+        elif clean_path == '/api/extra/capabilities':
+            response_body = json.dumps(get_friend_serving_capabilities()).encode()
 
         elif clean_path.endswith(('/api/extra/adapters')): # friend.cpp: named LoRA / steering / head pools
             response_body = (json.dumps(friend_adapter_listing()).encode())
