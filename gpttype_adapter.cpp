@@ -4855,6 +4855,10 @@ struct BatchGenerateRequest
     int slot = -1;
     int lane = 0;
     int priority = 0;
+    // Global scheduler epoch when this request most recently entered the
+    // waiting queue.  Admission uses this to age requests across native lanes
+    // instead of letting a steady stream of urgent work starve older traffic.
+    uint64_t waiting_since_epoch = 0;
     int logprobs = -1;
     int prompt_logprobs = -1;
     BatchState state = BatchState::WAITING;
@@ -5042,6 +5046,7 @@ static const uint64_t FRIEND_BATCH_MAX_WAIT_ROUNDS = 8;
 static std::vector<BatchRetainedSlot> batch_retained;
 static std::string batch_active_profile_key;
 static uint64_t batch_round = 0;
+static uint64_t batch_schedule_epoch = 0;
 struct BatchLane {
     int id = 0;
     llama_context * ctx = nullptr;
@@ -5981,6 +5986,39 @@ static bool batch_watermark_allows_locked(const BatchGenerateRequest & req)
     return projected + reserve <= capacity;
 }
 
+static void batch_mark_waiting_locked(BatchGenerateRequest & req)
+{
+    req.waiting_since_epoch = batch_schedule_epoch;
+}
+
+// Pick from the shared queue without depending on insertion order.  Priority
+// remains the first choice for fresh work, but a request that has waited through
+// eight completed rounds is promoted so a busy high-priority stream cannot
+// starve an otherwise healthy lane forever.
+static int batch_pick_waiting_locked()
+{
+    BatchGenerateRequest * best = nullptr;
+    bool have_starved = false;
+    for(int id : batch_waiting)
+    {
+        BatchGenerateRequest * req = batch_find_request_locked(id);
+        if(!req || req->state != BatchState::WAITING || !batch_owns(req)) continue;
+        const bool starved = batch_schedule_epoch >= req->waiting_since_epoch &&
+            batch_schedule_epoch - req->waiting_since_epoch >= FRIEND_BATCH_MAX_WAIT_ROUNDS;
+        if(!best ||
+           (starved && !have_starved) ||
+           (starved == have_starved &&
+            (starved ? req->waiting_since_epoch < best->waiting_since_epoch :
+             req->priority < best->priority ||
+             (req->priority == best->priority && req->waiting_since_epoch < best->waiting_since_epoch))))
+        {
+            best = req;
+            have_starved = starved;
+        }
+    }
+    return best ? best->id : -1;
+}
+
 static bool batch_claim_waiting_locked()
 {
     bool claimed = false;
@@ -5994,39 +6032,35 @@ static bool batch_claim_waiting_locked()
         }
         return false;
     };
-    size_t to_visit = batch_waiting.size();
-    while(!batch_waiting.empty() && to_visit-- > 0)
+    while(!batch_waiting.empty())
     {
-        int request_id = batch_waiting.front();
+        const int request_id = batch_pick_waiting_locked();
+        if(request_id < 0) break;
         BatchGenerateRequest * req = batch_find_request_locked(request_id);
         if(!req || req->state != BatchState::WAITING)
         {
-            batch_waiting.pop_front();
+            batch_waiting.erase(std::remove(batch_waiting.begin(), batch_waiting.end(), request_id), batch_waiting.end());
             continue;
         }
         if(!batch_owns(req)) {
-            batch_waiting.pop_front();
-            batch_waiting.push_back(request_id);
-            continue;
+            break;
         }
         // friend.cpp: tokenize first so the slot can be chosen by prefix overlap
         if(!batch_prepare_prompt_locked(*req))
         {
-            batch_waiting.pop_front();
+            batch_waiting.erase(std::remove(batch_waiting.begin(), batch_waiting.end(), request_id), batch_waiting.end());
             continue;
         }
         if(!batch_watermark_allows_locked(*req)) {
             ++batch_metrics.watermark_stalls;
-            batch_waiting.pop_front();
-            batch_waiting.push_back(request_id);
-            continue;
+            break;
         }
         int slot = batch_pick_slot_locked(*req, slot_occupied);
         if(slot < 0)
         {
             break; // all slots busy
         }
-        batch_waiting.pop_front();
+        batch_waiting.erase(std::remove(batch_waiting.begin(), batch_waiting.end(), request_id), batch_waiting.end());
         req->slot = slot;
         if(!req->paused_kv.empty()) {
             // Restore exactly the evaluated tokens; pending output and sampler RNG
@@ -6150,6 +6184,7 @@ static bool batch_preempt_for_waiting_locked() {
     victim->preempted = true;
     ++victim->preemption_count;
     victim->slot = -1;
+    batch_mark_waiting_locked(*victim);
     batch_waiting.push_back(victim->id);
     ++batch_metrics.preemptions;
     return true;
@@ -6401,6 +6436,7 @@ static void batch_worker_loop(BatchLane * lane)
                 }
             }
             batch_round_for()++;
+            ++batch_schedule_epoch;
             ++batch_metrics.rounds;
             batch_metrics.batch_tokens += batch.n_tokens;
             batch_metrics.prompt_tokens += prefill_tokens;
@@ -6566,6 +6602,7 @@ static void batch_worker_loop(BatchLane * lane)
                 req->lane = decode_lane;
                 req->disaggregated_prefill = false;
                 req->preempted = false;
+                batch_mark_waiting_locked(*req);
                 batch_waiting.push_back(req->id);
                 batch_cv.notify_all();
             }
@@ -6711,6 +6748,7 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     }
     batch_start_worker_locked();
     int request_id = req->id;
+    batch_mark_waiting_locked(*req);
     batch_requests.emplace_back(std::move(req));
     batch_waiting.push_back(request_id);
     batch_start_worker_locked();
@@ -10312,6 +10350,7 @@ bool gpttype_friend_request_control(int id, bool pause) {
             req->state = BatchState::WAITING;
             // A waiting request may still have a stale queue entry from before pause.
             batch_waiting.erase(std::remove(batch_waiting.begin(), batch_waiting.end(), id), batch_waiting.end());
+            batch_mark_waiting_locked(*req);
             batch_waiting.push_back(id);
         }
     }
