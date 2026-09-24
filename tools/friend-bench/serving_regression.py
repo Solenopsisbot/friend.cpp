@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""Real-server regression checks for n-gram rollback, pause/resume and cache salts.
+
+Usage: python3 tools/friend-bench/serving_regression.py --model ~/models/Bonsai-1.7B-Q1_0.gguf
+Runs serial reference and speculative servers sequentially on a free local port.
+"""
+import argparse
+import concurrent.futures
+import json
+from pathlib import Path
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[2]
+HTTP_TIMEOUT_SECONDS = 300
+
+
+def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0, disaggregated=False):
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        port = sock.getsockname()[1]
+    base = f'http://127.0.0.1:{port}'
+
+    def request(path, data=None):
+        payload = None if data is None else json.dumps(data).encode()
+        req = urllib.request.Request(base + path, data=payload, headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            body = response.read().decode()
+            return body if path == '/metrics' else json.loads(body)
+
+    def request_raw(path, data):
+        req = urllib.request.Request(base + path, data=json.dumps(data).encode(),
+                                     headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
+            return response.read().decode()
+
+    def metric(name):
+        return float(next(line.split()[1] for line in request('/metrics').splitlines() if line.startswith(name + ' ')))
+
+    with tempfile.TemporaryFile(mode='w+') as log:
+        draft_flag = '--suffix-draft' if suffix else '--ngram-draft'
+        slots = max(4, profile_lanes)
+        command = [sys.executable, str(ROOT / 'koboldcpp.py'), '--model', str(model),
+            '--port', str(port), '--contextsize', '4096', '--gpulayers', '99', '--skiplauncher',
+            '--quiet', '--parallelrequests', str(slots), '--prefill-tokens', '32', '--schedule-tokens', '64',
+            '--profile-lanes', str(profile_lanes), '--max-queued-requests', str(max_queued_requests),
+            draft_flag, str(draft)]
+        if disaggregated:
+            command.append('--disaggregated-prefill')
+        proc = subprocess.Popen(command,
+            cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            deadline = time.monotonic() + 90
+            while True:
+                try:
+                    request('/api/extra/requests')
+                    break
+                except (OSError, ValueError):
+                    if proc.poll() is not None or time.monotonic() > deadline:
+                        raise RuntimeError('server failed to start')
+                    time.sleep(.1)
+            lane_metrics = request('/metrics')
+            for lane in range(profile_lanes):
+                assert f'friend_batch_lane_running{{lane="{lane}"}} ' in lane_metrics, \
+                    f'lane {lane} metric missing'
+            assert metric('friend_batch_kv_pages_capacity') > 0, 'physical KV page capacity missing'
+            prompt = 'Continue this repeating sequence without explanation: ' + 'alpha beta gamma delta ' * 80
+            payload = dict(prompt=prompt, max_length=160, max_context_length=4096, temperature=0,
+                           rep_pen=1, top_k=0, top_p=1, seed=123, cache_salt='test-A',
+                           grammar='root ::= "alpha beta gamma delta " root')
+            if disaggregated:
+                payload['disaggregated_prefill'] = True
+            result_obj = request('/api/v1/generate', payload)['results'][0]
+            result = result_obj['text']
+            assert metric('friend_batch_kv_page_queries_total') > 0, 'physical KV page queries missing'
+            if disaggregated:
+                assert metric('friend_batch_kv_transfers_total') > 0, 'disaggregated KV handoff missing'
+                assert metric('friend_batch_kv_transfer_bytes_total') > 0, 'disaggregated KV bytes missing'
+            timing = result_obj.get('timing')
+            assert timing and timing['total_seconds'] >= timing['decode_seconds'] >= 0, timing
+            assert timing['queue_seconds'] >= 0 and timing['prefill_seconds'] >= 0, timing
+            lp = request('/api/v1/generate', dict(payload, max_length=8, logprobs=3, prompt_logprobs=3, cache_salt='logprobs'))['results'][0]
+            assert isinstance(lp.get('logprobs'), list) and lp['logprobs'], 'batch completion logprobs missing'
+            assert isinstance(lp.get('prompt_logprobs'), list) and lp['prompt_logprobs'], 'batch prompt logprobs missing'
+            assert len(lp['logprobs'][0]['top_logprobs']) == 3, 'batch logprobs top-k mismatch'
+            chat_lp = request('/v1/chat/completions', {
+                'messages': [{'role': 'user', 'content': 'Answer with one short word: hello'}],
+                'max_tokens': 4, 'temperature': 0, 'logprobs': True, 'top_logprobs': 2,
+                'prompt_logprobs': 2, 'cache_salt': 'chat-logprobs', 'stream': False,
+            })
+            chat_choice = chat_lp['choices'][0]
+            assert isinstance(chat_choice.get('logprobs'), dict), 'chat logprobs missing'
+            assert chat_choice['logprobs'].get('content'), 'chat completion logprobs missing'
+            assert chat_choice.get('prompt_logprobs'), 'chat prompt logprobs missing'
+            guided = request('/v1/chat/completions', {
+                'messages': [{'role': 'user', 'content': 'Answer yes or no: is two greater than one?'}],
+                'max_tokens': 4, 'temperature': 0, 'structured_outputs': {'choice': ['yes', 'no']},
+                'cache_salt': 'guided-choice', 'stream': False,
+            })
+            assert guided['choices'][0]['message']['content'].strip() in ('yes', 'no'), guided
+            guided_regex = request('/v1/chat/completions', {
+                'messages': [{'role': 'user', 'content': 'Reply with exactly yes.'}],
+                'max_tokens': 4, 'temperature': 0, 'guided_regex': r'^yes$',
+                'cache_salt': 'guided-regex', 'stream': False,
+            })
+            assert guided_regex['choices'][0]['message']['content'].strip() == 'yes', guided_regex
+            parallel = request('/v1/chat/completions', {
+                'messages': [{'role': 'user', 'content': 'Write one short, creative greeting.'}],
+                'max_tokens': 8, 'temperature': 0.8, 'seed': 901, 'n': 2,
+                'cache_salt': 'parallel-samples', 'stream': False,
+            })
+            assert len(parallel.get('choices', [])) == 2, parallel
+            assert [choice['index'] for choice in parallel['choices']] == [0, 1], parallel
+            assert parallel.get('parallel_samples') == 2, parallel
+            assert parallel['usage']['completion_tokens'] >= 0
+            assert parallel['usage']['total_tokens'] == (
+                parallel['usage']['prompt_tokens'] + parallel['usage']['completion_tokens'])
+            parallel_guided = request('/v1/chat/completions', {
+                'messages': [{'role': 'user', 'content': 'Answer yes or no.'}],
+                'max_tokens': 4, 'temperature': 0.8, 'seed': 902, 'n': 2,
+                'structured_outputs': {'choice': ['yes', 'no']},
+                'cache_salt': 'parallel-guided', 'stream': False,
+            })
+            assert len(parallel_guided.get('choices', [])) == 2, parallel_guided
+            assert all(choice['message']['content'].strip() in ('yes', 'no')
+                       for choice in parallel_guided['choices']), parallel_guided
+            stream_payload = {'messages': [{'role': 'user', 'content': 'Answer with six short words.'}],
+                              'max_tokens': 6, 'temperature': 0, 'stream': True,
+                              'stream_interval': 3, 'cache_salt': 'stream-interval'}
+            stream_body = request_raw('/v1/chat/completions', stream_payload)
+            stream_events = [line for line in stream_body.splitlines() if line.startswith('data: {')]
+            assert stream_body.rstrip().endswith('data: [DONE]'), 'stream did not finish'
+            assert 1 <= len(stream_events) <= 4, f'unexpected stream event count: {len(stream_events)}'
+            assert '"timing":' in stream_body, 'stream timing metadata missing'
+            # A grammar fixes the output independently of cache warmth. Exercise
+            # batching with native logprobs and (on the second run) speculation.
+            constrained = dict(stream_payload, max_tokens=20, guided_regex='^yes yes yes$',
+                               logprobs=True, top_logprobs=2)
+            reference_text = request('/v1/chat/completions', dict(constrained, stream=False))['choices'][0]['message']['content']
+            for interval in (1, 4):
+                raw = request_raw('/v1/chat/completions', dict(constrained, stream_interval=interval))
+                choices = [json.loads(line[6:])['choices'][0] for line in raw.splitlines()
+                           if line.startswith('data: {') and json.loads(line[6:]).get('choices')]
+                text = ''.join(choice.get('delta', {}).get('content', '') for choice in choices)
+                assert text == reference_text, (interval, text, reference_text)
+                assert any(choice.get('logprobs', {}).get('content') for choice in choices
+                           if isinstance(choice.get('logprobs'), dict)), 'stream logprobs missing'
+            if max_queued_requests:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    long_future = pool.submit(request, '/api/v1/generate',
+                                              dict(payload, max_length=96, cache_salt='queue-cap'))
+                    # Metal can spend tens of seconds decoding the preceding
+                    # long request.  Wait for the scheduler state rather than
+                    # making this check depend on a fast host.
+                    deadline = time.monotonic() + 90
+                    while time.monotonic() < deadline:
+                        active = [r for r in request('/api/extra/requests')
+                                  if r['state'] in ('prefill', 'generating')]
+                        if active:
+                            break
+                        time.sleep(.01)
+                    overloaded = request('/api/v1/generate',
+                                         dict(payload, max_length=4, cache_salt='queue-cap-2'))
+                    assert overloaded.get('error', {}).get('code') == 503, overloaded
+                    long_future.result(timeout=HTTP_TIMEOUT_SECONDS)
+            # Different namespaces must not reuse live/retained KV, including base profiles.
+            other = dict(payload, cache_salt='test-B', max_length=4)
+            if not disaggregated:
+                before = metric('friend_batch_reused_tokens_total')
+                request('/api/v1/generate', other)
+                assert metric('friend_batch_reused_tokens_total') == before, 'cross-salt reuse'
+                request('/api/v1/generate', other)
+                assert metric('friend_batch_reused_tokens_total') > before, 'same-salt reuse missing'
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(request, '/api/v1/generate', payload)
+                deadline = time.monotonic() + 90
+                target = None
+                while time.monotonic() < deadline:
+                    active = [r for r in request('/api/extra/requests') if r['state'] == 'generating']
+                    if active:
+                        target = active[0]['id']
+                        break
+                    time.sleep(.005)
+                assert target is not None, 'no active generation found'
+                offload_before = metric('friend_batch_offloaded_bytes')
+                assert request('/api/extra/requests/pause', {'id': target})['accepted']
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    state = next(r for r in request('/api/extra/requests') if r['id'] == target)
+                    if state['state'] == 'paused':
+                        break
+                    time.sleep(.005)
+                assert state['state'] == 'paused', state
+                assert state['paused_bytes'] > 0, state
+                assert metric('friend_batch_offloaded_bytes') > offload_before, 'offload metric missing'
+                # Another request must make progress while the first has released its slot.
+                request('/api/v1/generate', dict(other, cache_salt='test-C'))
+                assert not future.done(), 'paused request completed'
+                assert request('/api/extra/requests/resume', {'id': target})['accepted']
+                resumed_obj = future.result(timeout=HTTP_TIMEOUT_SECONDS)['results'][0]
+                assert resumed_obj['text'] == result, 'pause/resume changed output'
+                resumed_timing = resumed_obj.get('timing', {})
+                assert resumed_timing.get('pause_count', 0) >= 1, resumed_timing
+                assert resumed_timing.get('paused_seconds', -1) >= 0, resumed_timing
+            # Abort a paused request: this must reclaim the host snapshot, finish
+            # its waiter, preserve pause timing and leave the scheduler usable.
+            cancelled_before = metric('friend_batch_requests_cancelled_total')
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(request, '/api/v1/generate', dict(payload, max_length=512))
+                deadline = time.monotonic() + 90
+                target = None
+                while time.monotonic() < deadline:
+                    active = [r for r in request('/api/extra/requests') if r['state'] == 'generating']
+                    if active:
+                        target = active[0]['id']
+                        break
+                    time.sleep(.005)
+                assert target is not None, 'no request to cancel'
+                assert request('/api/extra/requests/pause', {'id': target})['accepted']
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    state = next(r for r in request('/api/extra/requests') if r['id'] == target)
+                    if state['state'] == 'paused':
+                        break
+                    time.sleep(.005)
+                assert state['state'] == 'paused', state
+                assert request('/api/extra/requests/cancel', {'id': target})['accepted']
+                cancelled = future.result(timeout=HTTP_TIMEOUT_SECONDS)['results'][0]['timing']
+                assert cancelled['cancelled'] and cancelled['request_id'] == target, cancelled
+                assert cancelled['cancellation_seconds'] >= 0 and cancelled['paused_seconds'] > 0, cancelled
+                assert cancelled['end_to_end_seconds'] >= cancelled['total_seconds'], cancelled
+            assert metric('friend_batch_requests_cancelled_total') == cancelled_before + 1
+            assert metric('friend_batch_offloaded_bytes') == 0, 'cancelled snapshot leaked'
+            request('/api/v1/generate', dict(payload, max_length=4))
+            # Four long, low-priority requests fill every sequence slot. A short
+            # urgent request must be admitted by snapshotting one victim.
+            if profile_lanes == 1 and not max_queued_requests:
+                preempt_before = metric('friend_batch_preemptions_total')
+                low_payload = dict(payload, max_length=128, grammar='', priority=100, bypass_eos_token=True,
+                                   cache_salt='preempt-low')
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                    low_futures = [pool.submit(request, '/api/v1/generate', dict(low_payload, seed=200 + i)) for i in range(4)]
+                    deadline = time.monotonic() + 90
+                    while time.monotonic() < deadline:
+                        active = [r for r in request('/api/extra/requests') if r['state'] == 'generating']
+                        if len(active) >= 4:
+                            break
+                        time.sleep(.01)
+                    urgent = request('/api/v1/generate', dict(payload, max_length=4, priority=-100,
+                                                             cache_salt='preempt-urgent'))
+                    assert urgent['results'][0]['text'], 'urgent request returned no output'
+                    assert metric('friend_batch_preemptions_total') > preempt_before, 'priority preemption missing'
+                    for future in low_futures:
+                        future.result(timeout=HTTP_TIMEOUT_SECONDS)
+            if draft:
+                proposed = metric('friend_batch_draft_proposed_tokens_total')
+                accepted = metric('friend_batch_draft_accepted_tokens_total')
+                print(f'  speculation observed: proposed={proposed:.0f}, accepted={accepted:.0f}', flush=True)
+                assert proposed > 0 and accepted > 0, 'speculative path was not exercised'
+                disabled = request('/api/v1/generate', dict(payload, speculative_tokens=0))['results'][0]
+                assert disabled['text'] == result, 'disabling request speculation changed greedy output'
+                assert metric('friend_batch_draft_proposed_tokens_total') == proposed, 'request draft cap was ignored'
+            print(f'PASS draft={draft}, lanes={profile_lanes}: namespace isolation, reuse, pause/resume', flush=True)
+            return result
+        except BaseException:
+            log.seek(0)
+            print(log.read()[-10000:], file=sys.stderr)
+            raise
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--model', type=Path, required=True)
+    parser.add_argument('--profile-lanes', type=int, default=1)
+    parser.add_argument('--max-queued-requests', type=int, default=0)
+    parser.add_argument('--disaggregated-prefill', action='store_true',
+                        help='exercise lane-0 prefill to decode-lane state handoff')
+    args = parser.parse_args()
+    if args.profile_lanes < 1 or args.profile_lanes > 32:
+        parser.error('--profile-lanes must be between 1 and 32')
+    if args.disaggregated_prefill and args.profile_lanes < 2:
+        parser.error('--disaggregated-prefill requires --profile-lanes >= 2')
+    reference = run(args.model.expanduser(), 0, profile_lanes=args.profile_lanes,
+                    max_queued_requests=args.max_queued_requests,
+                    disaggregated=args.disaggregated_prefill)
+    speculative = run(args.model.expanduser(), 4, suffix=True, profile_lanes=args.profile_lanes,
+                    max_queued_requests=args.max_queued_requests,
+                    disaggregated=args.disaggregated_prefill)
+    assert reference == speculative, 'speculation changed greedy output'
+    print('PASS speculative output matches no-drafter reference')

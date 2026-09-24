@@ -35,6 +35,11 @@ No release binaries yet. Build from source, details below.
 | [Adaptive speculative decoding](#adaptive-speculative-decoding) | Draft length chosen per-round from live measurements. Fixed drafting loses ~25% on chat; adaptive stayed at or above the no-drafter baseline on every workload tested. |
 | [Steering vectors built in](#steering-vectors-built-in) | Build control vectors from contrastive prompts on the running model. 1.3 seconds from 12 pairs on a 1.7B model. |
 | [Wider continuous batching](#continuous-batching) | Grammar, DRY, XTC, top-n-sigma, mirostat, and dynamic temperature all batch across concurrent requests. |
+| Decode-first scheduling | Ready decodes run before prompt work; `--prefill-tokens` bounds prompt work per round so long prompts do not freeze other requests. |
+| Priority scheduling and preemption | Per-request `priority` values, fair tie breaking, and bounded host snapshots let urgent work displace lower-priority sequences when all slots are full. |
+| Suffix speculation | `--suffix-draft N` proposes continuations from repeated prompt/history suffixes; it takes precedence over the fixed n-gram drafter. |
+| Batch logprobs | Concurrent requests can ask for per-token top alternatives with `logprobs`; results stay isolated per request. |
+| Serving metrics | Prometheus text at `/metrics`: queue time, TTFT, ITL, decode time, cache reuse, and batch counters. |
 | [Blue-noise sampling](#blue-noise-sampling) | Anti-correlated random rolls: fewer streaks at either end of the distribution, which the model would otherwise amplify into loops or derailing. Unbiased. |
 | [Low-bit models and kernels](#low-bit-models-and-kernels) | Q1_0, PQ2_0, PTQ1_0 with CPU/Metal/CUDA/Vulkan kernels. Metal batch-of-8 on 27B Bonsai Q1_0: 190.6 ms down to 100.2 ms. Maxwell GPUs without dp4a go from 25 to 63+ tok/s on Bonsai-8B Q1_0. |
 
@@ -157,6 +162,147 @@ another sequence's cells. friend.cpp batches more request types than stock
 koboldcpp -- grammar, DRY, XTC, top-n-sigma, mirostat, and dynamic temperature all
 work across concurrent requests.
 
+Scheduling is decode-first, then chunked prefill. `--prefill-tokens N` limits how
+many prompt tokens can be admitted beside one decode round; `0` uses the normal
+backend batch size. Smaller values protect inter-token latency under long prompts,
+while larger values improve time to first token and throughput. `/metrics` exposes
+Prometheus-compatible queue, TTFT, inter-token, decode, batching, and cache-reuse
+counters for tuning this tradeoff.
+
+Requests may include `cache_salt` to isolate prefix reuse between tenants. The salt
+is hashed before it reaches the native cache key, and adapter/cache identities use
+SHA-256. Model/LoRA file identities still incorporate path, size and modification
+time rather than hashing entire weight files.
+
+Batch requests may include `priority`; lower values are scheduled first, while
+equal-priority requests retain fair round-robin ordering.
+
+`--schedule-tokens N` sets the unified token budget for each batch round. Decode
+tokens are admitted first, then prompt and speculative tokens spend the remainder;
+`0` keeps the backend batch size. This is useful when a large `--batchsize` would
+otherwise make long prefills harm inter-token latency.
+
+`--max-queued-requests N` bounds live continuous-batching requests, including
+waiting, running and paused work. A full queue returns a retryable overload error
+instead of silently falling back to the legacy generator; `0` leaves the cap off.
+`friend_batch_requests_rejected_total` counts those admissions.
+
+`--kv-watermark F` reserves fraction `F` of the estimated sequence-token capacity
+for currently active decodes before admitting another prompt. It reduces KV
+thrash while the physical allocator is under pressure; `0` disables it.
+`friend_batch_kv_watermark_stalls_total` counts deferred admissions.
+
+When every sequence slot is occupied, a waiting request with a strictly higher
+priority can evict one lower-priority sequence into the bounded compressed host
+snapshot tier. The request resumes with its sampler state and KV contents intact;
+equal-priority traffic is never churned. `/metrics` exposes
+`friend_batch_preemptions_total`.
+
+For prompt/history-driven workloads, `--suffix-draft N` uses repeated suffixes and
+frequency-weighted continuations to generate adaptive draft proposals. It is
+compatible with continuous batching and falls back to the existing n-gram drafter
+when unset. Requests can pass `"logprobs": K` (up to 20) to retain top-K token
+alternatives in the batch result without sharing the legacy process-wide buffer.
+
+Native callers that need concurrent personas can bind an LM head to an individual
+`llama_context` with `llama_set_adapter_head(ctx, head)` and inspect it with
+`llama_get_adapter_head`. The binding is included in graph reuse keys, so contexts
+sharing one model can decode in parallel without mutating the model's global head.
+Currently the context-local graph path covers LLaMA, Qwen3/Qwen3-MoE, and
+Qwen3.5/Qwen3.5-MoE. Freeing a head unbinds it from its contexts. Profile application uses this path where
+supported. The existing `llama_model_set_head` API remains the model-wide
+compatibility path for other architectures.
+
+For in-process parallel persona execution, `--profile-lanes N` creates N native
+contexts over the same model weights. Each lane owns independent KV, compute
+buffers, adapter bindings, and sampler state; requests are affinity-routed by
+LoRA/vector/head profile and then scheduled fairly within a lane. CPU thread
+counts are divided across lanes, while the backend weights remain shared. This
+mode currently requires ordinary continuous batching without a separate draft
+model, MTP, or CFG guidance context; use the process router below when those
+features or model-wide adapter architectures are required.
+
+Each lane prepares its next batch under the scheduler lock, releases that lock
+while `llama_decode` owns the lane-local buffers, and applies pause or abort at
+the next completed round. This gives genuine cross-lane overlap today; a
+backend-specific prefetch queue with completion fences remains future work.
+
+For real model-replica parallelism, run the small process router alongside several
+full workers:
+
+```sh
+python tools/friend-bench/data_parallel_router.py --model model.gguf \
+  --replicas 2 --port 5001 --replica-arg=--gpulayers --replica-arg=99
+```
+
+Each worker owns its own context and device placement. Requests with the same
+`cache_salt` and adapter profile stay on one replica for prefix-cache locality;
+other requests go to the least-busy worker. LoRA, steering, and head profiles are
+therefore isolated in real worker lanes instead of being mutated mid-decode.
+The router namespaces request IDs as `router-epoch:worker:local-id`, aggregates
+request listings across healthy workers, retries only connection failures before
+the request is sent, and forwards SSE/NDJSON chunks as they arrive. Pause/resume
+controls use the namespaced ID, so they cannot target a request on another worker.
+The router also samples each worker's running/waiting requests and KV-block count;
+fresh samples influence least-load selection, while samples older than two seconds
+expire back to the local in-flight counter.
+Probe latency is folded into that score with an EWMA, and a worker can be marked
+draining so existing request owners finish while new work moves elsewhere.
+Connection failures put a replica on a short exponential health cooldown, while
+successful responses restore it immediately; if every replica is cooling down the
+router still probes one so a recovered worker can rejoin.
+This is the safe way to scale across devices without sharing mutable adapter or
+KV state.
+
+History-based speculation is available with `--ngram-draft N`. It proposes repeated
+continuations from the request's own token history and verifies them in the same
+target batch; it is opportunistic, so a request with no repeated suffix simply falls
+back to ordinary decoding. `/api/extra/requests` lists active batch requests, while
+`--suffix-draft N` searches both the prompt and generated history for repeated
+suffixes, chooses frequency-weighted continuations, and adapts the proposed length
+per request. It takes precedence over `--ngram-draft`.
+`POST /api/extra/requests/pause` and `/resume` suspend or continue a request at a
+worker boundary, while `/cancel` asks the native scheduler to abort it and
+release its KV ownership at the next safe boundary. Paused KV is bounded by a
+512 MiB host-memory budget.
+Preempted and explicitly paused snapshots use the same lossless byte-plane/zstd
+codec as the prompt cache when compression saves space; `/metrics` exposes the
+current stored byte count as `friend_batch_offloaded_bytes`.
+With native profile lanes enabled, `friend_batch_lane_running{lane="N"}` shows
+the bounded live request count for each lane, making affinity imbalance visible.
+The scheduler's physical page table reports `friend_batch_kv_pages_used`,
+`friend_batch_kv_pages_capacity`, page queries/hits and evictions for tuning cache
+pressure. The current llama backend still owns the actual KV tensors; this table
+is the ownership layer used while the backend migration to true paged storage is
+completed.
+
+`tools/friend-bench/lane_benchmark.py` measures end-to-end throughput for one or
+more native profile-lane counts and verifies every result is non-empty.
+
+OpenAI structured output requests use the same cached native grammar path for
+JSON Schema and JSON object responses. vLLM-style `structured_outputs: {"json":
+...}` / `{"json_schema": ...}` and `{"choice": [...]}` forms, plus
+`guided_json` and `guided_choice`, are accepted as aliases.
+
+OpenAI completion and chat requests may set `n` up to 16 for parallel sampling.
+Each sample gets an independent RNG/sampler state and indexed choice; native
+continuous batching shares complete prompt KV blocks between siblings and
+aggregates usage across the returned choices. Streaming `n` uses indexed SSE
+fan-in, drains completion races, and preserves split UTF-8 tokens.
+
+The scheduler-owned page table also has a versioned metadata connector in
+`friend/kv_connector.hpp`. Peers discover model/layout/dtype/profile/namespace
+compatibility before importing, receive export/import/invalidation events, and
+cannot invalidate pages that still have live references. The current llama
+backend has no device-KV transport hook, so the connector carries ownership
+metadata and leaves tensor payload transfer to the future paged backend.
+
+Multimodal requests retain up to eight preprocessed mtmd encoder results. The
+cache key includes media bytes, encoder identity, audio/image mode and the
+vision resize limit; replacing the encoder drops all entries. Prometheus exposes
+`friend_multimodal_encoder_cache_hits_total`, misses, evictions, current entry
+count, and encoded embedding bytes. Opaque mtmd metadata remains outside the
+byte gauge because the public API does not expose its storage size.
 ### Blue-noise sampling
 
 `"blue_noise": true` in a request enables anti-correlated random rolls -- each

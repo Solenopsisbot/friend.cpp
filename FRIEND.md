@@ -23,6 +23,14 @@ friend.cpp-specific features, described below:
 3. **Tiered prompt cache** -- RAM + disk caching of KV state with automatic prefix reuse
 4. **DSpark speculative drafters** -- PrismML's standalone drafters wired into `--draftmodel`, cache-aware
 5. **Fast 1-bit / ternary decode on old NVIDIA GPUs** -- a bit-plane mat-vec path for Q1_0 / PQ2_0 on GPUs without `dp4a` (Maxwell)
+6. **Priority-aware continuous batching** -- fair priority queues, bounded host KV snapshots for preemption, and per-request batch logprobs
+7. **Suffix speculation** -- prompt/history suffix matching with frequency-weighted adaptive drafts
+8. **Logical KV block tables** -- fixed-token blocks used for aligned llama sequence sharing and copy-on-write prefix reuse
+9. **Structured output aliases** -- cached JSON Schema and choice grammars through the OpenAI/vLLM request forms
+10. **Parallel sampling** -- bounded OpenAI `n` fan-out with independent RNG state, indexed choices, shared prompt KV and aggregated usage
+11. **KV connector contract** -- versioned compatibility discovery, metadata export/import, invalidation and ownership events
+12. **Guided regex constraints** -- bounded full-match regex subset compiled to named GBNF rules, with explicit 400 errors for unsupported assertions and backreferences
+13. **Multimodal encoder cache** -- bounded reuse of mtmd image/audio chunks and immutable projector embeddings keyed by bytes and preprocessing identity
 
 
 ---
@@ -267,14 +275,107 @@ The intended workflow: take a base model, fine-tune *only* the LM head (and opti
 
 ### Continuous batching
 
-With `--parallelrequests N` (which turns context shifting off automatically), requests are grouped by adapter profile per decode step. The worker sticks with a profile while it has work queued for it, then switches to a starved profile after 8 decode rounds.
+With `--parallelrequests N` (which turns context shifting off automatically), requests
+are grouped by adapter profile per decode step.
+
+`--profile-lanes N` adds N native execution lanes over the same model weights. Each
+lane has independent KV and compute buffers plus context-local adapter/head state;
+requests with different LoRA, steering, or head identities are affinity-routed to
+separate lanes when possible, and each lane retains the decode-first fair scheduler.
+The option is intended for high-parallelism persona serving and currently requires
+ordinary continuous batching without MTP, a separate draft model, or CFG guidance.
+CPU threads are divided across lanes, so raise N for concurrent work only when the
+device and memory budget can absorb the extra KV/compute state.
+
+`--max-lora-profiles N` bounds the number of distinct live adapter profiles. A new
+profile over the cap receives the same retryable overload response as a full
+continuous-batching queue, while requests using resident profiles keep running.
+`friend_batch_lora_profile_rejections_total` counts these admissions. This is
+profile-grouped execution across context lanes; llama's public API still does not
+permit different LoRA sets inside one `llama_decode` call.
+
+`--disaggregated-prefill --profile-lanes 2` moves each opted-in request through a
+real lane handoff: lane 0 evaluates the prompt and first token, then serializes
+the llama sequence state; a decode lane restores that state and continues without
+replaying the prompt. This is an in-process handoff over host memory. The KV
+connector can carry serialized payloads, and its live socket wrapper exposes
+frame, payload-byte, wire-byte, and failure counters. No network worker or
+device-tensor transport is assumed yet.
+
+The companion process router marks connection-failed workers unhealthy for a short
+exponential cooldown, resets the cooldown after a successful response, and keeps
+probing when all workers are cooling down so recovery is automatic.
+Responses include `X-Friend-Router-Epoch`, `X-Friend-Router-Worker`,
+`X-Friend-Router-Queue-Ms`, and `X-Friend-Router-Upstream-Header-Ms` headers so
+client timing traces can identify the replica and separate routing overhead from
+upstream response-header latency.
+It periodically samples worker request states and KV-block counts, using fresh
+observations in its load score and ignoring samples older than two seconds. A
+health cycle probes replicas concurrently, so one dead worker's timeout does not
+serialize health updates for the rest of the pool.
+
+`--schedule-tokens N` bounds the total tokens admitted to one scheduler round;
+decodes are admitted before prompt chunks, and `0` uses the backend batch size.
+Requests may set `speculative_tokens` (or `num_speculative_tokens`) to a value
+from `0` to `32` to cap history-based suffix/ngram speculation for that request;
+`0` disables it while an omitted field uses the server flag. This keeps a
+latency-sensitive request from inheriting an aggressive global draft budget.
+Same-profile prefixes share complete 16-token blocks through llama's sequence-cell
+copy-on-write path. The share count is exposed as
+`friend_batch_kv_block_shares_total` in `/metrics`.
+When profile lanes are enabled, `/metrics` also exposes the bounded live count per
+lane as `friend_batch_lane_running{lane="N"}`.
+`--max-queued-requests N` rejects new batch work once waiting, running and paused
+requests reach N; `friend_batch_requests_rejected_total` records those rejections.
+`--kv-watermark F` reserves a fraction of estimated sequence-token capacity for
+active decodes and defers prompt admission when the reserve would be consumed;
+`friend_batch_kv_watermark_stalls_total` reports those deferrals. This scheduler
+guard complements the future physical paged allocator.
+Admission keeps lower numeric priorities first while work is fresh, then promotes
+any request that has waited through eight completed scheduler rounds. The aging
+epoch is shared by native lanes, so a continuous stream on one lane cannot starve
+an older request handed to another lane.
+The scheduler now also tracks refcounted physical page identities for each logical
+KV block and exports used/capacity, query, hit and eviction counters. llama.cpp
+still owns device tensor allocation until the backend paged-KV handoff is complete;
+if the scheduler page table cannot acquire ownership, the request waits or fails
+at a safe boundary and `friend_batch_kv_page_stalls_total` records the pressure.
+
+Pause and priority-preemption snapshots are bounded by 512 MiB of host storage.
+They use the prompt-cache codec when compression reduces their size and restore
+with checksum validation. `friend_batch_offloaded_bytes` reports the stored bytes.
+
+OpenAI `/v1/completions` and `/v1/chat/completions` requests may set `n` up to
+16. Samples are submitted together from separate executor threads, share
+aligned prompt KV when the native batch scheduler can reuse it, and return
+indexed choices. A failed child aborts its admitted siblings. Streaming `n`
+uses the same native child requests and emits indexed SSE chunks as each child
+advances; client disconnects abort all children, completion races drain their
+last token, and incremental UTF-8 decoding preserves split multibyte pieces.
+The
+`friend/kv_connector.hpp` contract provides a versioned, bounded handoff for
+scheduler pages and serialized backend payloads. It rejects incompatible
+model/layout/dtype or profile namespaces, rolls back failed imports, and will
+not invalidate referenced pages. The serving path does not yet attach llama's
+device KV tensor bytes to this transport, so it is a connector contract rather
+than a live network prefill/decode split.
+`friend/kv_transport.hpp` wraps that wire in a bounded checksummed frame, with
+stream and POSIX socket helpers suitable for TCP, Unix sockets, or an RPC
+implementation; it does not claim to serialize llama's backend-owned device
+tensors.
+`friend/kv_socket_connector.hpp` uses that frame to export/import a connector
+snapshot over an already-authenticated connected socket, preserving the same
+descriptor, payload, and refcount checks.
+`GET /api/extra/capabilities` reports this serving support matrix and explains
+why backend tensor paging, device-KV attachment, expert parallelism, context
+parallelism, and beam branching are not advertised by this build.
 
 ### What's been verified
 
 - Each adapter kind (LoRA, steering, head) changes greedy output and returns exactly to base output when removed.
 - A copy of the model's own head reproduces base output bit-for-bit.
 - Head-only switches don't trigger prompt reprocessing.
-- Concurrent mixed-profile requests match serial results.
+- Concurrent head-profile requests match serial results; LoRA/steering profiles are grouped and applied one execution profile at a time because llama adapter state is context-local.
 
 ### LoRAs on Bonsai models
 

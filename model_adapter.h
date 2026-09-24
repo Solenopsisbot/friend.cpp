@@ -97,6 +97,7 @@ bool gpttype_batch_generate_has_finished(int request_id);
 int gpttype_batch_generate_stream_count(int request_id);
 const char * gpttype_batch_generate_new_token(int request_id, int idx);
 const char * gpttype_batch_generate_pending_output(int request_id);
+const char * gpttype_batch_generate_logprobs(int request_id, int begin, int end);
 generation_outputs gpttype_batch_generate_result(int request_id);
 bool gpttype_batch_generate_abort(int request_id);
 void gpttype_batch_generate_release(int request_id);
@@ -153,6 +154,7 @@ bool gpttype_load_state_kv(int slot);
 bool gpttype_clear_state_kv(bool shrink);
 // friend.cpp: prompt cache management (friend/prompt_cache.hpp)
 std::string gpttype_friend_cache_list_json();
+std::string gpttype_friend_metrics();
 size_t gpttype_friend_cache_clear(bool include_pinned);
 bool gpttype_friend_cache_pin(uint64_t id, bool pinned);
 // friend.cpp: build a steering vector from contrastive prompts (friend/steering.hpp); JSON in, JSON out
@@ -160,3 +162,6 @@ std::string gpttype_friend_build_steering(const std::string & request_json);
 int get_oldest_slot(int excludeSlotId);
 void touch_slot(int slot);
 int get_identical_existing_slot();
+
+std::string gpttype_friend_requests();
+bool gpttype_friend_request_control(int id, bool pause);
