@@ -116,6 +116,9 @@ int main() {
     assert(malformed_pages.entries().empty());
     friend_serving::metrics metrics;
     metrics.kv_page_stalls = 2;
+    metrics.kv_transfer_bytes = 64;
+    metrics.kv_transfer_count = 1;
     assert(metrics.render(0, 0).find("friend_batch_kv_page_stalls_total 2") != std::string::npos);
+    assert(metrics.render(0, 0).find("friend_batch_kv_transfer_bytes_total 64") != std::string::npos);
     return 0;
 }
