@@ -6647,7 +6647,12 @@ static void batch_worker_loop(BatchLane * lane)
             // first token there, then hands the prompt KV plus pending token to
             // a decode lane. The handoff is a real state snapshot; no prompt
             // text is replayed on the decode side.
-            if(req->disaggregated_prefill && req->i_batch_is_prefill && req->state == BatchState::GENERATING) {
+            // Do not migrate a sequence while an operator control is already
+            // pending. Resolving pause/abort on the current lane first avoids
+            // a race where a request is snapshotted and then stranded between
+            // the source and decode queues.
+            if(req->disaggregated_prefill && !req->pause_requested && !req->abort_requested &&
+               req->i_batch_is_prefill && req->state == BatchState::GENERATING) {
                 const int decode_lane = batch_choose_decode_lane_locked();
                 if(decode_lane < 0 || !batch_snapshot_paused_locked(*req, req->slot, false)) {
                     ++batch_metrics.kv_transfer_failures;
