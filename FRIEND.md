@@ -299,7 +299,7 @@ with checksum validation. `friend_batch_offloaded_bytes` reports the stored byte
 OpenAI `/v1/completions` and `/v1/chat/completions` requests may set `n` up to
 16. Samples are submitted together from separate executor threads, share
 aligned prompt KV when the native batch scheduler can reuse it, and return
-indexed choices. Streaming `n` is
+indexed choices. A failed child aborts its admitted siblings. Streaming `n` is
 rejected until the endpoint has an indexed SSE fan-in path. The
 `friend/kv_connector.hpp` contract provides a checked metadata handoff for
 future disaggregated KV transport; it rejects incompatible model/layout/dtype
