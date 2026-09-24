@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HTTP_TIMEOUT_SECONDS = 300
 
 
-def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
+def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0, disaggregated=False):
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         port = sock.getsockname()[1]
@@ -49,6 +49,8 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
             '--quiet', '--parallelrequests', str(slots), '--prefill-tokens', '32', '--schedule-tokens', '64',
             '--profile-lanes', str(profile_lanes), '--max-queued-requests', str(max_queued_requests),
             draft_flag, str(draft)]
+        if disaggregated:
+            command.append('--disaggregated-prefill')
         proc = subprocess.Popen(command,
             cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
         try:
@@ -70,9 +72,14 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
             payload = dict(prompt=prompt, max_length=160, max_context_length=4096, temperature=0,
                            rep_pen=1, top_k=0, top_p=1, seed=123, cache_salt='test-A',
                            grammar='root ::= "alpha beta gamma delta " root')
+            if disaggregated:
+                payload['disaggregated_prefill'] = True
             result_obj = request('/api/v1/generate', payload)['results'][0]
             result = result_obj['text']
             assert metric('friend_batch_kv_page_queries_total') > 0, 'physical KV page queries missing'
+            if disaggregated:
+                assert metric('friend_batch_kv_transfers_total') > 0, 'disaggregated KV handoff missing'
+                assert metric('friend_batch_kv_transfer_bytes_total') > 0, 'disaggregated KV bytes missing'
             timing = result_obj.get('timing')
             assert timing and timing['total_seconds'] >= timing['decode_seconds'] >= 0, timing
             assert timing['queue_seconds'] >= 0 and timing['prefill_seconds'] >= 0, timing
@@ -152,12 +159,13 @@ def run(model, draft, suffix=False, profile_lanes=1, max_queued_requests=0):
                     assert overloaded.get('error', {}).get('code') == 503, overloaded
                     long_future.result(timeout=HTTP_TIMEOUT_SECONDS)
             # Different namespaces must not reuse live/retained KV, including base profiles.
-            before = metric('friend_batch_reused_tokens_total')
             other = dict(payload, cache_salt='test-B', max_length=4)
-            request('/api/v1/generate', other)
-            assert metric('friend_batch_reused_tokens_total') == before, 'cross-salt reuse'
-            request('/api/v1/generate', other)
-            assert metric('friend_batch_reused_tokens_total') > before, 'same-salt reuse missing'
+            if not disaggregated:
+                before = metric('friend_batch_reused_tokens_total')
+                request('/api/v1/generate', other)
+                assert metric('friend_batch_reused_tokens_total') == before, 'cross-salt reuse'
+                request('/api/v1/generate', other)
+                assert metric('friend_batch_reused_tokens_total') > before, 'same-salt reuse missing'
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 future = pool.submit(request, '/api/v1/generate', payload)
                 deadline = time.monotonic() + 90
@@ -267,12 +275,18 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=Path, required=True)
     parser.add_argument('--profile-lanes', type=int, default=1)
     parser.add_argument('--max-queued-requests', type=int, default=0)
+    parser.add_argument('--disaggregated-prefill', action='store_true',
+                        help='exercise lane-0 prefill to decode-lane state handoff')
     args = parser.parse_args()
     if args.profile_lanes < 1 or args.profile_lanes > 32:
         parser.error('--profile-lanes must be between 1 and 32')
+    if args.disaggregated_prefill and args.profile_lanes < 2:
+        parser.error('--disaggregated-prefill requires --profile-lanes >= 2')
     reference = run(args.model.expanduser(), 0, profile_lanes=args.profile_lanes,
-                    max_queued_requests=args.max_queued_requests)
+                    max_queued_requests=args.max_queued_requests,
+                    disaggregated=args.disaggregated_prefill)
     speculative = run(args.model.expanduser(), 4, suffix=True, profile_lanes=args.profile_lanes,
-                      max_queued_requests=args.max_queued_requests)
+                    max_queued_requests=args.max_queued_requests,
+                    disaggregated=args.disaggregated_prefill)
     assert reference == speculative, 'speculation changed greedy output'
     print('PASS speculative output matches no-drafter reference')
