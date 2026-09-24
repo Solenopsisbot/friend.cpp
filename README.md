@@ -260,6 +260,11 @@ mode currently requires ordinary continuous batching without a separate draft
 model, MTP, or CFG guidance context; use the process router below when those
 features or model-wide adapter architectures are required.
 
+Each lane prepares its next batch under the scheduler lock, releases that lock
+while `llama_decode` owns the lane-local buffers, and applies pause or abort at
+the next completed round. This gives genuine cross-lane overlap today; a
+backend-specific prefetch queue with completion fences remains future work.
+
 For real model-replica parallelism, run the small process router alongside several
 full workers:
 
