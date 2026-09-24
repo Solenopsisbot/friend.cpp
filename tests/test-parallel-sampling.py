@@ -166,6 +166,115 @@ class ParallelSamplingTests(unittest.TestCase):
         assert events[-1] == "[DONE]"
         assert set(backend.released) == {0, 1}
 
+    def stream_handler(self, events):
+        handler = object.__new__(server.KcppServerRequestHandler)
+        handler.send_response = lambda *_args: None
+        handler.send_header = lambda *_args: None
+        handler.end_headers = lambda **_kwargs: None
+
+        async def capture(data):
+            events.append(data)
+
+        handler.send_oai_sse_event = capture
+        return handler
+
+    def test_stream_tail_and_split_unicode_are_drained_before_release(self):
+        for api_format in (3, 4):
+            with self.subTest(api_format=api_format):
+                backend = StreamingBackend()
+                events = []
+                handler = self.stream_handler(events)
+
+                async def generate(child, _api, _stream):
+                    index = int(child['oai_uniqueid'].rsplit('-', 1)[1])
+                    child['_batch_request_id'] = index
+                    # The first poll sees an incomplete UTF-8 sequence; the
+                    # remaining bytes arrive as the task completes during wait.
+                    backend.tokens[index] = [ctypes.c_char_p(b'caf\xc3')]
+                    await asyncio.sleep(0.03)
+                    backend.tokens[index].append(ctypes.c_char_p(b'\xa9!'))
+                    return {'choices': [{'finish_reason': 'stop'}]}
+
+                handler.generate_text = generate
+                with patch.object(server, 'args', self.args), patch.object(server, 'handle', backend):
+                    asyncio.run(handler.handle_parallel_sse_stream(dict(self.params, n=2), api_format))
+                output = {0: '', 1: ''}
+                finished = set()
+                for event in events:
+                    if event == '[DONE]':
+                        continue
+                    choice = json.loads(event)['choices'][0]
+                    index = choice['index']
+                    self.assertNotIn(index, finished)
+                    output[index] += choice.get('text', '') if api_format == 3 else choice.get('delta', {}).get('content', '')
+                    if choice['finish_reason'] is not None:
+                        finished.add(index)
+                self.assertEqual(output, {0: 'café!', 1: 'café!'})
+                self.assertEqual(finished, {0, 1})
+                self.assertCountEqual(backend.released, [0, 1])
+
+    def test_disconnect_aborts_late_admission_and_releases_children(self):
+        class DelayedBackend(StreamingBackend):
+            def __init__(self):
+                super().__init__()
+                self.lock = threading.Lock()
+                self.entered = threading.Event()
+                self.allow_late = threading.Event()
+                self.aborted = set()
+                self.stopped = [threading.Event(), threading.Event()]
+
+            def batch_generate_submit(self, inputs):
+                with self.lock:
+                    index = self.next_id
+                    self.next_id += 1
+                if index == 1:
+                    self.entered.set()
+                    assert self.allow_late.wait(5), 'monitor never cancelled'
+                self.tokens[index] = []
+                return index
+
+            def batch_generate_abort(self, index):
+                self.aborted.add(index)
+                self.stopped[index].set()
+
+            def batch_generate_result(self, index):
+                assert self.stopped[index].wait(5), 'native child was orphaned'
+                return SimpleNamespace(status=1, stopreason=-1, text=b'', prompt_tokens=3,
+                                       completion_tokens=0, logprobs_json=None, timing_json=None)
+
+        backend = DelayedBackend()
+        events = []
+        handler = self.stream_handler(events)
+        handler.connection = object()
+
+        async def disconnect(cancel):
+            while not backend.entered.is_set():
+                await asyncio.sleep(0.001)
+            cancel()
+            backend.allow_late.set()
+
+        handler.monitor_connection = disconnect
+        with patch.object(server, 'args', self.args), patch.object(server, 'handle', backend):
+            asyncio.run(handler.handle_parallel_sse_stream(dict(self.params, n=2), 4))
+        self.assertEqual(backend.aborted, {0, 1})
+        self.assertCountEqual(backend.released, [0, 1])
+        self.assertEqual(events, [])
+
+    def test_streaming_rejection_is_reported_without_legacy_fallback(self):
+        backend = NativeBackend(2, reject=-2)
+        events = []
+        handler = self.stream_handler(events)
+        with patch.object(server, 'args', self.args), patch.object(server, 'handle', backend):
+            asyncio.run(handler.handle_parallel_sse_stream(dict(self.params, n=2), 4))
+        self.assertEqual(json.loads(events[0])['error']['code'], 503)
+        self.assertEqual(events[-1], '[DONE]')
+
+    def test_streaming_ineligible_request_never_starts_children(self):
+        self.args.parallelrequests = 1
+        with patch.object(server, 'args', self.args), patch.object(server, 'handle', None):
+            result = asyncio.run(self.handler.handle_parallel_sse_stream(self.params, 4))
+        self.assertEqual(result['error']['code'], 400)
+
 
 if __name__ == "__main__":
     unittest.main()

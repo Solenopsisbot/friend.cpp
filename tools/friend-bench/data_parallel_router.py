@@ -64,7 +64,9 @@ class Pool:
         try:
             conn.request('GET', '/api/extra/requests')
             response = conn.getresponse()
-            entries = json.loads(response.read()) if response.status == 200 else []
+            if response.status != 200:
+                raise ValueError(f'worker state probe returned {response.status}')
+            entries = json.loads(response.read())
             running = sum(item.get('state') in ('prefill', 'generating') for item in entries)
             waiting = sum(item.get('state') == 'waiting' for item in entries)
             kv_blocks = sum(int(item.get('kv_blocks', 0) or 0) for item in entries)
@@ -115,14 +117,14 @@ class Pool:
         except Exception:
             pass
         with self.lock:
-            available = [i for i in range(len(self.ports)) if i not in excluded]
+            # Draining is an operator decision, not a transient health failure:
+            # never bring a drained worker back via the cooldown probe fallback.
+            available = [i for i in range(len(self.ports))
+                         if i not in excluded and not self.draining[i]]
             if not available:
-                raise ValueError("no untried replicas")
+                raise ValueError("no accepting untried replicas")
             now = time.monotonic()
             healthy = [i for i in available if self.failure_until[i] <= now]
-            accepting = [i for i in healthy if not self.draining[i]]
-            if accepting:
-                healthy = accepting
             # Keep probing when every replica is cooling down. This prevents a
             # transient outage from becoming a permanent routing blackout.
             candidates = healthy or available
@@ -255,7 +257,12 @@ class Handler(BaseHTTPRequestHandler):
             if len(attempted) >= len(self.pool.ports):
                 break
             if owner is None:
-                index, port = self.pool.choose(body, attempted)
+                try:
+                    index, port = self.pool.choose(body, attempted)
+                except ValueError:
+                    self.close_connection = True
+                    self.send_error(503, 'no accepting replicas')
+                    return
             else:
                 index, port = owner, self.pool.ports[owner]
                 with self.pool.lock:
@@ -289,6 +296,12 @@ class Handler(BaseHTTPRequestHandler):
                 while chunk := response.read1(64 * 1024):
                     self.wfile.write(chunk)
                     self.wfile.flush()
+                # A return in the try suite skips its else suite. Clear the
+                # cooldown here, after the upstream response has been consumed.
+                if response.status < 500:
+                    self.pool.mark_success(index)
+                else:
+                    self.pool.mark_failure(index)
                 return
             except (OSError, http.client.HTTPException) as exc:
                 if not connected and owner is None and len(attempted) < len(self.pool.ports):
@@ -300,8 +313,6 @@ class Handler(BaseHTTPRequestHandler):
                 if not headers_sent:
                     self.send_error(502, f'replica {port} unavailable: {exc}')
                 return
-            else:
-                self.pool.mark_success(index)
             finally:
                 conn.close()
                 self.pool.done(index)
