@@ -46,7 +46,7 @@ supported backends and remaining limitations as it progresses.
 | [~] | 12. Per-request timing data | Batch results now expose queue, prefill, TTFT, decode and total timing fields, with live regression checks. Streaming completion metadata and pause/preemption lifecycle accounting remain. |
 | [~] | 13. Richer cache metrics | Per-lane occupancy plus physical page capacity/usage, query/hit/eviction counters and watermark/rejection counters are exposed and live-checked. Recompute/transfer metrics and controlled pressure accounting remain. |
 | [ ] | 14. Multimodal encoder caching | Bounded reuse of image/audio encoder results keyed by input content, preprocessing and encoder identity. Verify invalidation, concurrent reuse, memory bounds and output equivalence. |
-| [ ] | 15. KV connector/event APIs | Versioned export/import, discovery, invalidation and event interfaces with model/layout/dtype/profile/cache-namespace compatibility and safe transfer lifetimes. Supply a working connector and exercise cancellation, corruption and incompatible peers. |
+| [~] | 15. KV connector/event APIs | `friend/kv_connector.hpp` now provides versioned discovery, compatibility-checked export/import, corruption rejection, refcount-safe invalidation and event callbacks over scheduler-owned pages, with focused tests. Backend tensor payload transfer and cancellation across a live network connector remain. |
 | [ ] | 16. Expert and context parallelism | Real expert placement/routing and context/KV sharding with explicit device groups and collective communication. Validate single-device equivalence, cross-device correctness and communication cost; do not count layer splitting or replicated workers as these features. |
 
 ## Implementation order
