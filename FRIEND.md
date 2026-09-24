@@ -334,6 +334,9 @@ than a live network prefill/decode split.
 stream and POSIX socket helpers suitable for TCP, Unix sockets, or an RPC
 implementation; it does not claim to serialize llama's backend-owned device
 tensors.
+`friend/kv_socket_connector.hpp` uses that frame to export/import a connector
+snapshot over an already-authenticated connected socket, preserving the same
+descriptor, payload, and refcount checks.
 
 ### What's been verified
 
