@@ -6102,10 +6102,41 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     child["sampler_seed"] = base_seed + index
                     child["seed"] = base_seed + index
                 children.append(child)
-            results = await asyncio.gather(*(self.generate_text(child, api_format, False) for child in children))
-            first_error = next((result for result in results if result.get("error")), None)
-            if first_error:
-                return first_error
+            tasks = {asyncio.create_task(self.generate_text(child, api_format, False)): child
+                     for child in children}
+            pending = set(tasks)
+            results_by_task = {}
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                failure = None
+                for task in done:
+                    try:
+                        result = task.result()
+                    except Exception as exc:
+                        failure = {"error": {"message": str(exc), "type": "server_error", "code": 500}}
+                        break
+                    results_by_task[task] = result
+                    if result.get("error"):
+                        failure = result
+                        break
+                if failure:
+                    # A cancelled to_thread wrapper cannot stop a running C++
+                    # call by itself. Abort each admitted child explicitly,
+                    # then cancel the Python waiters and drain their futures.
+                    abort = getattr(handle, "batch_generate_abort", None)
+                    if abort is not None:
+                        for child in tasks.values():
+                            request_id = child.get("_batch_request_id", -1)
+                            if isinstance(request_id, int) and request_id >= 0:
+                                try:
+                                    abort(request_id)
+                                except Exception:
+                                    pass
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*pending, return_exceptions=True)
+                    return failure
+            results = [results_by_task[task] for task in tasks]
             merged = dict(results[0])
             merged["id"] = f"chatcmpl-A{genparams.get('oai_uniqueid', 1)}" if api_format == 4 else f"cmpl-A{genparams.get('oai_uniqueid', 1)}"
             merged["choices"] = []
