@@ -108,6 +108,7 @@ static int friend_suffix_draft = 0;
 static int friend_schedule_tokens = 0;
 static int friend_max_queued_requests = 0;
 static float friend_kv_watermark = 0.0f;
+static int friend_max_lora_profiles = 0;
 
 llama_grammar *  grammar = nullptr; //currently used grammar
 llama_grammar_parser parsed_grammar;
@@ -3521,6 +3522,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     friend_suffix_draft = std::clamp(inputs.friend_suffix_draft, 0, 32);
     friend_schedule_tokens = std::max(0, inputs.friend_schedule_tokens);
     friend_max_queued_requests = std::max(0, inputs.friend_max_queued_requests);
+    friend_max_lora_profiles = std::clamp(inputs.friend_max_lora_profiles, 0, 1024);
     friend_kv_watermark = std::clamp(inputs.friend_kv_watermark, 0.0f, 0.9f);
     if(continuous_batching_slots > 0)
     {
@@ -6572,6 +6574,20 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
             return -2; // overload: the API layer must not silently fall back to legacy generation
         }
     }
+    const std::string requested_profile_key = profile.execution_key + "|" + profile.head_key;
+    if(friend_max_lora_profiles > 0) {
+        std::unordered_set<std::string> live_profiles;
+        for(const auto & pending : batch_requests) {
+            if(pending && batch_is_live_state(pending->state))
+                live_profiles.insert(pending->profile_key);
+        }
+        if(!live_profiles.count(requested_profile_key) &&
+           live_profiles.size() >= (size_t) friend_max_lora_profiles) {
+            ++batch_metrics.rejected;
+            ++batch_metrics.lora_profile_rejections;
+            return -2; // retryable: wait for a resident profile to drain
+        }
+    }
     auto req = std::make_unique<BatchGenerateRequest>();
     req->id = batch_next_request_id++;
     req->priority = inputs.priority;
@@ -6598,7 +6614,7 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     req->blue_noise = inputs.blue_noise;
     req->profile = profile;
     req->lane = batch_choose_lane_locked(profile);
-    req->profile_key = profile.execution_key + "|" + profile.head_key;
+    req->profile_key = requested_profile_key;
     req->grammar = inputs.grammar ? inputs.grammar : "";
     if(!req->grammar.empty())
     {
