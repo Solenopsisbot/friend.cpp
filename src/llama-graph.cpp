@@ -1527,6 +1527,8 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     cross            (params.cross),
     moe_cache        (params.moe_cache),
     prec_policy      (params.prec_policy),
+    adapter_head       (params.adapter_head),
+
     samplers         (params.samplers),
     cb_func          (params.cb),
     res              (params.res),
@@ -1539,6 +1541,20 @@ void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
     if (cb_func) {
         cb_func(ubatch, cur, name, il);
     }
+}
+
+ggml_tensor * llm_graph_context::head_tensor(ggml_tensor * base) const {
+    return adapter_head && adapter_head->output ? adapter_head->output : base;
+}
+
+ggml_tensor * llm_graph_context::head_norm_tensor(ggml_tensor * base) const {
+    return adapter_head && adapter_head->output_norm ? adapter_head->output_norm : base;
+}
+
+ggml_tensor * llm_graph_context::head_scale_tensor(ggml_tensor * base) const {
+    // The scale is part of the projection weight. Reusing the base weight's
+    // scale for a replacement head would silently corrupt its logits.
+    return adapter_head ? adapter_head->output_s : base;
 }
 
 
