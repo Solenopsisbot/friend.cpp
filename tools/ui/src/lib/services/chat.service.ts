@@ -581,11 +581,8 @@ export class ChatService {
 						done = true;
 						value = undefined;
 					}
-					if (done)
-					{
-						streamFinished = true;
-						break;
-					}
+
+					if (done) break;
 
 					if (abortSignal?.aborted) break;
 
@@ -1030,10 +1027,8 @@ export class ChatService {
 	): Promise<string | void> {
 		const {
 			backend_sampling,
-			blue_noise,
 			continueFinalMessage,
 			custom,
-			rng_type,
 			// Config options
 			disableReasoningParsing,
 			dry_allowed_length,
@@ -1209,10 +1204,6 @@ export class ChatService {
 		}
 
 		if (backend_sampling !== undefined) requestBody.backend_sampling = backend_sampling;
-		if (blue_noise !== undefined) requestBody.blue_noise = blue_noise;
-		if (rng_type !== undefined) requestBody.rng_type = rng_type;
-		if (blue_noise !== undefined) requestBody.blue_noise = blue_noise;
-		if (rng_type !== undefined) requestBody.rng_type = rng_type;
 
 		if (timings_per_token !== undefined) requestBody.timings_per_token = timings_per_token;
 

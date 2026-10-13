@@ -46,6 +46,9 @@ struct common_speculative_output_limits {
 common_speculative_output_limits common_speculative_get_output_limits(
         int32_t n_batch, int32_t n_parallel, int32_t n_draft);
 
+// return true if the target and draft models have compatible vocabs
+bool common_speculative_are_compatible(const llama_model * model_tgt, const llama_model * model_dft);
+
 common_speculative * common_speculative_init(common_params_speculative & params, uint32_t n_seq);
 
 void common_speculative_free(common_speculative * spec);
@@ -69,6 +72,13 @@ struct common_speculative_draft_params {
 
     // the generated draft from the last _draft() call
     llama_tokens * result;
+
+    // candidate distribution per drafted token; set it to make draft-simple and draft-mtp sample
+    std::vector<std::vector<llama_token_data>> * result_q = nullptr;
+
+    // the target's temp and seed, read only when the drafter samples probabilistically
+    float    temp = 1.0f;
+    uint32_t seed = LLAMA_DEFAULT_SEED;
 };
 
 common_speculative_draft_params & common_speculative_get_draft_params(common_speculative * spec, llama_seq_id seq_id);
@@ -77,13 +87,7 @@ common_speculative_draft_params & common_speculative_get_draft_params(common_spe
 void common_speculative_begin(common_speculative * spec, llama_seq_id seq_id, const llama_tokens & prompt);
 
 // process the batch and update the internal state of the speculative context
-bool common_speculative_process(common_speculative * spec, const llama_batch & batch);
-
-// true if any implementation requires the target's multi-layer tap capture
-// (see llama_set_capture_layers / llama_get_embeddings_capture_ith) -- used by
-// dspark, which conditions on several intermediate target layers concatenated
-// per position rather than a single pre/post-norm embedding.
-bool common_speculative_need_embd_capture(common_speculative * spec);
+bool common_speculative_process(common_speculative * spec, const common_batch & batch);
 
 // generate drafts for the sequences specified with `common_speculative_get_draft_params`
 void common_speculative_draft(common_speculative * spec);
@@ -97,40 +101,6 @@ void common_speculative_set_state(common_speculative * spec, llama_seq_id seq_id
 
 // print statistics about the speculative decoding
 void common_speculative_print_stats(const common_speculative * spec);
-
-// friend.cpp: prompt-reuse support for implementations that condition on
-// per-position target features (standalone dspark). koboldcpp reuses KV across
-// requests instead of re-prefilling, so rather than begin() (which wipes those
-// features) the host keeps them in sync with the target's KV:
-//   rewind: drop features/drafter KV at positions >= n_keep (call wherever the
-//           target KV is truncated). Returns the end of the prefix the drafter
-//           can condition on; if that is < the target's n_past there is a hole
-//           and the host must re-decode [covered, n_past) with capture.
-//   flush:  commit staged features into the drafter KV, so that saving the
-//           drafter context (llama_state_get_data) captures everything.
-//   resync: after restoring the drafter context from such a snapshot, drop
-//           staged rows and re-derive the covered end from the drafter KV.
-// All return -1/false when no registered implementation tracks features.
-int32_t common_speculative_friend_rewind(common_speculative * spec, llama_seq_id seq_id, llama_pos n_keep);
-bool    common_speculative_friend_flush (common_speculative * spec, llama_seq_id seq_id);
-int32_t common_speculative_friend_resync(common_speculative * spec, llama_seq_id seq_id);
-
-// TEST/DEBUG ONLY: directly stage target-tap context rows for the dspark
-// implementation (if registered), bypassing the normal process()-driven
-// capture path, which requires a real target context with
-// llama_set_capture_layers engaged and logits requested on every row. Used by
-// the Phase 2 synthetic-target harness (tests/test-dspark-loop.cpp) to drive
-// the block-draft loop deterministically without a target model.
-// `feat` is [n_rows * n_embd_cap] row-major, `pos` is [n_rows] absolute
-// positions, both appended to the sequence's pending context buffer exactly
-// as process() would have. Returns false if no dspark implementation is
-// registered.
-bool common_speculative_dspark_stage_ctx_test(common_speculative * spec,
-                                              llama_seq_id         seq_id,
-                                              const float *        feat,
-                                              int64_t              n_rows,
-                                              int64_t              n_embd_cap,
-                                              const int32_t *      pos);
 
 struct common_speculative_deleter {
     void operator()(common_speculative * s) { common_speculative_free(s); }

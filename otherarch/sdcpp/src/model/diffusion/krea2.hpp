@@ -12,8 +12,11 @@
 #include <utility>
 #include <vector>
 
-#include "core/ggml_extend.hpp"
+#include "core/ggml_extend.h"
 #include "core/ggml_graph_cut.h"
+#include "core/ggml_runner.h"
+#include "core/util.h"
+#include "model/common/ggml_block.hpp"
 #include "model/common/rope.hpp"
 #include "model/diffusion/dit.hpp"
 #include "model/diffusion/flux.hpp"
@@ -143,16 +146,16 @@ namespace Krea2 {
             }
             config.update_axes_dim();
 
-            LOG_DEBUG("krea2: layers=%" PRId64 ", features=%" PRId64 ", heads=%" PRId64 ", kv_heads=%" PRId64 ", text_dim=%" PRId64 ", text_layers=%" PRId64 ", text_heads=%" PRId64 ", text_kv_heads=%" PRId64 ", channels=%" PRId64,
-                      config.layers,
-                      config.features,
-                      config.heads,
-                      config.kv_heads,
-                      config.text_dim,
-                      config.text_layers,
-                      config.text_heads,
-                      config.text_kv_heads,
-                      config.in_channels);
+            LOG_VERBOSE("krea2: layers=%" PRId64 ", features=%" PRId64 ", heads=%" PRId64 ", kv_heads=%" PRId64 ", text_dim=%" PRId64 ", text_layers=%" PRId64 ", text_heads=%" PRId64 ", text_kv_heads=%" PRId64 ", channels=%" PRId64,
+                        config.layers,
+                        config.features,
+                        config.heads,
+                        config.kv_heads,
+                        config.text_dim,
+                        config.text_layers,
+                        config.text_heads,
+                        config.text_kv_heads,
+                        config.in_channels);
             return config;
         }
     };
@@ -229,8 +232,7 @@ namespace Krea2 {
             q          = ggml_reshape_3d(ctx->ggml_ctx, ggml_cont(ctx->ggml_ctx, q), head_dim_ * heads, Lq, N);
             k          = ggml_reshape_3d(ctx->ggml_ctx, ggml_cont(ctx->ggml_ctx, k), head_dim_ * kv_heads, Lk, N);
             v          = ggml_reshape_3d(ctx->ggml_ctx, ggml_cont(ctx->ggml_ctx, v), head_dim_ * kv_heads, Lk, N);
-            return ggml_ext_attention_ext(ctx->ggml_ctx,
-                                          ctx->backend,
+            return ggml_ext_attention_ext(ctx,
                                           q,
                                           k,
                                           v,
@@ -687,23 +689,28 @@ namespace Krea2 {
         }
     };
 
-    __STATIC_INLINE__ std::vector<float> gen_krea2_pe(int h,
-                                                      int w,
-                                                      int patch_size,
-                                                      int bs,
-                                                      int context_len,
-                                                      float theta,
-                                                      const std::vector<int>& axes_dim,
-                                                      const std::vector<ggml_tensor*>& ref_latents,
-                                                      Rope::RefIndexMode ref_index_mode) {
+    __STATIC_INLINE__ Rope::Embedding gen_krea2_pe(int h,
+                                                   int w,
+                                                   int patch_size,
+                                                   int bs,
+                                                   int context_len,
+                                                   float theta,
+                                                   const std::vector<int>& axes_dim,
+                                                   const std::vector<ggml_tensor*>& ref_latents,
+                                                   Rope::RefIndexMode ref_index_mode) {
+        Rope::Embedding result;
+        result.batch_size = bs;
+        result.positions.append_tokens(context_len);
         auto txt_ids = Rope::gen_flux_txt_ids(bs, context_len, 3, {});
-        auto img_ids = Rope::gen_flux_img_ids(h, w, patch_size, bs, 3, 0, 0, 0, false);
+        auto img_ids = Rope::gen_flux_img_ids(h, w, patch_size, bs, 3, 0, 0, 0, false, &result.positions);
         auto ids     = Rope::concat_ids(txt_ids, img_ids, bs);
         if (ref_latents.size() > 0) {
-            auto refs_ids = Rope::gen_refs_ids(patch_size, bs, 3, 1, ref_latents, ref_index_mode, 1.0f, false, 0);
+            auto refs_ids = Rope::gen_refs_ids(patch_size, bs, 3, 1, ref_latents, ref_index_mode, 1.0f, false, 0, &result.positions);
             ids           = Rope::concat_ids(ids, refs_ids, bs);
         }
-        return Rope::embed_nd(ids, bs, theta, axes_dim);
+        result.ids    = std::move(ids);
+        result.values = Rope::embed_nd(result.ids, bs, theta, axes_dim, result.layout, &result.frequencies);
+        return result;
     }
 
     struct Krea2Runner : public DiffusionModelRunner {
@@ -747,15 +754,15 @@ namespace Krea2 {
                 ref_latents.push_back(make_input(ref_latent_tensor));
             }
 
-            pe_vec      = gen_krea2_pe(static_cast<int>(x->ne[1]),
-                                       static_cast<int>(x->ne[0]),
-                                       config.patch_size,
-                                       static_cast<int>(x->ne[3]),
-                                       static_cast<int>(context->ne[1]),
-                                       config.theta,
-                                       config.axes_dim,
-                                       ref_latents,
-                                       ref_image_params.ref_index_mode);
+            pe_vec      = finish_rope_pe(gen_krea2_pe(static_cast<int>(x->ne[1]),
+                                                      static_cast<int>(x->ne[0]),
+                                                      config.patch_size,
+                                                      static_cast<int>(x->ne[3]),
+                                                      static_cast<int>(context->ne[1]),
+                                                      config.theta,
+                                                      config.axes_dim,
+                                                      ref_latents,
+                                                      ref_image_params.ref_index_mode));
             int pos_len = static_cast<int>(pe_vec.size() / config.axes_dim_sum / 2);
             auto pe     = ggml_new_tensor_4d(compute_ctx, GGML_TYPE_F32, 2, 2, config.axes_dim_sum / 2, pos_len);
             set_backend_tensor_data(pe, pe_vec.data());
@@ -775,7 +782,7 @@ namespace Krea2 {
             auto get_graph = [&]() -> ggml_cgraph* {
                 return build_graph(x, timesteps, context, ref_latents, ref_image_params);
             };
-            return restore_trailing_singleton_dims(GGMLRunner::compute<float>(get_graph, n_threads, false, false, false), x.dim());
+            return restore_trailing_singleton_dims(GGMLRunner::compute(get_graph, n_threads, false), x.dim());
         }
 
         sd::Tensor<float> compute(int n_threads,

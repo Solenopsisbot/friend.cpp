@@ -110,13 +110,13 @@ namespace MageFlow {
             }
 
             int batch_size = static_cast<int>(x->ne[3]);
-            pe_vec         = Rope::gen_mage_flow_pe(static_cast<int>(x->ne[1]),
-                                                    static_cast<int>(x->ne[0]),
-                                                    batch_size,
-                                                    static_cast<int>(context->ne[1]),
-                                                    ref_latents,
-                                                    config.theta,
-                                                    config.axes_dim);
+            pe_vec         = finish_rope_pe(Rope::gen_mage_flow_pe(static_cast<int>(x->ne[1]),
+                                                                   static_cast<int>(x->ne[0]),
+                                                                   batch_size,
+                                                                   static_cast<int>(context->ne[1]),
+                                                                   ref_latents,
+                                                                   config.theta,
+                                                                   config.axes_dim));
             int pos_len    = static_cast<int>(pe_vec.size() / config.axes_dim_sum / 2);
             auto pe        = ggml_new_tensor_4d(compute_ctx, GGML_TYPE_F32, 2, 2, config.axes_dim_sum / 2, pos_len);
             set_backend_tensor_data(pe, pe_vec.data());
@@ -142,7 +142,7 @@ namespace MageFlow {
             auto get_graph = [&]() -> ggml_cgraph* {
                 return build_graph(x, timesteps, context, ref_latents);
             };
-            return restore_trailing_singleton_dims(GGMLRunner::compute<float>(get_graph, n_threads, false, false, false), x.dim());
+            return restore_trailing_singleton_dims(GGMLRunner::compute(get_graph, n_threads, false), x.dim());
         }
 
         sd::Tensor<float> compute(int n_threads,
