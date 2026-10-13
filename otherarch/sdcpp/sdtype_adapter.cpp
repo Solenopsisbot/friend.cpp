@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <locale>
 
 #include <nlohmann/json.hpp>
 #include <inttypes.h>
@@ -22,6 +23,8 @@
 #include "stable-diffusion.h"
 #include "src/kcpp_sd_extensions.h"
 #include "src/core/util.h"
+#include "src/model.h"
+#include "src/model_loader.h"
 #include "ggml-backend.h"
 
 using namespace kcpp_sd;
@@ -37,6 +40,17 @@ using namespace kcpp_sd;
 #include "stb_image_resize.h"
 
 #include "avi_writer.h"
+
+// early callback log initialization
+namespace {
+    const bool _ = [] {
+        // activate kcpp logging backend, and prevent sd.cpp setting ggml logging
+        // callback (will keep using the default)
+        // the debug flag will be reset on the first image generation call
+        set_sd_log_level(1);
+        return true;
+    }();
+}
 
 struct LoraMap {
     std::vector<std::pair<std::string, float>> items;
@@ -105,6 +119,7 @@ struct SDParams {
     std::string audio_vae_path;
     std::string taesd_path;
     std::string stacked_id_embeddings_path;
+    std::string tokenizer; // settled tokenizer config (was StableDiffusionGGML::kcpp_tokenizer_path)
     sd_type_t wtype = SD_TYPE_COUNT;
 
     std::string prompt;
@@ -251,16 +266,6 @@ std::string load_gemma_vocab_json()
     static std::string cache;
     return load_embd_file(cache, "embd_res/gemma_vocab_json.embd");
 }
-std::string load_gemma2_merges()
-{
-    static std::string cache;
-    return load_embd_file(cache, "embd_res/gemma2_merges_utf8_c_str.embd");
-}
-std::string load_gemma2_vocab_json()
-{
-    static std::string cache;
-    return load_embd_file(cache, "embd_res/gemma2_vocab_json.embd");
-}
 std::string load_mistral_merges()
 {
     static std::string cache;
@@ -281,17 +286,6 @@ std::string load_umt5_tokenizer_json()
     static std::string cache;
     return load_embd_file(cache, "embd_res/umt5_tokenizer_json.embd");
 }
-std::string load_gpt_oss_merges()
-{
-    static std::string cache;
-    return load_embd_file(cache, "embd_res/gpt_oss_merges_utf8_c_str.embd");
-}
-std::string load_gpt_oss_vocab_json()
-{
-    static std::string cache;
-    return load_embd_file(cache, "embd_res/gpt_oss_vocab_json.embd");
-}
-
 static void step_callback(int step, int frame_count, sd_image_t* image, bool is_noisy, void* data);
 
 // 0 disable, 1 initial, 2 denoised
@@ -360,12 +354,330 @@ static bool is_video_model(kcpp_sd::model_info info)
     return info.is_wan || info.is_ltx || info.is_minimaxh3;
 }
 
+// this is a class only to access a protected member
+class Kcpp_ModelLoader: public ModelLoader
+{
+public:
+    bool has_diffusion_model_tensors()
+    {
+        for (auto& [name, tensor_storage] : tensor_storage_map) {
+            if (tensor_storage.name.find("model.diffusion_model.") != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+// read the model version from the file metadata using a temporary loader and
+// resolve model / diffusion_model and text encoder / llm / proj / vision paths
+static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, const sd_load_model_inputs& inputs)
+{
+    //if t5 is set, and model is a gguf, load it as a diffusion model path
+    bool endswithgguf = (sd_params.model_path.rfind(".gguf") == sd_params.model_path.size() - 5);
+    if((sd_params.t5xxl_path!="" || sd_params.clip_l_path!="" || sd_params.clip_g_path!="") && endswithgguf)
+    {
+        //extra check - make sure there is no diffusion model prefix already inside!
+        if(!gguf_tensor_exists(sd_params.model_path,"model.diffusion_model.",false))
+        {
+            printf("\nSwap to Diffusion Model Path:%s",sd_params.model_path.c_str());
+            sd_params.diffusion_model_path = sd_params.model_path;
+            sd_params.model_path = "";
+        }
+    }
+
+    params.model_path = sd_params.model_path.c_str();
+    params.clip_l_path = sd_params.clip_l_path.c_str();
+    params.clip_g_path = sd_params.clip_g_path.c_str();
+    params.t5xxl_path = sd_params.t5xxl_path.c_str();
+    params.diffusion_model_path = sd_params.diffusion_model_path.c_str();
+    params.vae_path = sd_params.vae_path.c_str();
+    params.audio_vae_path = sd_params.audio_vae_path.c_str();
+    params.taesd_path = sd_params.taesd_path.c_str();
+    params.photo_maker_path = sd_params.stacked_id_embeddings_path.c_str();
+    params.tokenizer = "";
+
+    auto path_empty = [](const char* path) -> bool {
+        return path == nullptr || *path == '\0';
+    };
+
+    std::string& kcpp_tokenizer_path = sd_params.tokenizer;
+    std::string& kcpp_taesd_path     = sd_params.taesd_path;
+
+    SDVersion tempver = VERSION_COUNT;
+
+    {
+        // use a temporary loader to detect the model version, then set
+        // model_path and diffusion_model_path to the correct places to be
+        // later loaded in the same way by the sdcpp loader
+        Kcpp_ModelLoader model_loader;
+
+        if (!path_empty(params.model_path)) {
+            printf("loading model from '%s'", params.model_path);
+            if (!model_loader.init_from_file(params.model_path)) {
+                printf("init model loader from file failed: '%s'", params.model_path);
+            }
+        }
+
+        if (!path_empty(params.diffusion_model_path)) {
+            printf("loading diffusion model from '%s'", params.diffusion_model_path);
+            if (!model_loader.init_from_file(params.diffusion_model_path, "model.diffusion_model.")) {
+                printf("loading diffusion model from '%s' failed", params.diffusion_model_path);
+            }
+        }
+
+        tempver = model_loader.get_sd_version();
+
+        bool fallback_prefixed = false;
+
+        // kcpp fallback to separate diffusion model passed as model
+        if (!path_empty(params.model_path) &&
+            path_empty(params.diffusion_model_path) &&
+            (!path_empty(params.t5xxl_path)||!path_empty(params.clip_l_path)))
+        {
+            bool endswithsafetensors = ends_with(params.model_path, ".safetensors");
+            if(endswithsafetensors && !model_loader.has_diffusion_model_tensors())
+            {
+                printf("SD Diffusion Model tensors missing! Fallback trying alternative tensor names...\n");
+                if (!model_loader.init_from_file(params.model_path, "model.diffusion_model.")) {
+                    printf("loading diffusion model from '%s' failed", params.model_path);
+                }
+                fallback_prefixed = true;
+                // Keep both paths so VAE or conditioner tensors that must remain at their original names still work.
+                params.diffusion_model_path = params.model_path;
+                tempver = model_loader.get_sd_version();
+            }
+        }
+
+        if (tempver == VERSION_ANIMA && !fallback_prefixed &&
+            !path_empty(params.model_path) &&
+            path_empty(params.diffusion_model_path) &&
+            !model_loader.has_diffusion_model_tensors()
+           )
+        {
+            printf("Anima: SD Diffusion Model tensors missing! Fallback trying alternative tensor names...\n");
+            if (!model_loader.init_from_file(params.model_path, "model.diffusion_model.")) {
+                printf("loading diffusion model from '%s' failed", params.model_path);
+            }
+            params.diffusion_model_path = params.model_path;
+            tempver = model_loader.get_sd_version();
+        }
+
+    }
+
+    std::string kcpp_main_tokenizer;
+
+    auto toLowerCase = [](const std::string& str) -> std::string {
+        std::string result;
+        std::locale loc;
+        for (char ch : str) {
+            result += std::tolower(ch, loc); // Use locale-aware tolower
+        }
+        return result;
+    };
+
+    bool iswan = sd_version_is_wan(tempver);
+    bool is_wan21 = sd_version_is_wan(tempver) && tempver != VERSION_WAN2_2_TI2V;
+    bool is_qwenimg = sd_version_is_qwen_image(tempver);
+    bool iszimg = sd_version_is_z_image(tempver);
+    bool isflux2 = sd_version_is_flux2(tempver);
+    bool is_ovis =  (tempver==VERSION_OVIS_IMAGE);
+    bool is_anima = sd_version_is_anima(tempver);
+    bool is_ernie = sd_version_is_ernie_image(tempver);
+    bool is_longcat = sd_version_is_longcat(tempver);
+    bool is_lens = sd_version_is_lens(tempver);
+    bool is_ming = (tempver == VERSION_MING_IMAGE);
+    bool is_pid = sd_version_is_pid(tempver);
+    bool is_ltx = sd_version_is_ltxav(tempver);
+    bool is_ideogram = sd_version_is_ideogram4(tempver);
+    bool is_boogu = sd_version_is_boogu_image(tempver);
+    bool is_krea2 = sd_version_is_krea2(tempver);
+    bool is_sefi = sd_version_is_sefi_image(tempver);
+    bool is_mageflow = sd_version_is_mage_flow(tempver);
+    bool is_minimaxh3 = sd_version_is_minimax_h3(tempver);
+    bool conditioner_is_llm = (is_qwenimg || iszimg || isflux2 || is_ovis || is_anima || is_ernie || is_longcat || is_lens || is_ltx || is_ideogram || is_boogu || is_krea2 || is_sefi || is_mageflow || is_minimaxh3 || is_pid || is_ming);
+    bool has_llm_vision = (is_qwenimg || is_longcat || is_boogu);
+
+    //kcpp qol fallback: if a llm was loaded as t5 by mistake
+    if(conditioner_is_llm && !path_empty(params.t5xxl_path))
+    {
+        if(path_empty(params.clip_l_path))
+        {
+            std::swap(params.clip_l_path, params.t5xxl_path);
+        }
+        else if(path_empty(params.clip_g_path))
+        {
+            //very tricky case. see if we can tell if clipl is an mmproj, if so move to right place
+            if(toLowerCase(params.clip_l_path).find("mmproj") != std::string::npos || is_ltx)
+            {
+                // g = l, l = t, t = ""
+                std::swap(params.clip_g_path, params.clip_l_path);
+                std::swap(params.clip_l_path, params.t5xxl_path);
+            }
+        }
+    }
+
+    //settle clip-l replacements
+    if (!path_empty(params.clip_l_path))
+    {
+        if(conditioner_is_llm && path_empty(params.llm_path))
+        {
+            std::swap(params.llm_path, params.clip_l_path);
+        }
+        else if(iswan)
+        {
+            if(path_empty(params.t5xxl_path))
+            {
+                std::swap(params.t5xxl_path, params.clip_l_path);
+            } else if (path_empty(params.clip_vision_path)) {
+                std::swap(params.clip_vision_path, params.clip_l_path);
+            }
+        }
+    }
+
+    //settle clip-g replacements
+    if (!path_empty(params.clip_g_path))
+    {
+        if(iswan && path_empty(params.clip_vision_path))
+        {
+            std::swap(params.clip_vision_path, params.clip_g_path);
+        }
+        else if(has_llm_vision && path_empty(params.llm_vision_path))
+        {
+            std::swap(params.llm_vision_path, params.clip_g_path);
+        }
+        else if(is_ltx)
+        {
+            std::swap(params.embeddings_connectors_path, params.clip_g_path);
+        }
+        else if(is_ideogram)
+        {
+            std::swap(params.uncond_diffusion_model_path, params.clip_g_path);
+        }
+        else if ((is_lens || is_pid || is_ming) && kcpp_main_tokenizer.empty())
+        {
+            // accept a tokenizer.json on clip_2
+            kcpp_main_tokenizer = params.clip_g_path;
+            params.clip_g_path = "";
+        }
+    }
+
+    //settle possible inversions for mmproj
+    if(!path_empty(params.llm_vision_path) && !path_empty(params.llm_path))
+    {
+        if(toLowerCase(params.llm_vision_path).find("mmproj") == std::string::npos &&
+        toLowerCase(params.llm_path).find("mmproj") != std::string::npos)
+        {
+            std::swap(params.llm_path, params.llm_vision_path);
+        }
+    }
+
+    //settle tae: build the TAE path for the detected model version
+    if(inputs.taesd)
+    {
+        const char* tae_name = nullptr;
+        if(sd_version_is_sd1(tempver) || sd_version_is_sd2(tempver))
+        {
+            tae_name = "taesd.embd";
+        }
+        else if(sd_version_is_sdxl(tempver))
+        {
+            tae_name = "taesd_xl.embd";
+        }
+        else if(sd_version_uses_flux_vae(tempver))
+        {
+            tae_name = "taesd_f.embd";
+        }
+        else if(sd_version_is_sd3(tempver))
+        {
+            tae_name = "taesd_3.embd";
+        }
+        else if(sd_version_uses_flux2_vae(tempver))
+        {
+            tae_name = "taesd_f2.embd";
+        }
+        else if(sd_version_uses_wan_vae(tempver) && tempver != VERSION_QWEN_IMAGE_2_1) // qwen 2.1 + tae crashing as of master-917
+        {
+            tae_name = "taesd_w21.embd";
+        }
+
+        if(tae_name)
+        {
+            kcpp_taesd_path = executable_path + "embd_res/" + tae_name;
+            if(!file_exists(kcpp_taesd_path))
+            {
+                printf("\nCannot use TAESD: \"%s\" not found. TAESD Disabled!\n", kcpp_taesd_path.c_str());
+                kcpp_taesd_path = "";
+            }
+        }
+        else
+        {
+            printf("\nCannot use TAESD: Unknown model version %d. TAESD Disabled!\n", tempver);
+        }
+        if(kcpp_taesd_path != "")
+        {
+            printf("With TAE SD VAE: %s\n", kcpp_taesd_path.c_str());
+        }
+    }
+    if (!path_empty(params.photo_maker_path) > 0 && tempver != VERSION_SDXL) {
+        printf("\nWARNING: PhotoMaker is only compatible with SDXL models. PhotoMaker will be disabled!\n");
+        params.photo_maker_path = "";
+    }
+
+    //for models with TAE suppport, if vae is set, tae is off, and it looks like a tae, swap to tae
+    if(kcpp_taesd_path=="" && !path_empty(params.vae_path) && toLowerCase(params.vae_path).rfind("tae")!=std::string::npos)
+    {
+        try {
+            const uintmax_t tae_size_limit = 64 * 1024 * 1024; //if its less than 64mb, it might be a TAE
+            // Get the file size in bytes cross-platform
+            uintmax_t size = std::filesystem::file_size(params.vae_path);
+            if (size > 0 && size < tae_size_limit) {
+                printf("\nVAE appears to be a TAE, loading as TAE instead!\n");
+                kcpp_taesd_path = params.vae_path;
+                params.vae_path = "";
+            }
+        }
+        catch (const std::filesystem::filesystem_error& e) {
+            std::printf("Error accessing file: %s\n", e.what());
+        }
+    }
+    params.taesd_path = kcpp_taesd_path.c_str();
+
+    if (!kcpp_main_tokenizer.empty()) {
+        // assemble the tokenizer config
+        if (!file_exists(kcpp_main_tokenizer)) {
+            printf("\nKCPP: tokenizer not found: %s\n", kcpp_main_tokenizer.c_str());
+        }
+        if (!kcpp_tokenizer_path.empty()) {
+            kcpp_tokenizer_path += ",";
+        }
+        kcpp_tokenizer_path += "main=";
+        kcpp_tokenizer_path += kcpp_main_tokenizer;
+        params.tokenizer = kcpp_tokenizer_path.c_str();
+    }
+
+    // patch hidream to fix broken images on vulkan
+    // https://github.com/leejet/stable-diffusion.cpp/issues/1496
+    if(tempver == VERSION_HIDREAM_O1 && path_empty(params.tensor_type_rules))
+    {
+        params.tensor_type_rules = "^model.language_model.layers.[0-9]+.mlp.down_proj.weight=bf16";
+    }
+
+    //debug print
+    // printf("\n\nclip_g: %s\nclip_l: %s\nclip_vision: %s\nllm: %s\nllm_vision: %s\nt5xxl: %s\ntaesd: %s\n",
+    // params.clip_g_path, params.clip_l_path, params.clip_vision_path,
+    // params.llm_path, params.llm_vision_path, params.t5xxl_path,
+    // params.taesd_path);
+}
+
 bool sdtype_load_model(const sd_load_model_inputs inputs) {
+
+    sddebugmode = inputs.debugmode;
+    set_sd_log_level(sddebugmode);
 
     sd_is_quiet = inputs.quiet;
     set_sd_quiet(sd_is_quiet);
     executable_path = sd_get_u8path(inputs.executable_path);
-    std::string taesdpath = "";
     LoraMap lora_map;
     for(int i=0;i<inputs.lora_len;++i)
     {
@@ -373,7 +685,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     }
     std::string vaefilename = inputs.vae_filename;
     std::string audiovaefilename = inputs.audio_vae_filename;
-    std::string t5xxl_filename = inputs.t5xxl_filename;
+    std::string t5xxl_filename = inputs.llm_filename;
     std::string clip1_filename = inputs.clip1_filename;
     std::string clip2_filename = inputs.clip2_filename;
     std::string photomaker_filename = inputs.photomaker_filename;
@@ -401,6 +713,8 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
         lora_dynamic = !!(inputs.lora_apply_mode & (1<<3));
         lora_cache   = lora_dynamic && !!(inputs.lora_apply_mode & (1<<4));
     }
+    // TODO: LoRA caching produces errors after a preloaded LoRA is later removed on a request
+    lora_cache = false;
 
     if(lora_map.items.size() > 0)
     {
@@ -418,8 +732,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
     if(inputs.taesd)
     {
-        taesdpath = executable_path + "embd_res/taesd.embd";
-        printf("With TAE SD VAE: %s\n",taesdpath.c_str());
+        printf("With Tiny Autoencoder (TAE)\n");
         if (cfg_tiled_vae_threshold < 8192) {
             printf("  disabling VAE tiling for TAESD\n");
             cfg_tiled_vae_threshold = 8192;
@@ -475,7 +788,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
         if (!lora_dynamic && inputs.lora_len > 0) {
             printf("Note: static LoRAs can reduce mmap memory savings!\n");
         }
-    } else if (inputs.params_backend == "CPU") {
+    } else if (params_backend == "CPU") {
         printf("Offloading weights to system RAM\n");
     } else if (inputs.use_mmap) {
         printf("Using mmap for I/O\n");
@@ -493,6 +806,9 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     if(inputs.max_vram && *inputs.max_vram) {
         max_vram = inputs.max_vram;
         printf("Using max VRAM = %s GB\n", max_vram.c_str());
+        if (params_backend == "") {
+            printf("Note: a VRAM limit may not be effective without offloading!\n");
+        }
     }
     if(inputs.quant > 0)
     {
@@ -512,42 +828,15 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     sd_params->vae_conv_direct = inputs.vae_conv_direct;
     sd_params->vae_path = vaefilename;
     sd_params->audio_vae_path = audiovaefilename;
-    sd_params->taesd_path = taesdpath;
     sd_params->t5xxl_path = t5xxl_filename;
     sd_params->clip_l_path = clip1_filename;
     sd_params->clip_g_path = clip2_filename;
     sd_params->stacked_id_embeddings_path = photomaker_filename;
     sd_params->lora_map = lora_map;
     sd_params->lora_dynamic = lora_dynamic;
-    //if t5 is set, and model is a gguf, load it as a diffusion model path
-    bool endswithgguf = (sd_params->model_path.rfind(".gguf") == sd_params->model_path.size() - 5);
-    if((sd_params->t5xxl_path!="" || sd_params->clip_l_path!="" || sd_params->clip_g_path!="") && endswithgguf)
-    {
-        //extra check - make sure there is no diffusion model prefix already inside!
-        if(!gguf_tensor_exists(sd_params->model_path,"model.diffusion_model.",false))
-        {
-            printf("\nSwap to Diffusion Model Path:%s",sd_params->model_path.c_str());
-            sd_params->diffusion_model_path = sd_params->model_path;
-            sd_params->model_path = "";
-        }
-    }
-
-    sddebugmode = inputs.debugmode;
-
-    set_sd_log_level(sddebugmode);
 
     sd_ctx_params_t params = {};
     sd_ctx_params_init(&params);
-
-    params.model_path = sd_params->model_path.c_str();
-    params.clip_l_path = sd_params->clip_l_path.c_str();
-    params.clip_g_path = sd_params->clip_g_path.c_str();
-    params.t5xxl_path = sd_params->t5xxl_path.c_str();
-    params.diffusion_model_path = sd_params->diffusion_model_path.c_str();
-    params.vae_path = sd_params->vae_path.c_str();
-    params.audio_vae_path = sd_params->audio_vae_path.c_str();
-    params.taesd_path = sd_params->taesd_path.c_str();
-    params.photo_maker_path = sd_params->stacked_id_embeddings_path.c_str();
 
     params.rng_type = CUDA_RNG;
 
@@ -558,7 +847,6 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     params.vae_conv_direct = sd_params->vae_conv_direct;
     params.model_args = "chroma_use_dit_mask=true";
     params.max_vram = max_vram.c_str();
-    params.stream_layers = inputs.stream_layers;
     params.eager_load = true; //kcpp should preload everything
     params.enable_mmap = inputs.use_mmap;
     params.backend = backend.c_str();
@@ -569,6 +857,8 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
     // also switches flash attn for the vae and conditioner
     params.flash_attn = params.diffusion_flash_attn;
+
+    kcpp_set_model_paths(params, *sd_params, inputs);
 
     if(inputs.debugmode==1)
     {
@@ -681,6 +971,14 @@ static inline int rounddown_to(int n, int fac) {
 
 static inline int roundup_to(int n, int fac) {
     return ((n + fac - 1) / fac) * fac;
+}
+
+// round a float/double avoiding too many decimal places
+// (like 6/10 -> 0.6000000238418579)
+static inline double round_for_info(double v) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%.6f", v);
+    return strtod(buf, nullptr);
 }
 
 const int img_side_min = 64;
@@ -1129,6 +1427,10 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     {
         ref_audio_data.push_back(std::string(inputs.ref_audios[i]));
     }
+    std::vector<float> custom_sigmas;
+    if (inputs.custom_sigmas && inputs.custom_sigmas_count > 0) {
+        custom_sigmas.assign(inputs.custom_sigmas, inputs.custom_sigmas + inputs.custom_sigmas_count);
+    }
     sd_params->prompt = inputs.prompt;
     sd_params->negative_prompt = inputs.negative_prompt;
     sd_params->cfg_scale = inputs.cfg_scale;
@@ -1200,6 +1502,15 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             sd_params->cfg_scale = 1.0f;
             sd_params->sample_steps = 1;
         }
+        // A custom sigma list determines the real sampler iteration count and
+        // would otherwise bypass the SDXS one-step restriction above. A
+        // two-value list already represents one step and remains valid.
+        if (custom_sigmas.size() > 2) {
+            if (!sd_is_quiet && sddebugmode) {
+                printf("SDXS: ignoring custom sigma schedule with more than 1 step\n");
+            }
+            custom_sigmas.clear();
+        }
     }
 
     //if a single extra image is provided, mask is NOT provided, and img2img image is NOT provided
@@ -1252,10 +1563,13 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
     int vae_tile_size = -1;
     if (dotile) {
-        int new_vae_tile_size = cfg_tiled_vae_threshold / info.vae_scale_factor;
+        // bump tile size to 1/4 of the configured maximum non-tiled image size
+        // (so 1/4 of the memory that would be used for that image)
+        const int minimum_tile_size = 256; // from mainline sdcpp
+        int new_vae_tile_size = cfg_tiled_vae_threshold;
         new_vae_tile_size = new_vae_tile_size / 2;
-        new_vae_tile_size -= new_vae_tile_size % 2;
-        if (new_vae_tile_size > vae_tile_size) {
+        new_vae_tile_size = roundup_to(new_vae_tile_size, 64);
+        if (new_vae_tile_size > minimum_tile_size) {
             vae_tile_size = new_vae_tile_size;
         }
     }
@@ -1470,6 +1784,10 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     params.sample_params.sample_method = sd_params->sample_method;
     params.sample_params.scheduler = sd_params->scheduler;
     params.sample_params.sample_steps = sd_params->sample_steps;
+    if (!custom_sigmas.empty()) {
+        params.sample_params.custom_sigmas = custom_sigmas.data();
+        params.sample_params.custom_sigmas_count = (int)custom_sigmas.size();
+    }
     params.sample_params.shifted_timestep = sd_params->shifted_timestep;
     if (sd_params->eta >= 0.f && sd_params->eta <= 1.f) {
         params.sample_params.eta = sd_params->eta;
@@ -1482,8 +1800,8 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
     params.strength = sd_params->strength;
     params.vae_tiling_params.enabled = dotile;
     if (vae_tile_size > 0) {
-        params.vae_tiling_params.tile_size_x = vae_tile_size;
-        params.vae_tiling_params.tile_size_y = vae_tile_size;
+        params.vae_tiling_params.tile_size_w = vae_tile_size;
+        params.vae_tiling_params.tile_size_h = vae_tile_size;
     }
     if(dotile)
     {
@@ -1612,14 +1930,19 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         fflush(stdout);
 
         results = nullptr;
-        if (!generate_video(sd_ctx, &vid_gen_params, &results, &generated_num_results, &generated_audio)) {
+        int output_fps = vid_fps;
+        if (!generate_video(sd_ctx, &vid_gen_params, &results, &generated_num_results, &generated_audio, &output_fps)) {
             results = nullptr;
             generated_audio = nullptr;
         }
         if(!sd_is_quiet && sddebugmode==1)
         {
             printf("\nRequested Vid Frames: %d, Generated Vid Frames: %d\n",vid_req_frames, generated_num_results);
+            if (output_fps != vid_fps) {
+                printf("\nRequested FPS: %d, Generated FPS: %d\n", vid_fps, output_fps);
+            }
         }
+        vid_fps = output_fps;
     }
     else if (!is_img2img)
     {
@@ -1717,6 +2040,9 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             free(input_audio.data);
             input_audio.data = nullptr;
         }
+        if (info.is_qwenimg && params.ref_images_count > 0) {
+            printf("\nKCPP SD: If using Qwen Image 2.1, editing requires Qwen3-VL vision mmproj!\n");
+        }
         return sd_generation.error("KCPP SD generate failed!");
     }
 
@@ -1727,7 +2053,7 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         if (*params.negative_prompt)
             jsoninfo["negative_prompt"] = params.negative_prompt;
         jsoninfo["seed"] = params.seed;
-        jsoninfo["cfg_scale"] = params.sample_params.guidance.txt_cfg;
+        jsoninfo["cfg_scale"] = round_for_info(params.sample_params.guidance.txt_cfg);
         jsoninfo["width"] = params.width;
         jsoninfo["height"] = params.height;
         jsoninfo["steps"] = params.sample_params.sample_steps;
@@ -1738,9 +2064,9 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
         if (params.sample_params.scheduler != scheduler_t::SCHEDULER_COUNT)
             jsoninfo["extra_generation_params"]["Schedule type"] = get_scheduler_name(params.sample_params.scheduler);
         if (params.sample_params.eta >= 0 && params.sample_params.eta <= 1)
-            jsoninfo["eta"] = params.sample_params.eta;
+            jsoninfo["eta"] = round_for_info(params.sample_params.eta);
         if (is_img2img)
-            jsoninfo["denoising_strength"] = params.strength;
+            jsoninfo["denoising_strength"] = round_for_info(params.strength);
         if (sd_params->model_path.empty())
             jsoninfo["sd_model_name"] = friendly_model_name(sd_params->diffusion_model_path);
         else
@@ -1906,13 +2232,52 @@ static void step_callback(int step, int frame_count, sd_image_t* image, bool is_
     }
 
     std::string preview;
-    if (image != nullptr) {
+    if (image != nullptr && frame_count > 0) {
+        constexpr uint32_t preview_max_dimension = 128;
+        std::vector<sd_image_t> resized_images(image, image + frame_count);
+        std::vector<std::vector<uint8_t>> resized_image_data(static_cast<size_t>(frame_count));
+        bool resize_ok = true;
+
+        for (int i = 0; i < frame_count; ++i) {
+            const sd_image_t& source = image[i];
+            if (source.width <= preview_max_dimension && source.height <= preview_max_dimension) {
+                continue;
+            }
+
+            uint32_t resized_width;
+            uint32_t resized_height;
+            if (source.width >= source.height) {
+                resized_width = preview_max_dimension;
+                resized_height = std::max(1u, static_cast<uint32_t>(
+                    static_cast<uint64_t>(source.height) * preview_max_dimension / source.width));
+            } else {
+                resized_height = preview_max_dimension;
+                resized_width = std::max(1u, static_cast<uint32_t>(
+                    static_cast<uint64_t>(source.width) * preview_max_dimension / source.height));
+            }
+
+            auto& pixels = resized_image_data[static_cast<size_t>(i)];
+            pixels.resize(static_cast<size_t>(resized_width) * resized_height * source.channel);
+            if (source.data == nullptr || source.channel == 0 ||
+                !stbir_resize_uint8(source.data, source.width, source.height, 0,
+                                    pixels.data(), resized_width, resized_height, 0, source.channel)) {
+                resize_ok = false;
+                break;
+            }
+            resized_images[static_cast<size_t>(i)] = {
+                resized_width, resized_height, source.channel, pixels.data()
+            };
+        }
+
+        sd_image_t* preview_images = resize_ok ? resized_images.data() : nullptr;
         if (frame_count == 1) {
-            preview = raw_image_to_png_base64(*image);
-        } else {
+            if (preview_images != nullptr) {
+                preview = raw_image_to_png_base64(*preview_images);
+            }
+        } else if (preview_images != nullptr) {
             uint8_t * out_data = nullptr;
             size_t out_len = 0;
-            if (create_gif_buf_from_sd_images_msf(image, frame_count, 16, &out_data,&out_len) == 0 && out_data && out_len > 0) {
+            if (create_gif_buf_from_sd_images_msf(preview_images, frame_count, 16, &out_data,&out_len) == 0 && out_data && out_len > 0) {
                 preview = kcpp_base64_encode(out_data, out_len);
             }
             if (out_data) {

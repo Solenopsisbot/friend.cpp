@@ -1,435 +1,301 @@
-# friend.cpp
+# KoboldCpp: Run local AI models with a built-in web UI
 
-A local inference engine for trying things -- adaptive speculative decoding,
-per-request adapter hot-swap, a prompt cache that actually remembers, and whatever else
-earns its place under honest measurement.
+KoboldCpp is free and open-source software for running GGUF large language models (LLMs) on your own computer. Chat with an AI assistant, write stories, roleplay, or connect other apps to a local API. KoboldCpp runs on CPU or GPU and also includes text, image, video, speech and music generation with compatible models, an integrated agent, a bundled KoboldAI Lite WebUI, and many additional powerful features.
 
-By [Solenopsisbot](https://github.com/Solenopsisbot).
+Inspired by **KoboldAI** and built on **llama.cpp**
 
----
+One executable file, no installation required. Ready-to-run downloads are available for Windows, Linux, and macOS.
 
-## What this is
+**[Download KoboldCpp](https://github.com/LostRuins/koboldcpp/releases/latest) | [Quick Start](#quick-start) |  [Official Resources](#official-resources)**
 
-An independent downstream fork of [koboldcpp](docs/KOBOLDCPP.md), itself built on
-llama.cpp and ggml, with [PrismML](https://github.com/PrismML-Eng/llama.cpp)'s llama.cpp fork
-merged in. Everything koboldcpp already does -- its bundled KoboldAI Lite UI,
-KoboldCpp/OpenAI/Ollama-compatible APIs, image generation, speech, all of it --
-still works unchanged.
+![Integrated Web UI](media/preview.png)
+![Roleplay Chat Mode](media/preview2.png)
+![GUI Launcher](media/preview3.png)
+![Messenger Chat Mode](media/preview4.png)
+![Image Generation UI](media/preview5.png)
+![Assistant UI](media/preview6.png)
 
-friend.cpp is a testbed for engine-level features: caching strategies, speculative
-decoding, adapter management, sampling, steering, and GPU kernels. The ethos is
-build, measure honestly, keep what the numbers justify. Fixed-length speculative
-drafting nearly doubles speed on predictable text and loses 25% on chat, so the
-default adapts per round instead -- and the tables below show both sides. Features
-that don't pan out under measurement get documented as what they are, not sold as
-what they aren't.
+## Features
+- **Local text generation:** Run any GGUF language model to generate text in chat, adventure, instruct, or story writing modes. Compatible vision models also support image understanding.
+- **Image generation and editing:** Supports Stable Diffusion 1.5, SDXL, SD3, Flux, Qwen Image, Ideogram, Z-Image, Klein, Krea2 and more.
+- **Video generation:** Supports WAN 2.2, LTX2.3, MiniMax H3 and more.
+- **Voice recognition:** Speech-to-text with Whisper, and multimodal audio from Gemma4 E2B and E4B.
+- **Speech generation:** Text to speech with Qwen3TTS, Kokoro, OuteTTS, Parler, and Dia.
+- **Music generation:** ACE Step 1.5 and ACE Step XL.
+- **Tools and agents:** MCP server support, tool calling, web search, retrieval-augmented generation (RAG) through TextDB, and an integrated KoboldCpp Agent for writing and editing code, running programs, and scheduling tasks.
+  - To start the agent, select **Launch KoboldCpp Agent** in the launcher's **Admin** tab, or add `--agent` to your launch command.
+- **Writing and roleplay tools:** Bundled KoboldAI Lite WebUI includes multiple UI themes, editing tools, memory, world info, author's notes, characters, scenarios, and persistent story saves. Import Tavern character cards and other supported formats from file or external sites. Also includes the classic llama.cpp WebUI.
+- **App integrations:** Compatible endpoints for KoboldAI, OpenAI, Ollama, A1111/Forge, ComfyUI, Whisper transcription, XTTS, and OpenAI speech clients. See [APIs and integrations](#apis-and-integrations).
+- **Fully Portable** - Single standalone executable for Windows, Linux or macOS, with no installation required and no external dependencies. Runs on CPU or GPU, with full or partial offloading. Can also run on Colab, Docker, also supports other platforms if self-compiled (like Android via Termux and Raspberry PI).
 
-No release binaries yet. Build from source, details below.
-
-## Highlights
-
-| Feature | What you get |
-|---|---|
-| [Tiered prompt cache](#tiered-prompt-cache) | RAM + optional disk. Returning to a previous conversation restores 1057/1074 tokens; prefill drops from 0.35 s to 0.06 s. On by default. |
-| [Per-request adapters](#per-request-adapter-profiles) | LoRA, steering vectors, and LM heads selected per request. Head swaps keep the KV cache valid -- nearly free. |
-| [Adaptive speculative decoding](#adaptive-speculative-decoding) | Draft length chosen per-round from live measurements. Fixed drafting loses ~25% on chat; adaptive stayed at or above the no-drafter baseline on every workload tested. |
-| [Steering vectors built in](#steering-vectors-built-in) | Build control vectors from contrastive prompts on the running model. 1.3 seconds from 12 pairs on a 1.7B model. |
-| [Wider continuous batching](#continuous-batching) | Grammar, DRY, XTC, top-n-sigma, mirostat, and dynamic temperature all batch across concurrent requests. |
-| Decode-first scheduling | Ready decodes run before prompt work; `--prefill-tokens` bounds prompt work per round so long prompts do not freeze other requests. |
-| Priority scheduling and preemption | Per-request `priority` values, fair tie breaking, and bounded host snapshots let urgent work displace lower-priority sequences when all slots are full. |
-| Suffix speculation | `--suffix-draft N` proposes continuations from repeated prompt/history suffixes; it takes precedence over the fixed n-gram drafter. |
-| Batch logprobs | Concurrent requests can ask for per-token top alternatives with `logprobs`; results stay isolated per request. |
-| Serving metrics | Prometheus text at `/metrics`: queue time, TTFT, ITL, decode time, cache reuse, and batch counters. |
-| [Blue-noise sampling](#blue-noise-sampling) | Anti-correlated random rolls: fewer streaks at either end of the distribution, which the model would otherwise amplify into loops or derailing. Unbiased. |
-| [Low-bit models and kernels](#low-bit-models-and-kernels) | Q1_0, PQ2_0, PTQ1_0 with CPU/Metal/CUDA/Vulkan kernels. Metal batch-of-8 on 27B Bonsai Q1_0: 190.6 ms down to 100.2 ms. Maxwell GPUs without dp4a go from 25 to 63+ tok/s on Bonsai-8B Q1_0. |
+## Phishing Scam Alert ⚠️
+- Phishing SCAM Warning: `koboldcpp.com` is a malicious fake site and is not affiliated with this project. You should **ONLY** trust official downloads from the release binaries on the official github at https://github.com/LostRuins/koboldcpp/releases/latest
 
 ## Quick start
+1. **Download KoboldCpp** for your operating system from the [latest KoboldCpp release](https://github.com/LostRuins/koboldcpp/releases/latest). See the [platform instructions](#download-and-run) below for help choosing a file.
+2. **Download a GGUF text model.** Models are separate from the software. If unsure, start with the [example models](#obtaining-a-gguf-model), or open **Get Help** and pick from **Newbie Templates** in the launcher for an easy setup.
+3. **Open KoboldCpp** and select your model in the **GGUF Text Model** field. Choose hardware settings suited to your computer. Generally the defaults should work, see [GPU and performance settings](#troubleshooting-and-improving-performance) if needed.
+    - Need help launching? See the [platform instructions](#download-and-run).
+    - A dedicated GPU is optional; the model size and context length determine how much memory you need.
+4. **Click Launch** and wait for the model to load. Keep KoboldCpp running while you use it.
+5. **Connect to the Web UI** in your browser once ready at http://localhost:5001
 
-**macOS (Metal):**
+## Download and Run
+You should choose the correct KoboldCpp executable from the **Assets** section of the [latest KoboldCpp release](https://github.com/LostRuins/koboldcpp/releases/latest). Here are direct links and a quick overview for each supported platform. Models must be [obtained separately](#obtaining-a-gguf-model)
 
-```sh
-make -j8 LLAMA_METAL=1 koboldcpp_default
-python3 koboldcpp.py --model model.gguf --gpulayers 99 --contextsize 8192
+### Windows
+- Download **[`koboldcpp.exe`](https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp.exe)** and double-click it to open the launcher.
+- If you do not need NVIDIA CUDA support, **[`koboldcpp-nocuda.exe`](https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp-nocuda.exe)** is a smaller download with CPU and Vulkan support.
+- If you're using a PC with an older CPU or GPU, try **[`koboldcpp-oldpc.exe`](https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp-oldpc.exe)** if you encounter compatibility issues.
+- KoboldCpp can also be run using the command line, for example `koboldcpp.exe --model "C:\Models\model.gguf"` For more info, please check `koboldcpp.exe --help`
+- One liner setup for windows:
+```
+cmd /c "curl -fLo koboldcpp.exe https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp.exe && koboldcpp.exe"
 ```
 
-**Linux (CUDA):**
-
-```sh
-make -j8 LLAMA_CUBLAS=1 koboldcpp_cublas
-python3 koboldcpp.py --model model.gguf --usecuda --gpulayers 99 --contextsize 8192
+### Linux
+- Download **[`koboldcpp-linux-x64`](https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp-linux-x64)** for an x86-64 Linux system. Make it executable with `chmod +x koboldcpp-linux-x64`, then launch it from a terminal in the download folder with `./koboldcpp-linux-x64`.
+- Use **[`koboldcpp-linux-x64-nocuda`](https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp-linux-x64-nocuda)** if you do not need CUDA, or try **[`koboldcpp-linux-x64-oldpc`](https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp-linux-x64-oldpc)** for older hardware. Substitute that filename in the commands above.
+- For command-line usage see `./koboldcpp-linux-x64 --help`, models can be loaded directly with `./koboldcpp-linux-x64 --model /path/to/model.gguf`
+- For other hardware or distributions that cannot run the binaries, see [building from source](#compiling-koboldcpp-from-source-code).
+- One liner setup for linux:
+```
+curl -fLo koboldcpp-linux-x64 https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp-linux-x64 && chmod +x koboldcpp-linux-x64 && ./koboldcpp-linux-x64
 ```
 
-For older NVIDIA GPUs (Maxwell, sm_5x), you need a CUDA 12.x toolkit -- CUDA 13
-dropped support for those architectures. Point the build at it with `CUDA_PATH` if
-it isn't the system default.
+### macOS
+- Download **[`koboldcpp-mac-arm64`](https://github.com/LostRuins/koboldcpp/releases/latest/download/koboldcpp-mac-arm64)** for an Apple Silicon (M-series) ARM64 Mac. Make it executable with `chmod +x koboldcpp-mac-arm64`, then launch it from a terminal in the download folder with `./koboldcpp-mac-arm64`.
+- If macOS blocks the app, follow [Apple's instructions to whitelist it in security settings](https://support.apple.com/en-us/102445) under **System Settings** and **Privacy & Security**. A [macOS launch walkthrough](https://youtube.com/watch?v=NOW5dyA_JgY) is also available.
+- For command-line usage see `./koboldcpp-mac-arm64 --help`, models can be loaded directly with `./koboldcpp-mac-arm64 --model /path/to/model.gguf`
+- Intel Macs require a [source build](#compiling-koboldcpp-from-source-code).
 
-The API listens on port 5001 by default. Open `http://localhost:5001` for the
-KoboldAI Lite UI, or point any OpenAI-compatible client at it.
+### Android and other platforms
+Android users can [install through Termux](#compiling-on-android-termux-installation). Source builds also support platforms such as OpenBSD and Raspberry Pi, see the [build instructions](#compiling-koboldcpp-from-source-code) and [KoboldCpp wiki](https://github.com/LostRuins/koboldcpp/wiki).
 
-See [FRIEND.md -- Quick start](FRIEND.md#quick-start-a-persona-server) for more
-detail.
+## Other ways to run KoboldCpp
 
----
+### External providers without a local model
+- KoboldCpp allows connecting the web UI directly with a supported external AI provider instead of using a local model. Currently, AI Horde, OpenAI Compatible, Anthropic, OpenRouter, Gemini, Grok, Mistral are among the supported services.
+- To connect, start with `--nomodel` or select **Allow Launch Without Models** in the launcher's **Loaded Files** tab. Alternatively, you can also use the [online KoboldAI Lite WebUI](https://lite.koboldai.net) directly.
 
-## Feature tour
+### Cloud GPUs and public demo
+- **Run on Google Colab:** Use the [official KoboldCpp Colab GPU Notebook](https://colab.research.google.com/github/LostRuins/koboldcpp/blob/concedo/colab.ipynb). This is an easy way to get started without installing anything in a minute or two. Your usage must comply with Colab's terms.
+- **Run on RunPod:** Cloud rental GPUs with variable prices. Launch the [KoboldCpp RunPod image](https://koboldai.org/runpodcpp), or try [SimplePod](https://koboldai.org/simplepod) for smaller models.
+- **Public demo:** Try the [KoboldCpp HuggingFace Space](https://koboldai-koboldcpp-tiefighter.hf.space/). Please be considerate of this free shared service.
 
-### Tiered prompt cache
+### Docker
+- Caution: The [official KoboldCpp Docker image](https://hub.docker.com/r/koboldai/koboldcpp) is intended for experts only, primarily for cloud GPU rentals. It uses an x86-64 Ubuntu environment internally and expects an NVIDIA or AMD GPU.
+- Docker may perform poorly on some Windows or macOS setups, and ARM systems may fail to run it. CPU feature detection can also incorrectly select slower fallback binaries on some systems.
+- For local use, you're recommended to start with the [prebuilt binaries](#download-and-run).
 
-On by default. Snapshots of processed context (KV + recurrent state) are reused by
-longest common prefix -- any later prompt starting with the same system prompt
-picks up where the last one left off. RAM budget via `--cache-ram` (default
-2048 MiB), optional disk tier via `--cache-dir` that survives restarts.
+## Obtaining a GGUF model
+KoboldCpp does not include model files. For local text generation, huggingface.co hosts many GGUF models, including [Bartowski's model collection](https://huggingface.co/bartowski). Image generation, music and audio features use their own model files and settings, and CivitAI has a good source of image models. Start with a smaller model if you are unsure what your computer can run. **Alternatively, click 'Get Help' in the GUI launcher and browse the 'Newbie Templates' (recommended)**
 
-Hybrid and recurrent models (e.g. Qwen3.5) get checkpoints at conversation-turn
-boundaries so they can resume from a shared prefix. Snapshots are taken in idle
-time (`--cache-idle-ms`, default 300 ms), so switching conversations after any pause
-doesn't pay for them.
-Snapshots are zstd-compressed losslessly (~1.2x). Outputs are identical to running
-without the cache in every tested scenario.
+KoboldCpp also retains backward compatibility with legacy GGML `.bin` models, though some newer features may be unavailable.
 
-API: `GET /api/extra/cache`, `POST /api/extra/cache/warm` (prefill + pin a
-prompt), `/pin`, `/clear`.
+- General Text Generation: [Qwen3-VL-8B](https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3-VL-8B-Instruct-Q4_K_S.gguf) **(Most Recommended, best all rounder model)**
+  - Add [optional Qwen3-VL-8B MMproj file](https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-BF16.gguf) for vision recognition capabilities.
+- Creative Writing and Roleplay: [L3-8B-Stheno-v3.2](https://huggingface.co/bartowski/L3-8B-Stheno-v3.2-GGUF/resolve/main/L3-8B-Stheno-v3.2-Q4_K_S.gguf)
+- Lightweight and Fast: [Gemma3-4B](https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf)
+  - Add [optional Gemma3-4B MMproj file](https://huggingface.co/koboldcpp/mmproj/resolve/main/gemma3-4b-mmproj-q8.gguf) for vision recognition capabilities.
+- Image Generation: [PicX Real](https://huggingface.co/koboldcpp/imgmodel/resolve/main/picx_real_q8_0.gguf)
+  - Or browse [More image generation models](https://huggingface.co/koboldcpp/imgmodel/tree/main)
+- Speech Recognition: [Whisper Base](https://huggingface.co/koboldcpp/whisper/resolve/main/whisper-base.en-q5_1.bin)
+  - Or browse [More Whisper models for Speech-To-Text](https://huggingface.co/koboldcpp/whisper/tree/main)
+- Text-To-Speech: [Kokoro TTS](https://huggingface.co/koboldcpp/tts/resolve/main/Kokoro_no_espeak_Q4.gguf)
+  - Or browse [More TTS models for Narration](https://huggingface.co/koboldcpp/tts/tree/main)
+- Music Generation: [AceStep 1.5](https://huggingface.co/koboldcpp/music/tree/main)
+- This is just a list for noobs to get started! There are hundreds more GGUFs out there!
+- [More newbie templates](https://huggingface.co/koboldcpp/newbie-templates) - Contains premade KoboldCpp quick launch templates curated for newbies.
+- [More popular templates](https://huggingface.co/koboldcpp/popular-templates) - Contains premade KoboldCpp quick launch templates curated for popularity.
+- [More extra templates](https://huggingface.co/koboldcpp/kcppt/tree/main) - Other premade KoboldCpp templates
 
-More: [FRIEND.md -- prompt cache](FRIEND.md#tiered-prompt-cache).
+To enable vision, load the matching MMProj file in **Mmproj File** under the launcher's **Loaded Files** tab, or add `--mmproj /path/to/mmproj.gguf` to your launch command alongside the text model.
 
-### Per-request adapter profiles
+To convert your own models, use the [GGUF conversion and quantization tools](https://kcpptools.concedo.workers.dev): run `convert_hf_to_gguf.py`, then `quantize_gguf.exe` to quantize the result.
 
-Preload pools at startup:
+## Troubleshooting and Improving Performance
+KoboldCpp provides many hardware configurations that can affect performance. Generally the default configuration should work decently, however you can make some adjustments to optimize your experience.
 
-```
---lora-pool NAME=PATH ...
---cvec-pool NAME=PATH ...
---head-pool NAME=PATH ...
-```
+- **System runs out of RAM:** Try a smaller model or a shorter context. Reducing GPU layers can increase system RAM usage by moving more model weights off the GPU.
+  - **Adjusting Context Size**: Use `--contextsize N` to set the maximum context length: how much text the model can work with at once, measured in tokens. Larger contexts need more memory.
+  - **Adjusting Batch Size**: Use `--batchsize N` to adjust prompt-processing batch size. A smaller batch can use less memory but might be slower. Set `-1` to disable batching.
+- **GPU runs out of VRAM:** Try fewer GPU layers, a smaller model, or a shorter context. Autofit is an estimate and may need manual adjustment.
+- **Generation is slow:** Check that the intended GPU backend is selected and that layers are offloaded. CPU-only generation works, but speed depends on your hardware and model.
+  - **GPU Acceleration**: Windows and Linux users with GPUs can use `--usecuda`  flag (Nvidia Only), or `--usevulkan` (AMD, Nvidia, Intel GPUs) for GPU acceleration, make sure you select the correct .exe with CUDA support. This is also selectable in the hardware preset in the GUI launcher.
+  - **GPU Layer Offloading**: Add `--gpulayers N` to offload model layers to the GPU. The default, `-1`, enables autofit; `0` disables GPU offloading. Lower the layer count if you run out of GPU memory.
+- **An older computer crashes at startup:** Some devices lack newer CPU instruction support. Try an `oldpc` release or use `--noavx2`. See the release notes for hardware compatibility.
+- **The browser cannot connect:** Wait for model loading to finish and check the address printed in the terminal. The default is [localhost:5001](http://localhost:5001); a custom `--port` changes it.
+- **A model will not load:** Check the terminal error, your available memory, and whether your KoboldCpp version supports the model. You can trigger debug mode with the `--debugmode` flag or launch toggle. Try the latest release and [check the wiki](https://github.com/LostRuins/koboldcpp/wiki) or [create a Github issue](https://github.com/LostRuins/koboldcpp/issues) to report a bug.
+- **Model is incoherent:** You might be using an incorrect chat template. Try relaunch with `--jinja` to use the included Jinja template, or enable the Jinja toggle in the GUI.
+- For more information, be sure to run the program with the `--help` flag.
 
-Each request selects what it needs:
+## APIs and integrations
+KoboldCpp serves many APIs alongside multiple bundled web UIs. Simply connect your software With the default port:
 
-```json
-{ "lora": {"name": 0.8}, "steer": {"name": 1.2}, "head": "name" }
-```
+| Interface | Base URL |
+| --- | --- |
+| KoboldCpp Default API base | `http://localhost:5001` |
+| OpenAI-compatible API | `http://localhost:5001/v1` |
+| Interactive API documentation | `http://localhost:5001/api` |
+| KoboldAI Lite web UI | `http://localhost:5001` |
+| llama.cpp web UI | `http://localhost:5001/lcpp` |
+| StableUI Image Gen UI | `http://localhost:5001/sdui` |
+| MusicUI Music Gen UI | `http://localhost:5001/musicui` |
 
-LM-head hot-swap is new engine code. Swapping a head only changes logits -- the KV
-cache stays valid, so per-request head switching is nearly free. LoRA and steering
-changes are keyed into the cache so KV is never reused across incompatible adapter
-sets. Concurrent requests with different adapters are grouped per decode step.
+**Additional APIs supported:** KoboldAI, OpenAI, Anthropic, Ollama, AUTOMATIC1111, ComfyUI, XTTS
 
-LoRAs work on Bonsai models (train against the unpacked weights).
-`tools/friend-heads/extract_head.py` extracts a head from any GGUF.
+Image, speech, embedding and music generation require the corresponding models to be loaded. Replace the host and port when connecting to a remote server or using a custom `--port`. For other apps, select a compatible API type and point the app at your running KoboldCpp server.
 
-More: [FRIEND.md -- adapter profiles](FRIEND.md#per-request-adapter-profiles).
+### KoboldCpp and KoboldAI API Documentation
+- Supported endpoints and request formats are described in the [KoboldCpp API reference](https://lite.koboldai.net/koboldcpp_api)
 
-### Steering vectors built in
+## Compiling KoboldCpp From Source Code
+Use a source build if a prebuilt binary does not suit your platform or you want to develop KoboldCpp. Manual builds require Git, Python 3, a C/C++ toolchain, and the development libraries for your chosen GPU backend.
 
-`POST /api/extra/steer/build` takes contrastive example prompts (positive vs
-negative), builds a control vector from the model's own hidden states using mean
-difference or PCA, auto-selects the layer band where the examples separate best,
-and scales it so strength 1.0 is approximately the observed shift. On a 1.7B
-model: built in 1.3 seconds from 12 pairs. Strength 1 / 2 / 4 produces
-noticeably / clearly / over-the-top shifted output while staying coherent.
+Optional Python runtime dependencies include `customtkinter` and Tk support for the GUI launcher, `jinja2` for chat templates, and `psutil` for system information. Install the Python packages you need in your Python environment with `python -m pip install -r requirements.txt`; Tk may require a separate package from your operating system. The automated Linux build script manages its own dependencies.
 
-Vectors save to `--cvec-dir` and reload at startup.
+Start by cloning the repository and entering its directory:
 
-### Adaptive speculative decoding
-
-`--draftamount` is now a maximum, not a fixed count. Each round, the engine picks
-the draft length (including 0, meaning "don't draft this round") that maximises
-expected tokens per millisecond, calculated from live measurements of acceptance
-rate, drafter time, and verify time.
-
-27B Bonsai Q1_0 with its DSpark drafter on Apple M5, tokens/s:
-
-| Workload | No drafter | Fixed draft of 3 | Adaptive |
-|---|---|---|---|
-| Counting | 21.7 | 39.0 | 36.6 |
-| Code | 21.6 | 36.6 | 35.7 |
-| Surreal haiku | 16.4 | 14.7 | 16.3 |
-| Chat | 21.5 | 15.8 | 22.0 |
-
-Fixed drafting wins big on predictable sequences and loses ~25% on chat. Adaptive
-stayed at or above the no-drafter baseline on every workload tested. `--draft-fixed` restores the old
-behaviour if you want it.
-
-PrismML's standalone DSpark drafters work via `--draftmodel`
-(Qwen3.5/3.6-family targets).
-
-More: [FRIEND.md -- DSpark](FRIEND.md#speculative-decoding-with-dspark-drafters).
-
-### Continuous batching
-
-`--parallelrequests N` enables concurrent request handling. Finished requests keep
-their KV for prefix reuse; new requests take the best-overlapping slot or share
-another sequence's cells. friend.cpp batches more request types than stock
-koboldcpp -- grammar, DRY, XTC, top-n-sigma, mirostat, and dynamic temperature all
-work across concurrent requests.
-
-Scheduling is decode-first, then chunked prefill. `--prefill-tokens N` limits how
-many prompt tokens can be admitted beside one decode round; `0` uses the normal
-backend batch size. Smaller values protect inter-token latency under long prompts,
-while larger values improve time to first token and throughput. `/metrics` exposes
-Prometheus-compatible queue, TTFT, inter-token, decode, batching, and cache-reuse
-counters for tuning this tradeoff.
-
-Requests may include `cache_salt` to isolate prefix reuse between tenants. The salt
-is hashed before it reaches the native cache key, and adapter/cache identities use
-SHA-256. Model/LoRA file identities still incorporate path, size and modification
-time rather than hashing entire weight files.
-
-Batch requests may include `priority`; lower values are scheduled first, while
-equal-priority requests retain fair round-robin ordering.
-
-`--schedule-tokens N` sets the unified token budget for each batch round. Decode
-tokens are admitted first, then prompt and speculative tokens spend the remainder;
-`0` keeps the backend batch size. This is useful when a large `--batchsize` would
-otherwise make long prefills harm inter-token latency.
-
-`--max-queued-requests N` bounds live continuous-batching requests, including
-waiting, running and paused work. A full queue returns a retryable overload error
-instead of silently falling back to the legacy generator; `0` leaves the cap off.
-`friend_batch_requests_rejected_total` counts those admissions.
-
-`--kv-watermark F` reserves fraction `F` of the estimated sequence-token capacity
-for currently active decodes before admitting another prompt. It reduces KV
-thrash while the physical allocator is under pressure; `0` disables it.
-`friend_batch_kv_watermark_stalls_total` counts deferred admissions.
-
-When every sequence slot is occupied, a waiting request with a strictly higher
-priority can evict one lower-priority sequence into the bounded compressed host
-snapshot tier. The request resumes with its sampler state and KV contents intact;
-equal-priority traffic is never churned. `/metrics` exposes
-`friend_batch_preemptions_total`.
-
-For prompt/history-driven workloads, `--suffix-draft N` uses repeated suffixes and
-frequency-weighted continuations to generate adaptive draft proposals. It is
-compatible with continuous batching and falls back to the existing n-gram drafter
-when unset. Requests can pass `"logprobs": K` (up to 20) to retain top-K token
-alternatives in the batch result without sharing the legacy process-wide buffer.
-
-Native callers that need concurrent personas can bind an LM head to an individual
-`llama_context` with `llama_set_adapter_head(ctx, head)` and inspect it with
-`llama_get_adapter_head`. The binding is included in graph reuse keys, so contexts
-sharing one model can decode in parallel without mutating the model's global head.
-Currently the context-local graph path covers LLaMA, Qwen3/Qwen3-MoE, and
-Qwen3.5/Qwen3.5-MoE. Freeing a head unbinds it from its contexts. Profile application uses this path where
-supported. The existing `llama_model_set_head` API remains the model-wide
-compatibility path for other architectures.
-
-For in-process parallel persona execution, `--profile-lanes N` creates N native
-contexts over the same model weights. Each lane owns independent KV, compute
-buffers, adapter bindings, and sampler state; requests are affinity-routed by
-LoRA/vector/head profile and then scheduled fairly within a lane. CPU thread
-counts are divided across lanes, while the backend weights remain shared. This
-mode currently requires ordinary continuous batching without a separate draft
-model, MTP, or CFG guidance context; use the process router below when those
-features or model-wide adapter architectures are required.
-
-Each lane prepares its next batch under the scheduler lock, releases that lock
-while `llama_decode` owns the lane-local buffers, and applies pause or abort at
-the next completed round. This gives genuine cross-lane overlap today; a
-backend-specific prefetch queue with completion fences remains future work.
-
-For real model-replica parallelism, run the small process router alongside several
-full workers:
-
-```sh
-python tools/friend-bench/data_parallel_router.py --model model.gguf \
-  --replicas 2 --port 5001 --replica-arg=--gpulayers --replica-arg=99
+```bash
+git clone https://github.com/LostRuins/koboldcpp.git
+cd koboldcpp
 ```
 
-Each worker owns its own context and device placement. Requests with the same
-`cache_salt` and adapter profile stay on one replica for prefix-cache locality;
-other requests go to the least-busy worker. LoRA, steering, and head profiles are
-therefore isolated in real worker lanes instead of being mutated mid-decode.
-The router namespaces request IDs as `router-epoch:worker:local-id`, aggregates
-request listings across healthy workers, retries only connection failures before
-the request is sent, and forwards SSE/NDJSON chunks as they arrive. Pause/resume
-controls use the namespaced ID, so they cannot target a request on another worker.
-The router also samples each worker's running/waiting requests and KV-block count;
-fresh samples influence least-load selection, while samples older than two seconds
-expire back to the local in-flight counter.
-Probe latency is folded into that score with an EWMA, and a worker can be marked
-draining so existing request owners finish while new work moves elsewhere.
-Connection failures put a replica on a short exponential health cooldown, while
-successful responses restore it immediately; if every replica is cooling down the
-router still probes one so a recovered worker can rejoin.
-This is the safe way to scale across devices without sharing mutable adapter or
-KV state.
+Run the following build commands from that directory. Use `make -jN` to compile with `N` parallel jobs. For manual builds intended for other machines, add `LLAMA_PORTABLE=1`; this avoids optimizing only for the build machine, but platform and runtime requirements still apply.
 
-History-based speculation is available with `--ngram-draft N`. It proposes repeated
-continuations from the request's own token history and verifies them in the same
-target batch; it is opportunistic, so a request with no repeated suffix simply falls
-back to ordinary decoding. `/api/extra/requests` lists active batch requests, while
-`--suffix-draft N` searches both the prompt and generated history for repeated
-suffixes, chooses frequency-weighted continuations, and adapts the proposed length
-per request. It takes precedence over `--ngram-draft`.
-`POST /api/extra/requests/pause` and `/resume` suspend or continue a request at a
-worker boundary, while `/cancel` asks the native scheduler to abort it and
-release its KV ownership at the next safe boundary. Paused KV is bounded by a
-512 MiB host-memory budget.
-Preempted and explicitly paused snapshots use the same lossless byte-plane/zstd
-codec as the prompt cache when compression saves space; `/metrics` exposes the
-current stored byte count as `friend_batch_offloaded_bytes`.
-With native profile lanes enabled, `friend_batch_lane_running{lane="N"}` shows
-the bounded live request count for each lane, making affinity imbalance visible.
-The scheduler's physical page table reports `friend_batch_kv_pages_used`,
-`friend_batch_kv_pages_capacity`, page queries/hits and evictions for tuning cache
-pressure. The current llama backend still owns the actual KV tensors; this table
-is the ownership layer used while the backend migration to true paged storage is
-completed.
+### Compiling on Linux
 
-`tools/friend-bench/lane_benchmark.py` measures end-to-end throughput for one or
-more native profile-lane counts and verifies every result is non-empty.
+**Automated build:** [koboldcpp.sh](koboldcpp.sh) uses a local micromamba/conda environment to obtain dependencies and build the libraries. Install `curl` and `bzip2` first.
 
-OpenAI structured output requests use the same cached native grammar path for
-JSON Schema and JSON object responses. vLLM-style `structured_outputs: {"json":
-...}` / `{"json_schema": ...}` and `{"choice": [...]}` forms, plus
-`guided_json` and `guided_choice`, are accepted as aliases.
+```bash
+./koboldcpp.sh             # Build as needed and open the launcher (requires X11)
+./koboldcpp.sh --help      # Show command-line options
+./koboldcpp.sh rebuild     # Refresh the environment and rebuild after updates
+./koboldcpp.sh dist        # Package a standalone binary in dist/
+```
 
-OpenAI completion and chat requests may set `n` up to 16 for parallel sampling.
-Each sample gets an independent RNG/sampler state and indexed choice; native
-continuous batching shares complete prompt KV blocks between siblings and
-aggregates usage across the returned choices. Streaming `n` uses indexed SSE
-fan-in, drains completion races, and preserves split UTF-8 tokens.
+To build for other machines, use `KCPP_PORTABLE=1 ./koboldcpp.sh dist`. The packaged binary still depends on the target system's compatibility with the Linux environment used to build it.
 
-The scheduler-owned page table also has a versioned metadata connector in
-`friend/kv_connector.hpp`. Peers discover model/layout/dtype/profile/namespace
-compatibility before importing, receive export/import/invalidation events, and
-cannot invalidate pages that still have live references. The current llama
-backend has no device-KV transport hook, so the connector carries ownership
-metadata and leaves tensor payload transfer to the future paged backend.
+**Manual build:** Run `make` for a CPU build, or choose a backend below and install its prerequisites.
 
-Multimodal requests retain up to eight preprocessed mtmd encoder results. The
-cache key includes media bytes, encoder identity, audio/image mode and the
-vision resize limit; replacing the encoder drops all entries. Prometheus exposes
-`friend_multimodal_encoder_cache_hits_total`, misses, evictions, current entry
-count, and encoded embedding bytes. Opaque mtmd metadata remains outside the
-byte gauge because the public API does not expose its storage size.
-### Blue-noise sampling
+| Backend | Build command | Prerequisite |
+| --- | --- | --- |
+| CPU | `make` | C/C++ toolchain |
+| Vulkan | `make LLAMA_VULKAN=1` | Vulkan SDK |
+| NVIDIA CUDA | `make LLAMA_CUBLAS=1` | CUDA Toolkit |
+| AMD ROCm | `make LLAMA_HIPBLAS=1` | ROCm development libraries |
+| CUDA and Vulkan | `make LLAMA_CUBLAS=1 LLAMA_VULKAN=1` | Both toolkits |
 
-`"blue_noise": true` in a request enables anti-correlated random rolls -- each
-individual roll stays uniform (unbiased), but streaks of rolls at the same end of the
-distribution get rarer. That matters because the model conditions on its own output:
-a run of top picks makes the next top pick likelier until the text locks into a loop
-(context collapse), and a run of bottom picks derails it. You can also set
-`"rng_type": "mt19937" | "lowbias32"` to pick the underlying generator.
+After building, launch with `python3 koboldcpp.py --model /path/to/model.gguf`.
 
-Measured: tail-pick streaks 20--27% shorter with mean surprisal unchanged. On a base
-model (Qwen3-1.7B-Base, 768-token raw completions, 192 paired runs) blue noise cut
-collapse from 24.5% to 19.8% at T=0.7, with less repetitive text overall (paired
-t = 2.3); the effect is smaller at T=1.0 with min_p. kaetemi, whose sampler this is,
-reports a large reduction in collapse on base models and about 1% better
-reasoning-model output in preliminary benchmarks. Short chat replies from an instruct
-model showed no judged preference either way -- too short to collapse.
+### Compiling on Windows
 
-More: [FRIEND.md -- blue-noise sampling](FRIEND.md#blue-noise-sampling).
+1. Install the standard **x64** version of [w64devkit](https://github.com/skeeto/w64devkit), not the i686 variant.
+2. Open its integrated terminal in the repository directory.
+3. Run `make` for a CPU build, or `make LLAMA_VULKAN=1` for Vulkan. This produces the DLLs used by `koboldcpp.py`.
+4. Launch with `python koboldcpp.py --model "C:\Models\model.gguf"`.
 
-### Low-bit models and kernels
+**CUDA builds** require Visual Studio, CMake, and the CUDA Toolkit. Open the project's CMake configuration in Visual Studio, build it, and copy `koboldcpp_cublas.dll` beside `koboldcpp.py`. The Makefile's `LLAMA_CUBLAS=1` option is for Linux. Portable CUDA executables must include matching `cublas`, `cublasLt`, and `cudart` libraries from the same CUDA Toolkit family used for the build.
 
-GGUF types Q1_0 (upstream llama.cpp), PQ2_0, and PTQ1_0 (PrismML-specific, used
-by models like `prism-ml/Ternary-Bonsai-*-gguf`) with kernels for CPU, Metal,
-CUDA, and Vulkan.
+**Packaging an executable:** Install PyInstaller and the Python modules collected by [make_pyinstaller.bat](make_pyinstaller.bat). Build the CPU and Vulkan libraries with `make LLAMA_VULKAN=1 LLAMA_PORTABLE=1` to provide the script's required DLLs, then run the batch file from a Windows command prompt. It produces `dist/koboldcpp-nocuda.exe`; see the [Windows release workflow](.github/workflows/kcpp-build-release-win.yaml) for CUDA packaging.
 
-friend.cpp-specific kernel work falls in two places:
+If replacing bundled Vulkan libraries, put the matching `.lib` files in `kcpp_src/lib` and their `.dll` files in the repository root, then rebuild. This is an advanced configuration.
 
-**Metal small-batch kernels.** Decoding a batch of n tokens on the 27B Bonsai Q1_0
-model (milliseconds per batch, Apple M5):
+### Compiling on macOS
 
-| Batch size | Stock | friend.cpp |
-|---|---|---|
-| 1 | 42.5 | 42.4 |
-| 2 | 57.1 | 52.2 |
-| 4 | 101.3 | 65.9 |
-| 8 | 190.6 | 100.2 |
-| 16 | 377.6 | 179.2 |
+Run `make` for a CPU build. For Metal GPU support, install the Apple command-line developer tools and build with:
 
-Single-token decode and prefill are unchanged. The wins matter for speculative
-decoding verification and concurrent-request batches.
+```bash
+make LLAMA_METAL=1
+python3 koboldcpp.py --model /path/to/model.gguf --gpulayers -1
+```
 
-**Maxwell dp4a-free path.** Old NVIDIA GPUs that lack dp4a (compute capability
-< 6.1) get a multiply-free bit-plane dot product for Q1_0 and PQ2_0. On a GTX 970
-running Bonsai-8B, generation speed: Q1_0 jumps from 25--29 to 63--72 tok/s,
-PQ2_0 from 24--26 to 46--48 tok/s. Output is bit-identical to the standard path.
-Auto-selected at runtime; you do not need to do anything.
+### Compiling on OpenBSD
 
-More: [FRIEND.md -- 1-bit / ternary](FRIEND.md#1-bit--ternary-decode-on-gpus-without-dp4a)
-and [FRIEND.md -- small-batch Bonsai kernels](FRIEND.md#small-batch-bonsai-kernels-metal).
+Install GNU Make with `pkg_add gmake`, then use `gmake` for a CPU build. For Vulkan, install `vulkan-loader` (also included as a dependency of `vulkan-tools`) and `shaderc`:
 
----
+```bash
+pkg_add gmake vulkan-loader shaderc
+ulimit -d 8388608
+gmake LLAMA_VULKAN=1
+python3 koboldcpp.py --model /path/to/model.gguf
+```
 
-## Experimental features
+Run package installation with the required system privileges. The `ulimit` setting raises the data-size limit for compilation. If the build reports that `ggml-vulkan-shaders.hpp` is missing, check that `glslc` from `shaderc` is installed.
 
-Most of friend.cpp's additions can be turned off individually for A/B comparisons
-or if something misbehaves:
+### Compiling on Android (Termux installation)
 
-- **Prompt cache:** `--cache-ram 0` disables it entirely.
-- **Adaptive drafting:** `--draft-fixed` restores fixed-length drafting.
-- **Blue-noise sampling:** opt-in per request (`"blue_noise": true`); off by
-  default.
-- **Metal small-batch kernels:** `GGML_METAL_BONSAI_SB_DISABLE=1` restores the
-  stock kernels.
-- **CUDA bit-plane path:** `FRIEND_CUDA_NO_BITPLANES=1` forces the stock dot
-  product.
+Install [Termux from F-Droid](https://f-droid.org/en/packages/com.termux/), then choose an automated or manual setup.
 
-Things may move between releases. The knobs exist so you can isolate what changed.
+**Automated setup:** Download and run the [Android installer](android_install.sh). Its interactive menu offers installation with a starter model or without a model.
 
----
+```bash
+curl -sSL https://raw.githubusercontent.com/LostRuins/koboldcpp/concedo/android_install.sh | sh
+```
 
-## Status and tested hardware
+**Manual setup:** In Termux, install the dependencies, clone the repository if you have not already done so, and build:
 
-This is a build-from-source project with no release binaries.
+```bash
+pkg update
+pkg upgrade
+pkg install openssl wget git python clang make
+git clone https://github.com/LostRuins/koboldcpp.git
+cd koboldcpp
+make
+python koboldcpp.py --model /path/to/model.gguf
+```
 
-- **Apple Silicon (Metal + CPU):** most tested. The numbers in this README are from
-  an M5.
-- **CUDA (Maxwell / GTX 970):** built and run. The 1-bit dp4a-free kernels are
-  verified here. The CUDA code also compiles for sm_61 through sm_120, but only
-  the 970 (sm_52) has been run on real hardware so far.
-- **Vulkan:** run on a GTX 970 (Maxwell): Q1_0 and PQ2_0 about
-  32 tok/s generation on Bonsai-8B, PTQ1_0 about 14; test-backend-ops
-  passes, and PQ2_0 greedy output matches CUDA. CUDA is still faster on
-  that card for Q1_0 and PQ2_0; Vulkan wins for PTQ1_0.
-- **HIP (AMD):** not built yet.
+Download a small GGUF model before the final command, and replace the model path with its location. Open [localhost:5001](http://localhost:5001) in your mobile browser once loading completes. For portable ARM builds, `LLAMA_PORTABLE=1` disables native ARM instruction optimizations.
 
-See [FRIEND.md -- limits](FRIEND.md#limits-and-not-yet-verified) for the honest
-list of what has and has not been tested.
+If package installation fails, update your packages or use `termux-change-repo` to choose another mirror. These instructions cover CPU builds; GPU acceleration depends on the device and its drivers.
 
-## Everything from koboldcpp still works
+## Help and community
 
-friend.cpp is a fork, not a replacement. The full koboldcpp feature set -- KoboldAI
-Lite UI, KoboldCpp API, OpenAI-compatible API, Ollama-compatible API, image
-generation, speech, story writing, all of it -- is intact and documented in
-[docs/KOBOLDCPP.md](docs/KOBOLDCPP.md).
+Start with the [KoboldCpp FAQ and knowledge base](https://github.com/LostRuins/koboldcpp/wiki), then search [existing issues](https://github.com/LostRuins/koboldcpp/issues) and [discussions](https://github.com/LostRuins/koboldcpp/discussions). If you still need help, [open an issue](https://github.com/LostRuins/koboldcpp/issues/new) or join the [KoboldAI Discord](https://koboldai.org/discord).
 
-## Tools
+For troubleshooting, include your operating system, hardware, KoboldCpp version, model filename, launch settings, and relevant error output.
 
-- **`tools/friend-sync/sync.sh`** -- one-command merge of upstream koboldcpp +
-  PrismML with conflict notes. Never pushes.
-- **`tools/friend-sync/smoke.py`** -- 24 end-to-end checks in about a minute:
-  coherence, determinism, cache-on output must equal cache-off output, head swap,
-  steering, batching, GPU vs CPU.
-- **`tools/friend-eval/sampler_lab.py`**, **`judge_lab.py`** and
-  **`collapse_eval.py`** -- sampler measurement, judged comparison, and
-  long-generation context collapse.
-- **`tools/friend-bench/`** -- kernel benchmarks.
-- **`tools/friend-heads/extract_head.py`** -- extract an LM head from any GGUF.
+## Official Resources
+The following are all official KoboldCpp resources
 
-More: [FRIEND.md -- tools](FRIEND.md#tools-for-maintaining-the-fork).
+- [Download KoboldCpp Releases](https://github.com/LostRuins/koboldcpp/releases/latest)
+- [KoboldAI Discord](https://koboldai.org/discord)
+- [KoboldCpp Huggingface Repo](https://huggingface.co/koboldcpp)
+- [KoboldCpp Sourceforge Mirror](https://sourceforge.net/projects/koboldcpp/)
+- [KoboldAI Subreddit](https://www.reddit.com/r/KoboldAi/)
+- [KoboldCpp Wiki](https://github.com/LostRuins/koboldcpp/wiki)
+- [KoboldCpp API Reference](https://lite.koboldai.net/koboldcpp_api)
+- [KoboldAI Lite Online WebUI](https://lite.koboldai.net)
+- [KoboldCpp Colab Notebook](https://colab.research.google.com/github/LostRuins/koboldcpp/blob/concedo/colab.ipynb)
+- [KoboldCpp Public Demo](https://koboldai-koboldcpp-tiefighter.hf.space/)
+- [KoboldCpp RunPod Cloud Image](https://koboldai.org/runpodcpp)
+- [KoboldCpp Docker image](https://hub.docker.com/r/koboldai/koboldcpp) (Caution: For experts only)
+- [KoboldCpp Official Community Website](https://koboldcpp.net)
 
-## Credits
+## KoboldCpp Community Website
+- NEW: KoboldCpp now has its own official KoboldCpp Community Website at **[https://koboldcpp.net](https://koboldcpp.net)**
+- This community website provides simple resources and instructions to help newbies get started, and links to release binaries on the KoboldCpp Github repo. Contributions are welcome.
 
-- [koboldcpp](https://github.com/LostRuins/koboldcpp) by LostRuins (Concedo) and
-  contributors
-- [llama.cpp](https://github.com/ggml-org/llama.cpp) and
-  [ggml](https://github.com/ggml-org/ggml) by Georgi Gerganov and contributors
-- [PrismML](https://github.com/PrismML-Eng/llama.cpp) for the Bonsai 1-bit/ternary models,
-  kernels, and DSpark drafters
-- Blue-noise sampler idea adapted from
-  [kaetemi's llama.cpp branch](https://github.com/kaetemi/llama.cpp)
+## Third Party Resources
+These unofficial community projects may be outdated or unmaintained. Contact their maintainers for support.
 
-friend.cpp-specific code is marked `friend.cpp:` in the source. New modules live
-in `friend/`.
+- **Arch Linux:** AUR packages for [CUDA](https://aur.archlinux.org/packages/koboldcpp-cuda) and [HIPBLAS](https://aur.archlinux.org/packages/koboldcpp-hipblas).
+- **Community Docker images:** [korewaChino](https://github.com/korewaChino/koboldCppDocker) and [noneabove1182](https://github.com/noneabove1182/koboldcpp-docker).
+- **Nix and NixOS:** Add `koboldcpp` to `environment.systemPackages` or `home.packages`. See the [Nix setup example](examples/nix_example.md) and report packaging problems to [Nixpkgs](https://github.com/NixOS/nixpkgs/issues).
+- **AMD ROCm fork:** [YellowRoseCx/koboldcpp-rocm](https://github.com/YellowRoseCx/koboldcpp-rocm). Check its maintenance status; Vulkan in the main release is a starting point for AMD users.
+- **Microsoft Word integration:** [GPTLocalhost](https://gptlocalhost.com/demo#KoboldCpp) connects Word to a local KoboldCpp server.
+
 
 ## License
+KoboldCpp and KoboldAI Lite are licensed under the **GNU AGPL v3.0**, unless a file states otherwise. Bundled components retain their respective licenses, including the [MIT license for GGML, llama.cpp, and stable-diffusion.cpp](MIT_LICENSE_GGML_SDCPP_LLAMACPP_ONLY.md).
 
-AGPL-3.0 (inherited from koboldcpp). See [LICENSE.md](LICENSE.md).
+KoboldCpp builds on the work of these projects:
+- [GGML](https://github.com/ggml-org/ggml) and [llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT)
+- [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) (MIT)
+- [TTS.cpp](https://github.com/mmwillet/TTS.cpp) (MIT)
+- [Qwen3-TTS.cpp](https://github.com/predict-woo/qwen3-tts.cpp) (MIT)
+- [acestep.cpp](https://github.com/ServeurpersoCom/acestep.cpp) (MIT)
+- [KoboldAI Lite](https://github.com/LostRuins/lite.koboldai.net) (AGPL)
 
-The ggml, llama.cpp, and stable-diffusion.cpp portions remain MIT-licensed; see
-[MIT_LICENSE_GGML_SDCPP_LLAMACPP_ONLY.md](MIT_LICENSE_GGML_SDCPP_LLAMACPP_ONLY.md).
+For enquiries, contact **@concedo** on discord, message **u/HadesThrowaway** on reddit, or find **LostRuins** on github.
