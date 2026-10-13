@@ -1,7 +1,7 @@
 #include "common.h"
 
-// fused trailing SiLU (the graph's conv output is consumed only by a silu)
-constant bool FC_ssm_conv_silu [[function_constant(FC_SSM_CONV_SILU)]];
+constant bool FC_ssm_conv_silu [[function_constant(FC_SSM_CONV + 1)]];
+constant int  FC_ssm_conv_nc    [[function_constant(FC_SSM_CONV + 2)]];
 
 // ref: ggml.c:ggml_compute_forward_ssm_conv_f32
 kernel void kernel_ssm_conv_f32_f32(
@@ -16,7 +16,7 @@ kernel void kernel_ssm_conv_f32_f32(
     const int64_t i2 = tgpig.y;
     const int64_t i3 = tgpig.z;
 
-    const int64_t nc  = args.ne10;
+    const int64_t nc  = FC_ssm_conv_nc;
   //const int64_t ncs = args.ne00;
   //const int64_t nr  = args.ne01;
   //const int64_t n_t = args.ne1;
@@ -28,11 +28,11 @@ kernel void kernel_ssm_conv_f32_f32(
 
     float sumf = 0.0f;
 
-    for (int64_t i0 = 0; i0 < nc; ++i0) {
+    FOR_UNROLL (int64_t i0 = 0; i0 < nc; ++i0) {
         sumf += s[i0] * c[i0];
     }
 
-    x[0] = FC_ssm_conv_silu ? sumf / (1.0f + exp(-sumf)) : sumf;
+    x[0] = FC_ssm_conv_silu ? sumf/(1.0f + exp(-sumf)) : sumf;
 }
 
 kernel void kernel_ssm_conv_f32_f32_4(
@@ -47,7 +47,7 @@ kernel void kernel_ssm_conv_f32_f32_4(
     const int64_t i2 = tgpig.y;
     const int64_t i3 = tgpig.z;
 
-    const int64_t nc  = args.ne10;
+    const int64_t nc  = FC_ssm_conv_nc;
   //const int64_t ncs = args.ne00;
   //const int64_t nr  = args.ne01;
   //const int64_t n_t = args.ne1;
@@ -59,11 +59,11 @@ kernel void kernel_ssm_conv_f32_f32_4(
 
     float sumf = 0.0f;
 
-    for (int64_t i0 = 0; i0 < nc/4; ++i0) {
+    FOR_UNROLL (int64_t i0 = 0; i0 < nc/4; ++i0) {
         sumf += dot(s[i0], c[i0]);
     }
 
-    x[0] = FC_ssm_conv_silu ? sumf / (1.0f + exp(-sumf)) : sumf;
+    x[0] = FC_ssm_conv_silu ? sumf/(1.0f + exp(-sumf)) : sumf;
 }
 
 constant short FC_ssm_conv_bs   [[function_constant(FC_SSM_CONV + 0)]];
@@ -90,7 +90,7 @@ kernel void kernel_ssm_conv_f32_f32_batched(
     const int64_t i2_off  = tpitg.x;
     const int64_t i2      = i2_base + i2_off;
 
-    const int64_t nc  = args.ne10;  // conv kernel size (typically 4)
+    const int64_t nc  = FC_ssm_conv_nc;  // conv kernel size (typically 4)
     const int64_t n_t = args.ne1;   // number of tokens
 
     // Bounds check for partial batches at the end
@@ -108,11 +108,11 @@ kernel void kernel_ssm_conv_f32_f32_batched(
     device float * x = (device float *) ((device char *) dst + ir*args.nb0 + i2*args.nb1 + i3*args.nb2);
 
     float sumf = 0.0f;
-    for (int64_t i0 = 0; i0 < nc; ++i0) {
+    FOR_UNROLL (int64_t i0 = 0; i0 < nc; ++i0) {
         sumf += s[i0] * c[i0];
     }
 
-    x[0] = FC_ssm_conv_silu ? sumf / (1.0f + exp(-sumf)) : sumf;
+    x[0] = FC_ssm_conv_silu ? sumf/(1.0f + exp(-sumf)) : sumf;
 }
 
 kernel void kernel_ssm_conv_f32_f32_batched_4(
@@ -135,7 +135,7 @@ kernel void kernel_ssm_conv_f32_f32_batched_4(
     const int64_t i2_off  = tpitg.x;
     const int64_t i2      = i2_base + i2_off;
 
-    const int64_t nc  = args.ne10;  // conv kernel size (typically 4)
+    const int64_t nc  = FC_ssm_conv_nc;  // conv kernel size (typically 4)
     const int64_t n_t = args.ne1;   // number of tokens
 
     // Bounds check for partial batches at the end
@@ -153,11 +153,11 @@ kernel void kernel_ssm_conv_f32_f32_batched_4(
     device float * x = (device float *) ((device char *) dst + ir*args.nb0 + i2*args.nb1 + i3*args.nb2);
 
     float sumf = 0.0f;
-    for (int64_t i0 = 0; i0 < nc/4; ++i0) {
+    FOR_UNROLL (int64_t i0 = 0; i0 < nc/4; ++i0) {
         sumf += dot(s[i0], c[i0]);
     }
 
-    x[0] = FC_ssm_conv_silu ? sumf / (1.0f + exp(-sumf)) : sumf;
+    x[0] = FC_ssm_conv_silu ? sumf/(1.0f + exp(-sumf)) : sumf;
 }
 
 // ref: ggml.c:ggml_compute_forward_ssm_scan_f32, Mamba-2 part
@@ -473,42 +473,4 @@ kernel void kernel_ssm_scan_ssd_mma_f32(
         // All state tiles must be visible before the next chunk consumes s_buff as S_prev.
         threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
     }
-}
-
-// friend.cpp: single-token step of the d_conv = 4 causal conv with its state bookkeeping, one
-// thread per channel: reads the 3 stored columns and the new input, writes silu(conv) and the
-// shifted state (s1, s2, x) to the cache. Replaces CONCAT + CPY + SSM_CONV + SILU (the stock
-// conv kernel also runs one single-thread threadgroup per channel). Each thread touches only
-// its own channel, so an in-place state update is race-free.
-kernel void kernel_ssm_conv_step_f32(
-        constant ggml_metal_kargs_ssm_conv_step & args,
-        device const float * st,
-        device const float * x,
-        device const float * kern,
-        device       float * out,
-        device       float * dst,
-        uint3 tgpig[[threadgroup_position_in_grid]],
-        uint  tpitg[[thread_index_in_threadgroup]],
-        uint3   ntg[[threads_per_threadgroup]]) {
-    const int     c = tgpig.x * ntg.x + tpitg;
-    const int64_t s = tgpig.y;
-    if (c >= args.C) {
-        return;
-    }
-
-    device const float * sc = st + s*args.st_s + c*args.st_c;
-    const float s0 = sc[0];
-    const float s1 = sc[1];
-    const float s2 = sc[2];
-    const float xv = x[s*args.x_s + c*args.x_c];
-    const float4 k = ((device const float4 *) kern)[c];
-
-    const float sumf = dot(float4(s0, s1, s2, xv), k);
-
-    out[s*args.out_s + c] = sumf / (1.0f + exp(-sumf));
-
-    device float * d = dst + s*args.dst_s + c*3;
-    d[0] = s1;
-    d[1] = s2;
-    d[2] = xv;
 }

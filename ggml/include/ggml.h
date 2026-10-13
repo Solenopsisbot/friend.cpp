@@ -226,7 +226,7 @@
 #define GGML_MAX_OP_PARAMS      64
 
 #ifndef GGML_MAX_NAME
-#   define GGML_MAX_NAME        128
+#   define GGML_MAX_NAME        160
 #endif
 
 #define GGML_DEFAULT_N_THREADS  4
@@ -436,11 +436,7 @@ extern "C" {
         GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
         GGML_TYPE_Q1_0    = 41,
         GGML_TYPE_Q2_0    = 42,
-        // Prism-private Q2_0 at group size 128 (upstream Q2_0 is group 64). High id so it
-        // slots above upstream types; type_traits is sized to COUNT (143) with 43..141 unused.
-        GGML_TYPE_PQ2_0 = 142,
-        GGML_TYPE_PTQ1_0 = 143, // Prism-private ternary, group 128
-        GGML_TYPE_COUNT   = 144,
+        GGML_TYPE_COUNT   = 43,
     };
 
     // [TAG_GGML_PREC]
@@ -496,8 +492,6 @@ extern "C" {
         GGML_FTYPE_MOSTLY_NVFP4   = 26, // except 1d tensors
         GGML_FTYPE_MOSTLY_Q1_0    = 27, // except 1d tensors
         GGML_FTYPE_MOSTLY_Q2_0    = 28, // except 1d tensors
-        GGML_FTYPE_MOSTLY_PQ2_0 = 128, // except 1d tensors (Prism-private group-128 Q2_0)
-        GGML_FTYPE_MOSTLY_PTQ1_0 = 129, // except 1d tensors (Prism-private group-128 ternary)
     };
 
     // available tensor operations:
@@ -2683,38 +2677,6 @@ extern "C" {
             struct ggml_tensor  * state,
             int64_t               K);
 
-    // rows-indexed state read: instead of a gathered [S_v, S_v, H_v, n_seqs]
-    // scratch, the op reads each sequence's live state directly from `states`
-    // (2D cache view, D = S_v*S_v*H_v wide rows) at row `rows[seq]` (I32,
-    // n_seqs entries). Removes the per-layer get_rows gather from recurrent
-    // decode graphs. Output layout is identical to ggml_gated_delta_net with
-    // K = n_snap_slots.
-    GGML_API struct ggml_tensor * ggml_gated_delta_net_rows(
-            struct ggml_context * ctx,
-            struct ggml_tensor  * q,
-            struct ggml_tensor  * k,
-            struct ggml_tensor  * v,
-            struct ggml_tensor  * g,
-            struct ggml_tensor  * beta,
-            struct ggml_tensor  * states,
-            struct ggml_tensor  * rows,
-            int                   n_snap_slots);
-
-    // fold the per-head gate activations into a gated_delta_net op (scalar gate only):
-    //   beta -> sigmoid(beta),  g -> a[h] * softplus(g + dt_bias[h])
-    // dt_bias and a are F32 with H_v elements; removes four elementwise ops per layer
-    GGML_API void ggml_gated_delta_net_set_raw_gates(
-            struct ggml_tensor  * gdn,
-            struct ggml_tensor  * dt_bias,
-            struct ggml_tensor  * a);
-
-    // friend.cpp: q and k arrive un-normalised; the op l2-normalises each head row itself,
-    // exactly as scale(rms_norm(x, eps/S_k), 1/sqrt(S_k)) would -- two dependent graph ops
-    // fewer per layer. Backends: CPU and Metal (callers must gate on that).
-    GGML_API void ggml_gated_delta_net_set_qk_l2(
-            struct ggml_tensor  * gdn,
-            float                 eps);
-
     // DSA lightning indexer
     //
     // q:       [n_embd_idx, n_head_idx, n_batch, ne3 ]
@@ -2759,11 +2721,21 @@ extern "C" {
             struct ggml_tensor  * x,
             struct ggml_tensor  * weights);
 
+    // hc_pre with a per-element gate (Qwen3.8-Flash-Next): gate [n_embd, hc, n_tokens]
+    //   result[i, t] = scale*sum_h x[i, h, t]*sigmoid(gate[i, h, t])
+    //
+    GGML_API struct ggml_tensor * ggml_dsv4_hc_pre_gated(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * x,
+            struct ggml_tensor  * gate,
+            float                 scale);
+
     // hc_post: x [n_embd, n_tokens], residual [n_embd, hc, n_tokens],
     //          post [hc, n_tokens], comb [dst_hc, src_hc, n_tokens]
     //          -> [n_embd, hc, n_tokens]
     //   result[i, dst, t] = x[i, t]*post[dst, t]
     //                       + sum_src residual[i, src, t]*comb[dst, src, t]
+    //   comb == NULL uses the identity: result[i, dst, t] = x[i, t]*post[dst, t] + residual[i, dst, t]
     //
     GGML_API struct ggml_tensor * ggml_dsv4_hc_post(
             struct ggml_context * ctx,

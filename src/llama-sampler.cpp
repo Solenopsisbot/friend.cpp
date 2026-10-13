@@ -15,7 +15,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
-#include <memory>
 #include <numeric>
 #include <random>
 #include <unordered_map>
@@ -351,180 +350,6 @@ static uint32_t get_rng_seed(uint32_t seed) {
     return seed;
 }
 
-// abstract RNG interface for the dist sampler
-struct llama_dist_rng {
-    virtual ~llama_dist_rng() = default;
-
-    virtual bool                            requires_sorted()  = 0;
-    virtual uint32_t                        next32()           = 0;
-    virtual uint64_t                        next64()           = 0;
-    virtual double                          nextf()            = 0;
-    virtual void                            reseed(uint32_t s) = 0;
-    virtual std::unique_ptr<llama_dist_rng> clone() const      = 0;
-};
-
-// Generative error diffusion for sequential blue noise, adapted from
-// kaetemi/llama.cpp feature/blue-noise.
-struct blue_noise_rng {
-    uint8_t bit_depth = 0;
-    std::unique_ptr<llama_dist_rng> rng;
-    std::vector<std::array<int8_t, 2>> states;
-
-    blue_noise_rng(uint8_t bit_depth, std::unique_ptr<llama_dist_rng> rng) {
-        init(bit_depth, std::move(rng));
-    }
-
-    blue_noise_rng(const blue_noise_rng & other)
-        : bit_depth(other.bit_depth)
-        , rng(other.rng ? other.rng->clone() : nullptr)
-        , states(other.states) {}
-
-    void init(uint8_t depth, std::unique_ptr<llama_dist_rng> source) {
-        bit_depth = std::clamp<uint8_t>(depth, 1, 16);
-        rng = std::move(source);
-        states.resize((1 << bit_depth) - 1);
-        reset_states();
-    }
-
-    void reseed(uint32_t s) {
-        rng->reseed(s);
-        reset_states();
-    }
-
-    void reset_states() {
-        static const int8_t tbl[10][2] = {
-            { 0,  0}, { 0,  0}, { 0,  0},
-            {-1,  0}, {-1,  0}, {-1,  0},
-            { 0, -1}, { 0, -1},
-            {-2,  0},
-            {-1, -1},
-        };
-
-        for (auto & state : states) {
-            uint32_t h = (uint32_t)(((uint64_t) rng->next32() * 10) >> 32);
-            state = { tbl[h][0], tbl[h][1] };
-        }
-    }
-
-    uint16_t advance(uint32_t h) {
-        uint32_t acc = 0;
-        for (int level = 0; level < bit_depth; level++) {
-            auto & s = states[(1 << level) - 1 + acc];
-
-            int    out = (s[0] >= 0) ? 1 : 0;
-            int8_t qe  = s[0] + (int8_t) (out ? -1 : 1);
-
-            s[0] = s[1];
-            s[1] = 0;
-            s[(h >> (31 - level)) & 1 ? 0 : 1] += qe;
-
-            acc = acc * 2 + out;
-        }
-        return (uint16_t) acc;
-    }
-
-    uint32_t next32() {
-        uint32_t h = rng->next32();
-        uint32_t val = advance(h);
-        return (val << (32 - bit_depth)) | (h & ((1u << (32 - bit_depth)) - 1));
-    }
-
-    uint64_t next64() {
-        uint64_t r = rng->next64();
-        uint32_t val = advance((uint32_t) (r >> 32));
-        return ((uint64_t) val << (64 - bit_depth)) | (r & ((UINT64_C(1) << (64 - bit_depth)) - 1));
-    }
-
-    double nextf() {
-        uint64_t combined = next64();
-        return (combined >> 11) * 0x1.0p-53;
-    }
-};
-
-struct llama_dist_rng_mt19937 : llama_dist_rng {
-    uint32_t seed;
-    std::mt19937 rng;
-
-    llama_dist_rng_mt19937(uint32_t seed) : seed(seed), rng(seed) {}
-
-    bool requires_sorted() override { return false; }
-    uint32_t next32() override { return rng(); }
-    uint64_t next64() override { return ((uint64_t) rng() << 32) | (uint64_t) rng(); }
-
-    double nextf() override {
-        std::uniform_real_distribution<double> dist(0.0, 1.0);
-        return dist(rng);
-    }
-
-    void reseed(uint32_t s) override {
-        seed = s;
-        rng.seed(s);
-    }
-
-    std::unique_ptr<llama_dist_rng> clone() const override {
-        return std::make_unique<llama_dist_rng_mt19937>(*this);
-    }
-};
-
-struct llama_dist_rng_lowbias32 : llama_dist_rng {
-    uint32_t hashed_seed = 0;
-    uint32_t position = 0;
-
-    llama_dist_rng_lowbias32(uint32_t seed) : hashed_seed(hash(seed)) {}
-
-    bool requires_sorted() override { return false; }
-
-    static uint32_t hash(uint32_t x) {
-        x ^= x >> 16; x *= 0x21f0aaad;
-        x ^= x >> 15; x *= 0x735a2d97;
-        x ^= x >> 15;
-        return x;
-    }
-
-    uint32_t next32() override {
-        uint32_t val = hash(position ^ hashed_seed);
-        position++;
-        return val;
-    }
-
-    uint64_t next64() override {
-        uint64_t lo = hash(position ^ ~hashed_seed);
-        uint64_t hi = next32();
-        return (hi << 32) | lo;
-    }
-
-    double nextf() override {
-        uint64_t combined = next64();
-        return (combined >> 11) * 0x1.0p-53;
-    }
-
-    void reseed(uint32_t s) override {
-        hashed_seed = hash(s);
-        position = 0;
-    }
-
-    std::unique_ptr<llama_dist_rng> clone() const override {
-        return std::make_unique<llama_dist_rng_lowbias32>(*this);
-    }
-};
-
-struct llama_dist_rng_blue : llama_dist_rng {
-    blue_noise_rng bn_rng;
-
-    llama_dist_rng_blue(std::unique_ptr<llama_dist_rng> source)
-        : bn_rng(16, std::move(source)) {}
-
-    bool requires_sorted() override { return true; }
-    uint32_t next32() override { return bn_rng.next32(); }
-    uint64_t next64() override { return bn_rng.next64(); }
-    double nextf() override { return bn_rng.nextf(); }
-    void reseed(uint32_t s) override { bn_rng.reseed(s); }
-
-    std::unique_ptr<llama_dist_rng> clone() const override {
-        return std::make_unique<llama_dist_rng_blue>(*this);
-    }
-};
-
 // llama_sampler API
 
 struct llama_sampler * llama_sampler_init(
@@ -819,7 +644,7 @@ static bool llama_sampler_backend_support(
         return true;
     }
 
-    auto probe = llama_sampler_backend_probe_graph(smpl, 1024*1024, GGML_DEFAULT_GRAPH_SIZE, true);
+    auto probe = llama_sampler_backend_probe_graph(smpl, 128*1024, GGML_DEFAULT_GRAPH_SIZE, true);
 
     for (int i = 0; i < ggml_graph_n_nodes(probe.gf); i++) {
         struct ggml_tensor * op = ggml_graph_node(probe.gf, i);
@@ -939,7 +764,7 @@ static bool llama_sampler_chain_backend_init(
         res = res && cur_prefix;
     }
 
-    auto probe = llama_sampler_backend_probe_graph(smpl, 1024*1024, GGML_DEFAULT_GRAPH_SIZE, false);
+    auto probe = llama_sampler_backend_probe_graph(smpl, 128*1024, GGML_DEFAULT_GRAPH_SIZE, false);
     chain->n_nodes = llama_sampler_backend_probe_n_nodes(probe);
 
     return res;
@@ -1261,6 +1086,12 @@ static void llama_sampler_greedy_backend_apply(
     struct ggml_tensor * curl = ggml_argmax(ctx, logits);
     ggml_set_name(curl, "greedy_argmax");
 
+    if (data->candidates != nullptr) {
+        struct ggml_tensor * candidates = ggml_reshape_2d(ctx, data->candidates, 1, ggml_nelements(data->candidates));
+        curl = ggml_get_rows(ctx, candidates, curl);
+        ggml_set_name(curl, "greedy_sampled_token");
+    }
+
     data->sampled = curl;
 }
 
@@ -1294,20 +1125,13 @@ struct llama_sampler_dist : public llama_sampler_backend {
     const uint32_t seed;
           uint32_t seed_cur;
 
-    // friend.cpp: polymorphic RNG (mt19937 / lowbias32, optionally wrapped in
-    // blue-noise error diffusion). Upstream uses a plain std::mt19937 here.
-    std::unique_ptr<llama_dist_rng> rng;
+    std::mt19937 rng;
 
     // TODO: refactor + fix naming
     //       https://github.com/ggml-org/llama.cpp/pull/25532/changes#r3749906719
     // use a temporary RNG for multi-output sampling so rejected tokens do not advance rng
-    //
-    // friend.cpp: rng_backend is a clone() of rng taken at the start of each
-    // transactional graph. accept() then replays one nextf() on the real rng per
-    // committed token, which reproduces the exact same draws (and, for blue noise,
-    // the same error-diffusion state) that the backend consumed.
     bool backend_transactional;
-    std::unique_ptr<llama_dist_rng> rng_backend;
+    std::mt19937 rng_backend;
     size_t n_backend_draws_generated;
     size_t n_backend_draws_committed;
 
@@ -1317,8 +1141,8 @@ struct llama_sampler_dist : public llama_sampler_backend {
     void copy_state(const llama_sampler_dist & src) {
         // note: inp_uniforms and backend_transactional belong to the current sampling graph
         seed_cur                  = src.seed_cur;
-        rng                       = src.rng->clone();
-        rng_backend               = src.rng_backend->clone();
+        rng                       = src.rng;
+        rng_backend               = src.rng_backend;
         n_backend_draws_generated = src.n_backend_draws_generated;
         n_backend_draws_committed = src.n_backend_draws_committed;
     }
@@ -1340,17 +1164,13 @@ static void llama_sampler_dist_apply(struct llama_sampler * smpl, llama_token_da
 
     cur_p->selected = 0;
 
+    std::uniform_real_distribution<double> dist(0.0f, 1.0f);
+
     if (cur_p->size == 1) {
         // keep the RNG state aligned with backend sampling, which draws once per output
-        ctx->rng->nextf();
+        (void) dist(ctx->rng);
         cur_p->data[0].p = 1.0f;
         return;
-    }
-
-    // blue noise only has its low-discrepancy property if the CDF is walked in a
-    // stable (descending-probability) order
-    if (ctx->rng->requires_sorted() && !cur_p->sorted) {
-        llama_token_data_array_partial_sort_inplace(cur_p, cur_p->size);
     }
 
     // max logit for numerical stability
@@ -1373,7 +1193,7 @@ static void llama_sampler_dist_apply(struct llama_sampler * smpl, llama_token_da
     // sample from the obtained probabilities and normalize the probs in a single pass
     // this is ~3x faster on Mac with full gpt-oss vocab than the version below
     //
-    const double rnd = ctx->rng->nextf();
+    const double rnd = dist(ctx->rng);
 
           double sum_run = 0.0f;
     const double sum_tgt = sum_cum*rnd;
@@ -1411,28 +1231,29 @@ static void llama_sampler_dist_apply(struct llama_sampler * smpl, llama_token_da
 static void llama_sampler_dist_reset(struct llama_sampler * smpl) {
     auto * ctx = (llama_sampler_dist *) smpl->ctx;
     ctx->seed_cur = get_rng_seed(ctx->seed);
-    ctx->rng->reseed(ctx->seed_cur);
-    ctx->rng_backend = ctx->rng->clone();
+    ctx->rng.seed(ctx->seed_cur);
+    ctx->rng_backend = ctx->rng;
     ctx->n_backend_draws_generated = 0;
     ctx->n_backend_draws_committed = 0;
 }
 
 static struct llama_sampler * llama_sampler_dist_clone(const struct llama_sampler * smpl) {
     const auto * ctx = (const llama_sampler_dist *) smpl->ctx;
-    return llama_sampler_init(
-        /* .iface = */ smpl->iface,
-        /* .ctx   = */ new llama_sampler_dist {
-            {"dist"},
-            /* .seed                      = */ ctx->seed,
-            /* .seed_cur                  = */ ctx->seed_cur,
-            /* .rng                       = */ ctx->rng->clone(),
-            /* .backend_transactional     = */ ctx->backend_transactional,
-            /* .rng_backend               = */ ctx->rng_backend->clone(),
-            /* .n_backend_draws_generated = */ ctx->n_backend_draws_generated,
-            /* .n_backend_draws_committed = */ ctx->n_backend_draws_committed,
-            /* .inp_uniforms              = */ {},
-        }
-    );
+    auto * result = llama_sampler_init_dist(ctx->seed);
+
+    // copy the state
+    {
+        auto * result_ctx = (llama_sampler_dist *) result->ctx;
+
+        result_ctx->seed_cur                  = ctx->seed_cur;
+        result_ctx->rng                       = ctx->rng;
+        result_ctx->backend_transactional     = ctx->backend_transactional;
+        result_ctx->rng_backend               = ctx->rng_backend;
+        result_ctx->n_backend_draws_generated = ctx->n_backend_draws_generated;
+        result_ctx->n_backend_draws_committed = ctx->n_backend_draws_committed;
+    }
+
+    return result;
 }
 
 static void llama_sampler_dist_free(struct llama_sampler * smpl) {
@@ -1449,7 +1270,7 @@ static bool llama_sampler_dist_backend_init(
 
     sctx->init(res);
     sctx->backend_transactional = n_outputs_max_per_seq > 1;
-    sctx->rng_backend = sctx->rng->clone();
+    sctx->rng_backend = sctx->rng;
     sctx->n_backend_draws_generated = 0;
     sctx->n_backend_draws_committed = 0;
 
@@ -1472,32 +1293,6 @@ static void llama_sampler_dist_backend_apply(
 
     // flatten
     struct ggml_tensor * logits = ggml_reshape_1d(ctx, data->logits, ggml_nelements(data->logits));
-
-    if (sctx->rng->requires_sorted()) {
-        // friend.cpp: blue noise needs the CDF in descending-probability order,
-        // mirroring the CPU path in llama_sampler_dist_apply
-        auto ggml_sort = [ctx](struct ggml_tensor * a, struct ggml_tensor * b) {
-            GGML_ASSERT(ggml_nrows(a) == 1);
-            struct ggml_tensor * a_reshaped = ggml_reshape_2d(ctx, a, 1, a->ne[0]);
-            struct ggml_tensor * a_sorted   = ggml_get_rows(ctx, a_reshaped, b);
-            return ggml_reshape_1d(ctx, a_sorted, a->ne[0]);
-        };
-
-        struct ggml_tensor * sorted_idx = ggml_argsort(ctx, logits, GGML_SORT_ORDER_DESC);
-        ggml_set_name(sorted_idx, "dist_sorted_idx");
-
-        logits = ggml_sort(logits, sorted_idx);
-        ggml_set_name(logits, "dist_sorted_logits");
-
-        if (data->candidates) {
-            struct ggml_tensor * cands = ggml_reshape_1d(ctx, data->candidates, ggml_nelements(data->candidates));
-            data->candidates = ggml_sort(cands, sorted_idx);
-        } else {
-            data->candidates = sorted_idx;
-        }
-        ggml_set_name(data->candidates, "dist_sorted_candidates");
-        data->logits = logits;
-    }
 
     struct ggml_tensor * probs = ggml_soft_max(ctx, logits);
     ggml_set_name(probs, "dist_probs");
@@ -1551,14 +1346,19 @@ static void llama_sampler_dist_backend_set_input(struct llama_sampler * smpl) {
 
     GGML_ASSERT(!sctx->inp_uniforms.empty());
 
-    // We draw in double precision via llama_dist_rng::nextf() and cast to float
-    // so the CPU and backend paths consume identical random sequences.
-    auto & rng = sctx->backend_transactional ? *sctx->rng_backend : *sctx->rng;
+    // We sample in double precision and cast to float to match rnd numbers of
+    // llama_sampler_dist which uses double precision (sampling from
+    // std::uniform_real_distribution<double> and
+    // std::uniform_real_distribution<float> with same rng will produce
+    // different sequences).
+    std::uniform_real_distribution<double> dist(0.0f, 1.0f);
+
+    auto & rng = sctx->backend_transactional ? sctx->rng_backend : sctx->rng;
 
     for (auto * inp_uniform : sctx->inp_uniforms) {
         GGML_ASSERT(inp_uniform != nullptr);
 
-        const float rnd = (float) rng.nextf();
+        const float rnd = dist(rng);
         ggml_backend_tensor_set(inp_uniform, &rnd, 0, sizeof(float));
 
         if (sctx->backend_transactional) {
@@ -1582,7 +1382,8 @@ static void llama_sampler_dist_accept(struct llama_sampler * smpl, llama_token t
         return;
     }
 
-    sctx->rng->nextf();
+    std::uniform_real_distribution<double> dist(0.0f, 1.0f);
+    (void) dist(sctx->rng);
     ++sctx->n_backend_draws_committed;
 }
 
@@ -1601,49 +1402,22 @@ static struct llama_sampler_i llama_sampler_dist_i = {
     /* .copy_state        = */ llama_sampler_backend_copy_state<llama_sampler_dist>,
 };
 
-static std::unique_ptr<llama_dist_rng> llama_sampler_make_dist_rng(uint32_t seed, bool blue_noise, enum llama_rng_type rng_type) {
-    std::unique_ptr<llama_dist_rng> rng;
-    switch (rng_type) {
-        case LLAMA_RNG_TYPE_LOWBIAS32:
-            rng = std::make_unique<llama_dist_rng_lowbias32>(seed);
-            break;
-        case LLAMA_RNG_TYPE_MT19937:
-        default:
-            rng = std::make_unique<llama_dist_rng_mt19937>(seed);
-            break;
-    }
-    if (blue_noise) {
-        return std::make_unique<llama_dist_rng_blue>(std::move(rng));
-    }
-    return rng;
-}
-
-struct llama_sampler * llama_sampler_init_dist_rng(uint32_t seed, bool blue_noise, enum llama_rng_type rng_type) {
+struct llama_sampler * llama_sampler_init_dist(uint32_t seed) {
     auto seed_cur = get_rng_seed(seed);
-    auto rng      = llama_sampler_make_dist_rng(seed_cur, blue_noise, rng_type);
-    auto rng_bk   = rng->clone();
     return llama_sampler_init(
         /* .iface = */ &llama_sampler_dist_i,
         /* .ctx   = */ new llama_sampler_dist {
             ("dist"),
             /* .seed                      = */ seed,
             /* .seed_cur                  = */ seed_cur,
-            /* .rng                       = */ std::move(rng),
+            /* .rng                       = */ std::mt19937(seed_cur),
             /* .backend_transactional     = */ false,
-            /* .rng_backend               = */ std::move(rng_bk),
+            /* .rng_backend               = */ std::mt19937(seed_cur),
             /* .n_backend_draws_generated = */ 0,
             /* .n_backend_draws_committed = */ 0,
             /* .inp_uniforms              = */ {},
         }
     );
-}
-
-struct llama_sampler * llama_sampler_init_dist(uint32_t seed) {
-    return llama_sampler_init_dist_rng(seed, false, LLAMA_RNG_TYPE_MT19937);
-}
-
-struct llama_sampler * llama_sampler_init_dist_blue(uint32_t seed) {
-    return llama_sampler_init_dist_rng(seed, true, LLAMA_RNG_TYPE_MT19937);
 }
 
 void llama_sampler_backend_begin(llama_sampler * sampler) {
@@ -1660,7 +1434,7 @@ void llama_sampler_backend_begin(llama_sampler * sampler) {
     } else if (sampler->iface == &llama_sampler_dist_i) {
         auto * ctx = (llama_sampler_dist *) sampler->ctx;
         if (ctx->backend_transactional) {
-            ctx->rng_backend = ctx->rng->clone();
+            ctx->rng_backend = ctx->rng;
             ctx->n_backend_draws_generated = 0;
             ctx->n_backend_draws_committed = 0;
         }

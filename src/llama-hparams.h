@@ -65,12 +65,15 @@ struct llama_hparams {
     uint32_t n_embd;
     uint32_t n_layer_all;
     uint32_t n_layer_nextn = 0;
+    uint32_t n_layer_decision = 0; // trailing blocks that form the decision head
 
     // granite-switch: index of the single-head "router" KV layer that encodes
     // per-token adapter selection. -1 when the model has no such layer.
     int32_t  router_layer = -1;
     uint32_t n_expert = 0;
     uint32_t n_rel_attn_bkts = 0;
+    uint32_t n_value_expert      = 0; // MoVA value experts (K2 Horizon)
+    uint32_t n_value_expert_used = 0;
 
     // TODO: this needs to be reworked
     int32_t  n_layer_kv_from_start = -1; // if non-negative, the first n_layer_kv_from_start layers have KV cache
@@ -206,6 +209,12 @@ struct llama_hparams {
     float    situ_beta            = 1.0f;
     float    situ_linear_beta     = 0.0f;   // 0 = no linear-beta transform on the up branch
 
+    // hrm-text (looped H/L stacks)
+    uint32_t n_hrm_layers_per_stack = 0;
+    uint32_t n_hrm_h_cycles = 0;
+    uint32_t n_hrm_l_cycles = 0;
+    bool     hrm_prefix_lm = false;
+
     bool ssm_dt_b_c_rms = false;
 
     float f_clamp_kqv      = 0.0f;
@@ -276,6 +285,12 @@ struct llama_hparams {
     uint32_t indexer_n_head    = 0;
     uint32_t indexer_head_size = 0;
     uint32_t indexer_top_k     = 0;
+    uint32_t indexer_kpool     = 0; // k-pool size
+    bool     indexer_kpool_select_tail = true;
+    // head-size slots per cached indexer row, the last one holds the pooled key
+    uint32_t indexer_kpool_row = 3;
+    // pools are consecutive cells in sequence order, not runs of consecutive positions
+    bool     indexer_kpool_by_order = false;
     // MSA
     uint32_t indexer_block_size  = 0;
     uint32_t indexer_local_blocks = 0;
@@ -288,11 +303,6 @@ struct llama_hparams {
     uint32_t dsv4_o_group_count        = 0;
     uint32_t dsv4_o_lora_rank          = 0;
     uint32_t dsv4_hc_mult              = 0;
-
-    // dspark GIDD log-SNR conditioning; GGUF sets <arch>.log_snr_conditioning
-    bool  dspark_log_snr_conditioning = false;
-    float dspark_min_log_snr = 0.0f;
-    float dspark_max_log_snr = 0.0f;
     uint32_t dsv4_hc_sinkhorn_iters    = 0;
     uint32_t dsv4_hash_layer_count     = 0;
     float    dsv4_compress_rope_base   = 0.0f;
@@ -348,36 +358,8 @@ struct llama_hparams {
     llama_token dec_start_token_id = LLAMA_TOKEN_NULL;
     uint32_t    dec_n_layer        = 0;
 
-    // dspark drafter (EAGLE-style block-diffusion speculative decoder). the
-    // trunk itself is a plain dense Qwen3-style stack (n_layer/n_head/n_ff etc.
-    // above already cover it); these are the extra fields the block-draft head
-    // needs. target_layer_ids indexes into the TARGET model's layers, not this
-    // drafter's own (tiny) layer count.
-    uint32_t dspark_block_size                  = 0;  // number of masked positions predicted per block
-    uint32_t dspark_mask_token_id               = 0;  // vocab id used to seed un-drafted block positions
-    uint32_t dspark_markov_rank                 = 0;  // low-rank factor width for the markov logit-bias head
-    bool     dspark_confidence_head             = false;
-    bool     dspark_hidden_correction           = false;
-    bool     dspark_markov_deploy_exposure      = false;
-    uint32_t dspark_correction_size             = 0;
-    bool     dspark_confidence_head_with_markov = false;
-
-    // GIDD log-SNR / noise-level conditioning (LogSnrEmbed): sinusoidal
-    // featurization of a per-position log-SNR value, run through a 2-layer
-    // SiLU MLP (dspark.log_snr_fc1/fc2), added to the draft noise embedding
-    // before the backbone. Absent on non-GIDD drafters -- dspark_log_snr_conditioning
-    // gates whether load_arch_tensors()/graph::graph() touch it at all.
-
-    // ordered set of target-model layer indices this drafter taps; n_dspark_target_layers
-    // is also the concatenation width multiplier (n_capture) for dspark.fc's input.
-    uint32_t                               n_dspark_target_layers = 0;
-    // uint32_t (not int32_t): matches an existing explicit template
-    // instantiation of llama_model_loader::get_key_or_arr for
-    // std::array<uint32_t, LLAMA_MAX_LAYERS>; layer indices are non-negative
-    // so the signed/unsigned choice loses nothing.
-    std::array<uint32_t, LLAMA_MAX_LAYERS> dspark_target_layers   = {};
-
     enum llama_pooling_type      pooling_type            = LLAMA_POOLING_TYPE_NONE;
+    enum llama_pooling_type      pooling_type_cls        = LLAMA_POOLING_TYPE_UNSPECIFIED; // pooling before the classifier head (RANK)
     enum llama_rope_type         rope_type               = LLAMA_ROPE_TYPE_NONE;
     enum llama_rope_scaling_type rope_scaling_type_train = LLAMA_ROPE_SCALING_TYPE_NONE;
 
@@ -389,6 +371,7 @@ struct llama_hparams {
     // llm_ffn_op_type_from_string() in llama-model.cpp, mirroring how
     // rope_scaling_type_train is handled.
     enum llm_ffn_op_type llm_ffn_op;
+    enum ggml_unary_op   act_cls = GGML_UNARY_OP_TANH; // activation of the classifier head (RANK)
 
     // Step35: optional per-layer clamps for (Swi)GLU
     std::array<float, LLAMA_MAX_LAYERS> swiglu_clamp_exp; // clamping for expert FFN
