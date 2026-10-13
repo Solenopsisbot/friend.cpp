@@ -377,7 +377,10 @@ class load_model_inputs(ctypes.Structure):
                 ("debugmode", ctypes.c_int),
                 ("continuous_batching_slots", ctypes.c_int),
                 ("rpc_mode", ctypes.c_int),
-                ("rpc_targets", ctypes.c_char_p)]
+                ("rpc_targets", ctypes.c_char_p),
+                ("friend_lora_pool", ctypes.c_char_p),
+                ("friend_cvec_pool", ctypes.c_char_p),
+                ("friend_head_pool", ctypes.c_char_p)]
 
 class generation_inputs(ctypes.Structure):
     _fields_ = [("seed", ctypes.c_int),
@@ -435,7 +438,8 @@ class generation_inputs(ctypes.Structure):
                 ("logit_biases", ctypes.POINTER(logit_bias)),
                 ("banned_tokens_len", ctypes.c_int),
                 ("banned_tokens", ctypes.POINTER(ctypes.c_char_p)),
-                ("reasoning_budget", ctypes.c_int)]
+                ("reasoning_budget", ctypes.c_int),
+                ("adapter_profile", ctypes.c_char_p)]
 
 class generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -2054,6 +2058,99 @@ def detect_memory_vk(gpumem_ignore_limit_min, gpumem_ignore_limit_max):
         return 0
 
 
+friend_adapter_pools = {"lora": {}, "cvec": {}, "head": {}}   # kind -> {name: path}
+friend_lora_default_scales = {}                               # lora name -> default scale
+_friend_name_re = re.compile(r'^[A-Za-z0-9_.\-]+$')
+
+def friend_parse_pool_args(entries, kind):
+    pool = {}
+    for entry in (entries or []):
+        if '=' not in entry:
+            raise ValueError(f"--{kind}-pool expects NAME=PATH, got {entry!r}")
+        name, path = entry.split('=', 1)
+        name = name.strip()
+        if not _friend_name_re.match(name):
+            raise ValueError(f"--{kind}-pool name {name!r} must match [A-Za-z0-9_.-]+")
+        if name in pool:
+            raise ValueError(f"--{kind}-pool name {name!r} given twice")
+        if not os.path.isfile(path):
+            raise ValueError(f"--{kind}-pool file not found: {path}")
+        pool[name] = path
+    return pool
+
+def friend_build_adapter_pools():
+    """Returns (lora_pool, cvec_pool, head_pool) wire strings and fills friend_adapter_pools."""
+    global friend_adapter_pools, friend_lora_default_scales
+    friend_adapter_pools = {"lora": {}, "cvec": {}, "head": {}}
+    friend_lora_default_scales = {}
+    lora_lines = []
+    # legacy --lora files: always-on at --loramult, addressable by their file stem
+    for path in (args.lora or []):
+        base = re.sub(r'[^A-Za-z0-9_.\-]', '_', os.path.splitext(os.path.basename(path))[0]) or "lora"
+        name, n = base, 2
+        while name in friend_adapter_pools["lora"]:
+            name, n = f"{base}_{n}", n + 1
+        friend_adapter_pools["lora"][name] = path
+        friend_lora_default_scales[name] = float(args.loramult)
+        lora_lines.append(f"{name}\t{path}\t{float(args.loramult)}")
+    for name, path in friend_parse_pool_args(getattr(args, "lora_pool", None), "lora").items():
+        if name in friend_adapter_pools["lora"]:
+            raise ValueError(f"--lora-pool name {name!r} collides with a --lora file")
+        friend_adapter_pools["lora"][name] = path
+        friend_lora_default_scales[name] = 0.0
+        lora_lines.append(f"{name}\t{path}\t0")
+    friend_adapter_pools["cvec"] = friend_parse_pool_args(getattr(args, "cvec_pool", None), "cvec")
+    friend_adapter_pools["head"] = friend_parse_pool_args(getattr(args, "head_pool", None), "head")
+    cvec_lines = [f"{n}\t{p}" for n, p in friend_adapter_pools["cvec"].items()]
+    head_lines = [f"{n}\t{p}" for n, p in friend_adapter_pools["head"].items()]
+    return "\n".join(lora_lines), "\n".join(cvec_lines), "\n".join(head_lines)
+
+def _friend_weighted_names(value, kind):
+    """Accepts {"name": w}, ["name", ...], [{"name": n, "scale"/"strength"/"weight": w}], or "name"."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value] if value else []
+    if isinstance(value, dict):
+        items = list(value.items())
+    elif isinstance(value, list):
+        items = []
+        for it in value:
+            if isinstance(it, str):
+                items.append((it, 1.0))
+            elif isinstance(it, dict) and "name" in it:
+                items.append((it["name"], it.get("scale", it.get("strength", it.get("weight", 1.0)))))
+            else:
+                raise ValueError(f"bad {kind} entry {it!r}")
+    else:
+        raise ValueError(f"'{kind}' must be an object, list or string")
+    out = []
+    for name, w in items:
+        if name not in friend_adapter_pools[kind]:
+            known = ", ".join(sorted(friend_adapter_pools[kind])) or "none loaded"
+            raise ValueError(f"unknown {kind} '{name}' (available: {known})")
+        w = float(w)
+        if not math.isfinite(w):
+            raise ValueError(f"{kind} '{name}' weight must be finite")
+        out.append((name, w))
+    return out
+
+def friend_adapter_profile_spec(genparams):
+    """Request fields -> C++ profile spec (see friend/adapters.hpp). Raises ValueError."""
+    parts = []
+    if genparams.get("lora", None) is not None:
+        parts.append("lora_explicit")  # the request's list replaces the default-on adapters
+        parts += [f"L {n} {w!r}" for n, w in _friend_weighted_names(genparams.get("lora"), "lora")]
+    steer = genparams.get("cvec", genparams.get("steer", None))
+    parts += [f"C {n} {w!r}" for n, w in _friend_weighted_names(steer, "cvec")]
+    head = genparams.get("head", None)
+    if head:
+        if not isinstance(head, str) or head not in friend_adapter_pools["head"]:
+            known = ", ".join(sorted(friend_adapter_pools["head"])) or "none loaded"
+            raise ValueError(f"unknown head {head!r} (available: {known})")
+        parts.append(f"H {head}")
+    return ";".join(parts)
+
 def fetch_gpu_properties(testCU,testVK,testmemory=False):
     gpumem_ignore_limit_min = 1024*1024*600 #600 mb min
     gpumem_ignore_limit_max = 1024*1024*1024*300 #300 gb max
@@ -2126,6 +2223,11 @@ def load_model(model_filename):
     inputs.lora_multiplier = args.loramult
     if args.lora:
         inputs.lora_filename = args.lora[0].encode("UTF-8")
+
+    lora_pool, cvec_pool, head_pool = friend_build_adapter_pools()
+    inputs.friend_lora_pool = lora_pool.encode("UTF-8")
+    inputs.friend_cvec_pool = cvec_pool.encode("UTF-8")
+    inputs.friend_head_pool = head_pool.encode("UTF-8")
 
     inputs.draftmodel_filename = args.draftmodel.encode("UTF-8") if (args.draftmodel and args.draftamount>0) else "".encode("UTF-8")
     inputs.draft_amount = args.draftamount
@@ -2502,6 +2604,11 @@ def generate(genparams, stream_flag=False):
         inputs.banned_tokens[n] = tok.encode("UTF-8")
 
     inputs.reasoning_budget = reasoning_budget
+    try:
+        inputs.adapter_profile = friend_adapter_profile_spec(genparams).encode("UTF-8")
+    except (ValueError, TypeError) as exc:
+        return {"text": "", "status": 0, "stopreason": -2, "prompt_tokens": 0,
+                "completion_tokens": 0, "error": str(exc)}
 
     currentusergenkey = genkey
     totalgens += 1
@@ -13804,6 +13911,9 @@ if __name__ == '__main__':
     advparser.add_argument("--jinjathink", help="A quick way to enable or disable thinking in the jinja template.", type=str, choices=['default','true','false'], default="default")
     advparser.add_argument("--lora", help="GGUF models only, applies a lora file on top of model.", metavar=('[lora_filename]'), nargs='+')
     advparser.add_argument("--loramult", metavar=('[amount]'), help="Multiplier for the Text LORA model to be applied.", type=float, default=1.0)
+    advparser.add_argument("--lora-pool", nargs="+", default=[], help="Preload named LoRA adapters as NAME=PATH.")
+    advparser.add_argument("--cvec-pool", nargs="+", default=[], help="Preload named steering vectors as NAME=PATH.")
+    advparser.add_argument("--head-pool", nargs="+", default=[], help="Preload named LM heads as NAME=PATH.")
     advparser.add_argument("--lowvram","-nkvo","--no-kv-offload", help="If supported by the backend, do not offload KV to GPU (lowvram mode). Not recommended, will be slow.", action='store_true')
     advparser.add_argument("--maingpu","--main-gpu","-mg", help="Only used in a multi-gpu setup. Sets the index of the main GPU that will be used.",metavar=('[Device ID]'), type=int, default=-1)
     advparser.add_argument("--maxrequestsize", metavar=('[size in MB]'), help="Specify a max request payload size. Any requests to the server larger than this size will be dropped. Do not change if unsure.", type=int, default=32)

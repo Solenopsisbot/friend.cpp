@@ -500,6 +500,9 @@ llama_context::llama_context(
 llama_context::~llama_context() {
     // wait for any pending asynchronous copies into the output buffers before they are freed
     synchronize();
+    if (adapter_head) {
+        adapter_head->bound_contexts.erase(this);
+    }
 
     // when training, ggml_opt allocates extra buffers through the scheduler, so the sizes no longer match the expectation
     if (!model.hparams.no_alloc && !opt_ctx) {
@@ -823,6 +826,42 @@ void llama_context::synchronize() {
 
 const llama_model & llama_context::get_model() const {
     return model;
+}
+
+int32_t llama_context::set_adapter_head(llama_adapter_head * head) {
+    if (head && head->model != &model) {
+        return -1;
+    }
+    switch (model.arch) {
+        case LLM_ARCH_LLAMA:
+        case LLM_ARCH_QWEN3:
+        case LLM_ARCH_QWEN3MOE:
+        case LLM_ARCH_QWEN35:
+        case LLM_ARCH_QWEN35MOE:
+            break;
+        default:
+            return -2;
+    }
+    if (adapter_head == head) {
+        return 0;
+    }
+    synchronize();
+    // A graph may still hold the old head's tensor pointers after a decode.
+    // Drop it now so callers may free an unbound head immediately.
+    for (auto & res : gf_res_prev) { res.reset(); }
+    gf_res_prev_active = nullptr;
+    if (adapter_head) {
+        adapter_head->bound_contexts.erase(this);
+    }
+    adapter_head = head;
+    if (head) {
+        head->bound_contexts.insert(this);
+    }
+    return 0;
+}
+
+llama_adapter_head * llama_context::get_adapter_head() const {
+    return adapter_head;
 }
 
 const llama_cparams & llama_context::get_cparams() const {
@@ -2610,10 +2649,13 @@ llm_graph_params llama_context::graph_params(
         /*.cross       =*/ &cross,
         /*.moe_cache   =*/ moe_cache.get(),
         /*.prec_policy =*/ &model.prec_policy,
+        /*.head_epoch  =*/ model.head_epoch,
+        /*.adapter_head=*/ adapter_head,
         /*.samplers    =*/ sampling.samplers,
         /*.n_outputs   =*/ n_outputs,
         /*.cb          =*/ graph_get_cb(),
         /*.res         =*/ res,
+
     };
 }
 
@@ -4599,4 +4641,12 @@ llama_memory_breakdown llama_get_memory_breakdown(const struct llama_context * c
 
 llama_context * llama_get_ctx_other(struct llama_context * ctx) {
     return ctx->get_cparams().ctx_other;
+}
+
+int32_t llama_set_adapter_head(struct llama_context * ctx, struct llama_adapter_head * head) {
+    return ctx ? ctx->set_adapter_head(head) : -1;
+}
+
+struct llama_adapter_head * llama_get_adapter_head(const struct llama_context * ctx) {
+    return ctx ? ctx->get_adapter_head() : nullptr;
 }
