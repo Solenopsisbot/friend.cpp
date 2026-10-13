@@ -146,3 +146,16 @@ LLAMA_API uint32_t        llama_model_target_layer_ids_n(const struct llama_mode
 // if out is nullptr, returns the number of tokens without writing to out
 // caller must allocate enough memory for out before calling
 LLAMA_API uint32_t llama_model_get_tok_embd(const struct llama_model * model, float * out);
+
+
+
+// friend.cpp: caller-owned GGUF heads; free before their model. Binding/freeing
+// must be serialized against inference on the affected contexts.
+struct llama_adapter_head;
+LLAMA_API struct llama_adapter_head * llama_adapter_head_init(struct llama_model * model, const char * path);
+LLAMA_API void llama_adapter_head_free(struct llama_adapter_head * head);
+LLAMA_API int32_t llama_model_set_head(struct llama_model * model, struct llama_adapter_head * head);
+LLAMA_API struct llama_adapter_head * llama_model_get_head(const struct llama_model * model);
+// Returns -2 if the architecture has no context-local head implementation.
+LLAMA_API int32_t llama_set_adapter_head(struct llama_context * ctx, struct llama_adapter_head * head);
+LLAMA_API struct llama_adapter_head * llama_get_adapter_head(const struct llama_context * ctx);

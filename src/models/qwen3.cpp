@@ -143,14 +143,14 @@ llama_model_qwen3::graph::graph(const llama_model & model, const llm_graph_param
     cur = inpL;
 
     cur = build_norm(cur,
-            model.output_norm, NULL,
+            head_norm_tensor(model.output_norm), NULL,
             LLM_NORM_RMS, -1);
 
     cb(cur, "result_norm", -1);
     res->t_embd = cur;
 
     // lm_head
-    cur = build_lora_mm(model.output, cur, model.output_s);
+    cur = build_lora_mm(head_tensor(model.output), cur, head_scale_tensor(model.output_s));
 
     cb(cur, "result_output", -1);
     res->t_logits = cur;
