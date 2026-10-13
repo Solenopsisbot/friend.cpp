@@ -65,6 +65,7 @@
 #include "llama-ext.h"
 #include "llama-model.h"
 #include "llama-vocab.h"
+#include "friend/adapters.hpp"
 #include "nlohmann/json.hpp"
 
 //const
@@ -129,7 +130,18 @@ static bool draft_is_mtp = false; // true for MTP/DFLASH/DSPARK paths that verif
 static common_speculative_type draft_spec_type_active = COMMON_SPECULATIVE_TYPE_NONE;
 static bool mtp_uses_spec_checkpoint = false;
 static common_prompt_checkpoint mtp_spec_ckpt;
-static llama_context * guidance_ctx = nullptr; //for classifier free guidance, will be null if unused
+static llama_context * guidance_ctx = nullptr; // for classifier-free guidance
+
+static std::string batch_active_profile_key;
+static friend_adapters::profile batch_default_profile;
+static bool friend_profiles_loaded = false;
+
+static std::vector<llama_context *> friend_model_contexts() {
+    std::vector<llama_context *> out;
+    if (llama_ctx_v4) out.push_back(llama_ctx_v4);
+    if (guidance_ctx) out.push_back(guidance_ctx);
+    return out;
+}
 
 static mtmd_context * mtmd_ctx = nullptr; //for multimodal media
 static std::vector<media_object> media_objects;
@@ -3127,6 +3139,9 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     ggml_time_init();
     kcpp_data = new kcpp_params(); //allocate on heap to avoid linux segfault. yes this leaks memory.
 
+    friend_adapters::free_pools();
+    friend_profiles_loaded = false;
+    batch_active_profile_key.clear();
     file_format = in_file_format;
     file_format_meta = in_file_format_meta;
     kcpp_data->n_threads = inputs.threads;
@@ -3797,6 +3812,20 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
             return ModelLoadResult::FAIL;
         }
 
+        // Preload named adapters once. Requests with the same profile share a decode batch.
+        friend_profiles_loaded = inputs.friend_lora_pool || inputs.friend_cvec_pool || inputs.friend_head_pool;
+        if (friend_profiles_loaded) {
+            if (!friend_adapters::load_pools(llamamodel, inputs.friend_lora_pool, inputs.friend_cvec_pool, inputs.friend_head_pool)) {
+                fprintf(stderr, "%s: error: failed to load friend adapter pools\n", __func__);
+                return ModelLoadResult::FAIL;
+            }
+            batch_default_profile = friend_adapters::default_profile();
+            if (!friend_adapters::apply(batch_default_profile, friend_model_contexts())) {
+                fprintf(stderr, "%s: error: failed to apply default friend adapter profile\n", __func__);
+                return ModelLoadResult::FAIL;
+            }
+        }
+
         //we use a threadpool, greatly speeds up qwen3moe tg
         ggml_threadpool_params threadpool1_params, threadpool2_params;
         ggml_threadpool_params_init(&threadpool1_params,kcpp_data->n_threads);
@@ -3818,7 +3847,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
 
         std::vector<llama_adapter_lora *> loras;
         std::vector<float> lorascales;
-        if (lora_filename != "")
+        if (lora_filename != "" && !friend_profiles_loaded)
         {
             printf("\nAttempting to apply LORA adapter: %s\n", lora_filename.c_str());
             auto adapter = llama_adapter_lora_init(llamamodel, lora_filename.c_str());
@@ -4485,6 +4514,9 @@ struct BatchGenerateRequest
     bool bypass_eos_token = false;
     bool render_special = false;
     BatchMediaState media;
+    friend_adapters::profile profile;
+    std::string profile_key;
+    uint64_t last_round = 0;
     std::vector<llama_token> prompt_tokens;
     int prompt_pos = 0;
     int n_past = 0;
@@ -4528,7 +4560,6 @@ static bool batch_touched_since_legacy = false;
 static int batch_legacy_waiting = 0;
 static int batch_next_request_id = 1;
 static std::string batch_empty_string = "";
-
 static BatchGenerateRequest * batch_find_request_locked(int request_id)
 {
     for(auto & req : batch_requests)
@@ -5528,6 +5559,34 @@ static bool batch_claim_waiting_locked()
     return claimed;
 }
 
+// Context-wide adapters may change between decodes: each sequence retains its
+// own KV, and only sequences using the selected profile participate in a round.
+// Least-recently-served requests choose the group, so new arrivals and different
+// profiles make progress before older requests finish.
+static bool batch_select_profile_locked() {
+    static uint64_t round = 0;
+    BatchGenerateRequest * target = nullptr;
+    for (const auto & req : batch_requests) {
+        if (!req || req->slot < 0 || !batch_is_live_state(req->state)) continue;
+        if (!target || req->last_round < target->last_round) target = req.get();
+    }
+    if (!target) return false;
+    batch_active_profile_key = target->profile_key;
+    if (friend_profiles_loaded && !friend_adapters::apply(target->profile, {llama_ctx_v4})) {
+        for (auto & req : batch_requests) {
+            if (req && batch_is_live_state(req->state) && req->profile_key == batch_active_profile_key)
+                batch_finish_request_locked(*req, stop_reason::ERROR_ENCOUNTERED);
+        }
+        return false;
+    }
+    ++round;
+    for (auto & req : batch_requests) {
+        if (req && req->slot >= 0 && batch_is_live_state(req->state) && req->profile_key == batch_active_profile_key)
+            req->last_round = round;
+    }
+    return true;
+}
+
 static void batch_worker_loop()
 {
     const int batch_cap = std::max(1, kcpp_data ? kcpp_data->n_batch : 512);
@@ -5560,9 +5619,10 @@ static void batch_worker_loop()
                     batch_finish_request_locked(*req_ptr, stop_reason::INVALID);
                 }
             }
+            if (!batch_select_profile_locked()) continue;
             for(auto & req_ptr : batch_requests)
             {
-                if(req_ptr && req_ptr->state == BatchState::PREPARING && req_ptr->slot >= 0)
+                if(req_ptr && req_ptr->profile_key == batch_active_profile_key && req_ptr->state == BatchState::PREPARING && req_ptr->slot >= 0)
                 {
                     prepare_req = req_ptr.get();
                     break;
@@ -5572,7 +5632,7 @@ static void batch_worker_loop()
             {
                 for(auto & req_ptr : batch_requests)
                 {
-                    if(!req_ptr || req_ptr->state != BatchState::PREFILL || req_ptr->slot < 0 ||
+                    if(!req_ptr || req_ptr->profile_key != batch_active_profile_key || req_ptr->state != BatchState::PREFILL || req_ptr->slot < 0 ||
                        req_ptr->prompt_pos >= (int) req_ptr->prompt_tokens.size())
                     {
                         continue;
@@ -5595,6 +5655,8 @@ static void batch_worker_loop()
                         req_ptr->i_batch_is_prefill = false;
                     }
                 }
+                // Reserve decode tokens before allowing a long prompt to fill the batch.
+                for (int pass = 0; pass < 2; ++pass) {
                 for(auto & req_ptr : batch_requests)
                 {
                     if(!req_ptr || !batch_is_live_state(req_ptr->state) || req_ptr->slot < 0 || batch.size() >= batch_cap)
@@ -5602,6 +5664,9 @@ static void batch_worker_loop()
                         continue;
                     }
                     BatchGenerateRequest & req = *req_ptr;
+                    if(req.profile_key != batch_active_profile_key) continue;
+                    if ((pass == 0 && req.state != BatchState::GENERATING) ||
+                        (pass == 1 && req.state != BatchState::PREFILL)) continue;
                     if(req.state == BatchState::PREFILL)
                     {
                         while(req.prompt_pos < (int) req.prompt_tokens.size() && batch.size() < batch_cap)
@@ -5638,6 +5703,7 @@ static void batch_worker_loop()
                         req.n_past++;
                         req.has_pending = false;
                     }
+                }
                 }
                 for(auto & req_ptr : batch_requests)
                 {
@@ -5773,6 +5839,12 @@ int gpttype_batch_generate_submit(const generation_inputs inputs)
     }
     auto req = std::make_unique<BatchGenerateRequest>();
     req->id = batch_next_request_id++;
+    if (friend_profiles_loaded) {
+        std::string profile_error;
+        if (!friend_adapters::parse_profile(inputs.adapter_profile, req->profile, profile_error)) { fprintf(stderr, "friend: invalid adapter profile: %s\n", profile_error.c_str()); return -1; }
+        req->profile_key = req->profile.kv_key + "|" + req->profile.head_key;
+    }
+    if (!friend_profiles_loaded) req->profile_key = "";
     req->prompt = inputs.prompt ? inputs.prompt : "";
     req->prompt_added_memory = inputs.memory ? inputs.memory : "";
     req->grammar = inputs.grammar ? inputs.grammar : "";
@@ -6851,6 +6923,32 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
 {
     BatchLegacyGuard batch_legacy_guard;
     generation_outputs output;
+
+    if (friend_profiles_loaded) {
+        static std::string legacy_profile_key;
+        friend_adapters::profile profile;
+        std::string err;
+        if (!friend_adapters::parse_profile(inputs.adapter_profile, profile, err) ||
+            !friend_adapters::apply(profile, friend_model_contexts())) {
+            output.text = nullptr;
+            output.status = 0;
+            output.prompt_tokens = output.completion_tokens = 0;
+            output.stopreason = stop_reason::ERROR_ENCOUNTERED;
+            generation_finished = true;
+            return output;
+        }
+        const std::string key = profile.execution_key + "|" + profile.head_key;
+        if (key != legacy_profile_key) {
+            n_past = 0;
+            current_context_tokens.clear();
+            last_n_tokens.clear();
+            smartcontext.clear();
+            loaded_latest_logits.clear();
+            gpttype_clear_state_kv(false);
+            for (auto * ctx : friend_model_contexts()) llama_memory_clear(llama_get_memory(ctx), true);
+            legacy_profile_key = key;
+        }
+    }
 
     if(kcpp_data==nullptr)
     {

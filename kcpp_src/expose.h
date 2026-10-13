@@ -1,4 +1,6 @@
 #pragma once
+#ifndef KCPP_EXPOSE_H
+#define KCPP_EXPOSE_H
 
 #include <atomic>
 #include <cstdint>
@@ -93,6 +95,10 @@ struct load_model_inputs
     const int continuous_batching_slots = 0;
     const int rpc_mode = 0; //0=disabled, 1=connect, 2=host
     const char * rpc_targets = nullptr;
+    // Named adapter pools. Entries are NAME\tPATH[\tDEFAULT_SCALE], one per line.
+    const char * friend_lora_pool = nullptr;
+    const char * friend_cvec_pool = nullptr;
+    const char * friend_head_pool = nullptr;
 };
 struct generation_inputs
 {
@@ -152,6 +158,8 @@ struct generation_inputs
     const int banned_tokens_len = 0;
     const char ** banned_tokens = nullptr;
     const int reasoning_budget = -1;
+    // Canonical per-request adapter profile; empty selects model defaults.
+    const char * adapter_profile = nullptr;
 };
 struct generation_outputs
 {
@@ -425,3 +433,5 @@ const char * gpttype_batch_generate_pending_output(int request_id);
 generation_outputs gpttype_batch_generate_result(int request_id);
 bool gpttype_batch_generate_abort(int request_id);
 void gpttype_batch_generate_release(int request_id);
+
+#endif // KCPP_EXPOSE_H
