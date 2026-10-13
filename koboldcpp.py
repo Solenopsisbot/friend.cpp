@@ -14,7 +14,6 @@ try:
 except Exception:
     pass
 import copy
-import codecs
 import ctypes
 import multiprocessing
 import math
@@ -35,6 +34,7 @@ import random
 import hashlib
 import urllib.parse
 import urllib.request
+import shlex
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
@@ -59,18 +59,28 @@ default_visionmaxres = 1024
 net_save_slots = 12
 savestate_limit_default = 5
 savestate_limit = 0 #savestate slots start at 0, only set when load model
-default_vae_tile_threshold = 640
+default_vae_tile_threshold = 512
 default_sdvaedevice = 'main'
 default_sdclipdevice = 'CPU'
 default_native_ctx = 16384
 default_genlen = 2048
+default_autoswap_threshold = 256
 overridekv_max = 16
 default_autofit_padding = 1024
 lora_filenames_max = 10
-multiuser_concurrent_limit = 10
+queue_concurrent_limit = 10
 swa_padding_default = 0
 default_reqtimeout = 600 # 10 min default
-default_maxctx = 12288
+default_maxctx = 16384
+
+def parse_reqtimeout(value):
+    try:
+        timeout = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError("must be a valid integer")
+    if timeout < 0:
+        raise argparse.ArgumentTypeError("must be zero or greater")
+    return timeout or default_reqtimeout
 
 # abuse prevention
 stop_token_max = 256
@@ -80,11 +90,12 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.121"
+KcppVersion = "1.123"
 showdebug = True
 kcpp_instance = None #global running instance
-global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_base_config":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "base_config":"", "swapReqType": None, "autoswapmode": False}
+global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_base_config":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "base_config":"", "swapReqType": None, "loadedReqTypes": [], "autoswapmode": False}
 using_gui_launcher = False
+cli_arg_overrides = set()
 
 handle = None
 friendlymodelname = "inactive"
@@ -138,7 +149,7 @@ exitcounter = -1
 punishcounter = 0 #causes a timeout if too many errors
 rewardcounter = 0 #reduces error counts for successful jobs
 totalgens = 0
-currentusergenkey = "" #store a special key so polled streaming works even in multiuser
+currentusergenkey = "" #store a special key so polled streaming works even in with multiple users
 pendingabortkey = "" #if an abort is received for the non-active request, remember it (at least 1) to cancel later
 args = None #global args
 runmode_untouched = True
@@ -151,12 +162,11 @@ has_vision_support = False
 has_whisper = False
 cached_chat_template = None
 cached_sd_info = {}
+cached_sd_custom_sigmas = {}
 cached_jinja_kwargs = None
 savedata_obj = None
 mcp_connections = [] #every element is linked to one mcp source, contains obj {"client":obj, "tools":[]}
 mcp_lock = threading.Lock()
-structured_grammar_lock = threading.Lock()
-structured_grammar_cache = {}
 multiplayer_story_data_compressed = None #stores the full compressed story of the current multiplayer session
 multiplayer_turn_major = 1 # to keep track of when a client needs to sync their stories
 multiplayer_turn_minor = 1
@@ -207,6 +217,7 @@ tool_call_pairs = [ #third element is optional str to match in chat template bef
     ("<tool_calls>", "</tool_calls>", "[BEGIN FINAL RESPONSE]", True), #apriel
     ("<|START_ACTION|>", "<|END_ACTION|>", "<|START_OF_TURN_TOKEN|>", True), #cohere
     ("<atem:function_calls>", "</atem:function_calls>", "<|eom|>", True), #muse glimmer
+    ("[TOOL_CALLS]", "", None, True), #devstral, mistral
 ]
 
 address_header_formats = [
@@ -255,11 +266,15 @@ deprecated_keys = {
     "noblas",
     "nommap",
     "pipelineparallel",
+    "nopipelineparallel",
     "sdnotile",
+    "sdt5xxl",
     "forceversion",
     "sdgendefaults",
     "flashattention",
     "useswa",
+    "jinja_tools",
+    "multiuser",
 }
 
 saved_stdout = None
@@ -331,6 +346,7 @@ class load_model_inputs(ctypes.Structure):
                 ("use_fastforward", ctypes.c_bool),
                 ("kcpp_main_gpu", ctypes.c_int),
                 ("batchsize", ctypes.c_int),
+                ("ubatchsize", ctypes.c_int),
                 ("autofit", ctypes.c_bool),
                 ("autofit_tax_mb", ctypes.c_int),
                 ("gpulayers", ctypes.c_int),
@@ -355,35 +371,13 @@ class load_model_inputs(ctypes.Structure):
                 ("swa_padding", ctypes.c_int),
                 ("smartcache", ctypes.c_bool),
                 ("smartcacheslots", ctypes.c_int),
-                ("pipelineparallel", ctypes.c_bool),
                 ("lora_multiplier", ctypes.c_float),
                 ("devices_override", ctypes.c_char_p),
                 ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int),
                 ("continuous_batching_slots", ctypes.c_int),
-                ("friend_prefill_tokens", ctypes.c_int),
                 ("rpc_mode", ctypes.c_int),
-                ("rpc_targets", ctypes.c_char_p),
-                ("friend_lora_pool", ctypes.c_char_p),
-                ("friend_cvec_pool", ctypes.c_char_p),
-                ("friend_head_pool", ctypes.c_char_p),
-                ("friend_cache_ram_mb", ctypes.c_int),
-                ("friend_cache_disk_mb", ctypes.c_int),
-                ("friend_cache_dir", ctypes.c_char_p),
-                ("friend_cache_min_tokens", ctypes.c_int),
-                ("friend_cache_capture_tokens", ctypes.c_int),
-                ("friend_cvec_dir", ctypes.c_char_p),
-                ("friend_draft_fixed", ctypes.c_bool),
-                ("friend_cache_idle_ms", ctypes.c_int),
-                ("friend_ngram_draft", ctypes.c_int),
-                ("friend_suffix_draft", ctypes.c_int),
-                ("friend_schedule_tokens", ctypes.c_int),
-                ("friend_profile_lanes", ctypes.c_int),
-                ("friend_max_queued_requests", ctypes.c_int),
-                ("friend_kv_watermark", ctypes.c_float),
-                ("friend_max_lora_profiles", ctypes.c_int),
-                ("friend_disaggregated_prefill", ctypes.c_bool),
-                ]
+                ("rpc_targets", ctypes.c_char_p)]
 
 class generation_inputs(ctypes.Structure):
     _fields_ = [("seed", ctypes.c_int),
@@ -441,25 +435,14 @@ class generation_inputs(ctypes.Structure):
                 ("logit_biases", ctypes.POINTER(logit_bias)),
                 ("banned_tokens_len", ctypes.c_int),
                 ("banned_tokens", ctypes.POINTER(ctypes.c_char_p)),
-                ("reasoning_budget", ctypes.c_int),
-                ("blue_noise", ctypes.c_bool),
-                ("rng_type", ctypes.c_int),
-                ("adapter_profile", ctypes.c_char_p),
-                ("cache_pin_label", ctypes.c_char_p),
-                ("priority", ctypes.c_int),
-                ("logprobs", ctypes.c_int),
-                ("prompt_logprobs", ctypes.c_int),
-                ("disaggregated_prefill", ctypes.c_bool),
-                ("friend_draft_max", ctypes.c_int)]
+                ("reasoning_budget", ctypes.c_int)]
 
 class generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
                 ("stopreason", ctypes.c_int),
                 ("prompt_tokens", ctypes.c_int),
                 ("completion_tokens", ctypes.c_int),
-                ("text", ctypes.c_char_p),
-                ("logprobs_json", ctypes.c_char_p),
-                ("timing_json", ctypes.c_char_p)]
+                ("text", ctypes.c_char_p)]
 
 class sd_load_model_inputs(ctypes.Structure):
     _fields_ = [("model_filename", ctypes.c_char_p),
@@ -474,7 +457,7 @@ class sd_load_model_inputs(ctypes.Structure):
                 ("vae_conv_direct", ctypes.c_bool),
                 ("taesd", ctypes.c_bool),
                 ("tiled_vae_threshold", ctypes.c_int),
-                ("t5xxl_filename", ctypes.c_char_p),
+                ("llm_filename", ctypes.c_char_p),
                 ("clip1_filename", ctypes.c_char_p),
                 ("clip2_filename", ctypes.c_char_p),
                 ("vae_filename", ctypes.c_char_p),
@@ -489,7 +472,6 @@ class sd_load_model_inputs(ctypes.Structure):
                 ("img_soft_limit", ctypes.c_int),
                 ("max_vram", ctypes.c_char_p),
                 ("split_mode", ctypes.c_char_p),
-                ("stream_layers", ctypes.c_bool),
                 ("auto_fit", ctypes.c_bool),
                 ("devices_override", ctypes.c_char_p),
                 ("quiet", ctypes.c_bool),
@@ -533,7 +515,9 @@ class sd_generation_inputs(ctypes.Structure):
                 ("upscale", ctypes.c_bool),
                 ("lora_len", ctypes.c_int),
                 ("lora_filenames", ctypes.POINTER(ctypes.c_char_p)),
-                ("lora_multipliers", ctypes.POINTER(ctypes.c_float))]
+                ("lora_multipliers", ctypes.POINTER(ctypes.c_float)),
+                ("custom_sigmas", ctypes.POINTER(ctypes.c_float)),
+                ("custom_sigmas_count", ctypes.c_int)]
 
 class sd_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -886,6 +870,13 @@ def getabspath():
 def file_exists(filename):
     return os.path.exists(os.path.join(getdirpath(), filename))
 
+def get_kcpp_bin_path(filename):
+    base_path = getattr(sys, '_MEIPASS', getabspath())
+    bundled_path = os.path.join(base_path, filename)
+    if os.path.exists(bundled_path):
+        return bundled_path
+    return os.path.join(base_path, "kcpp_src", "bin", filename)
+
 def suppress_stdout():
     global saved_stdout, saved_stderr, saved_stdout_py, saved_stderr_py, stdout_nullfile, stdout_nullfile_py
     if not saved_stdout and not saved_stderr and not saved_stdout_py and not saved_stderr_py and not stdout_nullfile and not stdout_nullfile_py:
@@ -1042,8 +1033,6 @@ def init_library():
     handle.batch_generate_new_token.restype = ctypes.c_char_p
     handle.batch_generate_pending_output.argtypes = [ctypes.c_int]
     handle.batch_generate_pending_output.restype = ctypes.c_char_p
-    handle.batch_generate_logprobs.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
-    handle.batch_generate_logprobs.restype = ctypes.c_char_p
     handle.batch_generate_result.argtypes = [ctypes.c_int]
     handle.batch_generate_result.restype = generation_outputs
     handle.batch_generate_abort.argtypes = [ctypes.c_int]
@@ -1082,19 +1071,6 @@ def init_library():
     handle.load_state_kv.argtypes = [ctypes.c_int]
     handle.load_state_kv.restype = ctypes.c_bool
     handle.clear_state_kv.restype = ctypes.c_bool
-    handle.friend_requests.argtypes = []
-    handle.friend_requests.restype = ctypes.c_char_p
-    handle.friend_request_control.argtypes = [ctypes.c_int, ctypes.c_bool]
-    handle.friend_request_control.restype = ctypes.c_bool
-    handle.friend_metrics.argtypes = []
-    handle.friend_metrics.restype = ctypes.c_char_p
-    handle.friend_cache_list.restype = ctypes.c_char_p
-    handle.friend_cache_clear.argtypes = [ctypes.c_bool]
-    handle.friend_cache_clear.restype = ctypes.c_size_t
-    handle.friend_cache_pin.argtypes = [ctypes.c_uint64, ctypes.c_bool]
-    handle.friend_cache_pin.restype = ctypes.c_bool
-    handle.friend_build_steering.argtypes = [ctypes.c_char_p]
-    handle.friend_build_steering.restype = ctypes.c_char_p
     handle.sd_load_model.argtypes = [sd_load_model_inputs]
     handle.sd_load_model.restype = ctypes.c_bool
     handle.sd_generate.argtypes = [sd_generation_inputs]
@@ -1257,6 +1233,7 @@ def fix_unquoted_keys(s: str) -> str:
     Fix JSON with unquoted keys by only quoting identifiers that appear
     in key position (after '{' or ',' at object level, before ':').
     Uses a state machine to track position in the JSON structure.
+    Returns the original input if malformed nesting prevents progress.
     """
     result = []
     i = 0
@@ -1309,6 +1286,7 @@ def fix_unquoted_keys(s: str) -> str:
             i += 1
             return
         while i < n:
+            start = i
             skip_whitespace()
             if i < n and s[i] == '"':
                 read_string()
@@ -1329,6 +1307,8 @@ def fix_unquoted_keys(s: str) -> str:
             if s[i] == ',':
                 result.append(s[i])
                 i += 1
+            if i == start:
+                raise ValueError("Cannot advance while repairing JSON object")
         if i < n and s[i] == '}':
             result.append(s[i])
             i += 1
@@ -1342,6 +1322,7 @@ def fix_unquoted_keys(s: str) -> str:
             i += 1
             return
         while i < n:
+            start = i
             read_value()
             skip_whitespace()
             if i >= n or s[i] == ']':
@@ -1349,10 +1330,17 @@ def fix_unquoted_keys(s: str) -> str:
             if s[i] == ',':
                 result.append(s[i])
                 i += 1
+            if i == start:
+                raise ValueError("Cannot advance while repairing JSON array")
         if i < n and s[i] == ']':
             result.append(s[i])
             i += 1
-    read_value()
+    try:
+        read_value()
+    except (ValueError, RecursionError):
+        # Preserve the malformed input for the caller's JSON validation. Do not
+        # return a partially repaired prefix that could look like a valid call.
+        return s
     return ''.join(result)
 
 def old_cpu_check(): #return -1 for pass, 0 if has avx2, 1 if has avx, 2 if has nothing
@@ -1371,10 +1359,9 @@ def old_cpu_check(): #return -1 for pass, 0 if has avx2, 1 if has avx, 2 if has 
                 elif 'avx2' not in cpuinfo:
                     retflags = 1
         elif os.name == 'nt':
-            basepath = os.path.abspath(os.path.dirname(__file__))
             output = ""
             data = None
-            output = subprocess.run([os.path.join(basepath, "simplecpuinfo.exe")], capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS, encoding='utf-8', timeout=6).stdout
+            output = subprocess.run([get_kcpp_bin_path("simplecpuinfo.exe")], capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS, encoding='utf-8', timeout=6).stdout
             data = json.loads(output)
             if data["avx2"]==0 and data["avx"]==0:
                 retflags = 2
@@ -1547,7 +1534,10 @@ def truncate_long_json(data, max_length):
 
 def convert_json_to_gbnf(json_obj):
     try:
-        from json_to_gbnf import SchemaConverter
+        try:
+            from json_to_gbnf import SchemaConverter
+        except ModuleNotFoundError:
+            from kcpp_src.json_to_gbnf import SchemaConverter
         prop_order = []
         converter = SchemaConverter(
         prop_order={name: idx for idx, name in enumerate(prop_order)},
@@ -1562,185 +1552,6 @@ def convert_json_to_gbnf(json_obj):
     except Exception as e:
         print(f"JSON to GBNF failed: {e}")
         return ""
-
-def cached_json_to_gbnf(json_obj):
-    """Compile a schema once per process; grammar objects remain request-owned."""
-    try:
-        key = json.dumps(json_obj, sort_keys=True, separators=(',', ':'))
-    except Exception:
-        return convert_json_to_gbnf(json_obj)
-    with structured_grammar_lock:
-        cached = structured_grammar_cache.get(key)
-    if cached is not None:
-        return cached
-    compiled = convert_json_to_gbnf(json_obj)
-    if compiled:
-        with structured_grammar_lock:
-            structured_grammar_cache[key] = compiled
-            if len(structured_grammar_cache) > 256:
-                structured_grammar_cache.pop(next(iter(structured_grammar_cache)))
-    return compiled
-
-def choices_to_gbnf(choices):
-    """Compile vLLM-style guided_choice values into a native GBNF root."""
-    if not isinstance(choices, list) or not choices or not all(isinstance(value, str) for value in choices):
-        return ""
-    # JSON string escaping is also the escaping accepted by llama.cpp's grammar
-    # parser for quoted terminals. Preserve order while removing duplicates so
-    # clients get deterministic grammar cache keys and output alternatives.
-    unique = list(dict.fromkeys(choices))
-    return "root ::= " + " | ".join(json.dumps(value, ensure_ascii=False) for value in unique) + "\n"
-
-def regex_to_gbnf(pattern):
-    """Compile the portable guided-regex subset understood by llama grammars.
-
-    Regex engines have features (lookarounds, backreferences and anchors that
-    inspect generated history) that a token grammar cannot represent. Reject
-    those forms explicitly; accepting them and emitting a weaker grammar would
-    make a structured-output request look successful while violating its
-    contract. Character classes, groups, alternation and repetition are
-    translated to GBNF terminals/operators.
-    """
-    if not isinstance(pattern, str) or not pattern or len(pattern) > 2048:
-        return ""
-    text = pattern
-    if text.startswith('^'):
-        text = text[1:]
-    if text.endswith('$') and not text.endswith('\\$'):
-        text = text[:-1]
-    pos = 0
-
-    def class_body():
-        nonlocal pos
-        start = pos
-        escaped = False
-        while pos < len(text):
-            char = text[pos]
-            pos += 1
-            if escaped:
-                escaped = False
-                continue
-            if char == '\\':
-                escaped = True
-            elif char == ']':
-                return text[start:pos - 1]
-        raise ValueError("unterminated character class")
-
-    def normalize_class(value):
-        value = value.replace('\\d', '0-9').replace('\\w', 'A-Za-z0-9_')
-        value = value.replace('\\s', ' \\t\\n\\r')
-        if '\\b' in value or '\\B' in value:
-            raise ValueError("word-boundary classes are unsupported")
-        return value
-
-    def parse_alt(stop=None):
-        nonlocal pos
-        alternatives = []
-        current = []
-        while pos < len(text):
-            char = text[pos]
-            if stop and char == stop:
-                break
-            if char == '|':
-                pos += 1
-                alternatives.append(current)
-                current = []
-                continue
-            if char == ')':
-                if stop:
-                    break
-                raise ValueError("unmatched closing group")
-            if char == '(':
-                pos += 1
-                if text[pos:pos + 2] == '?:':
-                    pos += 2
-                elif text[pos:pos + 1] == '?':
-                    raise ValueError("lookarounds and named groups are unsupported")
-                inner = parse_alt(')')
-                if pos >= len(text) or text[pos] != ')':
-                    raise ValueError("unterminated group")
-                pos += 1
-                atom = '(' + ' | '.join(' '.join(part) for part in inner) + ')' if len(inner) > 1 else '(' + ' '.join(inner[0]) + ')'
-            elif char == '[':
-                pos += 1
-                atom = '[' + normalize_class(class_body()) + ']'
-            elif char == '.':
-                pos += 1
-                atom = '[^\\n]'
-            elif char == '\\':
-                pos += 1
-                if pos >= len(text):
-                    raise ValueError("trailing escape")
-                escaped = text[pos]
-                pos += 1
-                atom = {'d': '[0-9]', 'w': '[A-Za-z0-9_]', 's': '[ \\t\\n\\r]'}.get(escaped)
-                if atom is None:
-                    if escaped in 'AbBZzG':
-                        raise ValueError("regex boundary is unsupported")
-                    atom = json.dumps(escaped, ensure_ascii=False)
-            else:
-                pos += 1
-                if char in '^$':
-                    raise ValueError("anchors are only supported at the pattern edges")
-                atom = json.dumps(char, ensure_ascii=False)
-
-            minimum, maximum = 1, 1
-            if pos < len(text):
-                quantifier = text[pos]
-                if quantifier in '*+?':
-                    pos += 1
-                    minimum, maximum = (0, None) if quantifier == '*' else ((1, None) if quantifier == '+' else (0, 1))
-                elif quantifier == '{':
-                    end = text.find('}', pos + 1)
-                    if end < 0:
-                        raise ValueError("unterminated repetition")
-                    bounds = text[pos + 1:end].split(',', 1)
-                    if not bounds[0].isdigit() or (len(bounds) == 2 and bounds[1] and not bounds[1].isdigit()):
-                        raise ValueError("invalid repetition bounds")
-                    minimum = int(bounds[0])
-                    maximum = minimum if len(bounds) == 1 else (None if not bounds[1] else int(bounds[1]))
-                    if maximum is not None and maximum < minimum:
-                        raise ValueError("repetition maximum precedes minimum")
-                    if maximum is not None and maximum > 64:
-                        raise ValueError("repetition bound is too large")
-                    pos = end + 1
-            repeated = ' '.join(atom for _ in range(minimum))
-            if maximum is None:
-                rendered = repeated + (' ' if repeated else '') + '(' + atom + ')*'
-            else:
-                optional = ' '.join('(' + atom + ')?' for _ in range(maximum - minimum))
-                rendered = ' '.join(part for part in (repeated, optional) if part)
-            current.append(rendered)
-        alternatives.append(current)
-        return alternatives
-
-    try:
-        alternatives = parse_alt()
-        if pos != len(text) or not alternatives or any(not part for part in alternatives):
-            return ""
-        return "root ::= " + " | ".join(' '.join(part) for part in alternatives) + "\n"
-    except (ValueError, IndexError) as exc:
-        print(f"guided_regex rejected: {exc}")
-        return ""
-
-def cached_regex_to_gbnf(pattern):
-    key = "regex:" + pattern if isinstance(pattern, str) else "regex:<invalid>"
-    with structured_grammar_lock:
-        cached = structured_grammar_cache.get(key)
-    if cached is not None:
-        return cached
-    try:
-        from friend.guided_regex import compile_regex
-        compiled = compile_regex(pattern)
-    except Exception as exc:
-        print(f"guided_regex rejected: {exc}")
-        compiled = ""
-    if compiled:
-        with structured_grammar_lock:
-            structured_grammar_cache[key] = compiled
-            if len(structured_grammar_cache) > 256:
-                structured_grammar_cache.pop(next(iter(structured_grammar_cache)))
-    return compiled
 
 def get_capabilities():
     global savedata_obj, has_multiplayer, KcppVersion, friendlymodelname, friendlysdmodelname, fullsdmodelpath, password, fullwhispermodelpath, ttsmodelpath, embeddingsmodelpath, musicdiffusionmodelpath, musicllmmodelpath, has_audio_support, has_vision_support, mcp_connections
@@ -1760,64 +1571,7 @@ def get_capabilities():
     has_mcp = True if (args.mcpfile and mcp_connections and len(mcp_connections) > 0) else False
     admin_type = (2 if args.admin and args.admindir and args.adminpassword else (1 if args.admin and args.admindir else 0))
     has_router = True if args.routermode else False
-    return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":visionSupport,"audio":audioSupport,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts, "embeddings":has_embeddings, "music":has_music, "savedata":(savedata_obj is not None), "admin": admin_type, "router":has_router, "guidance": has_guidance, "jinja": has_jinja, "mcp":has_mcp}
-
-
-def get_friend_serving_capabilities():
-    """Return the explicit backend support matrix for friend.cpp features."""
-    lanes = max(1, int(getattr(args, "profile_lanes", 1) or 1))
-    parallel = max(1, int(getattr(args, "parallelrequests", 1) or 1))
-    # Keep this machine-readable and honest. ``implemented`` means the request
-    # path is live in this process; ``partial`` means a scheduler/host contract
-    # exists but the bundled llama backend owns the missing device primitive.
-    support = {
-        "admission_control": "implemented",
-        "request_cancellation": "implemented",
-        "stream_batching": "implemented",
-        "parallel_sampling": "implemented" if parallel > 1 else "available_when_continuous_batching_enabled",
-        "structured_outputs": "implemented",
-        "speculative_request_budget": "implemented",
-        "multimodal_encoded_cache": "implemented_when_mmproj_loaded",
-        "scheduler_paged_kv": "partial",
-        "physical_kv_recompute": "unsupported",
-        "backend_paged_kv": "unsupported",
-        "async_prefetch_fences": "unsupported",
-        "mixed_sequence_lora": "unsupported",
-        "native_sampling_branches": "partial",
-        "batch_model_speculation": "unsupported",
-        "reasoning_tool_stream_interaction": "available_with_legacy_path",
-        "device_kv_transport": "unsupported",
-        "expert_parallel": "unsupported",
-        "context_parallel": "unsupported",
-        "beam_search": "excluded",
-    }
-    return {
-        "continuous_batching": parallel > 1,
-        "profile_lanes": lanes,
-        "parallel_sampling": parallel > 1,
-        "scheduler_paged_kv": True,
-        "backend_paged_kv": False,
-        "kv_connector": True,
-        "kv_socket_transport": True,
-        "device_kv_transport": False,
-        "disaggregated_prefill": bool(getattr(args, "disaggregated_prefill", False) and lanes >= 2),
-        "expert_parallel": False,
-        "context_parallel": False,
-        "beam_search": False,
-        "support": support,
-        "reasons": {
-            "async_prefetch_fences": "llama_decode is synchronous and does not expose a graph submission handle through the serving ABI",
-            "physical_kv_recompute": "the scheduler cannot evict referenced backend KV cells and llama exposes no recompute callback for a live sequence",
-            "mixed_sequence_lora": "llama adapter state is context-wide for one decode",
-            "native_sampling_branches": "parallel samples share scheduler KV prefixes, but no public branch object clones sampler and grammar state after decode",
-            "batch_model_speculation": "draft contexts are owned by the legacy speculative path and are not safe to multiplex through native batch lanes",
-            "backend_paged_kv": "llama owns KV tensor allocation; friend.cpp only tracks scheduler page identities",
-            "device_kv_transport": "llama exposes sequence state serialization, not backend tensor attachment",
-            "expert_parallel": "the bundled backend exposes no expert placement or collective-routing API",
-            "context_parallel": "the bundled backend exposes no KV sharding or cross-device attention collective",
-            "beam_search": "native branch ownership is not wired into the serving scheduler",
-        },
-    }
+    return {"result":"KoboldCpp", "version":KcppVersion, "protected":has_password, "llm":has_llm, "txt2img":has_txt2img,"vision":visionSupport,"audio":audioSupport,"transcribe":has_whisper,"multiplayer":has_multiplayer,"websearch":has_search,"tts":has_tts, "embeddings":has_embeddings, "music":has_music, "musicllm":bool(musicllmmodelpath), "savedata":(savedata_obj is not None), "admin": admin_type, "router":has_router, "guidance": has_guidance, "jinja": has_jinja, "mcp":has_mcp, "parallelrequests":args.parallelrequests, "defaults_modified":bool(args.gendefaults)}
 
 
 def scan_directory(dirpath, valid_exts, depth):
@@ -1844,6 +1598,17 @@ def get_current_admindir_list():
         opts.append("initial_model")
         opts.append("unload_model")
     return opts
+
+
+def get_initial_admin_model(config_path, admin_dir):
+    if not config_path or not admin_dir or not os.path.isdir(admin_dir):
+        return "initial_model"
+    dirpath = os.path.abspath(admin_dir)
+    config_path = os.path.normcase(os.path.abspath(config_path))
+    for name in scan_directory(dirpath, (".kcpps", ".kcppt"), 1):
+        if os.path.normcase(os.path.abspath(os.path.join(dirpath, name))) == config_path:
+            return name
+    return "initial_model"
 
 
 def dump_gguf_metadata(file_path): #if you're gonna copy this into your own project at least credit concedo
@@ -2298,7 +2063,7 @@ def fetch_gpu_properties(testCU,testVK,testmemory=False):
         MaxMemory[0] = max(cumem,MaxMemory[0])
         MaxFreeMemory[0] = max(freecumem,MaxFreeMemory[0])
         if testmemory:
-            print(f'detected CUDA memory: {cumem/(1024*1024)} MB, {freecumem/(1024*102)} MB free')
+            print(f'detected CUDA memory: {cumem/(1024*1024)} MB, {freecumem/(1024*1024)} MB free')
 
     if testVK:
         vkmem = detect_memory_vk(gpumem_ignore_limit_min, gpumem_ignore_limit_max)
@@ -2342,124 +2107,6 @@ def auto_set_backend_cli():
     if not found_new_backend:
         print(f"Auto Selected Default Backend (flag={cpusupport})\n")
 
-# friend.cpp: named adapter pools (LoRA / control vectors / LM heads) and per-request
-# adapter profiles. The C++ side (friend/adapters.hpp) owns the actual adapters; Python
-# owns validation so a typo'd adapter name is a clear request error, not a silent no-op.
-friend_adapter_pools = {"lora": {}, "cvec": {}, "head": {}}   # kind -> {name: path}
-friend_lora_default_scales = {}                               # lora name -> default scale
-_friend_name_re = re.compile(r'^[A-Za-z0-9_.\-]+$')
-
-def friend_parse_pool_args(entries, kind):
-    pool = {}
-    for entry in (entries or []):
-        if '=' not in entry:
-            raise ValueError(f"--{kind}-pool expects NAME=PATH, got {entry!r}")
-        name, path = entry.split('=', 1)
-        name = name.strip()
-        if not _friend_name_re.match(name):
-            raise ValueError(f"--{kind}-pool name {name!r} must match [A-Za-z0-9_.-]+")
-        if name in pool:
-            raise ValueError(f"--{kind}-pool name {name!r} given twice")
-        if not os.path.isfile(path):
-            raise ValueError(f"--{kind}-pool file not found: {path}")
-        pool[name] = path
-    return pool
-
-def friend_build_adapter_pools():
-    """Returns (lora_pool, cvec_pool, head_pool) wire strings and fills friend_adapter_pools."""
-    global friend_adapter_pools, friend_lora_default_scales
-    friend_adapter_pools = {"lora": {}, "cvec": {}, "head": {}}
-    friend_lora_default_scales = {}
-    lora_lines = []
-    # legacy --lora files: always-on at --loramult, addressable by their file stem
-    for path in (args.lora or []):
-        base = re.sub(r'[^A-Za-z0-9_.\-]', '_', os.path.splitext(os.path.basename(path))[0]) or "lora"
-        name, n = base, 2
-        while name in friend_adapter_pools["lora"]:
-            name, n = f"{base}_{n}", n + 1
-        friend_adapter_pools["lora"][name] = path
-        friend_lora_default_scales[name] = float(args.loramult)
-        lora_lines.append(f"{name}\t{path}\t{float(args.loramult)}")
-    for name, path in friend_parse_pool_args(getattr(args, "lora_pool", None), "lora").items():
-        if name in friend_adapter_pools["lora"]:
-            raise ValueError(f"--lora-pool name {name!r} collides with a --lora file")
-        friend_adapter_pools["lora"][name] = path
-        friend_lora_default_scales[name] = 0.0
-        lora_lines.append(f"{name}\t{path}\t0")
-    friend_adapter_pools["cvec"] = friend_parse_pool_args(getattr(args, "cvec_pool", None), "cvec")
-    # vectors previously built with /api/extra/steer/build come back automatically
-    cvec_dir = getattr(args, "cvec_dir", "")
-    if cvec_dir and os.path.isdir(cvec_dir):
-        for fn in sorted(os.listdir(cvec_dir)):
-            stem, ext = os.path.splitext(fn)
-            if ext.lower() == ".gguf" and _friend_name_re.match(stem) and stem not in friend_adapter_pools["cvec"]:
-                friend_adapter_pools["cvec"][stem] = os.path.join(cvec_dir, fn)
-    friend_adapter_pools["head"] = friend_parse_pool_args(getattr(args, "head_pool", None), "head")
-    cvec_lines = [f"{n}\t{p}" for n, p in friend_adapter_pools["cvec"].items()]
-    head_lines = [f"{n}\t{p}" for n, p in friend_adapter_pools["head"].items()]
-    return "\n".join(lora_lines), "\n".join(cvec_lines), "\n".join(head_lines)
-
-def _friend_weighted_names(value, kind):
-    """Accepts {"name": w}, ["name", ...], [{"name": n, "scale"/"strength"/"weight": w}], or "name"."""
-    if value is None:
-        return []
-    if isinstance(value, str):
-        value = [value] if value else []
-    if isinstance(value, dict):
-        items = list(value.items())
-    elif isinstance(value, list):
-        items = []
-        for it in value:
-            if isinstance(it, str):
-                items.append((it, 1.0))
-            elif isinstance(it, dict) and "name" in it:
-                items.append((it["name"], it.get("scale", it.get("strength", it.get("weight", 1.0)))))
-            else:
-                raise ValueError(f"bad {kind} entry {it!r}")
-    else:
-        raise ValueError(f"'{kind}' must be an object, list or string")
-    out = []
-    for name, w in items:
-        if name not in friend_adapter_pools[kind]:
-            known = ", ".join(sorted(friend_adapter_pools[kind])) or "none loaded"
-            raise ValueError(f"unknown {kind} '{name}' (available: {known})")
-        w = float(w)
-        if not math.isfinite(w):
-            raise ValueError(f"{kind} '{name}' weight must be finite")
-        out.append((name, w))
-    return out
-
-def friend_adapter_profile_spec(genparams):
-    """Request fields -> C++ profile spec (see friend/adapters.hpp). Raises ValueError."""
-    parts = []
-    salt = genparams.get("cache_salt")
-    if salt is not None:
-        if not isinstance(salt, str):
-            raise ValueError("cache_salt must be a string")
-        # Hash before putting it into the delimiter-based native wire format. Empty
-        # string is an explicit namespace, distinct from an omitted salt.
-        import hashlib
-        parts.append("S " + hashlib.sha256(salt.encode("utf-8")).hexdigest())
-    if genparams.get("lora", None) is not None:
-        parts.append("lora_explicit")  # the request's list replaces the default-on adapters
-        parts += [f"L {n} {w!r}" for n, w in _friend_weighted_names(genparams.get("lora"), "lora")]
-    steer = genparams.get("cvec", genparams.get("steer", None))
-    parts += [f"C {n} {w!r}" for n, w in _friend_weighted_names(steer, "cvec")]
-    head = genparams.get("head", None)
-    if head:
-        if not isinstance(head, str) or head not in friend_adapter_pools["head"]:
-            known = ", ".join(sorted(friend_adapter_pools["head"])) or "none loaded"
-            raise ValueError(f"unknown head {head!r} (available: {known})")
-        parts.append(f"H {head}")
-    return ";".join(parts)
-
-def friend_adapter_listing():
-    return {
-        "lora": [{"name": n, "default_scale": friend_lora_default_scales.get(n, 0.0)} for n in friend_adapter_pools["lora"]],
-        "cvec": [{"name": n} for n in friend_adapter_pools["cvec"]],
-        "head": [{"name": n} for n in friend_adapter_pools["head"]],
-    }
-
 def load_model(model_filename):
     global args, calulated_gpu_overhead, savestate_limit
     inputs = load_model_inputs()
@@ -2478,21 +2125,7 @@ def load_model(model_filename):
     inputs.lora_filename = "".encode("UTF-8")
     inputs.lora_multiplier = args.loramult
     if args.lora:
-        inputs.lora_filename = args.lora[0].encode("UTF-8") # still used by pre-GGUF formats
-    # friend.cpp: GGUF adapters all go through the named pools (legacy --lora included)
-    friend_lora_pool, friend_cvec_pool, friend_head_pool = friend_build_adapter_pools()
-    inputs.friend_lora_pool = friend_lora_pool.encode("UTF-8")
-    inputs.friend_cvec_pool = friend_cvec_pool.encode("UTF-8")
-    inputs.friend_head_pool = friend_head_pool.encode("UTF-8")
-    # friend.cpp: tiered prompt cache
-    inputs.friend_cache_ram_mb = max(0, int(args.cache_ram))
-    inputs.friend_cache_disk_mb = max(0, int(args.cache_disk))
-    inputs.friend_cache_dir = (os.path.abspath(args.cache_dir) if args.cache_dir else "").encode("UTF-8")
-    inputs.friend_cache_min_tokens = max(1, int(args.cache_min_tokens))
-    inputs.friend_cache_capture_tokens = max(1, int(args.cache_capture_tokens))
-    inputs.friend_cvec_dir = (os.path.abspath(args.cvec_dir) if args.cvec_dir else "").encode("UTF-8")
-    inputs.friend_draft_fixed = bool(getattr(args, "draft_fixed", False))
-    inputs.friend_cache_idle_ms = max(0, int(getattr(args, "cache_idle_ms", 300)))
+        inputs.lora_filename = args.lora[0].encode("UTF-8")
 
     inputs.draftmodel_filename = args.draftmodel.encode("UTF-8") if (args.draftmodel and args.draftamount>0) else "".encode("UTF-8")
     inputs.draft_amount = args.draftamount
@@ -2542,6 +2175,7 @@ def load_model(model_filename):
     else:
         inputs.quant_k = inputs.quant_v = 0
     inputs.batchsize = args.batchsize
+    inputs.ubatchsize = args.ubatchsize
     inputs.autofit = args.autofit
     inputs.autofit_tax_mb = int(args.autofitpadding) + int(calulated_gpu_overhead/(1024*1024))
     inputs.gpulayers = args.gpulayers
@@ -2590,17 +2224,7 @@ def load_model(model_filename):
     sclimit = (savestate_limit_default if scint<=1 else scint)
     savestate_limit = sclimit
     inputs.smartcacheslots = sclimit
-    inputs.pipelineparallel = (not args.nopipelineparallel)
     inputs.continuous_batching_slots = args.parallelrequests if (args.parallelrequests>1) else 0
-    inputs.friend_prefill_tokens = args.prefilltokens
-    inputs.friend_ngram_draft = args.ngram_draft
-    inputs.friend_suffix_draft = args.suffix_draft
-    inputs.friend_schedule_tokens = args.schedule_tokens
-    inputs.friend_profile_lanes = args.profile_lanes
-    inputs.friend_max_queued_requests = args.max_queued_requests
-    inputs.friend_kv_watermark = args.kv_watermark
-    inputs.friend_max_lora_profiles = args.max_lora_profiles
-    inputs.friend_disaggregated_prefill = args.disaggregated_prefill
     inputs.rpc_mode = (2 if args.rpcmode=="host" else (1 if args.rpcmode=="connect" else 0))
     inputs.rpc_targets = (args.rpctargets if args.rpcmode=="connect" else "").encode("UTF-8")
 
@@ -2625,10 +2249,17 @@ def coerce_ban_list(value):
             pass
     return [value]
 
+def normalize_sampler_order(value):
+    if value is None or value == []:
+        return []
+    if not isinstance(value, (list, tuple)) or not 0 < len(value) <= sampler_order_max:
+        return None
+    if any(isinstance(sampler, bool) or not isinstance(sampler, int) or sampler < 0 or sampler >= sampler_order_max for sampler in value):
+        return None
+    return list(value)
+
 def generate(genparams, stream_flag=False):
     global maxctx, args, currentusergenkey, totalgens, pendingabortkey
-    default_adapter = {} if chatcompl_adapter is None else chatcompl_adapter
-    adapter_obj = genparams.get('adapter', default_adapter)
 
     prompt = genparams.get('prompt', "")
     memory = genparams.get('memory', "")
@@ -2638,15 +2269,15 @@ def generate(genparams, stream_flag=False):
     audio = genparams.get('audio', [])
     max_context_length = tryparseint(genparams.get('max_context_length', maxctx),maxctx)
     max_length = tryparseint(genparams.get('max_length', args.defaultgenamt),args.defaultgenamt)
-    temperature = tryparsefloat(genparams.get('temperature', adapter_obj.get("temperature", 0.7)),0.7)
-    top_k = tryparseint(genparams.get('top_k', adapter_obj.get("top_k", 100)),100)
+    temperature = tryparsefloat(genparams.get('temperature', 0.7),0.7)
+    top_k = tryparseint(genparams.get('top_k', 100),100)
     top_a = tryparsefloat(genparams.get('top_a', 0.0),0.0)
-    top_p = tryparsefloat(genparams.get('top_p', adapter_obj.get("top_p", 0.9)),0.9)
-    min_p = tryparsefloat(genparams.get('min_p', adapter_obj.get("min_p", 0.0)),0.0)
+    top_p = tryparsefloat(genparams.get('top_p', 0.9),0.9)
+    min_p = tryparsefloat(genparams.get('min_p', 0.0),0.0)
     typical_p = tryparsefloat(genparams.get('typical', 1.0),1.0)
     tfs = tryparsefloat(genparams.get('tfs', 1.0),1.0)
     nsigma = tryparsefloat(genparams.get('nsigma', 0.0),0.0)
-    rep_pen = tryparsefloat(genparams.get('rep_pen', adapter_obj.get("rep_pen", 1.0)),1.0)
+    rep_pen = tryparsefloat(genparams.get('rep_pen', 1.0),1.0)
     rep_pen_range = tryparseint(genparams.get('rep_pen_range', 320),320)
     rep_pen_slope = tryparsefloat(genparams.get('rep_pen_slope', 1.0),1.0)
     presence_penalty = tryparsefloat(genparams.get('presence_penalty', 0.0),0.0)
@@ -2660,10 +2291,7 @@ def generate(genparams, stream_flag=False):
     dry_sequence_breakers = genparams.get('dry_sequence_breakers', [])
     xtc_threshold = tryparsefloat(genparams.get('xtc_threshold', 0.2),0.2)
     xtc_probability = tryparsefloat(genparams.get('xtc_probability', 0),0)
-    sampler_order = genparams.get('sampler_order', [6, 0, 1, 3, 4, 2, 5])
-    blue_noise = genparams.get('blue_noise', False)
-    rng_type_raw = genparams.get('rng_type', 'mt19937')
-    rng_type = 1 if str(rng_type_raw).lower() == 'lowbias32' or rng_type_raw == 1 else 0
+    sampler_order = normalize_sampler_order(genparams.get('sampler_order', [6, 0, 1, 3, 4, 2, 5]))
     seed = tryparseint(genparams.get('sampler_seed', -1),-1)
     stop_sequence = genparams.get('stop_sequence', [])
     ban_eos_token = genparams.get('ban_eos_token', False)
@@ -2673,7 +2301,7 @@ def generate(genparams, stream_flag=False):
     #translate grammar if its json
     try:
         grammarjson = json.loads(grammar)
-        decoded = cached_json_to_gbnf(grammarjson)
+        decoded = convert_json_to_gbnf(grammarjson)
         if decoded:
             grammar = decoded
     except Exception:
@@ -2695,7 +2323,7 @@ def generate(genparams, stream_flag=False):
     banned_strings = coerce_ban_list(genparams.get('banned_strings', [])) # SillyTavern uses that name
     banned_tokens = coerce_ban_list(genparams.get('banned_tokens', banned_strings))
     bypass_eos_token = genparams.get('bypass_eos', False)
-    tool_call_fix = genparams.get('using_openai_tools', False)
+    tool_call_fix = genparams.get('_generic_tool_json_array_fix', False)
     custom_token_bans = genparams.get('custom_token_bans', '')
 
     for tok in custom_token_bans.split(','):
@@ -2726,8 +2354,18 @@ def generate(genparams, stream_flag=False):
             print(f"\n!!! ====== !!!\n(Warning! Request max_context_length={max_context_length} exceeds allocated context size of {maxctx}. It will be reduced to fit. Consider launching with increased --contextsize to avoid issues. This message will only show once per session.)\n!!! ====== !!!")
             showmaxctxwarning = False
         max_context_length = maxctx
-    min_remain_hardlimit = max(min(max_context_length-4, 16),int(max_context_length*0.2))
-    min_remain_softlimit = max(min(max_context_length-4, 16),int(max_context_length*0.4))
+    rep_pen_range = max(0, min(rep_pen_range, max(1, max_context_length)))
+    # Estimate the complete textual input before deciding how much of the
+    # context may be used for output. Media token usage cannot be estimated by
+    # token_count, so retain the more conservative limit for multimodal input.
+    estimated_input_tokens = token_count_text(prompt, True)
+    if estimated_input_tokens >= 0 and memory:
+        memory_token_count = token_count_text(memory, False)
+        estimated_input_tokens = (estimated_input_tokens + memory_token_count) if memory_token_count >= 0 else -1
+    if images or audio:
+        estimated_input_tokens = -1
+    min_remain_hardlimit = calculate_min_remain_hardlimit(max_context_length, estimated_input_tokens)
+    min_remain_softlimit = max(min(max_context_length-4, 16),int(max_context_length*0.45))
     if args.genlimit > 0 and max_length > args.genlimit:
         max_length = args.genlimit
     if max_length >= (max_context_length-min_remain_softlimit):
@@ -2775,27 +2413,6 @@ def generate(genparams, stream_flag=False):
     inputs.smoothing_curve = smoothing_curve
     inputs.adaptive_target = adaptive_target
     inputs.adaptive_decay = adaptive_decay
-    inputs.blue_noise = bool(blue_noise)
-    inputs.rng_type = rng_type
-    cache_pin = genparams.get("cache_pin", None)
-    inputs.cache_pin_label = (str(cache_pin)[:128] if cache_pin else "").encode("UTF-8")
-    # vLLM-style priority scheduling: lower values are served first, with
-    # arrival/fairness ordering still breaking ties.
-    inputs.priority = max(-1000000, min(1000000, tryparseint(genparams.get("priority", 0), 0)))
-    # Batch requests keep their own top alternatives instead of sharing the
-    # legacy process-wide logprob history. Cap this at the native JSON size.
-    inputs.logprobs = requested_logprobs(genparams)
-    inputs.prompt_logprobs = max(-1, min(20, tryparseint(genparams.get("prompt_logprobs", -1), -1)))
-    inputs.disaggregated_prefill = bool(genparams.get("disaggregated_prefill", False))
-    # Per-request speculation budget: omitted uses the server's configured
-    # ngram/suffix draft length, zero disables drafting for this request.
-    draft_budget = genparams.get("speculative_tokens", genparams.get("num_speculative_tokens", None))
-    inputs.friend_draft_max = -1 if draft_budget is None else max(0, min(32, tryparseint(draft_budget, 0)))
-    try:
-        inputs.adapter_profile = friend_adapter_profile_spec(genparams).encode("UTF-8")
-    except ValueError as e:
-        utfprint(f"Rejecting request: {e}", 1)
-        return {"text":"","status":0,"stopreason":-2, "prompt_tokens":0, "completion_tokens": 0, "total_tokens": 0, "error": str(e)}
     inputs.grammar = grammar.encode("UTF-8")
     inputs.grammar_retain_state = grammar_retain_state
     inputs.allow_eos_token = not ban_eos_token
@@ -2834,17 +2451,16 @@ def generate(genparams, stream_flag=False):
     for n, breaker in enumerate(dry_sequence_breakers):
         inputs.dry_sequence_breakers[n] = breaker.encode("UTF-8")
 
-    if sampler_order and 0 < len(sampler_order) <= sampler_order_max:
-        try:
-            for i, sampler in enumerate(sampler_order):
-                inputs.sampler_order[i] = sampler
-            inputs.sampler_len = len(sampler_order)
-            global showsamplerwarning
-            if showsamplerwarning and inputs.mirostat==0 and inputs.sampler_len>0 and (inputs.sampler_order[0]!=6 or inputs.sampler_order[inputs.sampler_len-1]!=5):
-                print("\n(Note: Non-default sampler_order detected. Recommended sampler values are [6,0,1,3,4,2,5]. This message will only show once per session.)")
-                showsamplerwarning = False
-        except TypeError as e:
-            print("ERROR: sampler_order must be a list of integers: " + str(e))
+    if sampler_order:
+        for i, sampler in enumerate(sampler_order):
+            inputs.sampler_order[i] = sampler
+        inputs.sampler_len = len(sampler_order)
+        global showsamplerwarning
+        if showsamplerwarning and inputs.mirostat==0 and inputs.sampler_len>0 and (inputs.sampler_order[0]!=6 or inputs.sampler_order[inputs.sampler_len-1]!=5):
+            print("\n(Note: Non-default sampler_order detected. Recommended sampler values are [6,0,1,3,4,2,5]. This message will only show once per session.)")
+            showsamplerwarning = False
+    elif sampler_order is None:
+        print("ERROR: sampler_order must contain between 1 and 7 integer sampler IDs from 0 to 6. Using the default order.")
     inputs.seed = seed
 
     inputs.stop_sequence_len = len(stop_sequence)
@@ -2902,31 +2518,14 @@ def generate(genparams, stream_flag=False):
                 batch_request_id = handle.batch_generate_submit(inputs)
             except Exception:
                 batch_request_id = -1
-        if batch_request_id == -2:
-            genparams['_batch_overloaded'] = True
-            return {"text":"", "status":0, "stopreason":-2, "prompt_tokens":0,
-                    "completion_tokens":0, "total_tokens":0,
-                    "error":"server is at its continuous-batching request capacity"}
         if batch_request_id >= 0:
             genparams['_batch_request_id'] = batch_request_id
-            # Cancellation may arrive while native admission is still in flight.
-            # Remember it on the child so late submissions cannot escape cleanup.
-            if genparams.get('_batch_cancel_requested', False):
-                handle.batch_generate_abort(batch_request_id)
             ret = handle.batch_generate_result(batch_request_id)
         else:
-            if genparams.get('_parallel_sample_native', False):
-                # Concurrent samples must never enter the singleton legacy
-                # generator together if native admission rejects a feature.
-                return {"text":"", "status":0, "stopreason":-2, "prompt_tokens":0,
-                        "completion_tokens":0, "total_tokens":0,
-                        "error":"native continuous batching is unavailable for this parallel sample"}
             genparams['_batch_fallback'] = True
             ret = handle.generate(inputs)
         outstr = ""
-        # friend.cpp: a request that fails mid-generation (e.g. the KV cache runs out of room
-        # for --parallelrequests slots) keeps what it generated; finish_reason says "error"
-        if ret.status==1 or (ret.stopreason == -2 and ret.text):
+        if ret.status==1:
             outstr = ret.text.decode("UTF-8","ignore")
         if batch_request_id >= 0 and not stream_flag:
             handle.batch_generate_release(batch_request_id)
@@ -2938,23 +2537,7 @@ def generate(genparams, stream_flag=False):
                 sindex = outstr.find(trim_str)
                 if sindex != -1 and trim_str!="":
                     outstr = outstr[:sindex]
-        batch_logprobs = None
-        if batch_request_id >= 0 and ret.logprobs_json:
-            try:
-                batch_logprobs = json.loads(ret.logprobs_json.decode("UTF-8", "ignore"))
-            except Exception:
-                batch_logprobs = None
-        batch_timing = None
-        if batch_request_id >= 0 and ret.timing_json:
-            try:
-                batch_timing = json.loads(ret.timing_json.decode("UTF-8", "ignore"))
-            except Exception:
-                batch_timing = None
-        return {"text":outstr,"status":ret.status,"stopreason":ret.stopreason,"prompt_tokens":ret.prompt_tokens,
-                "completion_tokens": ret.completion_tokens, "logprobs": batch_logprobs,
-                "prompt_logprobs": batch_logprobs.get("prompt", []) if isinstance(batch_logprobs, dict) else None,
-                "completion_logprobs": batch_logprobs.get("completion", []) if isinstance(batch_logprobs, dict) else batch_logprobs,
-                "timing": batch_timing}
+        return {"text":outstr,"status":ret.status,"stopreason":ret.stopreason,"prompt_tokens":ret.prompt_tokens, "completion_tokens": ret.completion_tokens}
 
 def continuous_batching_python_eligible(genparams, api_format):
     if not args.parallelrequests or args.parallelrequests <= 1 or api_format <= 0:
@@ -2966,24 +2549,11 @@ def continuous_batching_python_eligible(genparams, api_format):
     if not getattr(args, "noshift", False) or getattr(args, "smartcontext", False) or getattr(args, "draftmodel", "") or getattr(args, "usemtp", False) or getattr(args, "enableguidance", False):
         utfprint("Batching disabled due to loaded settings",2)
         return False
-    if genparams.get("negative_prompt") or genparams.get("images") or genparams.get("audio"):
-        utfprint("Batching disabled due to media",2)
+    if genparams.get("negative_prompt"):
+        utfprint("Batching disabled due to negative prompt",2)
         return False
-    # friend.cpp: grammar, DRY, XTC, top-n-sigma, mirostat and dynatemp are batchable now
     if genparams.get("grammar_retain_state") or genparams.get("banned_tokens") or genparams.get("banned_strings"):
-        utfprint("Batching disabled due to persistent grammar or bans",2)
-        return False
-    if tryparsefloat(genparams.get("smoothing_factor", 0), 0) or tryparsefloat(genparams.get("adaptive_target", -1), -1) > 0 or genparams.get("using_openai_tools", False):
-        utfprint("Batching disabled due to samplers set 2",2)
-        return False
-    if tryparsefloat(genparams.get("top_a", 0), 0) or tryparsefloat(genparams.get("tfs", 1), 1) != 1:
-        utfprint("Batching disabled due to samplers set 3",2)
-        return False
-    if genparams.get("sampler_order") and genparams.get("sampler_order") != [6, 0, 1, 3, 4, 2, 5]:
-        utfprint("Batching disabled due to sampler order",2)
-        return False
-    if genparams.get("reasoning_effort"):
-        utfprint("Batching disabled due to reasoning",2)
+        utfprint("Batching disabled due to retained grammar or bans",2)
         return False
     return True
 
@@ -3039,6 +2609,44 @@ def sd_sdapi_samplers():
             smap[sampler] = []
     result = [{'name': k, 'aliases': v, 'options':{}}
                   for k, v in smap.items()]
+    return result
+
+def sd_build_custom_sigmas():
+    """Build the canonical custom sigma lists from the gendefaults field
+    `custom_sigmas` (a map of scheduler name -> list of sigma values).
+    Returns a dict mapping lowercase name -> list of float sigmas.
+    Entries that are short/invalid, collide with a built-in scheduler, or
+    duplicate an earlier entry (case-insensitively) are ignored."""
+    global cached_sd_info, args
+    result = {}
+    gend = gendefaults_parse_meta_field(args.gendefaults or '')
+    custom = gend.get('custom_sigmas', {})
+    if not isinstance(custom, dict):
+        print("Warning: gendefaults custom_sigmas is not a dictionary, ignoring")
+        return result
+    builtin = {str(s).lower() for s in cached_sd_info.get('available_schedulers', [])}
+    for name, values in custom.items():
+        key = str(name).lower()
+        if (not isinstance(values, list) or len(values) < 2
+                or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values)):
+            print(f"Warning: gendefaults custom_sigmas entry '{name}' is not a list of at least 2 numbers, ignoring")
+            continue
+        try:
+            sigmas = [float(v) for v in values]
+        except (OverflowError, TypeError, ValueError):
+            print(f"Warning: gendefaults custom_sigmas entry '{name}' contains an invalid number, ignoring")
+            continue
+        # sanitize inputs
+        if not all(math.isfinite(v) and math.isfinite(ctypes.c_float(v).value) for v in sigmas):
+            print(f"Warning: gendefaults custom_sigmas entry '{name}' contains a non-finite or out-of-range number, ignoring")
+            continue
+        if key in builtin:
+            print(f"Warning: gendefaults custom_sigmas entry '{name}' collides with a built-in scheduler, ignoring")
+            continue
+        if key in result:
+            print(f"Warning: gendefaults custom_sigmas entry '{name}' duplicates an earlier entry, ignoring")
+            continue
+        result[key] = sigmas
     return result
 
 
@@ -3110,11 +2718,12 @@ def sd_get_device_override(deviceid, module=''):
         result = device_name
     return result
 
-def sd_load_model(model_filename,vae_filename,t5xxl_filename,clip1_filename,clip2_filename,photomaker_filename,upscaler_filename,audio_vae_filename):
-    global args, cached_sd_info
+def sd_load_model(model_filename,vae_filename,llm_filename,clip1_filename,clip2_filename,photomaker_filename,upscaler_filename,audio_vae_filename):
+    global args, cached_sd_info, cached_sd_custom_sigmas
     inputs = sd_load_model_inputs()
     inputs = set_backend_props(inputs)
     cached_sd_info = sd_get_info()
+    cached_sd_custom_sigmas = sd_build_custom_sigmas()
     inputs.model_filename = model_filename.encode("UTF-8")
     thds = args.threads
 
@@ -3141,13 +2750,13 @@ def sd_load_model(model_filename,vae_filename,t5xxl_filename,clip1_filename,clip
     inputs.tiled_vae_threshold = args.sdtiledvae
     inputs.vae_filename = vae_filename.encode("UTF-8")
     inputs.audio_vae_filename = audio_vae_filename.encode("UTF-8")
-    inputs.t5xxl_filename = t5xxl_filename.encode("UTF-8")
+    inputs.llm_filename = llm_filename.encode("UTF-8")
     inputs.clip1_filename = clip1_filename.encode("UTF-8")
     inputs.clip2_filename = clip2_filename.encode("UTF-8")
     inputs.photomaker_filename = photomaker_filename.encode("UTF-8")
     inputs.upscaler_filename = upscaler_filename.encode("UTF-8")
     inputs.max_vram = str((args.sdvramlimit/1024.0) if args.sdvramlimit > 0 else '').encode('UTF-8')
-    inputs.stream_layers = False
+    inputs.auto_fit = False
 
     lora_filenames, lora_multipliers = prepare_initial_lora_multipliers()
     inputs.lora_len = len(lora_filenames)
@@ -3434,17 +3043,15 @@ def lora_map_name_to_path(request_list):
     return result
 
 def sd_generate(genparams):
-    global maxctx, args, currentusergenkey, totalgens, pendingabortkey, chatcompl_adapter
+    global maxctx, args, currentusergenkey, totalgens, pendingabortkey, chatcompl_adapter, cached_sd_custom_sigmas
 
     job_timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
 
-    default_adapter = {} if chatcompl_adapter is None else chatcompl_adapter
-    adapter_obj = genparams.get('adapter', default_adapter)
-    forced_negprompt = adapter_obj.get("add_sd_negative_prompt", "")
-    forced_posprompt = adapter_obj.get("add_sd_prompt", "")
-    forced_steplimit = tryparseint(adapter_obj.get("add_sd_step_limit", genparams.get("add_sd_step_limit",80)),80)
-    forced_maxcfg = tryparsefloat(adapter_obj.get("add_sd_cfg_limit", genparams.get("add_sd_cfg_limit",25)),25)
-    allow_remove_limits = tryparseint(adapter_obj.get("remove_limits", genparams.get("remove_limits",0)),0)
+    forced_negprompt = genparams.get("add_sd_negative_prompt", "")
+    forced_posprompt = genparams.get("add_sd_prompt", "")
+    forced_steplimit = tryparseint(genparams.get("add_sd_step_limit",80),80)
+    forced_maxcfg = tryparsefloat(genparams.get("add_sd_cfg_limit",25),25)
+    allow_remove_limits = tryparseint(genparams.get("remove_limits",0),0)
 
     prompt = genparams.get("prompt", "high quality")
     negative_prompt = genparams.get("negative_prompt", "")
@@ -3477,6 +3084,7 @@ def sd_generate(genparams):
         seed = random.randint(100000, 999999)
     sample_method = (genparams.get("sampler_name") or "default")
     scheduler = (genparams.get("scheduler") or "default").lower()
+    custom_sigmas = cached_sd_custom_sigmas.get(scheduler)
     extra_sample_args = str(genparams.get("extra_sample_args") or "")
     ref_image_args = str(genparams.get("ref_image_args") or "").strip()
     clip_skip = tryparseint(genparams.get("clip_skip", -1),-1)
@@ -3507,6 +3115,9 @@ def sd_generate(genparams):
     if flow_shift is not None and flow_shift < 0:
         flow_shift = None # fall back to the default
     sample_steps = (1 if sample_steps < 1 else (forced_steplimit if sample_steps > forced_steplimit else sample_steps))
+    if custom_sigmas is not None:
+        # custom sigmas fully determine the schedule; ignore the requested step count
+        sample_steps = len(custom_sigmas) - 1
     vid_req_frames = (1 if vid_req_frames < 1 else (480 if vid_req_frames > 480 else vid_req_frames))
     vid_fps = (16 if vid_fps < 16 else (32 if vid_fps > 32 else vid_fps))
 
@@ -3548,6 +3159,9 @@ def sd_generate(genparams):
     inputs.seed = ((seed + 2**31) % 2**32) - 2**31
     inputs.sample_method = sd_sampler_canonical_name(sample_method).encode("UTF-8")
     inputs.scheduler = scheduler.encode("UTF-8")
+    inputs.custom_sigmas_count = len(custom_sigmas) if custom_sigmas is not None else 0
+    if custom_sigmas is not None:
+        inputs.custom_sigmas = (ctypes.c_float * len(custom_sigmas))(*custom_sigmas)
     inputs.eta = -1.0 if eta is None else eta
     inputs.extra_sample_args = extra_sample_args.encode("UTF-8")
     inputs.clip_skip = clip_skip
@@ -3556,8 +3170,8 @@ def sd_generate(genparams):
     inputs.video_output_type = video_output_type
     inputs.remove_limits = allow_remove_limits
     inputs.ref_image_args = ref_image_args.encode("UTF-8")
-    inputs.circular_x = tryparseint(adapter_obj.get("circular_x", genparams.get("circular_x",0)),0)
-    inputs.circular_y = tryparseint(adapter_obj.get("circular_y", genparams.get("circular_y",0)),0)
+    inputs.circular_x = tryparseint(genparams.get("circular_x",0),0)
+    inputs.circular_y = tryparseint(genparams.get("circular_y",0),0)
     inputs.cache_mode = cache_mode.encode("UTF-8")
     inputs.cache_options = cache_options.encode("UTF-8")
     inputs.upscale = (True if tryparseint(genparams.get("enable_hr", 0),0) else False)
@@ -3872,7 +3486,7 @@ def embeddings_generate(genparams):
     return {"count":tokcnt, "data":tokarrs}
 
 def music_load_model(musicllm,musicembedding,musicdiffusion,musicvae):
-    global args
+    global args, musicllmmodelpath
     inputs = music_load_model_inputs()
     inputs.musicllm_filename = musicllm.encode("UTF-8")
     inputs.musicembedding_filename = musicembedding.encode("UTF-8")
@@ -3881,6 +3495,7 @@ def music_load_model(musicllm,musicembedding,musicdiffusion,musicvae):
     inputs.lowvram = True if args.musiclowvram else False
     inputs = set_backend_props(inputs)
     ret = handle.music_load_model(inputs)
+    musicllmmodelpath = musicllm if ret else ""
     return ret
 
 def music_generate_codes(genparams):
@@ -3933,6 +3548,22 @@ def tokenize_ids(countprompt,tcaddspecial):
         # the above protects the server in case the count limit got corrupted
         countdata = [rawcountdata.ids[i] for i in range(countlimit)]
     return countdata
+
+def token_count_text(countprompt,tcaddspecial):
+    # Count without copying the shared token ID vector when only its size is needed.
+    with token_count_lock:
+        rawcountdata = handle.token_count(countprompt.encode("UTF-8"),tcaddspecial)
+        count = rawcountdata.count
+    hardlimit = (2**31) - 1
+    if count < 0 or count > hardlimit:
+        utfprint("Warning: TokenCount exceeds max limit.")
+        return -1
+    return count
+
+def calculate_min_remain_hardlimit(max_context_length, input_token_count):
+    # Small inputs (<25% max ctx) may use up to 80% of context for generation. For larger or unknown inputs, max allowed is 65% instead
+    min_remain_ratio = 0.2 if 0 <= input_token_count < max_context_length * 0.25 else 0.35
+    return max(min(max_context_length-4, 16), int(max_context_length*min_remain_ratio))
 
 def detokenize_ids(tokids,addspecial):
     tokidslen = len(tokids)
@@ -4296,7 +3927,10 @@ def toolcall_to_normalized_json(text,start_tag,end_tag,required_match_txt): #con
         params = {}
         param_blocks = re.findall(r"<parameter=(.*?)>(.*?)</parameter>", text, re.DOTALL)
         for key, value in param_blocks:
-            params[key.strip()] = value.strip()
+            key = key.strip()
+            if not key: # Models may emit an empty parameter tag for no-argument tools.
+                continue
+            params[key] = value.strip()
         return json.dumps({"name": fn_name, "arguments": params})
     def parse_glm(text: str) -> str:
         text = text.strip()
@@ -4381,7 +4015,9 @@ def toolcall_to_normalized_json(text,start_tag,end_tag,required_match_txt): #con
             return json.dumps({"name": fn_name, "arguments": args})
         except Exception:
             pass
-        return text
+        # Invalid arguments are not a tool call. In particular, do not let the
+        # generic JSON extractor mistake fragments of embedded code for calls.
+        return ""
 
     def parse_gpt_oss(text: str) -> str:
         fn_match = re.search(r'functions\.([a-zA-Z_][a-zA-Z0-9_]*)', text)
@@ -4525,6 +4161,20 @@ def native_parse_toolcall_tags(text: str, genparams: dict) -> list:
     except Exception:
         return []
 
+def extract_toolcall_prose_prefix_content(text: str):
+    """Keep only the prose before the first recognized tool-call marker."""
+    if not text:
+        return None
+    boundary = len(text)
+    for start, _, required_match_txt, _ in tool_call_pairs:
+        if required_match_txt and cached_chat_template and required_match_txt not in cached_chat_template:
+            continue
+        index = text.find(start)
+        if index != -1:
+            boundary = min(boundary, index)
+    return (text[:boundary].strip() or None) if boundary < len(text) else None
+
+
 def repack_toolcall_tags(text: str, original_tools:list):
     global thinkformats, tool_call_pairs
     tool_calls = []
@@ -4654,6 +4304,9 @@ def remove_outer_tags(inputstr):
 def normalize_anthropic_tools_input(tools): #Convert Anthropic-format tool definitions to OpenAI format.
     normalized = []
     for tool in tools:
+        if not isinstance(tool, dict):
+            print(f"Dropped unsupported tool: {tool}")
+            continue
         if tool.get("type") == "function" and "function" in tool: # Already in OpenAI format — leave it alone
             normalized.append(tool)
             continue
@@ -4667,6 +4320,22 @@ def normalize_anthropic_tools_input(tools): #Convert Anthropic-format tool defin
         # Unknown format, drop the tool
         print(f"Dropped unsupported tool: {tool}")
         # normalized.append(tool)
+    return normalized
+
+def normalize_openai_tools_input(tools):
+    """Keep only function tools that KoboldCpp can execute."""
+    normalized = []
+    if not isinstance(tools, list):
+        print(f"Dropped unsupported tools value: {tools}")
+        return normalized
+    for tool in tools:
+        function = tool.get("function") if isinstance(tool, dict) else None
+        if isinstance(tool, dict) and tool.get("type") == "function" and isinstance(function, dict) and function.get("name"):
+            normalized.append(tool)
+        else:
+            # OpenAI built-in tools (for example web_search) require provider-side
+            # implementations and cannot be exposed to the local model as functions.
+            print(f"Dropped unsupported tool: {tool}")
     return normalized
 
 def normalize_tool_call_resp(obj): # Normalize various tool call formats to OpenAI format
@@ -4750,34 +4419,6 @@ def extract_json_from_string(input_string, check_strict=False):
     except Exception:
         pass
     return []
-
-def requested_logprobs(params):
-    """Normalize chat bool + top_logprobs and completion integer conventions."""
-    value = params.get("logprobs")
-    if value is None or value is False:
-        return -1
-    if value is True:
-        value = params.get("top_logprobs", 0)
-    return max(-1, min(20, tryparseint(value, -1)))
-
-
-def format_batch_logprobs(items, api_format, offset=0):
-    """Keep raw token bytes and return the endpoint's logprob shape."""
-    if items is None:
-        return None
-    if api_format == 4:
-        return {"content": items}
-    if api_format == 3:
-        offsets = []
-        for item in items:
-            offsets.append(offset)
-            offset += len(item["token"])
-        return {"tokens": [i["token"] for i in items],
-                "token_logprobs": [i["logprob"] for i in items],
-                "top_logprobs": [{t["token"]: t["logprob"] for t in i["top_logprobs"]} for i in items],
-                "text_offset": offsets}
-    return items
-
 
 def parse_last_logprobs(lastlogprobs):
     if not lastlogprobs:
@@ -4959,7 +4600,7 @@ def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_
                 temptoolnames.append("null")
                 custom_tools_prompt_json_format = "Respond with a JSON object using this structure:\r\n{\r\n    \"reasoning\": \"Your reasoning here\",\r\n    \"final_decision\": \"yes\" or \"no\",\r\n    \"tool_name\": \"exact_tool_name_here\" or \"null\"\r\n}\r\n\r\nRules:\r\n- Output only the JSON object. Do NOT add anything before or after the json object.\r\n- final_decision must be exactly \"yes\" or \"no\"\r\n- tool_name must be either an exact tool name, or if no tool is required, an empty string: \"\"\r\n- Keep reasoning short, maximum one or two sentences.\r\n- No unnecessary comments"
                 tempjson = {"type":"object","properties":{"reasoning":{"type":"string"},"final_decision":{"type":"string","enum":["yes","no","Yes","No","YES","NO"," yes"," no"," Yes"," No"," YES"," NO"]},"tool_name":{"type":"string","enum":temptoolnames}},"required":["reasoning","final_decision","tool_name"],"additionalProperties":False}
-            toolquerygrammar = cached_json_to_gbnf(tempjson)
+            toolquerygrammar = convert_json_to_gbnf(tempjson)
 
             if not is_followup_tool:
                 custom_tools_prompt = "Is calling one of the tools listed above absolutely essential to answer user's current request, or is a tool call optional?"
@@ -5015,16 +4656,28 @@ def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_
 def compress_tools_array(tools_array):
     tools_array_filtered = []
     for tool_dict in tools_array:
+        if not isinstance(tool_dict, dict):
+            continue
         tool_data = tool_dict
         if 'function' in tool_dict:
             tool_data = tool_dict['function']
+        if not isinstance(tool_data, dict) or not tool_data.get("name"):
+            continue
         tool_props = {}
         params = tool_data.get("parameters", {})
+        if not isinstance(params, dict):
+            params = {}
         props = params.get("properties", {})
+        if not isinstance(props, dict):
+            props = {}
         for prop_name, prop_data in props.items():
+            if not isinstance(prop_data, dict):
+                continue
             prop_type = prop_data.get("type")
             if prop_type is None and "anyOf" in prop_data:
                 for option in prop_data["anyOf"]:
+                    if not isinstance(option, dict):
+                        continue
                     option_type = option.get("type")
                     if option_type and option_type != "null":
                         prop_type = option_type
@@ -5033,7 +4686,7 @@ def compress_tools_array(tools_array):
                 prop_type = "string"
             tool_props[prop_name] = prop_type
         tools_array_filtered.append({
-            "name": tool_data['name'],
+            "name": tool_data["name"],
             "description": tool_data.get("description", ""),
             "properties": tool_props
         })
@@ -5068,6 +4721,47 @@ def sweep_media_from_messages(messages_array):
             for img in imgs_ollama:
                 images.append(img)
     return images, audio
+
+
+def apply_forced_sysprompt(genparams, api_format):
+    forced_sysprompt = genparams.get("add_sysprompt", "")
+    if not forced_sysprompt:
+        return genparams
+    if not isinstance(forced_sysprompt, str):
+        forced_sysprompt = str(forced_sysprompt)
+
+    # Responses and Anthropic requests are converted to OpenAI chat requests
+    # below. Defer injection until that conversion so the prefix is not added
+    # twice or lost when their messages array is rebuilt.
+    if api_format == 8 or api_format == 9:
+        return genparams
+
+    if api_format == 4 or api_format == 7:
+        messages = genparams.get("messages", [])
+        if isinstance(messages, list):
+            for message in messages:
+                if not isinstance(message, dict) or message.get("role") != "system":
+                    continue
+                content = message.get("content", "")
+                if isinstance(content, str):
+                    message["content"] = forced_sysprompt + content
+                elif isinstance(content, list):
+                    content.insert(0, {"type": "text", "text": forced_sysprompt})
+                else:
+                    message["content"] = forced_sysprompt + ("" if content is None else str(content))
+                break
+            else:
+                messages.insert(0, {"role": "system", "content": forced_sysprompt})
+            genparams["messages"] = messages
+            return genparams
+
+    if api_format == 6:
+        system_prompt = genparams.get("system", "")
+        genparams["system"] = forced_sysprompt + (system_prompt if isinstance(system_prompt, str) else str(system_prompt))
+    else:
+        memory = genparams.get("memory", "")
+        genparams["memory"] = forced_sysprompt + (memory if isinstance(memory, str) else str(memory))
+    return genparams
 
 
 def transform_genparams(genparams, api_format, use_jinja):
@@ -5105,6 +4799,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
 
     used_tool_json = None
     #api format 1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat,8=oai-responses,9=anthropic-messages
+    apply_forced_sysprompt(genparams, api_format)
     #alias all nonstandard alternative names for rep pen.
     rp1 = float(genparams.get('repeat_penalty', 1.0))
     rp2 = float(genparams.get('repetition_penalty', 1.0))
@@ -5127,7 +4822,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
     elif api_format==3 or api_format==4 or api_format==7:
         default_adapter = {} if chatcompl_adapter is None else chatcompl_adapter
         adapter_obj = genparams.get('adapter', default_adapter)
-        default_max_tok = (adapter_obj.get("max_length", args.defaultgenamt) if (api_format==4 or api_format==7) else args.defaultgenamt)
+        default_max_tok = (genparams.get("max_length", args.defaultgenamt) if (api_format==4 or api_format==7) else args.defaultgenamt)
         oaiml = tryparseint(genparams.get('max_tokens', genparams.get('max_completion_tokens', default_max_tok)),default_max_tok)
         genparams["max_length"] = genparams.get('max_length', oaiml)
         if genparams["max_length"] <= 0:
@@ -5145,6 +4840,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
         genparams["mirostat"] = genparams.get('mirostat_mode', 0)
 
         if api_format==4 or api_format==7: #handle ollama chat here too
+            if genparams.get("tools"):
+                genparams["tools"] = normalize_openai_tools_input(genparams["tools"])
             # translate openai chat completion messages format into one big string.
             messages_array = genparams.get('messages', [])
             messages_string = adapter_obj.get("chat_start", "")
@@ -5165,18 +4862,12 @@ ws ::= | " " | "\n" [ \t]{0,20}
 
             # handle structured outputs
             respformat = genparams.get('response_format', None)
-            structured = genparams.get('structured_outputs')
-            if not isinstance(structured, dict):
-                structured = {}
-            guided_json = genparams.get('guided_json', structured.get('json', structured.get('json_schema')))
-            guided_choice = genparams.get('guided_choice', structured.get('choice'))
-            guided_regex = genparams.get('guided_regex', structured.get('regex'))
             if respformat:
                 try:
                     rt = respformat.get('type')
                     if rt.lower() == "json_schema":
                         schema = respformat.get('json_schema').get('schema')
-                        decoded = cached_json_to_gbnf(schema)
+                        decoded = convert_json_to_gbnf(schema)
                         if decoded:
                             genparams["grammar"] = decoded
                     elif rt.lower() == "json_object":
@@ -5185,28 +4876,10 @@ ws ::= | " " | "\n" [ \t]{0,20}
                     # In case of any issues, just do normal gen
                     print("Structured Output not valid - discarded")
                     pass
-            elif guided_json is not None:
-                try:
-                    schema = guided_json.get('schema') if isinstance(guided_json, dict) and 'schema' in guided_json else guided_json
-                    decoded = cached_json_to_gbnf(schema)
-                    if decoded:
-                        genparams["grammar"] = decoded
-                except Exception:
-                    print("Structured Outputs JSON not valid - discarded")
-            elif guided_choice is not None:
-                decoded = choices_to_gbnf(guided_choice)
-                if decoded:
-                    genparams["grammar"] = decoded
-            elif guided_regex is not None:
-                decoded = cached_regex_to_gbnf(guided_regex)
-                if decoded:
-                    genparams["grammar"] = decoded
-                else:
-                    genparams["_guided_regex_error"] = "guided_regex is invalid or uses unsupported features"
             elif 'json_schema' in genparams:
                 try:
                     schema = genparams.get('json_schema')
-                    decoded = cached_json_to_gbnf(schema)
+                    decoded = convert_json_to_gbnf(schema)
                     if decoded:
                         genparams["grammar"] = decoded
                 except Exception:
@@ -5217,7 +4890,9 @@ ws ::= | " " | "\n" [ \t]{0,20}
             attachedimgid = 0
             attachedaudid = 0
             jinja_output = None
-            jinjatools = genparams.get('tools', [])
+            request_tools = genparams.get('tools', [])
+            genparams['_jinja_tool_formatting_used'] = False
+            genparams['_generic_tool_json_array_fix'] = False
             if use_jinja and cached_chat_template:
                 copied_jinja_kwargs = dict(cached_jinja_kwargs or {})
                 # Merge user-provided chat_template_kwargs into our defaults
@@ -5231,7 +4906,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                     copied_jinja_kwargs["reasoning_strength"] = "none"
                 elif "reasoning_effort" in copied_jinja_kwargs and copied_jinja_kwargs["reasoning_effort"]:
                     copied_jinja_kwargs["reasoning_strength"] = copied_jinja_kwargs["reasoning_effort"]
-                jinja_output = format_jinja(messages_array,jinjatools,copied_jinja_kwargs)
+                jinja_output = format_jinja(messages_array,request_tools,copied_jinja_kwargs)
             if jinja_output:
                 messages_string = jinja_output
                 for pair in thinkformats:
@@ -5239,18 +4914,19 @@ ws ::= | " " | "\n" [ \t]{0,20}
                     if jinja_output.rstrip().endswith(starter): #the prompt template already forced a start think.
                         genparams["already_started_thinking"] = True
                         break
-                if jinjatools and len(jinjatools)>0:
+                if request_tools and len(request_tools)>0:
                     genparams["using_openai_tools"] = True
-                    if api_format == 4 and args.jinja_tools:
+                    genparams['_jinja_tool_formatting_used'] = True
+                    if api_format == 4:
                         # Default Jinja tool requests to 0.5 and cap their temperature at 1.0.
-                        genparams["temperature"] = min(tryparsefloat(genparams.get("temperature", adapter_obj.get("temperature", 0.5)), 0.5), 1.0)
+                        genparams["temperature"] = min(tryparsefloat(genparams.get("temperature", 0.5), 0.5), 1.0)
                 # handle media
                 images_added, audio_added = sweep_media_from_messages(messages_array)
             else:
-                if jinjatools:
+                if request_tools:
                     # inject the tools list at the top of the context window, even if context has shifted
                     # uses koboldcpp's special memory parameter
-                    tools_string = f"{system_message_start}### Available Tools:\n{json.dumps(compress_tools_array(jinjatools), indent=0)}{system_message_end}\n"
+                    tools_string = f"{system_message_start}### Available Tools:\n{json.dumps(compress_tools_array(request_tools), indent=0)}{system_message_end}\n"
                     exist_mem = genparams.get('memory', "")
                     genparams["memory"] = tools_string + exist_mem
 
@@ -5339,6 +5015,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                             # Set temperature lower automatically if function calling, cannot exceed 0.5
                             genparams["temperature"] = (1.0 if genparams.get("temperature", 0.5) > 1.0 else genparams.get("temperature", 0.5))
                             genparams["using_openai_tools"] = True
+                            genparams['_generic_tool_json_array_fix'] = True
                             # Set grammar to llamacpp example grammar to force json response (see https://github.com/ggerganov/llama.cpp/blob/master/grammars/json_arr.gbnf)
                             genparams["grammar"] = jsongrammar
                             try:
@@ -5346,7 +5023,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                                 toolparamjson = used_tool_json.get('function').get('parameters')
                                 bettergrammarjson = {"type":"array","items":{"type":"object","properties":{"id":{"type":"string","enum":["call_001"]},"type":{"type":"string","enum":["function"]},"function":{"type":"object","properties":{"name":{"type":"string"},"arguments":{}},"required":["name","arguments"],"additionalProperties":False}},"required":["id","type","function"],"additionalProperties":False}}
                                 bettergrammarjson["items"]["properties"]["function"]["properties"]["arguments"] = toolparamjson
-                                decoded = cached_json_to_gbnf(bettergrammarjson)
+                                decoded = convert_json_to_gbnf(bettergrammarjson)
                                 if decoded:
                                     genparams["grammar"] = decoded
                             except Exception:
@@ -5379,7 +5056,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 genparams["stop_sequence"] = [user_message_start.strip()]
             else:
                 genparams["stop_sequence"].append(user_message_start.strip())
-            if not used_tool_json and jinjatools and latest_turn_was_tool:
+            if not used_tool_json and request_tools and latest_turn_was_tool:
                 genparams["stop_sequence"].append("(Made a function call") # qol prevent fake toolcalls
             genparams["trim_stop"] = True
 
@@ -5772,7 +5449,7 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
         is_chat_completions_path = (clean_path.endswith('/v1/chat/completions') or clean_path=='/chat/completions')
 
         #any requests to the following endpoints is capable of waking the server
-        wake_requests = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions","/v1/responses","/completions","/chat/completions","/responses","/api/extra/transcribe","/v1/audio/transcriptions","/api/extra/tts","/v1/audio/speech","/api/extra/embeddings","/v1/embeddings","/api/embed","/api/extra/music/prepare","/api/extra/music/generate","/images/generations","/v1/images/generations","/images/edits","/v1/images/edits","/sdapi/v1/txt2img","/sdapi/v1/img2img","/sdapi/v1/upscale"]
+        wake_requests = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions","/v1/responses","/completions","/chat/completions","/responses","/api/extra/transcribe","/v1/audio/transcriptions","/api/extra/tts","/v1/audio/speech","/api/extra/embeddings","/v1/embeddings","/api/embed","/api/extra/music/prepare","/api/extra/music/generate","/images/generations","/v1/images/generations","/images/edits","/v1/images/edits","/sdapi/v1/txt2img","/sdapi/v1/img2img","/sdapi/v1/upscale","/api/generate", "/api/chat", "/v1/messages", "/messages"]
         is_wake_request = clean_path in wake_requests
 
         autoswapEnabled = global_memory["autoswapmode"] is not None and global_memory["autoswapmode"]
@@ -5816,39 +5493,44 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
                         time.sleep(3)
                         global_memory["last_active_timestamp"] = datetime.now()
                         global_memory["triggered_sleeping"] = False
-                        if not self.wait_for_upstream_ready(upstream_port,120,0.5):
+                        if not self.wait_for_upstream_ready(upstream_port,args.reqtimeout,0.5):
                             self.send_error(504, "KoboldCpp model swap reload timed out")
                             return
                         time.sleep(0.1)
             if autoswapEnabled and not model_switch_pass:
-                textReqs = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions","/v1/responses","/completions","/chat/completions","/responses"]
+                textReqs = ["/api/extra/generate/stream","/api/extra/tokencount","/api/v1/generate","/sdapi/v1/interrogate","/v1/completions","/v1/chat/completions","/v1/responses","/completions","/chat/completions","/responses","/api/generate", "/api/chat", "/v1/messages", "/messages"]
                 sttReqs = ["/api/extra/transcribe","/v1/audio/transcriptions"]
                 ttsReqs = ["/api/extra/tts", "/v1/audio/speech"]
                 embedReqs = ["/api/extra/embeddings", "/v1/embeddings", "/api/embed"]
                 musicReqs = ["/api/extra/music/prepare","/api/extra/music/generate"]
                 imageReqs = ["/images/generations", "/v1/images/generations", "/images/edits", "/v1/images/edits", "/sdapi/v1/txt2img", "/sdapi/v1/img2img", "/sdapi/v1/upscale"] # "/sdapi/v1/sd-models", "/sdapi/v1/options", "/sdapi/v1/samplers"
 
-                swapModeChanged = False
-                if any(clean_path.endswith(e) for e in textReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "text"):
-                    global_memory["swapReqType"] = "text"
-                    swapModeChanged = True
-                elif any(clean_path.endswith(e) for e in sttReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "stt"):
-                    global_memory["swapReqType"] = "stt"
-                    swapModeChanged = True
-                elif any(clean_path.endswith(e) for e in ttsReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "tts"):
-                    global_memory["swapReqType"] = "tts"
-                    swapModeChanged = True
-                elif any(clean_path.endswith(e) for e in embedReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "embed"):
-                    global_memory["swapReqType"] = "embed"
-                    swapModeChanged = True
-                elif any(clean_path.endswith(e) for e in musicReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "music"):
-                    global_memory["swapReqType"] = "music"
-                    swapModeChanged = True
-                elif any(clean_path.endswith(e) for e in imageReqs) and (global_memory["swapReqType"] is None or global_memory["swapReqType"] != "image"):
-                    global_memory["swapReqType"] = "image"
-                    swapModeChanged = True
+                requestedType = None
+                if any(clean_path.endswith(e) for e in textReqs):
+                    requestedType = "text"
+                elif any(clean_path.endswith(e) for e in sttReqs):
+                    requestedType = "stt"
+                elif any(clean_path.endswith(e) for e in ttsReqs):
+                    requestedType = "tts"
+                elif any(clean_path.endswith(e) for e in embedReqs):
+                    requestedType = "embed"
+                elif any(clean_path.endswith(e) for e in musicReqs):
+                    requestedType = "music"
+                elif any(clean_path.endswith(e) for e in imageReqs):
+                    requestedType = "image"
+
+                # A worker may contain several below-threshold model families. Only
+                # restart when the requested family is neither resident nor the
+                # family most recently requested for this configuration.
+                loadedReqTypes = list(global_memory.get("loadedReqTypes", []))
+                swapModeChanged = (requestedType is not None
+                    and requestedType not in loadedReqTypes
+                    and requestedType != global_memory["swapReqType"])
+                if swapModeChanged:
+                    global_memory["swapReqType"] = requestedType
 
                 if (global_memory["swapReqType"] is not None and swapModeChanged):
+                    global_memory["triggered_sleeping"] = False
                     reqbody = json.dumps({"filename":global_memory["current_model"], "baseconfig": global_memory["base_config"]})
                     reqheaders = {
                         'Content-Type': 'application/json',
@@ -5861,7 +5543,7 @@ class KcppProxyHandler(http.server.BaseHTTPRequestHandler):
                     resp = conn.getresponse()
                     time.sleep(3)
                     global_memory["last_active_timestamp"] = datetime.now()
-                    if not self.wait_for_upstream_ready(upstream_port,120,0.5):
+                    if not self.wait_for_upstream_ready(upstream_port,args.reqtimeout,0.5):
                         self.send_error(504, "KoboldCpp model swap reload timed out")
                         return
                     time.sleep(0.1)
@@ -5959,6 +5641,22 @@ class KcppProxyHttpServer(http.server.HTTPServer):
         finally:
             self.shutdown_request(request)
 
+def create_server_ssl_context(ssl_config):
+    if not ssl_config:
+        return None
+    import ssl
+    try:
+        if len(ssl_config) != 2 or not all(isinstance(path, str) for path in ssl_config):
+            raise ValueError("Provide a certificate file and a key file.")
+        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        # Do not prompt for an encrypted key in a background server process.
+        context.load_cert_chain(certfile=os.path.abspath(ssl_config[0]),
+                                keyfile=os.path.abspath(ssl_config[1]), password=lambda: "")
+        return context
+    except (OSError, ValueError, TypeError) as exc:
+        raise SystemExit(f"Your SSL configuration is INVALID: {exc}") from None
+
+
 def run_router_proxy(proxy_port, upstream_port):
     server = KcppProxyHttpServer(("", proxy_port), KcppProxyHandler, upstream_port)
     global args, sslvalid
@@ -5966,10 +5664,7 @@ def run_router_proxy(proxy_port, upstream_port):
         import ssl
         if args.nocertify:
             ssl._create_default_https_context = ssl._create_unverified_context
-        certpath = os.path.abspath(args.ssl[0])
-        keypath = os.path.abspath(args.ssl[1])
-        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        context.load_cert_chain(certfile=certpath, keyfile=keypath)
+        context = create_server_ssl_context(args.ssl)
         server.socket = context.wrap_socket(server.socket, server_side=True)
         print(f"KoboldCpp Proxy starting on port {proxy_port} (SSL/HTTPS), forwarding to port {upstream_port}",flush=True)
     else:
@@ -5992,6 +5687,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.port = port
 
     def __call__(self, *args, **kwargs):
+        # Each server worker reuses this handler across connections. A failed
+        # header write leaves the previous response's buffer uncleared.
+        self._headers_buffer = []
         super().__init__(*args, **kwargs)
 
     def log_message(self, format, *args):
@@ -6139,97 +5837,13 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         }
         return ret
 
+    def make_openai_generation_error(self):
+        return {"error": {"message": "The model failed to generate a response.",
+                          "type": "server_error", "param": None, "code": "server_error"}}
+
     async def generate_text(self, genparams, api_format, stream_flag):
         global friendlymodelname, chatcompl_adapter, currfinishreason, thinkformats
         global autoswapmode, textName, sttName, ttsName, embedName, musicName, imageName, mmprojName
-
-        # Do not silently treat a beam request as ordinary sampling. Correct
-        # beams need native sequence-branch ownership so grammar, EOS and KV
-        # state are cloned together; the public llama API does not provide that
-        # contract yet.
-        beam_width = tryparseint(genparams.get("beam_width", 1), 1)
-        if genparams.get("use_beam_search", False) or beam_width > 1:
-            return {"error": {"message": "beam search requires native branch ownership and is not available yet",
-                               "type": "invalid_request_error", "code": 400}}
-
-        # OpenAI's `n` asks for independent samples from one prompt. Native
-        # continuous batching schedules these children together; prompt prefix
-        # sharing keeps the common attention KV in one sequence-cell range,
-        # while every child has its own sampler and RNG state.
-        sample_count = max(1, min(16, tryparseint(genparams.get("n", 1), 1)))
-        if sample_count > 1 and not genparams.get("_parallel_sample_child"):
-            if stream_flag:
-                return {"error": {"message": "streaming parallel samples are not enabled for this backend", "type": "invalid_request_error", "code": 400}}
-            if api_format not in (3, 4):
-                return {"error": {"message": "parallel samples require an OpenAI completion endpoint", "type": "invalid_request_error", "code": 400}}
-            parent = dict(genparams)
-            parent.pop("n", None)
-            parent["_parallel_sample_child"] = True
-            parent["_parallel_sample_native"] = continuous_batching_python_eligible(parent, api_format)
-            base_seed = tryparseint(parent.get("sampler_seed", parent.get("seed", -1)), -1)
-            children = []
-            for index in range(sample_count):
-                # Input normalization can mutate nested maps such as logit_bias.
-                # Each concurrently running sample needs its own copy.
-                child = copy.deepcopy(parent)
-                child["oai_uniqueid"] = f"{genparams.get('oai_uniqueid', 1)}-{index}"
-                if base_seed >= 0:
-                    child["sampler_seed"] = base_seed + index
-                    child["seed"] = base_seed + index
-                children.append(child)
-            tasks = {asyncio.create_task(self.generate_text(child, api_format, False)): child
-                     for child in children}
-            pending = set(tasks)
-            results_by_task = {}
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                failure = None
-                for task in done:
-                    try:
-                        result = task.result()
-                    except Exception as exc:
-                        failure = {"error": {"message": str(exc), "type": "server_error", "code": 500}}
-                        break
-                    results_by_task[task] = result
-                    if result.get("error"):
-                        failure = result
-                        break
-                if failure:
-                    # A cancelled to_thread wrapper cannot stop a running C++
-                    # call by itself. Abort each admitted child explicitly,
-                    # then cancel the Python waiters and drain their futures.
-                    abort = getattr(handle, "batch_generate_abort", None)
-                    if abort is not None:
-                        for child in tasks.values():
-                            request_id = child.get("_batch_request_id", -1)
-                            if isinstance(request_id, int) and request_id >= 0:
-                                try:
-                                    abort(request_id)
-                                except Exception:
-                                    pass
-                    for task in pending:
-                        task.cancel()
-                    await asyncio.gather(*pending, return_exceptions=True)
-                    return failure
-            results = [results_by_task[task] for task in tasks]
-            merged = dict(results[0])
-            merged["id"] = f"chatcmpl-A{genparams.get('oai_uniqueid', 1)}" if api_format == 4 else f"cmpl-A{genparams.get('oai_uniqueid', 1)}"
-            merged["choices"] = []
-            completion_total = 0
-            prompt_tokens = 0
-            for index, result in enumerate(results):
-                choice = dict(result.get("choices", [{}])[0])
-                choice["index"] = index
-                merged["choices"].append(choice)
-                completion_total += int(result.get("usage", {}).get("completion_tokens", 0) or 0)
-                prompt_tokens = max(prompt_tokens, int(result.get("usage", {}).get("prompt_tokens", 0) or 0))
-            if isinstance(merged.get("usage"), dict):
-                merged["usage"] = dict(merged["usage"])
-                merged["usage"]["prompt_tokens"] = prompt_tokens
-                merged["usage"]["completion_tokens"] = completion_total
-                merged["usage"]["total_tokens"] = prompt_tokens + completion_total
-            merged["parallel_samples"] = sample_count
-            return merged
 
         currfinishreason = None
         req_id_suffix = genparams.get('oai_uniqueid',1)
@@ -6246,53 +5860,31 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             return generate(genparams=genparams,stream_flag=stream_flag)
 
         genout = {"text": "", "status": -1, "stopreason": -1, "prompt_tokens":0, "completion_tokens": 0, "total_tokens": 0}
-        if genparams.get('_parallel_sample_native', False):
-            # gather() alone cannot overlap coroutines that block before their
-            # first await. Submit native children from separate executor threads
-            # so all of them can enter the scheduler before waiting for results.
-            genout = await asyncio.to_thread(run_blocking)
-        elif stream_flag:
-            loop = asyncio.get_event_loop()
-            executor = ThreadPoolExecutor()
-            genout = await loop.run_in_executor(executor, run_blocking)
-        else:
-            genout = run_blocking()
-
-        if genout.get('error'):
-            error = {"message": genout['error'], "type": "server_overloaded", "code": 503}
-            if stream_flag and not genparams.get('_parallel_sample_child', False):
-                # handle_sse_stream owns the response framing for streaming APIs;
-                # leave a marker for it rather than pretending legacy generation
-                # was started after native admission rejected the request.
-                genparams['_batch_overloaded'] = True
-            else:
-                return {"error": error}
+        if api_format in (3, 4):
+            genparams['_oai_generation_pending'] = True
+        try:
+            # Leave the event loop free to monitor non-streaming requests too.
+            # asyncio.run waits for this executor before the request handler returns.
+            loop = asyncio.get_running_loop()
+            genout = await loop.run_in_executor(None, run_blocking)
+        finally:
+            genparams.pop('_oai_generation_pending', None)
 
         recvtxt = genout['text']
         if recvtxt is not None and not isinstance(recvtxt, str):
             recvtxt = recvtxt.decode("UTF-8", "ignore") if isinstance(recvtxt, bytes) else str(recvtxt)
         prompttokens = genout['prompt_tokens'] if genout['prompt_tokens'] > 0 else 0
         comptokens = genout['completion_tokens'] if genout['completion_tokens'] > 0 else 0
-        currfinishreason = "error" if (genout['stopreason'] == -2) else ("length" if (genout['stopreason'] != 1) else "stop")
+        currfinishreason = "error" if (genout['stopreason'] == -2) else ("stop" if genout['stopreason'] in (1, 2) else "length")
+        if api_format in (3, 4) and (genout['stopreason'] == -2 or genout['status'] == 0):
+            genparams['_oai_generation_error'] = True
+            return self.make_openai_generation_error()
 
         # grab logprobs if not streaming
         logprobsdict = None
-        if genout.get("logprobs") is not None:
-            logprobsdict = genout["logprobs"]
-        elif not stream_flag and ("logprobs" in genparams and genparams["logprobs"]):
+        if not stream_flag and ("logprobs" in genparams and genparams["logprobs"]):
             lastlogprobs = handle.last_logprobs()
             logprobsdict = parse_last_logprobs(lastlogprobs)
-
-        # Batch-native logprobs are split by phase. Keep the established
-        # completion-shaped `logprobs` field while exposing both phases to
-        # callers that need prompt scoring.
-        prompt_logprobs = genout.get("prompt_logprobs")
-        completion_logprobs = genout.get("completion_logprobs")
-        timing = genout.get("timing")
-        if isinstance(logprobsdict, dict) and "prompt" in logprobsdict:
-            prompt_logprobs = logprobsdict.get("prompt", [])
-            completion_logprobs = logprobsdict.get("completion", [])
-            logprobsdict = format_batch_logprobs(completion_logprobs, api_format) if requested_logprobs(genparams) >= 0 else None
 
         # flag instance as non-idle for a while
         washordereq = genparams.get('genkey', '').startswith('HORDEREQ_')
@@ -6348,7 +5940,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                         tc["id"] = f"call_{random.randint(10000, 99999)}"
                         if tcarg is not None and not isinstance(tcarg, str):
                             tc["function"]["arguments"] = json.dumps(tcarg)
-                    recvtxt = None
+                    recvtxt = extract_toolcall_prose_prefix_content(recvtxt)
                     currfinishreason = "tool_calls"
                     utfprint(f"\nExecute Toolcall: {json.dumps(tool_calls)}",1)
         if recvtxt:
@@ -6362,9 +5954,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         elif api_format == 3:
             res = {"id": cmpl_id, "object": "text_completion", "created": int(time.time()), "model": modelNameToReturn,
                    "usage": {"prompt_tokens": prompttokens, "completion_tokens": comptokens, "total_tokens": (prompttokens+comptokens)},
-                   "timing": timing,
-                   "choices": [{"text": recvtxt, "index": 0, "finish_reason": currfinishreason, "logprobs":logprobsdict,
-                                "prompt_logprobs": prompt_logprobs, "completion_logprobs": completion_logprobs}]}
+                   "choices": [{"text": recvtxt, "index": 0, "finish_reason": currfinishreason, "logprobs":logprobsdict}]}
         elif api_format == 4: #chat completions
             ccmsg = {"role": "assistant", "content": recvtxt, "tool_calls": tool_calls}
             if reasoningtxt and genparams.get('encapsulate_thinking', True):
@@ -6373,9 +5963,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 ccmsg["content"] = reasoningtxt + (recvtxt if recvtxt else "")
             res = {"id": chatcmpl_id, "object": "chat.completion", "created": int(time.time()), "model": modelNameToReturn,
                    "usage": {"prompt_tokens": prompttokens, "completion_tokens": comptokens, "total_tokens": (prompttokens+comptokens)},
-                   "timing": timing,
-                   "choices": [{"index": 0, "message": ccmsg, "finish_reason": currfinishreason, "logprobs":logprobsdict,
-                                "prompt_logprobs": prompt_logprobs, "completion_logprobs": completion_logprobs}]}
+                   "choices": [{"index": 0, "message": ccmsg, "finish_reason": currfinishreason, "logprobs":logprobsdict}]}
         elif api_format == 5:
             res = {"caption": end_trim_to_sentence(recvtxt)}
         elif api_format == 6:
@@ -6447,11 +6035,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 "usage": {"input_tokens": prompttokens, "output_tokens": comptokens}
             }
         else: #kcpp format
-            res = {"results": [{"text": recvtxt, "tool_calls": tool_calls, "finish_reason": currfinishreason,
-                                 "logprobs":logprobsdict, "prompt_logprobs": prompt_logprobs,
-                                 "completion_logprobs": completion_logprobs,
-                                 "prompt_tokens": prompttokens, "completion_tokens": comptokens,
-                                 "timing": timing}]}
+            res = {"results": [{"text": recvtxt, "tool_calls": tool_calls, "finish_reason": currfinishreason, "logprobs":logprobsdict, "prompt_tokens": prompttokens, "completion_tokens": comptokens}]}
 
         try:
             return res
@@ -6473,171 +6057,6 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(f'event: {eventname}\ndata: {data}\n\n'.encode())
         self.wfile.flush()
 
-    async def handle_parallel_sse_stream(self, genparams, api_format):
-        """Fan in native child streams for OpenAI ``n`` requests.
-
-        ``generate`` leaves a batch request live while a streaming request is
-        being consumed. Each child therefore exposes an independent native
-        request id in its copied parameter map; this loop polls those cursors
-        and emits indexed SSE chunks as soon as tokens are available.
-        """
-        if api_format not in (3, 4):
-            return {"error": {"message": "streaming parallel samples require an OpenAI endpoint",
-                               "type": "invalid_request_error", "code": 400}}
-        sample_count = max(1, min(16, tryparseint(genparams.get("n", 1), 1)))
-        parent = dict(genparams)
-        parent.pop("n", None)
-        parent["_parallel_sample_child"] = True
-        parent["_parallel_sample_native"] = continuous_batching_python_eligible(parent, api_format)
-        if not parent["_parallel_sample_native"]:
-            return {"error": {"message": "streaming parallel samples require native continuous batching",
-                               "type": "invalid_request_error", "code": 400}}
-        base_seed = tryparseint(parent.get("sampler_seed", parent.get("seed", -1)), -1)
-        children = []
-        for index in range(sample_count):
-            child = copy.deepcopy(parent)
-            child["oai_uniqueid"] = f"{genparams.get('oai_uniqueid', 1)}-{index}"
-            if base_seed >= 0:
-                child["sampler_seed"] = base_seed + index
-                child["seed"] = base_seed + index
-            children.append(child)
-
-        model_name = friendlymodelname
-        if autoswapmode and textName is not None:
-            model_name = textName
-        request_id = f"chatcmpl-A{genparams.get('oai_uniqueid', 1)}" if api_format == 4 else f"cmpl-A{genparams.get('oai_uniqueid', 1)}"
-        self.send_response(200)
-        self.send_header("X-Accel-Buffering", "no")
-        self.send_header("cache-control", "no-cache")
-        self.send_header("connection", "keep-alive")
-        self.end_headers(content_type="text/event-stream")
-
-        tasks = {asyncio.create_task(self.generate_text(child, api_format, True)): (index, child)
-                 for index, child in enumerate(children)}
-        pending = set(tasks)
-        monitor_task = None
-        cursors = {index: 0 for index in range(sample_count)}
-        decoders = [codecs.getincrementaldecoder("utf-8")("ignore") for _ in children]
-        roles_sent = set()
-        disconnected = False
-
-        def abort_children():
-            abort = getattr(handle, "batch_generate_abort", None)
-            for child in children:
-                child['_batch_cancel_requested'] = True
-                request_id = child.get("_batch_request_id", -1)
-                if abort is not None and isinstance(request_id, int) and request_id >= 0:
-                    try:
-                        abort(request_id)
-                    except Exception:
-                        pass
-
-        def on_disconnect():
-            nonlocal disconnected
-            disconnected = True
-            abort_children()
-
-        async def drain_child(index, child, final=False):
-            native_id = child.get("_batch_request_id", -1)
-            if not isinstance(native_id, int) or native_id < 0:
-                return
-            text = ""
-            count = handle.batch_generate_stream_count(native_id)
-            while cursors[index] < count:
-                token = handle.batch_generate_new_token(native_id, cursors[index])
-                if token is None:
-                    break
-                cursors[index] += 1
-                text += decoders[index].decode(ctypes.string_at(token))
-            if final:
-                text += decoders[index].decode(b"", final=True)
-            if not text:
-                return
-            choice = {"index": index, "finish_reason": None}
-            if api_format == 4:
-                choice["delta"] = {"content": text}
-                if index not in roles_sent:
-                    choice["delta"]["role"] = "assistant"
-                    roles_sent.add(index)
-            else:
-                choice["text"] = text
-            await self.send_oai_sse_event(json.dumps({
-                "id": request_id, "object": "chat.completion.chunk" if api_format == 4 else "text_completion",
-                "created": int(time.time()), "model": model_name, "choices": [choice]}))
-
-        try:
-            # The ordinary streaming path watches the socket for disconnects;
-            # parallel fan-in must do the same or orphaned children can keep
-            # occupying native slots after a client disappears.  Unit capture
-            # handlers do not expose a socket, so they keep the deterministic
-            # polling path without a monitor task.
-            if getattr(self, "connection", None) is not None:
-                monitor_task = asyncio.create_task(self.monitor_connection(on_disconnect))
-            while pending:
-                if disconnected:
-                    return
-                for task, (index, child) in tasks.items():
-                    await drain_child(index, child)
-
-                done, pending = await asyncio.wait(pending, timeout=0.02,
-                                                   return_when=asyncio.FIRST_COMPLETED)
-                if disconnected:
-                    return
-                for task in done:
-                    index, child = tasks[task]
-                    try:
-                        result = task.result()
-                    except Exception as exc:
-                        abort_children()
-                        await self.send_oai_sse_event(json.dumps({"error": {
-                            "message": str(exc), "type": "server_error", "code": 500}}))
-                        await self.send_oai_sse_event("[DONE]")
-                        return
-                    if result.get("error"):
-                        abort_children()
-                        await self.send_oai_sse_event(json.dumps(result))
-                        await self.send_oai_sse_event("[DONE]")
-                        return
-                    # Completion can race the preceding cursor poll. Drain again
-                    # before release so the final token is never discarded.
-                    await drain_child(index, child, final=True)
-                    finish = (result.get("choices") or [{}])[0]
-                    if api_format == 4:
-                        payload = {"id": request_id, "object": "chat.completion.chunk",
-                                   "created": int(time.time()), "model": model_name,
-                                   "choices": [{"index": index, "delta": {},
-                                                "finish_reason": finish.get("finish_reason", "stop")}]}
-                    else:
-                        payload = {"id": request_id, "object": "text_completion",
-                                   "created": int(time.time()), "model": model_name,
-                                   "choices": [{"index": index, "text": "",
-                                                "finish_reason": finish.get("finish_reason", "stop")}]}
-                    timing = finish.get("timing") or result.get("timing")
-                    if timing:
-                        payload["choices"][0]["timing"] = timing
-                    await self.send_oai_sse_event(json.dumps(payload))
-                    native_id = child.get("_batch_request_id", -1)
-                    if isinstance(native_id, int) and native_id >= 0:
-                        handle.batch_generate_release(native_id)
-                        child.pop("_batch_request_id", None)
-            await self.send_oai_sse_event("[DONE]")
-        except Exception:
-            abort_children()
-            raise
-        finally:
-            # Cancelling an asyncio wrapper does not stop its native executor
-            # thread. Abort first, join the children, then release their IDs.
-            # The sticky flag also catches submissions that finish after abort.
-            abort_children()
-            if monitor_task and not monitor_task.done():
-                monitor_task.cancel()
-                await asyncio.gather(monitor_task, return_exceptions=True)
-            await asyncio.gather(*tasks, return_exceptions=True)
-            for child in children:
-                native_id = child.pop("_batch_request_id", -1)
-                if isinstance(native_id, int) and native_id >= 0:
-                    handle.batch_generate_release(native_id)
-
     async def send_kai_sse_event(self, data):
         self.wfile.write('event: message\n'.encode())
         self.wfile.write(f'data: {data}\n\n'.encode())
@@ -6646,6 +6065,33 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
     async def send_ollama_stream_event(self, data):
         self.wfile.write(f'{data}\n'.encode())
         self.wfile.flush()
+
+    async def send_tool_stream_keepalives(self, genparams, api_format, interval=50):
+        # Tool calls may be buffered until generation finishes. Keep the stream
+        # active without adding content to the eventual tool call.
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                if not (genparams.get('sync_toolcall_stream_ineligible', False) or genparams.get('sync_toolcall_potential_triggered', False)):
+                    continue
+                if api_format == 7: # Ollama NDJSON requires a valid JSON line
+                    model_name = friendlymodelname
+                    if autoswapmode and textName is not None:
+                        model_name = textName
+                    keepalive = {
+                        "model": model_name,
+                        "created_at": str(datetime.now(timezone.utc).isoformat()),
+                        "message": {"role": "assistant", "content": ""},
+                        "done": False,
+                    }
+                    packet = json.dumps(keepalive).encode()
+                    self.wfile.write(packet + (b' ' * max(1, 2047 - len(packet))) + b'\n')
+                else: # OpenAI and Anthropic use SSE; comments are client-invisible
+                    self.wfile.write(b': keepalive' + (b' ' * 2035) + b'\n\n')
+                self.wfile.flush()
+        except OSError:
+            self.close_connection = True
+            handle.abort_generate()
 
     async def handle_sse_stream(self, genparams, api_format):
         global friendlymodelname, currfinishreason, thinkformats, tool_call_pairs, cached_chat_template
@@ -6665,18 +6111,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("connection", "keep-alive")
         stream_content_type = 'application/x-ndjson' if api_format == 6 or api_format == 7 else 'text/event-stream'
         self.end_headers(content_type=stream_content_type)
-
-        if genparams.get('_batch_overloaded', False):
-            error = json.dumps({"error": {"message": "server is at its continuous-batching request capacity",
-                                            "type": "server_overloaded", "code": 503}})
-            if api_format in (3, 4):
-                await self.send_oai_sse_event(error)
-                await self.send_oai_sse_event("[DONE]")
-            elif api_format == 6 or api_format == 7:
-                await self.send_ollama_stream_event(error)
-            else:
-                await self.send_kai_sse_event(error)
-            return
+        genparams['_sse_stream_started'] = True
 
         # if tools, do not send anything else - OAI tool calls will be handled with fakestreaming!
         # only exception is if we know the exact toolcall tag to segment!
@@ -6687,9 +6122,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             if streamhandled and cached_chat_template and start in cached_chat_template:
                 tool_segment_tag = start
                 break
-        jinjatools = (args.jinja and args.jinja_tools)
         if (api_format == 4 or api_format == 7 or api_format == 9) and using_openai_tools:
-            if not jinjatools or not tool_segment_tag:
+            if not genparams.get('_jinja_tool_formatting_used', False) or not tool_segment_tag:
                 genparams['sync_toolcall_stream_ineligible'] = True
                 return
 
@@ -6706,40 +6140,36 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         anthropic_block_index = 0              # current content block index for Anthropic SSE
         rseq_num = 0
         current_token = 0
-        emitted_token = 0
-        stream_token_buffer = ""
-        default_stream_interval = getattr(args, "stream_interval", 1)
-        stream_interval = max(1, min(64, tryparseint(genparams.get("stream_interval", default_stream_interval), default_stream_interval)))
         prompttokens = 0
         incomplete_token_buffer = bytearray()
         async_sleep_short = 0.02
         await asyncio.sleep(0.35) #anti race condition, prevent check from overtaking generate
         batch_request_id = genparams.get('_batch_request_id', -1)
         batch_final_result = None
-        logprob_cursor = 0
-        logprob_offset = 0
-        batch_final_logprobs = {}
-        batch_final_timing = {}
 
         try:
             tokenReserve = "" #keeps fully formed tokens that we cannot send out yet
             while True:
                 if batch_request_id < 0:
                     batch_request_id = genparams.get('_batch_request_id', -1)
-                    if genparams.get('_batch_expected', False) and batch_request_id < 0 and not genparams.get('_batch_fallback', False):
-                        await asyncio.sleep(async_sleep_short)
-                        continue
+                if api_format in (3, 4) and genparams.get('_oai_generation_error', False):
+                    break
+                if genparams.get('_batch_expected', False) and batch_request_id < 0 and not genparams.get('_batch_fallback', False):
+                    await asyncio.sleep(async_sleep_short)
+                    continue
                 using_batch_stream = batch_request_id >= 0
                 streamDone = handle.batch_generate_has_finished(batch_request_id) if using_batch_stream else handle.has_finished() #exit next loop on done
+                if streamDone and api_format in (3, 4) and genparams.get('_oai_generation_pending', False):
+                    await asyncio.sleep(async_sleep_short) # wait for the request's success/error result
+                    continue
                 if streamDone:
                     if using_batch_stream and batch_final_result is None:
                         batch_final_result = handle.batch_generate_result(batch_request_id)
-                        if batch_final_result.logprobs_json:
-                            batch_final_logprobs = json.loads(batch_final_result.logprobs_json)
-                        if batch_final_result.timing_json:
-                            batch_final_timing = json.loads(batch_final_result.timing_json)
                     sr = batch_final_result.stopreason if using_batch_stream else handle.get_last_stop_reason()
-                    currfinishreason = "error" if sr==-2 else ("length" if (sr!=1) else "stop")
+                    currfinishreason = "error" if sr==-2 else ("stop" if sr in (1, 2) else "length")
+                    if api_format in (3, 4) and (sr == -2 or (using_batch_stream and batch_final_result.status == 0)):
+                        # The completed generation result will be sent as an error in do_POST.
+                        break
                     prompttokens = batch_final_result.prompt_tokens if using_batch_stream else handle.get_last_input_count()
                 tokenStr = ""
                 streamcount = handle.batch_generate_stream_count(batch_request_id) if using_batch_stream else handle.get_stream_count()
@@ -6758,43 +6188,6 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     if tokenSeg!="" and not badFragment:
                         incomplete_token_buffer.clear()
                         tokenStr += tokenSeg
-
-                # Buffer a configurable number of generated tokens before
-                # emitting an event. Completion/error paths always flush the
-                # final partial chunk; logprob cursors advance only when that
-                # chunk is actually sent.
-                stream_token_buffer += tokenStr
-                if not streamDone and current_token - emitted_token < stream_interval:
-                    await asyncio.sleep(async_sleep_short)
-                    continue
-                tokenStr = stream_token_buffer
-                stream_token_buffer = ""
-                emitted_token = current_token
-
-                # Each stream owns a cursor; scores cannot leak from another request.
-                if api_format in (3, 4):
-                    lp = None
-                    prompt_lp = None
-                    if using_batch_stream:
-                        end = batch_final_result.completion_tokens if streamDone else current_token
-                        items = json.loads(handle.batch_generate_logprobs(batch_request_id, logprob_cursor, end))
-                        if items:
-                            lp = format_batch_logprobs(items, api_format, logprob_offset)
-                            logprob_cursor += len(items)
-                            logprob_offset += sum(len(item['token']) for item in items)
-                        if streamDone and tryparseint(genparams.get('prompt_logprobs', -1), -1) >= 0:
-                            prompt_lp = batch_final_logprobs.get('prompt', [])
-                    elif streamDone and requested_logprobs(genparams) >= 0:
-                        lp = parse_last_logprobs(handle.last_logprobs())
-                    if lp is not None or prompt_lp is not None:
-                        choice = {'index': 0, 'finish_reason': None, 'logprobs': lp}
-                        choice['delta' if api_format == 4 else 'text'] = {'content': ''} if api_format == 4 else ''
-                        if prompt_lp is not None:
-                            choice['prompt_logprobs'] = prompt_lp
-                        await self.send_oai_sse_event(json.dumps({
-                            'id': chatcmpl_id if api_format == 4 else cmpl_id,
-                            'object': 'chat.completion.chunk' if api_format == 4 else 'text_completion',
-                            'created': int(time.time()), 'model': modelNameToReturn, 'choices': [choice]}))
 
                 if tokenStr!="" or streamDone:
                     # split think tag handling
@@ -6956,6 +6349,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                     await asyncio.sleep(async_sleep_short)
                                     return
 
+                            if api_format in (4, 9) and genparams.get('sync_toolcall_potential_triggered', False):
+                                need_split_final_msg = False # the fake-stream path owns the final chunk
                             if need_split_final_msg: #we need to send one message without the finish reason, then send a finish reason with no msg to follow standards
                                 if api_format == 4:  # if oai chat, set format to expected openai streaming response
                                     event_str = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":None,"delta":delta}]})
@@ -7000,17 +6395,22 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                 if delta and 'role' in delta:
                                     delta = {'role':delta["role"],'content':''}
                             if api_format == 4:  # if oai chat, set format to expected openai streaming response
-                                final_choice = {"index":0,"finish_reason":currfinishreason,"delta":delta}
-                                if streamDone and batch_final_timing:
-                                    final_choice["timing"] = batch_final_timing
-                                event_str = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":modelNameToReturn,"choices":[final_choice]})
+                                if streamDone and ("logprobs" in genparams and genparams["logprobs"]): # this is a hack that sends an extra message containing ALL the logprobs
+                                    lastlogprobs = handle.last_logprobs()
+                                    logprobsdict = parse_last_logprobs(lastlogprobs)
+                                    addonstr = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":None,"delta":{'role':'assistant','content':''},"logprobs":logprobsdict}]})
+                                    await self.send_oai_sse_event(addonstr)
+                                finish_reason = currfinishreason if streamDone and not genparams.get('sync_toolcall_potential_triggered', False) else None
+                                event_str = json.dumps({"id":chatcmpl_id,"object":"chat.completion.chunk","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":finish_reason,"delta":delta}]})
                                 genparams['sync_toolcall_first_role_sent'] = True
                                 await self.send_oai_sse_event(event_str)
                             elif api_format == 3:  # non chat completions
-                                final_choice = {"index":0,"finish_reason":currfinishreason,"text":tokenStr}
-                                if streamDone and batch_final_timing:
-                                    final_choice["timing"] = batch_final_timing
-                                event_str = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":modelNameToReturn,"choices":[final_choice]})
+                                if streamDone and ("logprobs" in genparams and genparams["logprobs"]): # this is a hack that sends an extra message containing ALL the logprobs
+                                    lastlogprobs = handle.last_logprobs()
+                                    logprobsdict = parse_last_logprobs(lastlogprobs)
+                                    addonstr = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":None,"text":"","logprobs":logprobsdict}]})
+                                    await self.send_oai_sse_event(addonstr)
+                                event_str = json.dumps({"id":cmpl_id,"object":"text_completion","created":int(time.time()),"model":modelNameToReturn,"choices":[{"index":0,"finish_reason":currfinishreason if streamDone else None,"text":tokenStr}]})
                                 await self.send_oai_sse_event(event_str)
                             elif api_format == 6 or api_format == 7: # Ollama newline-delimited JSON streaming
                                 created_at = str(datetime.now(timezone.utc).isoformat())
@@ -7086,7 +6486,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                 if anthropic_first_loop:
                                     await self.send_anthropic_sse_event("message_start", json.dumps({"type":"message_start","message":{"type":"message","id":f"msg_A{req_id_suffix}","role":"assistant","model":modelNameToReturn,"usage":{"input_tokens":prompttokens,"output_tokens":0}}}))
                                     anthropic_first_loop = False
-                                if not genparams.get("sync_toolcall_potential_triggered", False):
+                                if not genparams.get("sync_toolcall_potential_triggered", False) or sync_potential_toolcall_splitmatch:
                                     reasoning = delta.get("reasoning_content", "")
                                     content = delta.get("content", "")
                                     if reasoning and genparams.get('encapsulate_thinking', True):
@@ -7114,7 +6514,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                                         # edge case: stream ended with only thinking or no content at all — open a text block so we always close one
                                         await self.send_anthropic_sse_event("content_block_start", json.dumps({"type":"content_block_start","index":anthropic_block_index,"content_block":{"type":"text","text":""}}))
                                     await self.send_anthropic_sse_event("content_block_stop", json.dumps({"type":"content_block_stop","index":anthropic_block_index}))
-                                    await self.send_anthropic_sse_event("message_delta", json.dumps({"type":"message_delta","delta":{"stop_reason":anthropic_reason,"stop_sequence":None},"usage":{"output_tokens":current_token}}))
+                                    await self.send_anthropic_sse_event("message_delta", json.dumps({"type":"message_delta","delta":{"stop_reason":anthropic_reason,"stop_sequence":None},"usage":{"input_tokens":prompttokens,"output_tokens":current_token}}))
                                     await self.send_anthropic_sse_event("message_stop", json.dumps({"type":"message_stop"}))
                             else:
                                 event_str = json.dumps({"token": tokenStr, "finish_reason":currfinishreason})
@@ -7126,6 +6526,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     await asyncio.sleep(async_sleep_short) #this should keep things responsive
 
                 if streamDone:
+                    if api_format in (4, 9) and genparams.get('sync_toolcall_potential_triggered', False):
+                        return # finish and usage follow after the buffered tool calls are parsed
                     if api_format == 4 or api_format == 3:  # if oai chat, send last [DONE] message consistent with openai format
                         strop = genparams.get("stream_options",None)
                         if (strop and strop.get("include_usage",False)):  # Send a final chunk with usage info, only if requested
@@ -7137,6 +6539,7 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                             await self.send_oai_sse_event(usage_str)
                         await self.send_oai_sse_event('[DONE]')
                         await asyncio.sleep(async_sleep_short)
+                    genparams['_sse_stream_finished'] = not genparams.get('sync_toolcall_potential_triggered', False)
                     break
         except Exception as ex:
             print("Token streaming was interrupted or aborted!")
@@ -7147,6 +6550,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 handle.abort_generate()
             await asyncio.sleep(0.1) #short delay
         finally:
+            if api_format == 9:
+                genparams['_anthropic_stream_state'] = (not anthropic_first_loop, anthropic_block_index,
+                                                       anthropic_thinking_block_open or anthropic_text_block_started)
             if batch_request_id >= 0:
                 handle.batch_generate_release(batch_request_id)
                 genparams.pop('_batch_request_id', None)
@@ -7161,10 +6567,14 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
     async def monitor_connection(self, cancel_fn): #Poll the socket to detect client disconnection
         import select
+        import ssl
+        sock = self.connection
+        # SSLSocket.recv rejects MSG_PEEK. Readability alone is not a disconnect.
+        if isinstance(sock, ssl.SSLSocket):
+            return
         loop = asyncio.get_event_loop()
         def check_connection_closed():
             try:
-                sock = self.connection
                 readable, _, exceptional = select.select([sock], [], [sock], 0)
                 if exceptional:
                     return True
@@ -7174,8 +6584,10 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     if len(data) == 0:
                         return True
                 return False
-            except (OSError, Exception):
-                return True  # Treat any error as disconnected
+            except (BlockingIOError, InterruptedError):
+                return False
+            except OSError:
+                return True
         while True:
             try:
                 await asyncio.sleep(0.5)
@@ -7189,18 +6601,65 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 return
 
     async def handle_request(self, genparams, api_format, stream_flag):
-        if stream_flag and tryparseint(genparams.get("n", 1), 1) > 1:
-            return await self.handle_parallel_sse_stream(genparams, api_format)
         tasks = []
         genparams["oai_uniqueid"] = random.randint(100000, 999999)
+        for key in ('_sse_stream_started', '_sse_stream_finished', '_oai_generation_pending', '_oai_generation_error', '_anthropic_stream_state', '_client_disconnected', '_json_keepalive_started'):
+            genparams.pop(key, None)
         monitor_task = None
+        tool_keepalive_task = None
+        json_keepalive_task = None
+        batch_expected = genparams.get('_batch_expected', False)
+
+        def disconnected():
+            genparams['_client_disconnected'] = True
+            self.close_connection = True
+
+        async def monitor_generation():
+            await self.monitor_connection(disconnected)
+            # Keep waiting for the generator to finish. An early abort can be
+            # reset during native startup, or precede publication of a batch ID.
+            while genparams.get('_client_disconnected', False) and not generate_task.done():
+                batch_request_id = genparams.get('_batch_request_id', -1)
+                if batch_request_id >= 0:
+                    handle.batch_generate_abort(batch_request_id)
+                elif not batch_expected:
+                    handle.abort_generate()
+                # Never use a global abort for an expected batch without an ID:
+                # it may be starting or already released by the worker thread.
+                await asyncio.sleep(0.1)
+
+        async def run_generation():
+            try:
+                return await self.generate_text(genparams, api_format, stream_flag)
+            except Exception as ex:
+                if api_format not in (3, 4):
+                    raise
+                print(f"Generate: Error while generating: {ex}")
+                genparams['_oai_generation_error'] = True
+                handle.abort_generate()
+                return self.make_openai_generation_error()
+
         try:
             if stream_flag:
                 tasks.append(self.handle_sse_stream(genparams, api_format))
-            generate_task = asyncio.create_task(self.generate_text(genparams, api_format, stream_flag))
+            generate_task = asyncio.create_task(run_generation())
             tasks.append(generate_task)
-            if stream_flag:
-                monitor_task = asyncio.create_task(self.monitor_connection(handle.abort_generate))
+            monitor_task = asyncio.create_task(monitor_generation())
+            if stream_flag and api_format in (4, 7, 9) and genparams.get('using_openai_tools', False):
+                tool_keepalive_task = asyncio.create_task(self.send_tool_stream_keepalives(genparams, api_format))
+            elif not stream_flag and self.headers.get('X-KoboldCpp-Keepalive', '').lower() == 'true':
+                def start_keepalive():
+                    # Commit headers only if the request outlasts the first
+                    # interval. Fast errors can still return their HTTP status.
+                    self.close_connection = True
+                    self.send_response(200)
+                    self.send_header('connection', 'close')
+                    self.send_header('X-Accel-Buffering', 'no')
+                    self.end_headers(content_type='application/json')
+                    genparams['_json_keepalive_started'] = True
+
+                json_keepalive_task = asyncio.create_task(
+                    self.send_json_keepalives(disconnected, interval=15, start_fn=start_keepalive))
             await asyncio.gather(*tasks)
             generate_result = generate_task.result()
             return generate_result
@@ -7211,6 +6670,9 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
             await asyncio.sleep(0.1) #short delay
         except Exception as e:
             print(e)
+            if api_format in (3, 4):
+                handle.abort_generate()
+                return self.make_openai_generation_error()
         finally:
             if monitor_task and not monitor_task.done():
                 monitor_task.cancel()
@@ -7218,13 +6680,30 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                     await monitor_task
                 except asyncio.CancelledError:
                     pass
+            if tool_keepalive_task:
+                if not tool_keepalive_task.done():
+                    tool_keepalive_task.cancel()
+                try:
+                    await tool_keepalive_task
+                except (asyncio.CancelledError, OSError):
+                    pass
+            if json_keepalive_task:
+                if not json_keepalive_task.done():
+                    json_keepalive_task.cancel()
+                try:
+                    await json_keepalive_task
+                except (asyncio.CancelledError, OSError):
+                    pass
 
-    async def send_json_keepalives(self, cancel_fn, interval=50):
+    async def send_json_keepalives(self, cancel_fn, interval=50, start_fn=None):
         # Leading whitespace is valid JSON. Padding also helps small proxy buffers
         # make progress; it cannot bypass a proxy's absolute request time limit.
         try:
             while True:
                 await asyncio.sleep(interval)
+                if start_fn:
+                    start_fn()
+                    start_fn = None
                 self.wfile.write(b' ' * 2047 + b'\n')
                 self.wfile.flush()
         except OSError:
@@ -7545,32 +7024,6 @@ Change Mode<br>
             caps = get_capabilities()
             response_body = (json.dumps(caps).encode())
 
-        elif clean_path == '/api/extra/capabilities':
-            response_body = json.dumps(get_friend_serving_capabilities()).encode()
-
-        elif clean_path.endswith(('/api/extra/adapters')): # friend.cpp: named LoRA / steering / head pools
-            response_body = (json.dumps(friend_adapter_listing()).encode())
-
-        elif clean_path == '/api/extra/requests':
-            if not self.secure_endpoint():
-                return
-            response_body = handle.friend_requests() or b"[]"
-
-        elif clean_path == '/metrics':
-            if args.password and not self.check_header_password(args.password):
-                self.send_response(401)
-                self.end_headers()
-                return
-            response_body = handle.friend_metrics() or b""
-            self.send_response(200)
-            self.send_header('Content-Length', str(len(response_body)))
-            self.end_headers(content_type='text/plain; version=0.0.4; charset=utf-8')
-            self.wfile.write(response_body)
-            return
-
-        elif clean_path.endswith(('/api/extra/cache')): # friend.cpp: prompt cache contents
-            response_body = (handle.friend_cache_list() or b"{}")
-
         elif clean_path.endswith(('/api/admin/list_options')):  # used by admin to get info about a kcpp instance
             opts = []
             if args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
@@ -7684,7 +7137,9 @@ Change Mode<br>
             if (friendlysdmodelname=="inactive" or fullsdmodelpath=="") and not(autoswapmode and imageName is not None):
                 response_body = (json.dumps([]).encode())
             else:
-                response_body = (json.dumps([{"name":name,"label":name} for name in cached_sd_info.get('available_schedulers', [])]).encode())
+                schedulers = list(cached_sd_info.get('available_schedulers', []))
+                schedulers.extend(cached_sd_custom_sigmas.keys())
+                response_body = (json.dumps([{"name":name,"label":name} for name in schedulers]).encode())
         elif clean_path.endswith('/sdapi/v1/latent-upscale-modes'):
            response_body = (json.dumps([]).encode())
 
@@ -7957,30 +7412,6 @@ Change Mode<br>
         response_body = None
         response_code = 200
 
-        # Request controls must bypass the generation lock or a paused generation
-        # would hold that lock while waiting for its own resume request.
-        if clean_path in ('/api/extra/requests/pause', '/api/extra/requests/resume', '/api/extra/requests/cancel'):
-            if not self.secure_endpoint():
-                return
-            try:
-                params = json.loads(body)
-                request_id = params['id']
-                if type(request_id) is not int or not 0 < request_id <= 2147483647:
-                    raise ValueError("id must be a positive native request ID")
-                if clean_path.endswith('/cancel'):
-                    ok = handle.batch_generate_abort(request_id)
-                else:
-                    ok = handle.friend_request_control(request_id, clean_path.endswith('/pause'))
-                payload = json.dumps({"accepted": bool(ok)}).encode()
-                self.send_response(202 if ok else 404)
-            except (ValueError, TypeError, KeyError) as exc:
-                payload = json.dumps({"error": str(exc)}).encode()
-                self.send_response(400)
-            self.send_header('Content-Length', str(len(payload)))
-            self.end_headers(content_type='application/json')
-            self.wfile.write(payload)
-            return
-
         if clean_path.endswith('/api/extra/tokencount') or clean_path.endswith('/api/extra/tokenize'):
             if not self.secure_endpoint():
                 return
@@ -8022,7 +7453,7 @@ Change Mode<br>
                 schema = genparams.get('schema', None)
                 if not schema:
                     schema = genparams
-                decoded = cached_json_to_gbnf(schema)
+                decoded = convert_json_to_gbnf(schema)
                 response_body = (json.dumps({"result": decoded,"success":(True if decoded else False)}).encode())
             except Exception as e:
                 utfprint("JSON to Grammar Error: " + str(e))
@@ -8064,7 +7495,7 @@ Change Mode<br>
                 multiuserkey = ""
 
             if totalgens>0:
-                if (multiuserkey=="" and multiuserkey==currentusergenkey and requestsinqueue==0) or (multiuserkey!="" and multiuserkey==currentusergenkey): #avoid leaking prompts in multiuser
+                if (multiuserkey=="" and multiuserkey==currentusergenkey and requestsinqueue==0) or (multiuserkey!="" and multiuserkey==currentusergenkey): #avoid leaking prompts when multiple users
                     pendtxt = handle.get_pending_output()
                     pendtxtStr = ctypes.string_at(pendtxt).decode("UTF-8","ignore")
             response_body = (json.dumps({"results": [{"text": pendtxtStr}]}).encode())
@@ -8082,7 +7513,7 @@ Change Mode<br>
                 multiuserkey = ""
 
             if totalgens>0:
-                if (multiuserkey=="" and multiuserkey==currentusergenkey and requestsinqueue==0) or (multiuserkey!="" and multiuserkey==currentusergenkey): #avoid leaking prompts in multiuser
+                if (multiuserkey=="" and multiuserkey==currentusergenkey and requestsinqueue==0) or (multiuserkey!="" and multiuserkey==currentusergenkey): #avoid leaking prompts with multiple users
                     lastlogprobs = handle.last_logprobs()
                     logprobsdict = parse_last_logprobs(lastlogprobs)
             response_body = (json.dumps({"logprobs":logprobsdict}).encode())
@@ -8111,27 +7542,25 @@ Change Mode<br>
                 return
             if savedata_obj is None:
                 response_body = (json.dumps([]).encode())
-                return
-            output = []
-            for i in range (net_save_slots):
-                if str(i) in savedata_obj:
-                    output.append(savedata_obj[str(i)]["title"])
-                else:
-                    output.append("")
-            response_body = (json.dumps(output).encode())
+            else:
+                output = []
+                for i in range (net_save_slots):
+                    if str(i) in savedata_obj:
+                        output.append(savedata_obj[str(i)]["title"])
+                    else:
+                        output.append("")
+                response_body = (json.dumps(output).encode())
 
         elif clean_path.endswith('/api/extra/data/load'):
             if not self.secure_endpoint():
                 return
-            if savedata_obj is None:
-                response_body = (json.dumps({"success":False,"data":None}).encode())
             loadid = -1
             try:
                 tempbody = json.loads(body)
                 loadid = tryparseint(tempbody.get('slot', 0),0)
             except Exception:
                 loadid = -1
-            if loadid < 0 or str(loadid) not in savedata_obj:
+            if savedata_obj is None or loadid < 0 or str(loadid) not in savedata_obj:
                 response_body = (json.dumps({"success":False,"data":None}).encode())
             else:
                 response_body = (json.dumps({"success":True,"data":savedata_obj[str(loadid)]}).encode())
@@ -8388,13 +7817,12 @@ Change Mode<br>
                     }}).encode())
                 return
             ratelimitlookup[client_ip] = datetime.now()
-        muint = int(args.multiuser)
-        if muint<=0 and ((args.whispermodel and args.whispermodel!="") or (args.sdmodel and args.sdmodel!="") or (args.ttsmodel and args.ttsmodel!="") or (args.embeddingsmodel and args.embeddingsmodel!="")):
+        muint = int(args.queuelimit)
+        if muint < 2 and ((args.whispermodel and args.whispermodel!="") or (args.sdmodel and args.sdmodel!="") or (args.ttsmodel and args.ttsmodel!="") or (args.embeddingsmodel and args.embeddingsmodel!="")):
             muint = 2 # this prevents errors when using voice/img together with text
         if args.parallelrequests > 1 and muint <=0:
-            muint = multiuser_concurrent_limit # multiuser required for batching
-        multiuserlimit = ((muint-1) if muint > 1 else multiuser_concurrent_limit)
-        #backwards compatibility for up to X concurrent requests, use default limit of X if multiuser set to 1
+            muint = queue_concurrent_limit # required for batching
+        multiuserlimit = (muint if muint > 0 else queue_concurrent_limit)
         if muint > 0 and requestsinqueue < multiuserlimit:
             reqblocking = True
             requestsinqueue += 1
@@ -8409,6 +7837,10 @@ Change Mode<br>
         is_batchable_req = False
         if reqblocking:
             requestsinqueue = (requestsinqueue - 1) if requestsinqueue > 0 else 0
+
+        # Batching releases modelbusy, so track all in-flight requests separately.
+        with batched_cond:
+            global_memory["active_requests"] = global_memory.get("active_requests", 0) + 1
 
         # handle endpoints that require mutex locking and handle actual gens
         try:
@@ -8487,40 +7919,6 @@ Change Mode<br>
                 api_format = 1
             elif clean_path.endswith(('/api/v1/generate', '/api/latest/generate')):
                 api_format = 2
-            elif clean_path.endswith('/api/extra/cache/warm'):
-                # friend.cpp: prefill a prompt and pin it in the prompt cache. Rewritten into an
-                # ordinary 1-token generate so it queues and locks like any other request.
-                try:
-                    tmp = json.loads(body)
-                    tmp["max_length"] = 1
-                    tmp["cache_pin"] = str(tmp.get("cache_pin", tmp.get("label", "warm")))
-                    body = json.dumps(tmp).encode()
-                except Exception:
-                    pass
-                api_format = 2
-            elif clean_path.endswith('/api/extra/steer/build'):
-                # friend.cpp: build a steering vector from contrastive prompts (see FRIEND.md)
-                if not self.secure_endpoint():
-                    return
-                # already serialized: the POST handler holds modelbusy by the time routing runs here
-                result = json.loads((handle.friend_build_steering(body) or b"{}").decode("UTF-8", "ignore"))
-                if result.get("ok"):
-                    friend_adapter_pools["cvec"][result["name"]] = result.get("path") or "<memory>"
-                response_body = json.dumps(result).encode()
-            elif clean_path.endswith(('/api/extra/cache/clear', '/api/extra/cache/pin')):
-                # friend.cpp: prompt cache management
-                if not self.secure_endpoint():
-                    return
-                try:
-                    tmp = json.loads(body) if body else {}
-                except Exception:
-                    tmp = {}
-                if clean_path.endswith('/clear'):
-                    removed = handle.friend_cache_clear(bool(tmp.get("pinned", False)))
-                    response_body = json.dumps({"success": True, "removed": removed}).encode()
-                else:
-                    ok = handle.friend_cache_pin(int(tmp.get("id", 0)), bool(tmp.get("pinned", True)))
-                    response_body = json.dumps({"success": ok}).encode()
             elif clean_path.endswith('/api/extra/generate/stream'):
                 api_format = 2
                 sse_stream_flag = True
@@ -8634,11 +8032,6 @@ Change Mode<br>
                 if args.debugmode >= 1:
                     trunc_len = 40000
 
-                if use_jinja and not args.jinja_tools:
-                    tmptools = genparams.get('tools', [])
-                    if tmptools and len(tmptools) > 0:
-                        use_jinja = False # not allowed to use tools with jinja
-
                 # payload modifications for lcpp endpoint. we detect this by the timings_per_token field existing
                 if "timings_per_token" in genparams:
                     genparams["continue_assistant_turn"] = True
@@ -8649,26 +8042,6 @@ Change Mode<br>
 
                 # transform genparams (only used for text gen) first
                 genparams = transform_genparams(genparams, api_format, use_jinja)
-
-                if genparams.get("_guided_regex_error"):
-                    payload = json.dumps({"error": {"message": genparams["_guided_regex_error"],
-                                                       "type": "invalid_request_error", "code": 400}}).encode()
-                    self.send_response(400)
-                    self.send_header('content-length', str(len(payload)))
-                    self.end_headers(content_type='application/json')
-                    self.wfile.write(payload)
-                    return
-                if genparams.get("disaggregated_prefill", False) and (
-                        not getattr(args, "disaggregated_prefill", False) or
-                        getattr(args, "profile_lanes", 1) < 2):
-                    payload = json.dumps({"error": {
-                        "message": "disaggregated_prefill requires --disaggregated-prefill and --profile-lanes >= 2",
-                        "type": "invalid_request_error", "code": 400}}).encode()
-                    self.send_response(400)
-                    self.send_header('content-length', str(len(payload)))
-                    self.end_headers(content_type='application/json')
-                    self.wfile.write(payload)
-                    return
 
                 if args.debugmode >= 1:
                     printablegenparams = truncate_long_json(genparams,trunc_len)
@@ -8697,19 +8070,39 @@ Change Mode<br>
                             batched_request_runner_count += 1
 
                     gendat = asyncio.run(self.handle_request(genparams, api_format, sse_stream_flag))
+                    if genparams.pop('_client_disconnected', False):
+                        return
 
                     try:
                         modelNameToReturn = friendlymodelname
                         if autoswapmode and textName is not None:
                             modelNameToReturn = textName
+                        if api_format in (3, 4) and gendat and gendat.get('error'):
+                            genresp = json.dumps(gendat).encode()
+                            if genparams.get('_sse_stream_started', False):
+                                self.wfile.write(b'data: ' + genresp + b'\n\ndata: [DONE]\n\n')
+                                self.wfile.flush()
+                                self.close_connection = True
+                            else:
+                                # Once keepalives start, errors use the same JSON
+                                # body and the already committed HTTP 200 status.
+                                if not genparams.get('_json_keepalive_started', False):
+                                    self.send_response(500)
+                                    self.send_header('content-length', str(len(genresp)))
+                                    self.end_headers(content_type='application/json')
+                                self.wfile.write(genresp)
+                            return
                         # Headers are already sent when streaming
                         if not sse_stream_flag:
-                            self.send_response(200)
                             genresp = (json.dumps(gendat).encode())
-                            self.send_header('content-length', str(len(genresp)))
-                            self.end_headers(content_type='application/json')
+                            if not genparams.get('_json_keepalive_started', False):
+                                self.send_response(200)
+                                self.send_header('content-length', str(len(genresp)))
+                                self.end_headers(content_type='application/json')
                             self.wfile.write(genresp)
                         elif (api_format == 4 or api_format == 7 or api_format == 9) and genparams.get('using_openai_tools', False): #special case, fake streaming for tool calls
+                            if genparams.get('_sse_stream_finished', False):
+                                return
                             # we only send content_text and reasoning_text if tools aren't used. they contain the balance of the output after sync_toolcall_potential_triggered was triggered
                             content_text = genparams.get('sync_toolcall_extra_content', "") #populated by the sse call, we don't use gendat['choices'][0]['message'].get('content', None)
                             reasoning_text = genparams.get('sync_toolcall_extra_reasoning_content', "")
@@ -8754,12 +8147,18 @@ Change Mode<br>
 
                             elif api_format == 9: # Anthropic fake-stream for tool calls
                                 req_id_suffix = genparams.get('oai_uniqueid', 1)
-                                start_msg = {"type": "message", "id": f"msg_A{req_id_suffix}", "role": "assistant", "model": modelNameToReturn, "usage": {"input_tokens": 0, "output_tokens": 0}}
-                                self.wfile.write(f'event: message_start\ndata: {json.dumps({"type":"message_start","message":start_msg})}\n\n'.encode())
-                                block_index = 0
+                                message_started, block_index, block_open = genparams.get('_anthropic_stream_state', (False, 0, False))
+                                if not message_started:
+                                    start_msg = {"type": "message", "id": f"msg_A{req_id_suffix}", "role": "assistant", "model": modelNameToReturn, "content": [], "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": gendat['usage']['input_tokens'], "output_tokens": 0}}
+                                    self.wfile.write(f'event: message_start\ndata: {json.dumps({"type":"message_start","message":start_msg})}\n\n'.encode())
+                                if block_open:
+                                    self.wfile.write(f'event: content_block_stop\ndata: {json.dumps({"type":"content_block_stop","index":block_index})}\n\n'.encode())
+                                    block_index += 1
 
                                 # optional leading text (content that arrived before the tool tag)
                                 content_text = genparams.get('sync_toolcall_extra_content', "")
+                                if genparams.get('sync_toolcall_stream_ineligible', False):
+                                    content_text = ''.join(block.get('text', '') for block in gendat['content'] if block['type'] == 'text')
 
                                 # tool_use blocks
                                 if toolsdata_res and len(toolsdata_res) > 0:
@@ -8788,17 +8187,17 @@ Change Mode<br>
                                         block_index += 1
 
                                 stop_reason = "tool_use" if toolsdata_res else ("end_turn" if currfinishreason == "stop" else "max_tokens")
-                                usage_pp = handle.get_last_input_count()
-                                self.wfile.write(f'event: message_delta\ndata: {json.dumps({"type":"message_delta","delta":{"stop_reason":stop_reason,"stop_sequence":None},"usage":{"output_tokens":usage_pp}})}\n\n'.encode())
+                                self.wfile.write(f'event: message_delta\ndata: {json.dumps({"type":"message_delta","delta":{"stop_reason":stop_reason,"stop_sequence":None},"usage":gendat["usage"]})}\n\n'.encode())
                                 self.wfile.write(f'event: message_stop\ndata: {json.dumps({"type":"message_stop"})}\n\n'.encode())
                                 self.wfile.flush()
 
                             # OpenAI fake-stream path (format 4)
                             else:
-                                if genparams.get('sync_toolcall_first_role_sent', False): # Send role chunk first, if needed
+                                chatcmpl_id = gendat['id']
+                                if not genparams.get('sync_toolcall_first_role_sent', False): # Send role chunk first, if needed
                                     genparams['sync_toolcall_first_role_sent'] = True
                                     chunk_role = json.dumps({
-                                        "id": "koboldcpp",
+                                        "id": chatcmpl_id,
                                         "object": "chat.completion.chunk",
                                         "created": int(time.time()),
                                         "model": modelNameToReturn,
@@ -8832,7 +8231,7 @@ Change Mode<br>
 
                                     if temp_reasoning:
                                         chunk_content = json.dumps({
-                                            "id": "koboldcpp",
+                                            "id": chatcmpl_id,
                                             "object": "chat.completion.chunk",
                                             "created": int(time.time()),
                                             "model": modelNameToReturn,
@@ -8842,7 +8241,7 @@ Change Mode<br>
                                         self.wfile.flush()
                                     if temp_content:
                                         chunk_content = json.dumps({
-                                            "id": "koboldcpp",
+                                            "id": chatcmpl_id,
                                             "object": "chat.completion.chunk",
                                             "created": int(time.time()),
                                             "model": modelNameToReturn,
@@ -8864,7 +8263,7 @@ Change Mode<br>
                                             }
                                         }
                                         chunk_meta = json.dumps({
-                                            "id": "koboldcpp",
+                                            "id": chatcmpl_id,
                                             "object": "chat.completion.chunk",
                                             "created": int(time.time()),
                                             "model": modelNameToReturn,
@@ -8881,7 +8280,7 @@ Change Mode<br>
                                             "function": {"arguments": args_str}
                                         }
                                         chunk_args = json.dumps({
-                                            "id": "koboldcpp",
+                                            "id": chatcmpl_id,
                                             "object": "chat.completion.chunk",
                                             "created": int(time.time()),
                                             "model": modelNameToReturn,
@@ -8893,7 +8292,7 @@ Change Mode<br>
                                     # Send remaining buffered content if no tool calls were made
                                     if reasoning_text:
                                         chunk_content = json.dumps({
-                                            "id": "koboldcpp",
+                                            "id": chatcmpl_id,
                                             "object": "chat.completion.chunk",
                                             "created": int(time.time()),
                                             "model": modelNameToReturn,
@@ -8903,7 +8302,7 @@ Change Mode<br>
                                         self.wfile.flush()
                                     if content_text:
                                         chunk_content = json.dumps({
-                                            "id": "koboldcpp",
+                                            "id": chatcmpl_id,
                                             "object": "chat.completion.chunk",
                                             "created": int(time.time()),
                                             "model": modelNameToReturn,
@@ -8914,17 +8313,29 @@ Change Mode<br>
 
                                 # Final chunk
                                 chunk_final = json.dumps({
-                                    "id": "koboldcpp",
+                                    "id": chatcmpl_id,
                                     "object": "chat.completion.chunk",
                                     "created": int(time.time()),
                                     "model": modelNameToReturn,
-                                    "choices": [{"index": 0, "finish_reason": "tool_calls" if (len(toolsdata_res) > 0) else currfinishreason, "delta": {}}]
+                                    "choices": [{"index": 0, "finish_reason": gendat['choices'][0]['finish_reason'], "delta": {}}]
                                 })
                                 self.wfile.write(f"data: {chunk_final}\n\n".encode())
+                                strop = genparams.get("stream_options", None)
+                                if strop and strop.get("include_usage", False):
+                                    chunk_usage = json.dumps({
+                                        "id": chatcmpl_id,
+                                        "object": "chat.completion.chunk",
+                                        "created": int(time.time()),
+                                        "model": modelNameToReturn,
+                                        "choices": [],
+                                        "usage": gendat["usage"]
+                                    })
+                                    self.wfile.write(f"data: {chunk_usage}\n\n".encode())
                                 self.wfile.write("data: [DONE]\n\n".encode())
                                 self.wfile.flush()
                             self.close_connection = True
                     except Exception as ex:
+                        self.close_connection = True
                         utfprint(ex,1)
                         print("Generate: The response could not be sent, maybe connection was terminated?")
                         handle.abort_generate()
@@ -9153,6 +8564,9 @@ Change Mode<br>
 
         finally:
             time.sleep(0.05)
+            with batched_cond:
+                global_memory["last_active_timestamp"] = datetime.now()
+                global_memory["active_requests"] -= 1
             if is_batchable_req:
                 with batched_cond:
                     batched_request_runner_count -= 1
@@ -9188,7 +8602,7 @@ Change Mode<br>
             self.send_header('content-type', content_type)
         return super(KcppServerRequestHandler, self).end_headers()
 
-def RunServerMultiThreaded(addr, port, server_handler):
+def RunServerMultiThreaded(addr, port, server_handler, on_ready=None):
     global exitcounter, sslvalid, global_memory, num_server_threads
     if is_port_in_use(port):
         print(f"Warning: Port {port} already appears to be in use by another program.")
@@ -9202,11 +8616,7 @@ def RunServerMultiThreaded(addr, port, server_handler):
         ipv6_sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
 
     if args.ssl and sslvalid and not args.routermode: #if routermode, ssl is already offloaded
-        import ssl
-        certpath = os.path.abspath(args.ssl[0])
-        keypath = os.path.abspath(args.ssl[1])
-        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-        context.load_cert_chain(certfile=certpath, keyfile=keypath)
+        context = create_server_ssl_context(args.ssl)
         ipv4_sock = context.wrap_socket(ipv4_sock, server_side=True)
         if ipv6_sock:
             ipv6_sock = context.wrap_socket(ipv6_sock, server_side=True)
@@ -9263,21 +8673,25 @@ def RunServerMultiThreaded(addr, port, server_handler):
             exitcounter = 999
             self.httpd.server_close()
 
+    if not ipv4_sock and not ipv6_sock:
+        raise OSError("Cannot start the server: no socket could bind.")
+
     threadArr = []
     for i in range(num_server_threads):
         threadArr.append(Thread(i))
-    while 1:
-        try:
+    try:
+        if on_ready:
+            on_ready()
+        while 1:
             time.sleep(10)
-        except (KeyboardInterrupt,SystemExit):
-            global exitcounter
-            exitcounter = 999
-            for i in range(num_server_threads):
-                try:
-                    threadArr[i].stop()
-                except Exception:
-                    continue
-            sys.exit(0)
+    except (KeyboardInterrupt,SystemExit) as exc:
+        exitcounter = 999
+        for i in range(num_server_threads):
+            try:
+                threadArr[i].stop()
+            except Exception:
+                continue
+        sys.exit(exc.code if isinstance(exc, SystemExit) else 0)
 
 # Based on https://github.com/mathgeniuszach/xdialog/blob/main/xdialog/zenity_dialogs.py - MIT license | - Expanded version by Henk717
 def zenity(filetypes=None, initialdir="", initialfile="", multiple=False, **kwargs) -> Tuple[int, object]:
@@ -9418,7 +8832,7 @@ def save_config_dict(filename, savdict, template):
         filenamestr += ".kcpps"
     if not filenamestr.endswith(".kcppt") and template:
         filenamestr += ".kcppt"
-    do_not_save = {'allow_config_onready', 'analyze', 'config', 'exportconfig', 'exporttemplate', 'testmemory', 'unpack', 'version'}
+    do_not_save = {'agent_api_key', 'agent_base_url', 'allow_config_onready', 'analyze', 'config', 'exportconfig', 'exporttemplate', 'run_bundled_agent', 'testmemory', 'unpack', 'version'} | deprecated_keys
     filtered = {k: v for k, v in savdict.items() if k not in do_not_save}
     if 'gendefaults' in filtered:
         gendefaults = parse_json_object(filtered['gendefaults'], 'gendefaults')
@@ -9510,7 +8924,7 @@ def show_gui():
         root.attributes("-alpha", 0)
         args.model_param = zentk_askopenfilename(title="Select ggml model .bin or .gguf file or .kcpps config")
         root.withdraw()
-        root.quit()
+        root.destroy()
         if args.model_param and args.model_param!="" and (args.model_param.lower().endswith('.kcpps') or args.model_param.lower().endswith('.kcppt') or args.model_param.lower().endswith('.kcpps?download=true') or args.model_param.lower().endswith('.kcppt?download=true')):
             dlfile = download_model_from_url(args.model_param,[".kcpps",".kcppt"]) # maybe download from url
             if dlfile:
@@ -9655,7 +9069,7 @@ def show_gui():
 
     tabs = ctk.CTkFrame(root, corner_radius = 0, width=windowwidth, height=windowheight-50)
     tabs.grid(row=0, stick="nsew")
-    tabnames= ["Quick Launch", "Hardware", "Context", "Loaded Files", "Network", "Horde Worker","Image Gen","Audio","Admin","Extra"]
+    tabnames= ["Quick Launch", "Hardware", "Context", "Loaded Files", "Network", "Horde Worker","Image Gen","Audio","Agent","Admin","Extra"]
     navbuttons = {}
     navbuttonframe = ctk.CTkFrame(tabs, width=int(104), height=int(tabs.cget("height")))
     navbuttonframe.grid(row=0, column=0, padx=2,pady=2)
@@ -9669,7 +9083,9 @@ def show_gui():
     # slider data
     batchsize_values = ["-1","16","32","64","128","256","512","1024","2048","4096"]
     batchsize_text = ["Don't Batch","16","32","64","128","256","512","1024","2048","4096"]
+    ubatchsize_text = ["Match Batch Size","16","32","64","128","256","512","1024","2048","4096"]
     contextsize_text = ["256", "512", "1024", "2048", "3072", "4096", "5120", "6144", "7168", "8192", "9216", "10240", "11264", "12288", "13312", "14336", "15360", "16384", "18432", "20480", "22528", "24576", "26624", "28672", "30720", "32768", "36864", "40960", "45056", "49152", "53248", "57344", "61440", "65536", "73728", "81920", "90112", "98304", "106496", "114688", "122880", "131072", "147456", "163840", "180224", "196608", "212992", "229376", "245760", "262144" ]
+    default_contextsize_index = contextsize_text.index(str(default_maxctx))
     quantkv_text = ["f16","bf16","q8_0","q5_1","q4_0"]
 
     if not any(runopts):
@@ -9691,7 +9107,6 @@ def show_gui():
     debugmode = ctk.IntVar()
     keepforeground = ctk.IntVar()
     terminalonly = ctk.IntVar()
-    pipelineparallel = ctk.IntVar(value=1)
     quietmode = ctk.IntVar(value=0)
     nocertifymode = ctk.IntVar(value=0)
 
@@ -9700,6 +9115,7 @@ def show_gui():
     quantkv_var = ctk.IntVar(value=0)
     blas_threads_var = ctk.StringVar()
     blas_size_var = ctk.IntVar()
+    ubatch_size_var = ctk.IntVar()
     autofit_var = ctk.IntVar()
     tensor_split_str_vars = ctk.StringVar(value="")
     splitmode_var = ctk.StringVar(value=splitmode_choices[0])
@@ -9724,7 +9140,6 @@ def show_gui():
     chatcompletionsadapter_var = ctk.StringVar(value="AutoGuess")
     jinjatemplate_var = ctk.StringVar()
     jinja_var = ctk.IntVar(value=0)
-    jinja_tools_var = ctk.IntVar(value=0)
     jinja_kwargs_var = ctk.StringVar()
     jinja_think_var = ctk.StringVar(value="default")
     think_effort_var = ctk.StringVar(value="default")
@@ -9759,7 +9174,7 @@ def show_gui():
 
     port_var = ctk.StringVar(value=defaultport)
     host_var = ctk.StringVar(value="")
-    multiuser_var = ctk.StringVar(value=str(multiuser_concurrent_limit))
+    queuelimit_var = ctk.StringVar(value=str(queue_concurrent_limit))
     multiplayer_var = ctk.IntVar(value=has_multiplayer)
     websearch_var = ctk.IntVar(value=0)
     horde_name_var = ctk.StringVar(value="koboldcpp")
@@ -9786,7 +9201,7 @@ def show_gui():
     sd_loramult_var = ctk.StringVar(value="1.0")
     sd_vae_var = ctk.StringVar()
     sd_audio_vae_var = ctk.StringVar()
-    sd_t5xxl_var = ctk.StringVar()
+    sd_llm_var = ctk.StringVar()
     sd_clip1_var = ctk.StringVar()
     sd_clip2_var = ctk.StringVar()
     sd_photomaker_var = ctk.StringVar()
@@ -9828,12 +9243,15 @@ def show_gui():
     embeddings_gpu_var = ctk.IntVar(value=0)
 
     admin_var = ctk.IntVar(value=0)
+    agent_var = ctk.IntVar(value=1 if args.agent else 0)
+    agent_load_var = ctk.StringVar(value=args.agentload)
     admin_dir_var = ctk.StringVar()
     baseconfig_var = ctk.StringVar()
     admin_password_var = ctk.StringVar()
     singleinstance_var = ctk.IntVar(value=0)
     router_mode_var = ctk.IntVar(value=0)
     autoswap_mode_var = ctk.IntVar(value=0)
+    autoswap_threshold_var = ctk.StringVar(value=str(default_autoswap_threshold))
     admin_unload_timeout_var = ctk.StringVar(value=str(0))
 
     nozenity_var = ctk.IntVar(value=0)
@@ -9898,16 +9316,23 @@ def show_gui():
             temp.bind("<Leave>", hide_tooltip)
         return temp
 
-    def makeslider(parent, label, options, var, row=0, width=160, height=10, set=0, tooltip=""):
-        sliderLabel = makelabel(parent, options[set], row + 1, 0, columnspan=2, padx=(width+12))
-        titleLabel = makelabel(parent, label, row,0,tooltip)
+    def makeslider(parent, label, options, var, row=0, width=160, height=12, set=0, tooltip=""):
+        slider_row = ctk.CTkFrame(parent, fg_color="transparent")
+        slider_row.grid(row=row, column=0, columnspan=2, padx=8, sticky="w")
+        titleLabel = ctk.CTkLabel(slider_row, text=label)
+        titleLabel.grid(row=0, column=0, padx=(0, 8), sticky="w")
+        if tooltip:
+            titleLabel.bind("<Enter>", lambda event: show_tooltip(event, tooltip))
+            titleLabel.bind("<Leave>", hide_tooltip)
+        sliderLabel = ctk.CTkLabel(slider_row, text=options[set])
+        sliderLabel.grid(row=0, column=2, sticky="w")
         from_ = 0
         to = len(options)-1
         def sliderUpdate(a,b,c):
             sliderLabel.configure(text = options[int(var.get())])
         var.trace_add("write", sliderUpdate)
-        slider = ctk.CTkSlider(parent, from_=from_, to=to, variable = var, width = width, height=height, border_width=5,number_of_steps=len(options) - 1)
-        slider.grid(row=row+1,  column=0, padx = 8, stick="w", columnspan=2)
+        slider = ctk.CTkSlider(slider_row, from_=from_, to=to, variable=var, width=width, height=height, border_width=5, number_of_steps=len(options) - 1)
+        slider.grid(row=0, column=1, padx=(2, 8), sticky="w")
         slider.set(set)
         return slider, sliderLabel, titleLabel
 
@@ -10125,18 +9550,22 @@ def show_gui():
                     gpu_choice_var.set("0")
                     print(f"Auto Selected HIP Backend (flag={cpusupport})\n")
                     found_new_backend = True
-            elif exitcounter < 100 and (1 in VKIsDGPU) and runmode_untouched and ("Use Vulkan" in runopts or "Use Vulkan (Old CPU)" in runopts):
+            elif exitcounter < 100 and (1 in VKIsDGPU) and runmode_untouched:
                 for i in range(0,len(VKIsDGPU)):
                     if VKIsDGPU[i]==1:
                         if cpusupport<1 and "Use Vulkan" in runopts:
                             runopts_var.set("Use Vulkan")
-                        else:
+                        elif cpusupport<2 and "Use Vulkan (Old CPU)" in runopts:
                             runopts_var.set("Use Vulkan (Old CPU)")
+                        elif "Use Vulkan (Older CPU)" in runopts:
+                            runopts_var.set("Use Vulkan (Older CPU)")
+                        else:
+                            break
                         gpu_choice_var.set(str(i))
                         print(f"Auto Selected Vulkan Backend (flag={cpusupport})\n")
                         found_new_backend = True
                         break
-            else:
+            if not found_new_backend and runmode_untouched:
                 if runopts_var.get()=="Use CPU" and cpusupport==1 and "Use CPU (Old CPU)" in runopts:
                     runopts_var.set("Use CPU (Old CPU)")
                 elif runopts_var.get()=="Use CPU" and cpusupport==2 and "Failsafe Mode (Older CPU)" in runopts:
@@ -10153,9 +9582,12 @@ def show_gui():
             if filepath.lower().endswith('.kcpps'):
                 global runmode_untouched
                 runmode_untouched = False
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                dict = json.load(f)
-                import_vars(dict)
+            try:
+                config = read_config_file(filepath)
+            except (OSError, ValueError) as ex:
+                show_gui_msgbox("Invalid Config", f"Could not load config '{filepath}': {ex}")
+                return
+            import_vars(config)
 
     def gui_changed_modelfile(*args):
         global importvars_in_progress
@@ -10403,7 +9835,7 @@ def show_gui():
         makecheckbox(quick_tab, name, properties[0], int(idx/2) + 20, idx % 2, tooltiptxt=properties[1])
 
     # context size
-    makeslider(quick_tab, "Context Size:", contextsize_text, context_var, 40, width=280, set=13, tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
+    quick_context_slider, _, _ = makeslider(quick_tab, "Context Size:", contextsize_text, context_var, 40, width=280, set=default_contextsize_index, tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
 
     # load model
     makefileentry(quick_tab, "GGUF Text Model:", "Select GGUF or GGML Model File", model_var, 50, 280, onchoosefile=on_picked_model_file,tooltiptxt="Select a GGUF or GGML model file on disk to be loaded.")
@@ -10453,7 +9885,6 @@ def show_gui():
         "Direct I/O": [usedirectio, "Use direct I/O when loading GGUF models. May improve cold-load times on some storage."],
         "Keep Foreground": [keepforeground, "Bring KoboldCpp to the foreground every time there is a new generation."],
         "CLI Terminal Only": [terminalonly, "Does not launch KoboldCpp HTTP server. Instead, enables KoboldCpp from the command line, accepting interactive console input and displaying responses to the terminal."],
-        "Pipeline Parallel": [pipelineparallel, "Enable Pipeline Parallelism for faster multigpu speeds but using more memory, only active for multigpu."],
     }
 
     for idx, (name, properties) in enumerate(hardware_boxes.items()):
@@ -10462,6 +9893,21 @@ def show_gui():
     # blas batch size
     makeslider(hardware_tab, "Batch Size:", batchsize_text, blas_size_var, 16,width=200, set=6,tooltip="How many tokens to process at once per batch.\nLarger values use more memory.")
     blas_size_var.trace_add("write", changed_gpulayers_estimate)
+    ubatch_slider, _, _ = makeslider(hardware_tab, "Physical Batch Size:", ubatchsize_text, ubatch_size_var, 17,width=200, set=0,tooltip="How many tokens to process at once in each physical batch.\nThe default matches Batch Size. Smaller values may use less memory.")
+
+    def update_ubatch_limit(*unused):
+        batch_index = blas_size_var.get()
+        # A batch size of -1 disables batching, so only the default is applicable.
+        ubatch_slider.configure(to=max(1, batch_index), number_of_steps=max(1, batch_index), state="normal" if batch_index else "disabled")
+        ubatch_slider.set(min(ubatch_size_var.get(), batch_index))
+
+    def clamp_ubatch_size(*unused):
+        if ubatch_size_var.get() > blas_size_var.get():
+            ubatch_slider.set(blas_size_var.get())
+
+    blas_size_var.trace_add("write", update_ubatch_limit)
+    ubatch_size_var.trace_add("write", clamp_ubatch_size)
+    update_ubatch_limit()
 
     makecheckbox(hardware_tab, "Use FlashAttention", flashattention_var, 100, command=toggleflashattn,  tooltiptxt="Enable flash attention for GGUF models.")
 
@@ -10481,7 +9927,7 @@ def show_gui():
     cacheslots_entry, cacheslots_label = makelabelentry(context_tab, "CacheSlots:", smartcacheslots_var, row=5, padx=(300), singleline=True, tooltip="Number of slots for smartcache",labelpadx=(220))
 
     # context size
-    makeslider(context_tab, "Context Size:",contextsize_text, context_var, 18, width=280, set=13,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
+    context_slider, _, _ = makeslider(context_tab, "Context Size:",contextsize_text, context_var, 18, width=280, set=default_contextsize_index,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
     context_var.trace_add("write", changed_gpulayers_estimate)
     makelabelentry(context_tab, "Default Gen Amt:", defaultgenamt_var, row=20, padx=(120), singleline=True, tooltip="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.")
     makelabelentry(context_tab, "Prompt Limit:", genlimit_var, row=20, padx=(300), singleline=True, tooltip="If set, restricts max output tokens to this limit regardless of API request. Set to 0 to disable.",labelpadx=(210))
@@ -10513,7 +9959,7 @@ def show_gui():
     manualropebox = makecheckbox(context_tab, "Manual Rope Scale", variable=manualrope_var, row=22, command=togglerope, padx=(200), tooltiptxt="Set RoPE base and scale manually.")
 
     makecheckbox(context_tab, "Custom RoPE Config", variable=customrope_var, row=22, command=togglerope,tooltiptxt="Override the default RoPE configuration with custom RoPE scaling.")
-    noqkvlabel = makelabel(context_tab,"(Note: QuantKV works best with flash attention)",30,0,"Only K cache can be quantized, and performance can suffer.\nIn some cases, it might even use more VRAM when doing a full offload.",padx=160)
+    noqkvlabel = makelabel(context_tab,"(Note: QuantKV works best with flash attention)",31,0,"Only K cache can be quantized, and performance can suffer.\nIn some cases, it might even use more VRAM when doing a full offload.")
     noqkvlabel.configure(text_color="#ff5555")
     qkvslider,qkvlabel,qkvtitle = makeslider(context_tab, "Quantize KV Cache:", quantkv_text, quantkv_var, 30, set=0,tooltip="Enable quantization of KV cache.\nRequires Flash Attention for full effect, otherwise only K cache is quantized.")
     quantkv_var.trace_add("write", toggleflashattn)
@@ -10521,15 +9967,11 @@ def show_gui():
     makecheckbox(context_tab, "Enable Guidance", enableguidance_var, 43,padx=(140), tooltiptxt="Enables the use of Classifier-Free-Guidance, which allows the use of negative prompts. Has performance and memory impact.")
     def togglejinja(a,b,c):
         if jinja_var.get()==1:
-            jinja_tools_var.set(1)
-            jinjatoolsbox.grid()
             jinjakwargsbox.grid()
             jinjakwargsboxlbl.grid()
             jinjathinkbox.grid()
             jinjathinklbl.grid()
         else:
-            jinja_tools_var.set(0)
-            jinjatoolsbox.grid_remove()
             jinjakwargsbox.grid_remove()
             jinjakwargsboxlbl.grid_remove()
             jinjathinkbox.grid_remove()
@@ -10575,10 +10017,9 @@ def show_gui():
         curr = (curr if curr else {})
         if "reasoning_effort" in curr and curr["reasoning_effort"]:
             think_effort_var.set(curr["reasoning_effort"])
-    makecheckbox(context_tab, "Use Jinja", jinja_var, row=45, command=togglejinja, tooltiptxt="Enables using jinja chat template formatting for chat completions endpoint. Other endpoints are unaffected.")
-    jinjatoolsbox = makecheckbox(context_tab, "Jinja for Tools", jinja_tools_var, row=45 ,padx=(140), tooltiptxt="Allows jinja even with tool calls. If unchecked, jinja will be disabled when tools are used.")
+    makecheckbox(context_tab, "Use Jinja", jinja_var, row=45, command=togglejinja, tooltiptxt="Enables Jinja chat template formatting, including tool calls. Falls back to universal formatting if Jinja fails.")
     jinja_think_choices = ['default', 'true', 'false']
-    jinjathinkbox, jinjathinklbl = makelabelcombobox(context_tab, "Jinja Thinking:", jinja_think_var, 45, command=togglejinjathink,labelpadx=(280), padx=370, width=100, tooltiptxt="Tries to enable or disable thinking in Jinja mode. This is a shortcut to setting Jinja Kwargs directly.", values=jinja_think_choices)
+    jinjathinkbox, jinjathinklbl = makelabelcombobox(context_tab, "Jinja Thinking:", jinja_think_var, 45, command=togglejinjathink,labelpadx=(210), padx=300, width=100, tooltiptxt="Tries to enable or disable thinking in Jinja mode. This is a shortcut to setting Jinja Kwargs directly.", values=jinja_think_choices)
     jinjakwargsbox,jinjakwargsboxlbl = makelabelentry(context_tab, "Jinja Kwargs:", jinja_kwargs_var, row=47, width=160, labelpadx=(210), padx=(300), singleline=True, tooltip='Set additiona fields for Jinja JSON template parser, must be a valid json object.\nSpecified as JSON fields: {"KEY1":"VALUE1", "KEY2":"VALUE2"...}')
     think_effort_choices = ['default', 'xhigh', 'high', 'medium', 'low', 'minimal', 'none']
     makelabelcombobox(context_tab, "Think Effort:", think_effort_var, 47, command=togglethinkeffort, padx=84, width=100, tooltiptxt="Set the default thinking effort, can be overridden by the API.", values=think_effort_choices)
@@ -10675,11 +10116,11 @@ def show_gui():
     makefileentry(network_tab, "SSL Key:", "Select Unencrypted SSL key.pem file", ssl_key_var, 22, width=200, filetypes=[("*.pem *.crt *.key", "*.pem *.key")], singlerow=True, tooltiptxt="Select your unencrypted .pem SSL key file for https.\nCan be generated with OpenSSL.")
     makelabelentry(network_tab, "Password: ", password_var, 24, 200, padx=(100), singleline=True, tooltip="Enter a password required to use this instance.\nThis key will be required for all text endpoints.\nImage endpoints are not secured.")
 
-    makelabelentry(network_tab, "Multiuser Queue:", multiuser_var, row=30, width=50, padx=(120), singleline=True, tooltip="Maximum queued incoming requests.")
+    makelabelentry(network_tab, "Queue Limit:", queuelimit_var, row=30, width=50, padx=(120), singleline=True, tooltip="Maximum queued incoming requests.")
     makelabelentry(network_tab, "Max Req. Size (MB):", maxrequestsize_var, row=30, width=50, padx=(340), singleline=True, tooltip="Specify a max request payload size. Any requests to the server larger than this size will be dropped. Do not change if unsure.",labelpadx=210)
-    makelabelentry(network_tab, "IP Rate Limiter (s):", ratelimit_var, row=34, width=50, padx=(120), singleline=True, tooltip="Rate limits each IP to allow a new request once per X seconds. Do not change if unsure.")
+    makelabelentry(network_tab, "Parallel Requests:", parallel_requests_var, row=34, width=50, padx=(120), singleline=True, tooltip="Allows multiple requests to be batched and executed in parallel. Only works for basic text generation requests. Experimental!")
     makelabelentry(network_tab, "Request Timeout (s):", reqtimeout_var, row=34, width=50, padx=(340), singleline=True, tooltip="Timeout in seconds for HTTP requests",labelpadx=210)
-    makelabelentry(network_tab, "Parallel Requests:", parallel_requests_var, row=38, width=50, padx=(120), singleline=True, tooltip="Allows multiple requests to be batched and executed in parallel. Only works for basic text generation requests. Experimental!")
+    makelabelentry(network_tab, "IP Rate Limiter (s):", ratelimit_var, row=38, width=50, padx=(120), singleline=True, tooltip="Rate limits each IP to allow a new request once per X seconds. Do not change if unsure.")
 
 
     def togglerpcmode(a,b,c):
@@ -10788,9 +10229,9 @@ def show_gui():
     imglora4,imglora5 = makelabelentry(images_tab, "Multiplier:" , sd_loramult_var, 20, 50,padx=(390),singleline=True,tooltip="What mutiplier value to apply the SD LoRA with.",labelpadx=(330))
     imglora6,imglora7,imglora8 = makefileentry(images_tab, "LoRA Dir:", "Select directory for runtime lora triggers",sd_lora_var, 20, width=280, singlerow=True, dialog_type=2,tooltiptxt="Select directory containing LoRAs that can be used at runtime.\nSyntax is <lora:name:weight>")
 
-    makefileentry(images_tab, "T5-XXL File:", "Select T5-XXL model file (SD3, Flux, WAN)",sd_t5xxl_var, 24, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select a .safetensors t5xxl file to be loaded.")
-    makefileentry(images_tab, "Clip-1 File:", "Select First Clip model file (Clip-L for SD3 or Flux, or other vision encoder)",sd_clip1_var, 26, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select a .safetensors Clip-1 file to be loaded.\nThis is Clip-L for SD3 and Flux, Clip Vision for WAN, and Qwen2.5VL for QwenImage")
-    makefileentry(images_tab, "Clip-2 File:", "Select Second Clip model file (Clip-G for SD3)",sd_clip2_var, 28, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select a .safetensors Clip-2 file to be loaded.\nThis is Clip-G for SD3")
+    makefileentry(images_tab, "Image LLM:", "Select image text encoder or LLM model file",sd_llm_var, 24, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select a .safetensors or .gguf text encoder or LLM file for image generation.")
+    makefileentry(images_tab, "Clip-1 File:", "Select First Clip model file",sd_clip1_var, 26, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="Select a .safetensors Clip-1 file to be loaded.")
+    makefileentry(images_tab, "Clip-2 File:", "Select Second Clip model file, or tokenizer",sd_clip2_var, 28, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf *.json","*.safetensors *.gguf *.json")],tooltiptxt="Select a .safetensors Clip-2 file to be loaded, or tokenizer json.")
     makefileentry(images_tab, "PhotoMaker:", "Select Optional PhotoMaker model file (SDXL)",sd_photomaker_var, 30, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf","*.safetensors *.gguf")],tooltiptxt="PhotoMaker is a model that allows face cloning.\nSelect a .safetensors PhotoMaker file to be loaded (SDXL only).")
     makefileentry(images_tab, "Upscaler:", "Select Optional Upscaling model file (ESRGAN)",sd_upscaler_var, 32, width=280, singlerow=True, filetypes=[("*.safetensors *.gguf *.pth","*.safetensors *.gguf *.pth")],tooltiptxt="Select an upscaler model file.\nCurrently only ESRGAN is supported.")
 
@@ -10838,6 +10279,10 @@ def show_gui():
     makefileentry(audio_tab, "MusicVAE:", "Select music VAE model", musicvae_var, 36, width=280, singlerow=True, dialog_type=0, tooltiptxt="Select music VAE model")
     makecheckbox(audio_tab, "Music Low VRAM", musiclowvram_var, 38, 0,tooltiptxt="Unload music models when not in use.")
 
+    agent_tab = tabcontent["Agent"]
+    makecheckbox(agent_tab, "Launch KoboldCpp Agent", agent_var, 1, 0, tooltiptxt="Open the local tool-using agent in a new terminal after the KoboldCpp API is ready.")
+    makefileentry(agent_tab, "Load Agent Session:", "Select a KoboldCpp Agent JSON save file", agent_load_var, 3, width=280, filetypes=[("JSON save file", "*.json")], tooltiptxt="Load the agent's conversation, working directory, and runtime settings from a JSON save file.")
+
     admin_tab = tabcontent["Admin"]
     def toggleadmin(a,b,c):
         if admin_var.get()==1 and admin_dir_var.get()=="":
@@ -10857,6 +10302,15 @@ def show_gui():
             autoswap_mode_box.grid()
         else:
             autoswap_mode_box.grid_remove()
+        toggleautoswap(1,1,1)
+
+    def toggleautoswap(a,b,c):
+        if autoswap_mode_var.get()==1 and router_mode_var.get()==1 and admin_var.get()==1:
+            autoswap_threshold_entry.grid()
+            autoswap_threshold_label.grid()
+        else:
+            autoswap_threshold_entry.grid_remove()
+            autoswap_threshold_label.grid_remove()
 
     makecheckbox(admin_tab, "Enable Model Administration", admin_var, 1, 0, command=toggleadmin,tooltiptxt="Enable a admin server, allowing you to remotely relaunch and swap models and configs.")
     makelabelentry(admin_tab, "Admin Password:" , admin_password_var, 3, 150,padx=(120),singleline=True,tooltip="Require a password to access admin functions. You are strongly advised to use one for publically accessible instances!")
@@ -10864,8 +10318,9 @@ def show_gui():
     makefileentry(admin_tab, "Base config .kcpps (Optional, for reloading):", "", baseconfig_var, 7, width=280, dialog_type=0, tooltiptxt="Specify a base .kcpps config to apply, if no custom base config is selected during a model swap.")
     makelabelentry(admin_tab, "Auto Unload Timeout:" , admin_unload_timeout_var, 17, 70,padx=(150),singleline=True,tooltip="Set an idle timeout in seconds after which KoboldCpp will automatically unload the current model.")
     makecheckbox(admin_tab, "SingleInstance Mode", singleinstance_var, 19, 0,tooltiptxt="Allows this server to be shut down by another KoboldCpp instance with singleinstance starting on the same port.")
-    router_mode_box = makecheckbox(admin_tab, "Router Mode", router_mode_var, 21, 0, command=togglerouter, tooltiptxt="Router mode uses a reverse proxy router, allowing you to easily hotswap models and configs within a single request. Requires admin mode.")
-    autoswap_mode_box = makecheckbox(admin_tab, "Autoswap Mode", autoswap_mode_var, 23, 0,tooltiptxt="Autoswap mode builds on router mode to allow switching of model types within the same config automatically. Requires admin mode and router mode. All models desired must be defined within the same config.")
+    router_mode_box = makecheckbox(admin_tab, "Router Mode", router_mode_var, 31, 0, command=togglerouter, tooltiptxt="Router mode uses a reverse proxy router, allowing you to easily hotswap models and configs within a single request. Requires admin mode.")
+    autoswap_mode_box = makecheckbox(admin_tab, "Autoswap Mode", autoswap_mode_var, 33, 0, command=toggleautoswap, tooltiptxt="Autoswap mode builds on router mode to allow switching of model types within the same config automatically. Requires admin mode and router mode. All models desired must be defined within the same config.")
+    autoswap_threshold_entry, autoswap_threshold_label = makelabelentry(admin_tab, "Autoswap Threshold (MB):", autoswap_threshold_var, 35, 70, padx=(180), singleline=True, tooltip="Model families at or below this combined file size remain loaded as sidecars. Only one model family above the threshold is loaded at a time.")
 
     def kcpp_export_template():
         nonlocal kcpp_exporting_template
@@ -10987,7 +10442,6 @@ def show_gui():
         args.remotetunnel = remotetunnel_var.get()==1
         args.foreground = keepforeground.get()==1
         args.cli = terminalonly.get()==1
-        args.nopipelineparallel = pipelineparallel.get()==0
         args.quiet = quietmode.get()==1
         args.nocertify = nocertifymode.get()==1
         args.nomodel = nomodel.get()==1
@@ -11053,6 +10507,7 @@ def show_gui():
         args.blasthreads = None if blas_threads_var.get()=="" else int(blas_threads_var.get())
         args.device = deviceoverride_var.get()
         args.batchsize = int(batchsize_values[int(blas_size_var.get())])
+        args.ubatchsize = int(batchsize_values[int(ubatch_size_var.get())])
         args.autofit = autofit_var.get() == 1
         args.contextsize = int(contextsize_text[context_var.get()])
         if customrope_var.get()==1:
@@ -11072,7 +10527,6 @@ def show_gui():
         args.genlimit = int(genlimit_var.get()) if genlimit_var.get()!="" else 0
         args.nobostoken = (nobostoken_var.get()==1)
         args.jinja = (jinja_var.get()==1)
-        args.jinja_tools = (jinja_tools_var.get()==1)
         args.jinja_kwargs = jinja_kwargs_var.get()  if jinja_kwargs_var.get() != "" else ""
         args.jinjatemplate = jinjatemplate_var.get() if jinjatemplate_var.get() != "" else ""
         args.enableguidance = (enableguidance_var.get()==1)
@@ -11124,7 +10578,7 @@ def show_gui():
         args.port_param = defaultport if port_var.get()=="" else int(port_var.get())
         args.port = args.port_param
         args.host = host_var.get()
-        args.multiuser = int(multiuser_var.get()) if multiuser_var.get()!="" else multiuser_concurrent_limit
+        args.queuelimit = int(queuelimit_var.get()) if queuelimit_var.get()!="" else queue_concurrent_limit
         args.multiplayer = (multiplayer_var.get()==1)
         args.websearch = (websearch_var.get()==1)
         args.maxrequestsize = int(maxrequestsize_var.get()) if maxrequestsize_var.get()!="" else 32
@@ -11168,7 +10622,7 @@ def show_gui():
                 args.sdvae = sd_vae_var.get()
         args.sdaudiovae = sd_audio_vae_var.get() if sd_audio_vae_var.get() != "" else ""
         args.sdconvdirect = sd_convdirect_option(sd_convdirect_var.get())
-        args.sdt5xxl = sd_t5xxl_var.get() if sd_t5xxl_var.get() != "" else ""
+        args.sdllm = sd_llm_var.get() if sd_llm_var.get() != "" else ""
         args.sdclip1 = sd_clip1_var.get() if sd_clip1_var.get() != "" else ""
         args.sdclip2 = sd_clip2_var.get() if sd_clip2_var.get() != "" else ""
         args.sdphotomaker = sd_photomaker_var.get() if sd_photomaker_var.get() != "" else ""
@@ -11179,6 +10633,7 @@ def show_gui():
         args.sdloramult = sanitize_lora_multipliers(re.split(r"[ |]+", sd_loramult_var.get()))
         args.sdmaingpu = sd_resolve_device(sd_main_gpu_var.get())
         args.gendefaults = gen_defaults_var.get()  if gen_defaults_var.get() != "" else ""
+        args.reasoningeffort = "default" # already incorporated into the editable generation defaults
         args.gendefaultsoverwrite = (gen_defaults_overwrite_var.get()==1)
         args.whispermodel = whisper_model_var.get() if whisper_model_var.get() != "" else ""
         args.embeddingsmodel = embeddings_model_var.get()  if embeddings_model_var.get() != "" else ""
@@ -11204,11 +10659,14 @@ def show_gui():
         args.musiclowvram = musiclowvram_var.get()==1
 
         args.admin = (admin_var.get()==1 and not args.cli)
+        args.agent = agent_var.get()==1
+        args.agentload = agent_load_var.get()
         args.admindir = admin_dir_var.get()
         args.adminpassword = admin_password_var.get()
         args.singleinstance = (singleinstance_var.get()==1)
         args.routermode = (router_mode_var.get()==1 and admin_var.get()==1)
         args.autoswapmode = (autoswap_mode_var.get()==1 and router_mode_var.get()==1 and admin_var.get()==1)
+        args.autoswapthreshold = (default_autoswap_threshold if autoswap_threshold_var.get()=="" else max(0, int(autoswap_threshold_var.get())))
         args.baseconfig = baseconfig_var.get()
         args.adminunloadtimeout = (0 if admin_unload_timeout_var.get()=="" else int(admin_unload_timeout_var.get()))
         args.showgui = False #prevent showgui from leaking into configs, its cli only
@@ -11238,7 +10696,6 @@ def show_gui():
         remotetunnel_var.set(1 if "remotetunnel" in mydict and mydict["remotetunnel"] else 0)
         keepforeground.set(1 if "foreground" in mydict and mydict["foreground"] else 0)
         terminalonly.set(1 if "cli" in mydict and mydict["cli"] else 0)
-        pipelineparallel.set(0 if "nopipelineparallel" in mydict and mydict["nopipelineparallel"] else 1)
         quietmode.set(1 if "quiet" in mydict and mydict["quiet"] else 0)
         nocertifymode.set(1 if "nocertify" in mydict and mydict["nocertify"] else 0)
         nomodel.set(1 if "nomodel" in mydict and mydict["nomodel"] else 0)
@@ -11324,7 +10781,13 @@ def show_gui():
         else:
             deviceoverride_var.set("")
         if "contextsize" in mydict and mydict["contextsize"]:
-            context_var.set(contextsize_text.index(str(mydict["contextsize"])))
+            contextsize = str(mydict["contextsize"])
+            if contextsize not in contextsize_text:
+                contextsize_text.append(contextsize)
+                contextsize_text.sort(key=int)
+                for slider in (quick_context_slider, context_slider):
+                    slider.configure(to=len(contextsize_text)-1, number_of_steps=len(contextsize_text)-1)
+            context_var.set(contextsize_text.index(contextsize))
         if "overridenativecontext" in mydict and mydict["overridenativecontext"]>0:
             customrope_var.set(1)
             manualrope_var.set(0)
@@ -11357,7 +10820,6 @@ def show_gui():
             genlimit_var.set(str(0))
         nobostoken_var.set(mydict["nobostoken"] if ("nobostoken" in mydict) else 0)
         jinja_var.set(mydict["jinja"] if ("jinja" in mydict) else 0)
-        jinja_tools_var.set(mydict["jinja_tools"] if ("jinja_tools" in mydict) else 0)
         jinja_think_var.set("default")
         think_effort_var.set("default")
         jinja_kwargs = (mydict["jinja_kwargs"] if ("jinja_kwargs" in mydict and mydict["jinja_kwargs"]) else "")
@@ -11381,6 +10843,10 @@ def show_gui():
 
         if "batchsize" in mydict and mydict["batchsize"]:
             blas_size_var.set(batchsize_values.index(str(mydict["batchsize"])))
+        if "ubatchsize" in mydict and mydict["ubatchsize"] is not None:
+            ubatch_size_var.set(batchsize_values.index(str(mydict["ubatchsize"])))
+        else:
+            ubatch_size_var.set(0)
 
         autofit_var.set(1 if "autofit" in mydict and mydict["autofit"] else 0)
         model_var.set(mydict["model_param"] if ("model_param" in mydict and mydict["model_param"]) else "")
@@ -11433,7 +10899,7 @@ def show_gui():
         chatcompletionsadapter_var.set(mydict["chatcompletionsadapter"] if ("chatcompletionsadapter" in mydict and mydict["chatcompletionsadapter"]) else "")
         port_var.set(mydict["port_param"] if ("port_param" in mydict and mydict["port_param"]) else defaultport)
         host_var.set(mydict["host"] if ("host" in mydict and mydict["host"]) else "")
-        multiuser_var.set(mydict["multiuser"] if ("multiuser" in mydict and mydict["multiuser"]>1) else multiuser_concurrent_limit)
+        queuelimit_var.set(mydict["queuelimit"] if "queuelimit" in mydict else queue_concurrent_limit)
         multiplayer_var.set(mydict["multiplayer"] if ("multiplayer" in mydict) else 0)
         websearch_var.set(mydict["websearch"] if ("websearch" in mydict) else 0)
         download_dir_var.set(mydict["downloaddir"] if ("downloaddir" in mydict and mydict["downloaddir"]) else "")
@@ -11466,7 +10932,7 @@ def show_gui():
         sd_convdirect_var.set(sd_convdirect_option(mydict.get("sdconvdirect")))
         sd_vae_var.set(mydict["sdvae"] if ("sdvae" in mydict and mydict["sdvae"]) else "")
         sd_audio_vae_var.set(mydict["sdaudiovae"] if ("sdaudiovae" in mydict and mydict["sdaudiovae"]) else "")
-        sd_t5xxl_var.set(mydict["sdt5xxl"] if ("sdt5xxl" in mydict and mydict["sdt5xxl"]) else "")
+        sd_llm_var.set(mydict["sdllm"] if ("sdllm" in mydict and mydict["sdllm"]) else "")
         sd_clip1_var.set(mydict["sdclip1"] if ("sdclip1" in mydict and mydict["sdclip1"]) else "")
         sd_clip2_var.set(mydict["sdclip2"] if ("sdclip2" in mydict and mydict["sdclip2"]) else "")
         sd_photomaker_var.set(mydict["sdphotomaker"] if ("sdphotomaker" in mydict and mydict["sdphotomaker"]) else "")
@@ -11483,13 +10949,9 @@ def show_gui():
             sd_runtime_loras_var.set(0)
         sd_vram_limit_var.set(str(mydict["sdvramlimit"]) if ("sdvramlimit" in mydict and mydict["sdvramlimit"]) else "")
 
-        gendefaults = (mydict["gendefaults"] if ("gendefaults" in mydict and mydict["gendefaults"]) else "")
+        gendefaults = get_reasoning_defaults(mydict)
         if isinstance(gendefaults, type({})):
             gendefaults = json.dumps(gendefaults)
-        if "reasoningeffort" in mydict and mydict["reasoningeffort"] and mydict["reasoningeffort"]!="default":
-            gendefaults = (json.loads(gendefaults) if gendefaults else {})
-            gendefaults["reasoning_effort"] = mydict["reasoningeffort"]
-            gendefaults = json.dumps(gendefaults) if gendefaults else ""
         gen_defaults_var.set(gendefaults)
         gen_defaults_overwrite_var.set(1 if "gendefaultsoverwrite" in mydict and mydict["gendefaultsoverwrite"] else 0)
 
@@ -11513,8 +10975,11 @@ def show_gui():
         embeddings_gpu_var.set(mydict["embeddingsgpu"] if ("embeddingsgpu" in mydict) else 0)
 
         admin_var.set(mydict["admin"] if ("admin" in mydict) else 0)
+        agent_var.set(mydict["agent"] if ("agent" in mydict) else 0)
+        agent_load_var.set(mydict["agentload"] if ("agentload" in mydict and mydict["agentload"]) else "")
         router_mode_var.set(mydict["routermode"] if ("routermode" in mydict) else 0)
         autoswap_mode_var.set(mydict["autoswapmode"] if ("autoswapmode" in mydict) else 0)
+        autoswap_threshold_var.set(mydict["autoswapthreshold"] if ("autoswapthreshold" in mydict) else default_autoswap_threshold)
         admin_dir_var.set(mydict["admindir"] if ("admindir" in mydict and mydict["admindir"]) else "")
         baseconfig_var.set(mydict["baseconfig"] if ("baseconfig" in mydict and mydict["baseconfig"]) else "")
         admin_password_var.set(mydict["adminpassword"] if ("adminpassword" in mydict and mydict["adminpassword"]) else "")
@@ -11553,9 +11018,12 @@ def show_gui():
                 print("You can try using the legacy filepicker instead (in Extra).")
             return
         runmode_untouched = False
-        with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
-            dict = json.load(f)
-            import_vars(dict)
+        try:
+            config = read_config_file(filename)
+        except (OSError, ValueError) as ex:
+            show_gui_msgbox("Invalid Config", f"Could not load config '{filename}': {ex}")
+            return
+        import_vars(config)
         pass
 
     def display_help():
@@ -11626,7 +11094,7 @@ def show_gui():
         ctk.CTkButton(popup, text="Load Template", command=load_easy_template).pack(pady=5)
         newbdesc1 = ctk.CTkLabel(popup, text="LowSpec = Recommend 6GB VRAM\nMidSpec = Recommend 12GB VRAM\nHighSpec = Recommend 24GB VRAM")
         newbdesc1.pack(pady=(10, 0))
-        newbdesc2 = ctk.CTkLabel(popup, text="Everything = All Features         Text = Text Generation\nImages = Image Generation         Vision = Image Recognition\nVoice = Speech Generation         Audio = Speech Recognition")
+        newbdesc2 = ctk.CTkLabel(popup, text="Quickly get started with basic templates.\nSelect your desired use case.")
         newbdesc2.pack(pady=(10, 0))
         commdesc = ctk.CTkLabel(popup, text="Templates here are subject to change from time to time.\n\nFound a broken template? Want to contribute one?\nVisit https://huggingface.co/koboldcpp/popular-templates/")
         commdesc.pack_forget()
@@ -11676,6 +11144,10 @@ def show_gui():
         # processing vars
         kcpp_exporting_template = False
         export_vars()
+        # Cancel pending callbacks before destroy deletes their Tcl commands.
+        for after_id in root.tk.splitlist(root.tk.call("after", "info")):
+            root.tk.call("after", "cancel", after_id)
+        root.destroy()
 
         if not has_valid_model():
             exitcounter = 999
@@ -11716,7 +11188,7 @@ def show_gui_yesnobox(title,message,icon='error'):
 def print_with_time(txt):
     print(f"{datetime.now().strftime('[%H:%M:%S]')} " + txt, flush=True)
 
-def make_url_request(url, data, method='POST', headers={}, timeout=300):
+def make_url_request(url, data, method='POST', headers={}, timeout=600):
     global nocertify
     try:
         request = None
@@ -11956,14 +11428,18 @@ def convert_invalid_args(args):
         dict["port"] = dict["port_param"]
     if "sdnotile" in dict and "sdtiledvae" not in dict:
         dict["sdtiledvae"] = (0 if (dict["sdnotile"]) else default_vae_tile_threshold) # convert legacy option
+    if "sdt5xxl" in dict and dict["sdt5xxl"] and not dict.get("sdllm"):
+        dict["sdllm"] = dict["sdt5xxl"] # convert legacy option
     if 'sdquant' in dict and type(dict['sdquant']) is bool:
         dict['sdquant'] = 2 if dict['sdquant'] else 0
     if "sdclipl" in dict and "sdclip1" not in dict:
         dict["sdclip1"] = dict["sdclipl"]
     if "sdclipg" in dict and "sdclip2" not in dict:
         dict["sdclip2"] = dict["sdclipg"]
-    if "jinja_tools" in dict and dict["jinja_tools"]:
-        dict["jinja"] = True
+    if "jinja_tools" in dict:
+        if dict["jinja_tools"]:
+            dict["jinja"] = True
+        del dict["jinja_tools"]
     if "jinjathink" in dict and dict["jinjathink"] and dict["jinjathink"]!="default":
         dict["jinja"] = True
         jinja_kwargs = None
@@ -12004,35 +11480,35 @@ def setuptunnel(global_memory, has_sd, has_music):
     try:
         global sslvalid
         httpsaffix = ("https" if sslvalid else "http")
-        ssladd = (" --no-tls-verify" if sslvalid else "")
+        tunnelbinary = None
+
         def run_tunnel():
             tunnelproc = None
             tunneloutput = ""
             tunnelrawlog = ""
             time.sleep(0.2)
-            tunnelbinary = ""
+
             if os.name == 'nt':
                 print("Starting Cloudflare Tunnel for Windows, please wait...", flush=True)
-                tunnelbinary = "cloudflared.exe"
-            elif sys.platform=="darwin":
+            elif sys.platform == "darwin":
                 print("Starting Cloudflare Tunnel for MacOS, please wait...", flush=True)
-                tunnelbinary = "./cloudflared"
             elif sys.platform == "linux" and platform.machine().lower() == "aarch64":
                 print("Starting Cloudflare Tunnel for ARM64 Linux, please wait...", flush=True)
-                tunnelbinary = "./cloudflared-linux-arm64"
             else:
                 print("Starting Cloudflare Tunnel for Linux, please wait...", flush=True)
-                tunnelbinary = "./cloudflared-linux-amd64"
 
-            tunnelproc = None
             displayedport = (args.port if not args.proxy_port else args.proxy_port)
+            tunnelcmd = [tunnelbinary, "tunnel", "--url", f"{httpsaffix}://localhost:{int(displayedport)}"]
+            if sslvalid:
+                tunnelcmd.append("--no-tls-verify")
+
             if sys.platform == "linux":
                 clean_env = os.environ.copy()
                 clean_env.pop("LD_LIBRARY_PATH", None)
                 clean_env["PATH"] = "/usr/bin:/bin"
-                tunnelproc = subprocess.Popen(f"{tunnelbinary} tunnel --url {httpsaffix}://localhost:{int(displayedport)}{ssladd}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=clean_env)
+                tunnelproc = subprocess.Popen(tunnelcmd, text=True, encoding='utf-8', stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=clean_env)
             else:
-                tunnelproc = subprocess.Popen(f"{tunnelbinary} tunnel --url {httpsaffix}://localhost:{int(displayedport)}{ssladd}", text=True, encoding='utf-8', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                tunnelproc = subprocess.Popen(tunnelcmd, text=True, encoding='utf-8', stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             time.sleep(10)
 
             def tunnel_reader():
@@ -12069,17 +11545,31 @@ def setuptunnel(global_memory, has_sd, has_music):
             tunnelproc.wait()
 
         if os.name == 'nt':
-            downloader_internal("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe", "cloudflared.exe", True, 500000)
-        elif sys.platform=="darwin":
-            downloader_internal("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz", "cloudflared-darwin-amd64.tgz", True, 500000)
-            subprocess.run("tar -xzf cloudflared-darwin-amd64.tgz", shell=True)
-            subprocess.run("chmod +x 'cloudflared'", shell=True)
+            tunnelbinary = downloader_internal("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe", "cloudflared.exe", True, 500000)
+        elif sys.platform == "darwin":
+            if platform.machine().lower() in ("arm64", "aarch64"):
+                archive = downloader_internal("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz", "cloudflared-darwin-arm64.tgz", True, 500000)
+            else:
+                archive = downloader_internal("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz", "cloudflared-darwin-amd64.tgz", True, 500000)
+            if not archive:
+                raise RuntimeError("Could not download cloudflared")
+            tunnel_dir = os.path.dirname(os.path.abspath(archive))
+            subprocess.run(["tar", "-xzf", archive, "-C", tunnel_dir], check=True)
+            tunnelbinary = os.path.join(tunnel_dir, "cloudflared")
+            subprocess.run(["chmod", "+x", tunnelbinary], check=True)
         elif sys.platform == "linux" and platform.machine().lower() == "aarch64":
-            downloader_internal("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64", "cloudflared-linux-arm64", True, 500000)
-            subprocess.run("chmod +x 'cloudflared-linux-arm64'", shell=True)
+            tunnelbinary = downloader_internal("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64", "cloudflared-linux-arm64", True, 500000)
+            if tunnelbinary:
+                subprocess.run(["chmod", "+x", tunnelbinary], check=True)
         else:
-            downloader_internal("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64", "cloudflared-linux-amd64", True, 500000)
-            subprocess.run("chmod +x 'cloudflared-linux-amd64'", shell=True)
+            tunnelbinary = downloader_internal("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64", "cloudflared-linux-amd64", True, 500000)
+            if tunnelbinary:
+                subprocess.run(["chmod", "+x", tunnelbinary], check=True)
+
+        if not tunnelbinary:
+            raise RuntimeError("Could not download cloudflared")
+
+        tunnelbinary = os.path.abspath(tunnelbinary)
         print("Attempting to start tunnel thread...", flush=True)
         tunnel_thread = threading.Thread(target=run_tunnel)
         tunnel_thread.start()
@@ -12121,31 +11611,85 @@ def reload_new_config(filename,defaultargs,overwrite_blank=False): #for changing
         except Exception as e:
             print(f"Reload New Config Failed: {e}")
 
-def load_config_cli(filename):
-    print(f"Loading configuration file {filename}...")
+def read_config_file(filename):
     with open(filename, 'r', encoding='utf-8', errors='ignore') as f:
         config = json.load(f)
-        config = convert_invalid_args(config)
-        if "onready" in config and not getattr(args, "allow_config_onready", False):
-            config["onready"] = "" #do not allow onready commands from config
-        if "allow_config_onready" in config:
-            del config["allow_config_onready"] #do not allow configs to opt into onready commands
-        args.istemplate = False
-        raw_args = (sys.argv[1:]) #a lousy hack to allow for overriding kcpps
-        # special: overriding model applies to model_param too
-        if "--model" in raw_args:
-            raw_args.append("--model_param")
-        for key, value in config.items():
-            if f"--{key}" in raw_args:
-                if key!="config":
-                    print(f"Overriding Config Value: {key}")
-            else:
-                setattr(args, key, value)
-        if args.istemplate:
-            print("\nA .kcppt template was selected from CLI...")
-            if (args.usecuda is None) and (args.usevulkan is None):
-                print("Automatically selecting your backend...")
-                auto_set_backend_cli()
+    if not isinstance(config, dict):
+        raise ValueError("Config must contain a JSON object.")
+    return config
+
+def get_cli_arg_overrides(parser, argv=None):
+    # Reuse argparse's alias/value handling, omitting arguments that were not supplied.
+    explicit_parser = copy.deepcopy(parser)
+    for action in explicit_parser._actions:
+        action.default = None
+    explicit = {key: value for key, value in vars(explicit_parser.parse_args(argv)).items() if value is not None}
+    model = explicit.get("model_param", "")
+    if model.lower().split("?")[0].endswith(('.kcpps', '.kcppt')):
+        explicit.pop("model_param") # positional config files are not model overrides
+    overrides = set(explicit)
+    if overrides & {"model", "model_param"}:
+        overrides.update(("model", "model_param"))
+    if overrides & {"port", "port_param"}:
+        overrides.update(("port", "port_param"))
+    return overrides
+
+def get_reasoning_defaults(config):
+    defaults = config.get("gendefaults") or ""
+    effort = config.get("reasoningeffort", "default")
+    if effort and effort != "default":
+        defaults = (parse_json_object(defaults, "gendefaults") or {}).copy()
+        defaults["reasoning_effort"] = effort
+        defaults = json.dumps(defaults)
+    return defaults
+
+def load_config_cli(filename):
+    print(f"Loading configuration file {filename}...")
+    try:
+        config = read_config_file(filename)
+    except (OSError, ValueError) as ex:
+        exit_with_error(2, f"Could not load config '{filename}': {ex}")
+        return
+    config = convert_invalid_args(config)
+    if "onready" in config and not getattr(args, "allow_config_onready", False):
+        config["onready"] = "" #do not allow onready commands from config
+    if "allow_config_onready" in config:
+        del config["allow_config_onready"] #do not allow configs to opt into onready commands
+    args.istemplate = False
+    for key, value in config.items():
+        if key in cli_arg_overrides:
+            if key!="config":
+                print(f"Overriding Config Value: {key}")
+        else:
+            setattr(args, key, value)
+    if args.istemplate:
+        print("\nA .kcppt template was selected from CLI...")
+        if (args.usecuda is None) and (args.usevulkan is None):
+            print("Automatically selecting your backend...")
+            auto_set_backend_cli()
+
+def apply_agent_launch_safeguards(launch_args):
+    if not launch_args.agent:
+        return
+
+    if launch_args.cli:
+        launch_args.host = "127.0.0.1"  # The same-terminal agent uses a local API.
+
+    adjustments = []
+    if launch_args.defaultgenamt < 10240:
+        adjustments.append(f"default generation amount increased from {launch_args.defaultgenamt} to 10240")
+        launch_args.defaultgenamt = 10240
+    if launch_args.contextsize < 32768:
+        adjustments.append(f"context size increased from {launch_args.contextsize} to 32768")
+        launch_args.contextsize = 32768
+    if not launch_args.jinja:
+        adjustments.append("Jinja chat templates enabled")
+        launch_args.jinja = True
+    if adjustments:
+        print("\nWARNING: KoboldCpp Agent adjusted launch settings for reliable tool use:")
+        for adjustment in adjustments:
+            print(f"  - {adjustment}")
+        print()
 
 def convert_args_to_template(savdict):
     savdict["istemplate"] = True
@@ -12288,8 +11832,7 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
     download_url = resolve_huggingface_xet_url(input_url)
     aria2_candidates = []
     if os.name == 'nt':
-        basepath = os.path.abspath(os.path.dirname(__file__))
-        a2cexe = os.path.join(basepath, "aria2c-win.exe")
+        a2cexe = get_kcpp_bin_path("aria2c-win.exe")
         if os.path.exists(a2cexe):  # on windows try using embedded aria2c
             aria2_candidates.append((a2cexe, "aria2c-win"))
     if shutil.which("aria2c") is not None:
@@ -12301,6 +11844,9 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
         "--file-allocation=none", "--max-tries=3", "--retry-wait=5",
         "-d", out_dir, "-o", out_name, download_url
     ]
+    skip_cert_check = bool(args.nocertify)
+    if skip_cert_check:
+        aria2_args.insert(0, "--check-certificate=false")
     for aria2_exe, aria2_name in aria2_candidates:
         if dl_success:
             break
@@ -12313,7 +11859,7 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
 
     try:
         if not dl_success and shutil.which("curl") is not None:
-            rc = subprocess.run(["curl", "-fLo", output_filename, download_url],
+            rc = subprocess.run(["curl", *(["--insecure"] if skip_cert_check else []), "-fLo", output_filename, download_url],
                 capture_output=capture_output, text=True, check=True, encoding="utf-8")
             dl_success = (rc.returncode == 0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
     except subprocess.CalledProcessError as e:
@@ -12321,7 +11867,7 @@ def downloader_internal(input_url, output_filename, capture_output, min_file_siz
 
     try:
         if not dl_success and shutil.which("wget") is not None:
-            rc = subprocess.run(["wget", "-O", output_filename, download_url],
+            rc = subprocess.run(["wget", *(["--no-check-certificate"] if skip_cert_check else []), "-O", output_filename, download_url],
                 capture_output=capture_output, text=True, check=True, encoding="utf-8")
             dl_success = (rc.returncode == 0 and os.path.exists(output_filename) and os.path.getsize(output_filename) > min_file_size)
     except subprocess.CalledProcessError as e:
@@ -12385,6 +11931,153 @@ def analyze_gguf_model_wrapper(filename=""):
     print(f"Analyzing {filename}, please wait...\n---",flush=True)
     dumpthread = threading.Thread(target=analyze_gguf_model, args=(args,filename))
     dumpthread.start()
+
+
+def get_kobold_agent_path():
+    base_path = getattr(sys, '_MEIPASS', os.path.abspath(os.path.dirname(__file__)))
+    return os.path.join(base_path, "kcpp_agent.py")
+
+
+def run_bundled_kobold_agent(base_url=None, api_key=None, load_session=None):
+    """Run the bundled agent script inside a frozen KoboldCpp process."""
+    agent_path = get_kobold_agent_path()
+    if not os.path.isfile(agent_path):
+        raise FileNotFoundError(f"Kobold Agent script not found: {agent_path}")
+
+    # A normal import also lets PyInstaller collect the agent's stdlib imports.
+    import kcpp_agent
+    old_argv = sys.argv
+    try:
+        sys.argv = [agent_path]
+        if base_url:
+            sys.argv.extend(["--base-url", base_url])
+        if api_key:
+            sys.argv.extend(["--api-key", api_key])
+        if load_session:
+            sys.argv.extend(["--load-session", load_session])
+        kcpp_agent.main()
+    finally:
+        sys.argv = old_argv
+
+
+def launch_kobold_agent_terminal(base_url=None, api_key=None, same_terminal=False, load_session=None):
+    """Run the agent in a new or existing terminal, using the bundled runner when frozen."""
+    agent_path = get_kobold_agent_path()
+    if not os.path.isfile(agent_path):
+        print(f"Cannot launch Kobold Agent: script not found at {agent_path}")
+        return False
+
+    is_frozen = getattr(sys, 'frozen', False)
+    command = ([sys.executable, "--run-bundled-agent"] if is_frozen
+               else [sys.executable, agent_path])
+    if base_url:
+        command.extend(["--agent-base-url" if is_frozen else "--base-url", base_url])
+    if api_key:
+        command.extend(["--agent-api-key" if is_frozen else "--api-key", api_key])
+    if load_session:
+        command.extend(["--agentload" if is_frozen else "--load-session", load_session])
+
+    try:
+        if same_terminal:
+            # Keep the child's terminal handles while silencing server output,
+            # including native library prints, for the duration of the session.
+            suppress_stdout()
+            try:
+                subprocess.run(command, cwd=os.getcwd(), stdout=saved_stdout,
+                               stderr=saved_stderr, check=True)
+            finally:
+                restore_stdout()
+            return True
+        if os.name == 'nt':
+            # Prefer Windows Terminal's Unicode/font fallback support over a
+            # fresh classic console, which may have different fonts from CMD.
+            terminal_path = shutil.which("wt.exe")
+            # wt treats semicolons as command separators, even within arguments.
+            # Use the direct launcher for these paths/credentials to preserve them.
+            if terminal_path and not any(";" in value for value in [os.getcwd(), *command]):
+                try:
+                    terminal_process = subprocess.Popen(
+                        [terminal_path, "-w", "-1", "new-tab", "-d", os.getcwd(), *command],
+                        cwd=os.getcwd(), creationflags=subprocess.CREATE_NO_WINDOW)
+                    try:
+                        if terminal_process.wait(timeout=3) == 0:
+                            return True
+                    except subprocess.TimeoutExpired:
+                        # Some versions keep the launcher alive with the window.
+                        return True
+                except OSError:
+                    pass  # An unavailable/broken execution alias can still be on PATH.
+            subprocess.Popen(command, cwd=os.getcwd(), creationflags=subprocess.CREATE_NEW_CONSOLE)
+        elif sys.platform == 'darwin':
+            shell_command = f"cd {shlex.quote(os.getcwd())} && exec {shlex.join(command)}"
+            apple_script = f'tell application "Terminal" to do script {json.dumps(shell_command)}'
+            subprocess.Popen(["osascript", "-e", apple_script], start_new_session=True)
+        else:
+            # Frozen Linux builds prepend their extraction directory to
+            # LD_LIBRARY_PATH.  Do not leak those bundled libraries into a
+            # system terminal emulator: mixing them with the terminal's system
+            # libraries can produce loader errors (for example, Cairo failing
+            # to resolve FreeType symbols) before the agent is ever started.
+            terminal_env = os.environ.copy()
+            if is_frozen:
+                original_library_path = terminal_env.get("LD_LIBRARY_PATH_ORIG")
+                if original_library_path is not None:
+                    terminal_env["LD_LIBRARY_PATH"] = original_library_path
+                else:
+                    terminal_env.pop("LD_LIBRARY_PATH", None)
+                # Give the agent its own extracted files, even if this launcher
+                # exits. Set this on the command so terminal-server handoffs
+                # cannot lose it when forwarding to an existing terminal.
+                command = ["env", "PYINSTALLER_RESET_ENVIRONMENT=1", *command]
+
+            terminal_commands = [
+                ("x-terminal-emulator", ["-e"]),
+                ("gnome-terminal", ["--"]),
+                ("konsole", ["-e"]),
+                ("mate-terminal", ["--"]),
+                ("xfce4-terminal", ["-x"]),
+                ("xterm", ["-e"]),
+            ]
+            attempted = set()
+            failures = []
+            for terminal, terminal_args in terminal_commands:
+                terminal_path = shutil.which(terminal)
+                if not terminal_path:
+                    continue
+                # Distributions often link x-terminal-emulator to xterm. Do not
+                # retry the same broken terminal under a second name.
+                resolved_path = os.path.realpath(terminal_path)
+                if resolved_path in attempted:
+                    continue
+                attempted.add(resolved_path)
+                # xterm's default bitmap font is often absent in minimal Linux
+                # installations; request a fontconfig-backed font instead.
+                launch_args = (["-fa", "monospace"] if os.path.basename(resolved_path) == "xterm" else []) + terminal_args
+                try:
+                    terminal_process = subprocess.Popen(
+                        [terminal_path, *launch_args, *command],
+                        cwd=os.getcwd(), env=terminal_env, start_new_session=True)
+                    try:
+                        exit_code = terminal_process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        return True  # The terminal is still open.
+                    if exit_code == 0:
+                        return True  # Some terminals hand off to a background process.
+                    failures.append(f"{terminal} exited with code {exit_code}")
+                except OSError as exc:
+                    failures.append(f"{terminal}: {exc}")
+            if failures:
+                print(f"Cannot launch Kobold Agent: {'; '.join(failures)}.")
+            else:
+                print("Cannot launch Kobold Agent: no supported terminal emulator was found.")
+            manual_command = ([sys.executable, "--run-bundled-agent"] if is_frozen
+                              else [sys.executable, agent_path])
+            print(f"Try running this in an existing terminal: {shlex.join(manual_command)}")
+            return False
+        return True
+    except Exception as e:
+        print(f"Cannot launch Kobold Agent: {e}")
+        return False
 
 
 def register_koboldcpp():
@@ -12532,6 +12225,15 @@ def main(launch_args, default_args):
     global args, showdebug, kcpp_instance, exitcounter, using_gui_launcher, sslvalid, global_memory
     args = launch_args #note: these are NOT shared with the child processes!
 
+    if args.run_bundled_agent:
+        run_bundled_kobold_agent(args.agent_base_url, args.agent_api_key, args.agentload)
+        return
+
+    standalone_agent_args = cli_arg_overrides and cli_arg_overrides <= {"agent", "agentload"}
+    if args.agent and (len(sys.argv) == 2 or standalone_agent_args):
+        launch_kobold_agent_terminal(load_session=args.agentload)
+        return
+
     if (args.version) and len(sys.argv) <= 2:
         print(f"{KcppVersion}") # just print version and exit
         return
@@ -12580,6 +12282,7 @@ def main(launch_args, default_args):
         return
 
     cfgname = ""
+    initial_config_path = ""
     if args.config and len(args.config)==1: #handle initial config loading for launch
         cfgname = args.config[0] #store first so baseconfig wont overwrite it
 
@@ -12590,6 +12293,7 @@ def main(launch_args, default_args):
                 cfgname = dlfile
         if isinstance(cfgname, str) and os.path.exists(cfgname):
            load_config_cli(cfgname)
+           initial_config_path = cfgname
         elif args.ignoremissing:
             print("Ignoring missing kcpp config file...")
         else:
@@ -12607,6 +12311,7 @@ def main(launch_args, default_args):
         dlfile = download_model_from_url(args.model_param,[".kcpps",".kcppt"]) # maybe download from url
         if dlfile:
             args.model_param = dlfile
+        initial_config_path = args.model_param
         load_config_cli(args.model_param)
 
     if args.exportconfig:
@@ -12624,6 +12329,9 @@ def main(launch_args, default_args):
         print("***")
         try:
             show_gui()
+            # Collect GUI reference cycles on the Tk thread, after show_gui's locals are released.
+            import gc
+            gc.collect()
         except Exception as ex:
             exitcounter = 999
             ermsg = "Reason: " + str(ex) + "\nFile selection GUI unsupported.\ncustomtkinter python module required!\n\nYou must use the command line instead, e.g. python ./koboldcpp.py --help"
@@ -12633,9 +12341,10 @@ def main(launch_args, default_args):
             time.sleep(3)
             sys.exit(2)
 
-    if args.ssl: #need to duplicate here for the tunnel
-        if len(args.ssl)==2 and isinstance(args.ssl[0], str) and os.path.exists(args.ssl[0]) and isinstance(args.ssl[1], str) and os.path.exists(args.ssl[1]):
-            sslvalid = True
+    apply_agent_launch_safeguards(args)
+
+    # Validate before starting the router or tunnel, including PEM parsing/key matching.
+    sslvalid = create_server_ssl_context(args.ssl) is not None
 
     args.proxy_port = None #normally unused
     if args.autoswapmode:
@@ -12686,7 +12395,8 @@ def main(launch_args, default_args):
             input()
     else:  # manager command queue for admin mode
         with multiprocessing.Manager() as mp_manager:
-            global_memory = mp_manager.dict({"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_base_config":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "base_config":"", "swapReqType": None, "autoswapmode": False})
+            initial_model = get_initial_admin_model(initial_config_path, args.admindir)
+            global_memory = mp_manager.dict({"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_base_config":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":initial_model, "base_config":"", "swapReqType": None, "loadedReqTypes": [], "autoswapmode": False})
 
             if args.remotetunnel and not args.prompt and not args.benchmark and not args.cli:
                 setuptunnel(global_memory, True if args.sdmodel else False, True if (args.musicdiffusion or args.musicllm or args.ttsmodel) else False)
@@ -12714,12 +12424,13 @@ def main(launch_args, default_args):
                                 kcpp_instance.terminate()
                                 kcpp_instance.join(timeout=10)  # Ensure process is stopped
                                 kcpp_instance = None
-                            kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "g_memory": global_memory, "gui_launcher": False})
-                            kcpp_instance.daemon = True
-                            kcpp_instance.start()
                             global_memory["restart_target"] = ""
                             global_memory["restart_override_base_config"] = ""
                             global_memory["swapReqType"] = None
+                            global_memory["loadedReqTypes"] = []
+                            kcpp_instance = multiprocessing.Process(target=kcpp_main_process,kwargs={"launch_args": args, "g_memory": global_memory, "gui_launcher": False})
+                            kcpp_instance.daemon = True
+                            kcpp_instance.start()
                             time.sleep(3)
                         else:
                             break # kill the program
@@ -12727,8 +12438,9 @@ def main(launch_args, default_args):
                         fault_recovery_mode = False
                     restart_target = global_memory["restart_target"]
                     restart_override_base_config = global_memory["restart_override_base_config"]
-                    last_active = global_memory["last_active_timestamp"]
-                    if last_active and args.adminunloadtimeout>0:
+                    activity = global_memory.copy()
+                    last_active = activity["last_active_timestamp"]
+                    if last_active and args.adminunloadtimeout>0 and not activity.get("active_requests", 0):
                         curtime = datetime.now()
                         elapsedtime = curtime - last_active
                         time_since_last_active = elapsedtime.total_seconds()
@@ -12738,6 +12450,8 @@ def main(launch_args, default_args):
                                     print(f"[Unload Timeout] Inactive for over {time_since_last_active}s, unloading models via autoswap...")
                                     global_memory["swapReqType"] = "nomodel"
                                     global_memory["triggered_sleeping"] = True
+                                    restart_target = global_memory["current_model"]
+                                    restart_override_base_config = global_memory["base_config"]
                             elif global_memory["current_model"]!="unload_model":
                                 print(f"[Unload Timeout] Inactive for over {time_since_last_active}s, unloading models...")
                                 restart_target = "unload_model"
@@ -12768,6 +12482,7 @@ def main(launch_args, default_args):
                             if (os.path.exists(maintarget_filepath) or restart_target=="unload_model" or restart_target=="initial_model") and (restart_override_base_config=="" or os.path.exists(basecfg_filepath)):
                                 print("Terminating old process...")
                                 global_memory["load_complete"] = False
+                                global_memory["loadedReqTypes"] = []
                                 kcpp_instance.terminate()
                                 kcpp_instance.join(timeout=10)  # Ensure process is stopped
                                 kcpp_instance = None
@@ -12896,26 +12611,74 @@ def mk_lora_info(imgloras, multipliers):
             preloaded_table.append(lora_entry)
     return preloaded_table, lora_path_map, lora_name_map
 
+autoswap_model_fields = {
+    "text": ["model", "model_param", "lora", "mmproj", "draftmodel"],
+    "stt": ["whispermodel"],
+    "tts": ["ttsmodel", "ttswavtokenizer"],
+    "embed": ["embeddingsmodel"],
+    "music": ["musicllm", "musicembeddings", "musicdiffusion", "musicvae"],
+    "image": ["sdmodel", "sdllm", "sdclip1", "sdclip2", "sdphotomaker", "sdupscaler", "sdvae", "sdaudiovae", "sdlora"],
+}
+
+autoswap_primary_fields = {
+    "text": ["model", "model_param"],
+    "stt": ["whispermodel"],
+    "tts": ["ttsmodel"],
+    "embed": ["embeddingsmodel"],
+    "music": ["musicllm", "musicdiffusion"],
+    "image": ["sdmodel"],
+}
+
+def getAutoswapModelTypes(args):
+    result = []
+    for model_type, fields in autoswap_primary_fields.items():
+        if any(getattr(args, field, None) for field in fields):
+            result.append(model_type)
+    return result
+
+def getAutoswapModelSize(args, model_type):
+    """Return the combined on-disk size for a model family, or None if unknown."""
+    paths = set()
+    for field in autoswap_model_fields[model_type]:
+        value = getattr(args, field, None)
+        values = value if isinstance(value, (list, tuple)) else [value]
+        for path in values:
+            if isinstance(path, str) and path:
+                fullpath = os.path.abspath(path)
+                if os.path.isfile(fullpath):
+                    paths.add(os.path.normcase(fullpath))
+                elif os.path.isdir(fullpath) and field not in autoswap_primary_fields[model_type]:
+                    for root, _, filenames in os.walk(fullpath):
+                        for filename in filenames:
+                            paths.add(os.path.normcase(os.path.join(root, filename)))
+                else:
+                    return None
+    if not paths:
+        return None
+    try:
+        return sum(os.path.getsize(path) for path in paths)
+    except OSError:
+        return None
+
 def disableSwappedFieldsInConfig(args, swapReqType):
-    print(f"Swapping to type: {swapReqType}")
-    if swapReqType != "text":
-        for e in ["model", "model_param", "lora", "mmproj"]:
-            setattr(args, e, "")
-    if swapReqType != "stt":
-        for e in ["whispermodel"]:
-            setattr(args, e, "")
-    if swapReqType != "tts":
-        for e in ["ttsmodel", "ttswavtokenizer"]:
-            setattr(args, e, "")
-    if swapReqType != "embed":
-        for e in ["embeddingsmodel"]:
-            setattr(args, e, "")
-    if swapReqType != "music":
-        for e in ["musicllm", "musicembeddings", "musicdiffusion", "musicvae"]:
-            setattr(args, e, "")
-    if swapReqType != "image":
-        for e in ["sdmodel", "sdt5xxl", "sdclip1", "sdclip2", "sdphotomaker", "sdupscaler", "sdvae", "sdaudiovae", "sdlora"]:
-            setattr(args, e, "")
+    threshold_mb = max(0, getattr(args, "autoswapthreshold", default_autoswap_threshold))
+    threshold_bytes = threshold_mb * 1024 * 1024
+    configured_types = getAutoswapModelTypes(args)
+    keep_types = set()
+
+    if swapReqType != "nomodel":
+        if swapReqType in configured_types:
+            keep_types.add(swapReqType)
+        for model_type in configured_types:
+            model_size = getAutoswapModelSize(args, model_type)
+            if model_size is not None and model_size <= threshold_bytes:
+                keep_types.add(model_type)
+
+    print(f"Swapping to type: {swapReqType}; resident types: {', '.join(sorted(keep_types)) or 'none'} (threshold {threshold_mb} MB)")
+    for model_type, fields in autoswap_model_fields.items():
+        if model_type not in keep_types:
+            for field in fields:
+                setattr(args, field, "")
 
 
 def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
@@ -12925,7 +12688,10 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     start_server = True
 
     args = launch_args
+    args.gendefaults = get_reasoning_defaults(vars(args))
     global_memory = g_memory
+    if global_memory is not None:
+        global_memory["active_requests"] = 0
     using_gui_launcher = gui_launcher
     start_time = time.time()
 
@@ -12982,7 +12748,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     else:
         global_memory["autoswapmode"] = False
 
-    if args.model_param and (args.benchmark or args.prompt or args.cli):
+    if args.model_param and (args.benchmark or args.prompt or args.cli) and not (args.cli and args.agent):
         start_server = False
 
     args.sdlora = sanitize_lora_list(args.sdlora)
@@ -13081,10 +12847,10 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         dlfile = download_model_from_url(args.sdmodel,[".gguf",".safetensors"],min_file_size=500000)
         if dlfile:
             args.sdmodel = dlfile
-    if args.sdt5xxl and args.sdt5xxl!="":
-        dlfile = download_model_from_url(args.sdt5xxl,[".gguf",".safetensors"],min_file_size=500000)
+    if args.sdllm and args.sdllm!="":
+        dlfile = download_model_from_url(args.sdllm,[".gguf",".safetensors"],min_file_size=500000)
         if dlfile:
-            args.sdt5xxl = dlfile
+            args.sdllm = dlfile
     if args.sdclip1 and args.sdclip1!="":
         dlfile = download_model_from_url(args.sdclip1,[".gguf",".safetensors"],min_file_size=500000)
         if dlfile:
@@ -13236,7 +13002,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 process.nice(psutil.REALTIME_PRIORITY_CLASS)
                 print("High Priority for Windows Set: " + str(oldprio) + " to " + str(process.nice()))
             elif os_used == "linux":  # linux
-                process.nice(psutil.IOPRIO_CLASS_RT)
+                process.nice(-18)
                 print("High Priority for Linux Set: " + str(oldprio) + " to " + str(process.nice()))
             else:  # MAC OS X or other
                 process.nice(-18)
@@ -13270,16 +13036,15 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         nocertify = True
         ssl._create_default_https_context = ssl._create_unverified_context
 
+    if args.usecpu and args.rpcmode!="connect":
+        args.gpulayers = 0
+        args.autofit = False
+
     if args.gpulayers:
         if args.autofit:
             args.gpulayers = -1
-        shouldavoidgpu = False
-        if args.usecpu and sys.platform!="darwin":
-            shouldavoidgpu = True
-            if args.gpulayers and args.gpulayers>0 and args.rpcmode!="connect":
-                print("WARNING: GPU layers is set, but a GPU backend was not selected! GPU will not be used!")
-                args.gpulayers = 0
-        elif args.gpulayers==-1 and sys.platform=="darwin" and args.model_param and os.path.exists(args.model_param):
+        shouldavoidgpu = args.usecpu
+        if not shouldavoidgpu and args.gpulayers==-1 and sys.platform=="darwin" and args.model_param and os.path.exists(args.model_param):
             print("MacOS detected: Auto GPU layers set to maximum")
             args.gpulayers = 200
         elif not shouldavoidgpu:
@@ -13435,7 +13200,11 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 pass
 
             if chatcompl_adapter is None:
-                print("Chat template heuristics failed to identify chat completions format. Alpaca will be used.")
+                if cached_chat_template:
+                    args.jinja = True
+                    print("Chat template heuristics failed to identify chat completions format. Jinja will be used.")
+                else:
+                    print("Chat template heuristics failed to identify chat completions format. Alpaca will be used.")
 
     #handle loading image model
     if args.sdmodel and args.sdmodel!="":
@@ -13449,7 +13218,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 exit_with_error(2,f"Cannot find image model file: {imgmodel}")
         else:
             imgvae = ""
-            imgt5xxl = ""
+            imgllm = ""
             imgclip1 = ""
             imgclip2 = ""
             imgphotomaker = ""
@@ -13467,11 +13236,11 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                     imgaudiovae = os.path.abspath(args.sdaudiovae)
                 else:
                     print("Missing SD Audio VAE model file...")
-            if args.sdt5xxl:
-                if os.path.exists(args.sdt5xxl):
-                    imgt5xxl = os.path.abspath(args.sdt5xxl)
+            if args.sdllm:
+                if os.path.exists(args.sdllm):
+                    imgllm = os.path.abspath(args.sdllm)
                 else:
-                    print("Missing SD T5-XXL model file...")
+                    print("Missing image LLM model file...")
             if args.sdclip1:
                 if os.path.exists(args.sdclip1):
                     imgclip1 = os.path.abspath(args.sdclip1)
@@ -13498,7 +13267,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             friendlysdmodelname = os.path.basename(imgmodel)
             friendlysdmodelname = os.path.splitext(friendlysdmodelname)[0]
             friendlysdmodelname = sanitize_string(friendlysdmodelname)
-            loadok = sd_load_model(imgmodel,imgvae,imgt5xxl,imgclip1,imgclip2,imgphotomaker,imgupscaler,imgaudiovae)
+            loadok = sd_load_model(imgmodel,imgvae,imgllm,imgclip1,imgclip2,imgphotomaker,imgupscaler,imgaudiovae)
             print("Load Image Model OK: " + str(loadok))
             if not loadok:
                 exitcounter = 999
@@ -13549,7 +13318,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     if args.embeddingsmodel and args.embeddingsmodel!="":
         if not os.path.exists(args.embeddingsmodel):
             if args.ignoremissing:
-                print("Ignoring missing TTS model files!")
+                print("Ignoring missing embedding model files!")
                 args.embeddingsmodel = None
             else:
                 exitcounter = 999
@@ -13616,6 +13385,9 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 if not loadok:
                     exitcounter = 999
                     exit_with_error(3, "Could not load Music models!")
+        else:
+            exitcounter = 999
+            exit_with_error(2, "Invalid config: Music embedding and Music VAE models require a Music Diffusion model!")
 
     #load embedded lite
     embddir = os.path.join(os.path.abspath(os.path.dirname(os.path.realpath(__file__))),"embd_res")
@@ -13745,12 +13517,9 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         print(f"Enabled APIs: {' '.join(apimlist)}")
 
     global sslvalid
-    if args.ssl:
-        if len(args.ssl)==2 and isinstance(args.ssl[0], str) and os.path.exists(args.ssl[0]) and isinstance(args.ssl[1], str) and os.path.exists(args.ssl[1]):
-            sslvalid = True
-            print("SSL configuration is valid and will be used.")
-        else:
-            print("Your SSL configuration is INVALID. SSL will not be used.")
+    sslvalid = create_server_ssl_context(args.ssl) is not None
+    if sslvalid:
+        print("SSL configuration is valid and will be used.")
     endpoint_url = ""
     remote_url = ""
     httpsaffix = ("https" if sslvalid else "http")
@@ -13761,6 +13530,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         endpoint_url = f"{httpsaffix}://{args.host}:{displayedport}"
 
     if start_server:
+        if global_memory is not None:
+            global_memory["loadedReqTypes"] = getAutoswapModelTypes(args) if autoswapmode else []
         if not args.remotetunnel:
             if displayedport!=11434:
                 print("Note: For third party Ollama API Emulation, you should set the port to 11434.")
@@ -13791,6 +13562,14 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 LaunchWebbrowser(endpoint_url,"--launch was set, but could not launch web browser automatically.")
             browser_thread = threading.Timer(2, launch_browser_thread) #2 second delay
             browser_thread.start()
+        agent_base_url = None
+        if args.agent:
+            agent_host = args.host
+            if agent_host in ("", "0.0.0.0", "::", "[::]"):
+                agent_host = "127.0.0.1"
+            elif ":" in agent_host and not agent_host.startswith("["):
+                agent_host = f"[{agent_host}]"
+            agent_base_url = f"{httpsaffix}://{agent_host}:{displayedport}/v1"
 
         if args.hordekey and args.hordekey!="":
             if args.hordeworkername and args.hordeworkername!="":
@@ -13822,7 +13601,11 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 lastturns.append({"role":"system","content":args.prompt})
                 print(f"System Prompt:\n{args.prompt}\n")
             while True:
-                lastuserinput = input("> ")
+                try:
+                    lastuserinput = input("> ")
+                except EOFError:
+                    print("\nTerminal input is unavailable or closed. Exiting CLI mode.", flush=True)
+                    break
                 if lastuserinput=="/quit" or lastuserinput=="/exit":
                     break
                 if not lastuserinput:
@@ -13838,6 +13621,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 result = (genout["text"] if "text" in genout else "")
                 if result:
                     lastturns.append({"role":"assistant","content":result})
+                    if args.debugmode >= 1:
+                        print() # native debug timing output does not end with a newline
                     print(result.strip() + "\n", flush=True)
                 else:
                     print("(No Response Received)\n", flush=True)
@@ -13926,7 +13711,22 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         else:
             # Flush stdout for previous win32 issue so the client can see output.
             print(f"======\nPlease connect to custom endpoint at {endpoint_url}", flush=True)
-        asyncio.run(RunServerMultiThreaded(args.host, args.port, KcppServerRequestHandler))
+        on_server_ready = None
+        if agent_base_url:
+            def on_server_ready():
+                if args.cli:
+                    if args.mcpfile:
+                        time.sleep(2)
+                    success = launch_kobold_agent_terminal(agent_base_url, args.password, same_terminal=True, load_session=args.agentload)
+                    raise SystemExit(0 if success else 1)
+                if args.mcpfile:
+                    agent_timer = threading.Timer(
+                        2, launch_kobold_agent_terminal, args=(agent_base_url, args.password), kwargs={"load_session": args.agentload}
+                    )
+                    agent_timer.start()
+                    return True
+                return launch_kobold_agent_terminal(agent_base_url, args.password, load_session=args.agentload)
+        asyncio.run(RunServerMultiThreaded(args.host, args.port, KcppServerRequestHandler, on_server_ready))
     else:
         # Flush stdout for previous win32 issue so the client can see output.
         if not args.prompt or args.benchmark or args.cli:
@@ -13955,7 +13755,7 @@ if __name__ == '__main__':
     modelgroup = parser.add_mutually_exclusive_group() #we want to be backwards compatible with the unnamed positional args
     modelgroup.add_argument("--model","-m", metavar=('[filenames]'), help="Model file to load. Accepts multiple values if they are URLs.", type=str, nargs='+', default=[])
     modelgroup.add_argument("model_param", help="Model file to load (positional)", nargs="?")
-    parser.add_argument("--config", metavar=('[filename]'), help="Load settings from a .kcpps file. Other arguments will be ignored", type=str, nargs=1)
+    parser.add_argument("--config", metavar=('[filename]'), help="Load settings from a .kcpps file. Explicit command-line arguments override the file", type=str, nargs=1)
     parser.add_argument("--contextsize","--ctx-size", "-c", help=f"Controls the memory allocated for maximum context size, only change if you need more RAM for big contexts. (default {default_maxctx}).",metavar=('[256 to 524288]'), type=check_range(int,256,524288), default=default_maxctx)
     parser.add_argument("--gpulayers","--gpu-layers","--n-gpu-layers","-ngl", help="Set number of layers to offload to GPU (when using GPU). Set to -1 to enable autofit (default), set to 0 to disable GPU offload.",metavar=('[GPU layers]'), nargs='?', const=1, type=int, default=-1)
     parser.add_argument("--host", metavar=('[ipaddr]'), help="Host IP to listen on. If this flag is not set, all routable interfaces are accepted.", default="")
@@ -13969,14 +13769,17 @@ if __name__ == '__main__':
 
     #more advanced params
     advparser = parser.add_argument_group('Advanced Commands')
+    advparser.add_argument("--agent", help="Launches the simple KoboldCpp Agent in a new terminal window, or the current terminal with --cli.", action='store_true')
+    advparser.add_argument("--agentload", metavar=('[filename]'), help="Load a KoboldCpp Agent JSON save file when launching the agent.", default="")
     advparser.add_argument("--analyze", metavar=('[filename]'), help="Reads the metadata, weight types and tensor names in any GGUF or safetensors file.", default="")
     advparser.add_argument("--autofit","--fit","-fit", help="Forces autofit, which attempts to fit the model in the best possible way. Overrides everything else.", action='store_true')
     advparser.add_argument("--autofitpadding", metavar=('[padding in MB]'), help="How much spare allowance in MB should autofit reserve? If it's too little, the load might fail.", type=int, default=default_autofit_padding)
-    advparser.add_argument("--batchsize","--blasbatchsize","--batch-size","-b", help="Sets the batch size used in batched processing (default 512). Setting it to -1 disables batched mode, but keeps other benefits like GPU offload.", type=int,choices=[-1,16,32,64,128,256,512,1024,2048,4096], default=512)
+    advparser.add_argument("--batchsize","--blasbatchsize","--batch-size","-b", help="Sets the logical batch size used in batched processing (default 512). Setting it to -1 disables batched mode, but keeps other benefits like GPU offload.", type=int,choices=[-1,16,32,64,128,256,512,1024,2048,4096], default=512)
+    advparser.add_argument("--ubatchsize","--ubatch-size","-ub", help="Sets the physical batch size used in batched processing. Setting it to -1 uses the same value as batchsize (default).", type=int,choices=[-1,16,32,64,128,256,512,1024,2048,4096], default=-1)
     advparser.add_argument("--benchmark", help="Do not start server, instead run benchmarks. If filename is provided, appends results to provided file.", metavar=('[filename]'), nargs='?', const="stdout", type=str, default=None)
     advparser.add_argument("--blasthreads","--batchthreads","--threadsbatch","--threads-batch", help="Use a different number of threads during batching if specified. Otherwise, has the same value as --threads",metavar=('[threads]'), type=int, default=0)
     advparser.add_argument("--chatcompletionsadapter", metavar=('[filename]'), help="Select an optional ChatCompletions Adapter JSON file to force custom instruct tags.", default="AutoGuess")
-    advparser.add_argument("--cli", help="Does not launch KoboldCpp HTTP server. Instead, enables KoboldCpp from the command line, accepting interactive console input and displaying responses to the terminal.", action='store_true')
+    advparser.add_argument("--cli", help="Runs interactive terminal chat without an HTTP server. With --agent, runs the agent in this terminal using a loopback HTTP server.", action='store_true')
     advparser.add_argument("--debugmode", help="Shows additional debug info in the terminal. Levels: -1 (Horde-quiet, suppresses non-essential prints; auto-applied when Horde args are set), 0 (default, normal output), 1 (verbose: extra slot/cache info, larger print buffers, retains horde-debug prefix). Passing the flag without a value implies 1.", nargs='?', const=1, type=int, default=0)
     advparser.add_argument("--defaultgenamt", help="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.", type=check_range(int,64,32768), default=default_genlen)
     advparser.add_argument("--device", "-dev", metavar=('<dev1,dev2,..>'), help="Set llama.cpp compatible device selection override. Comma separated. Overrides normal device choices.", default="")
@@ -13995,24 +13798,12 @@ if __name__ == '__main__':
     advparser.add_argument("--genlimit","--promptlimit", help="Sets the maximum number of generated tokens, it will restrict all generations to this or lower. Also usable with --prompt or --benchmark.",metavar=('[token limit]'), type=int, default=0)
     advparser.add_argument("--highpriority", help="Experimental flag. If set, increases the process CPU priority, potentially speeding up generation. Use caution.", action='store_true')
     advparser.add_argument("--ignoremissing", help="Ignores all missing non-essential files, just skipping them instead.", action='store_true')
-    advparser.add_argument("--jinja", help="Enables using jinja chat template formatting for chat completions endpoint. Other endpoints are unaffected. Tool calls are done without jinja.", action='store_true')
+    advparser.add_argument("--jinja", "--jinja_tools", "--jinja-tools", "--jinjatools", dest="jinja", help="Enables Jinja chat template formatting, including tool calls. Falls back to universal formatting if Jinja fails.", action='store_true')
     advparser.add_argument("--jinja_kwargs","--jinja-kwargs","--jinjakwargs","--chat-template-kwargs", metavar=('{"parameter":"value",...}'), help="Set additional fields for Jinja JSON template parser, must be a valid JSON object.", default="")
-    advparser.add_argument("--jinja_tools","--jinja-tools","--jinjatools", help="Enables using jinja chat template formatting for chat completions endpoint. Other endpoints are unaffected. Tool calls are done with jinja.", action='store_true')
     advparser.add_argument("--jinjatemplate","--chat-template-file", metavar=('[filename]'), help="Select a custom Jinja chat template, will overwrite model jinja chat template", default="")
     advparser.add_argument("--jinjathink", help="A quick way to enable or disable thinking in the jinja template.", type=str, choices=['default','true','false'], default="default")
     advparser.add_argument("--lora", help="GGUF models only, applies a lora file on top of model.", metavar=('[lora_filename]'), nargs='+')
     advparser.add_argument("--loramult", metavar=('[amount]'), help="Multiplier for the Text LORA model to be applied.", type=float, default=1.0)
-    advparser.add_argument("--lora-pool", dest="lora_pool", metavar=('NAME=PATH'), nargs='+', help="friend.cpp: preload named LoRA adapters, off by default; a request enables them with \"lora\": {\"NAME\": scale}.")
-    advparser.add_argument("--cvec-pool", dest="cvec_pool", metavar=('NAME=PATH'), nargs='+', help="friend.cpp: preload named control (steering) vectors (GGUF, llama.cpp cvec format); a request applies them with \"steer\": {\"NAME\": strength}.")
-    advparser.add_argument("--cache-ram", dest="cache_ram", metavar=('[MB]'), type=int, default=2048, help="friend.cpp: RAM budget of the prompt cache in MiB (0 disables it; it then falls back to --smartcache behaviour).")
-    advparser.add_argument("--cache-idle-ms", dest="cache_idle_ms", metavar=('[ms]'), type=int, default=300, help="friend.cpp: after a generation, snapshot the live context into the prompt cache once the server has been idle this long, so a later conversation switch doesn't pay for it (0 disables).")
-    advparser.add_argument("--cache-dir", dest="cache_dir", metavar=('[path]'), default="", help="friend.cpp: directory for the prompt cache's disk tier. Entries are written through and survive restarts.")
-    advparser.add_argument("--cache-disk", dest="cache_disk", metavar=('[MB]'), type=int, default=20480, help="friend.cpp: disk budget of the prompt cache in MiB.")
-    advparser.add_argument("--cache-min-tokens", dest="cache_min_tokens", metavar=('[tokens]'), type=int, default=64, help="friend.cpp: don't cache or reuse prefixes shorter than this.")
-    advparser.add_argument("--cache-capture-tokens", dest="cache_capture_tokens", metavar=('[tokens]'), type=int, default=512, help="friend.cpp: snapshot a prompt into the cache after prefilling at least this many new tokens.")
-    advparser.add_argument("--draft-fixed", dest="draft_fixed", action='store_true', help="friend.cpp: always draft --draftamount tokens instead of adapting the draft length (0..draftamount) to measured acceptance and verify cost.")
-    advparser.add_argument("--cvec-dir", dest="cvec_dir", metavar=('[path]'), default="", help="friend.cpp: directory where /api/extra/steer/build saves steering vectors; every .gguf in it is loaded into the steering pool at startup (name = file stem).")
-    advparser.add_argument("--head-pool", dest="head_pool", metavar=('NAME=PATH'), nargs='+', help="friend.cpp: preload named LM heads (GGUF with output.weight); a request swaps with \"head\": \"NAME\". Head swaps keep the KV cache valid.")
     advparser.add_argument("--lowvram","-nkvo","--no-kv-offload", help="If supported by the backend, do not offload KV to GPU (lowvram mode). Not recommended, will be slow.", action='store_true')
     advparser.add_argument("--maingpu","--main-gpu","-mg", help="Only used in a multi-gpu setup. Sets the index of the main GPU that will be used.",metavar=('[Device ID]'), type=int, default=-1)
     advparser.add_argument("--maxrequestsize", metavar=('[size in MB]'), help="Specify a max request payload size. Any requests to the server larger than this size will be dropped. Do not change if unsure.", type=int, default=32)
@@ -14022,7 +13813,6 @@ if __name__ == '__main__':
     advparser.add_argument("--moecpu","--n-cpu-moe", "-ncmoe", metavar=('[layers affected]'), help="Keep the Mixture of Experts (MoE) weights of the first N layers in the CPU. If no value is provided, applies to all layers.", nargs='?', const=999, type=int, default=0)
     advparser.add_argument("--ffncpu","--n-cpu-ffn", "-ncffn", metavar=('[layers affected]'), help="Keep the dense FFN weights of the first N layers in the CPU. If no value is provided, applies to all layers.", nargs='?', const=999, type=int, default=0)
     advparser.add_argument("--moeexperts", metavar=('[num of experts]'), help="How many experts to use for MoE models (default=follow gguf)", type=int, default=-1)
-    advparser.add_argument("--multiuser", help="Set maximum number of queued incoming requests allowed.", metavar=('limit'), type=int, nargs='?', const=multiuser_concurrent_limit, default=multiuser_concurrent_limit)
     advparser.add_argument("--multiplayer", help="Hosts a shared multiplayer session that others can join.", action='store_true')
     advparser.add_argument("--nocertify", help="Allows insecure SSL connections. Use this if you have cert errors and need to bypass certificate restrictions.", action='store_true')
     advparser.add_argument("--nofastforward", help="If set, do not attempt to fast forward GGUF context (always reprocess). Will also enable noshift", action='store_true')
@@ -14031,7 +13821,6 @@ if __name__ == '__main__':
     advparser.add_argument("--nobostoken", help="Prevents BOS token from being added at the start of any prompt. Usually NOT recommended for most models.", action='store_true')
     advparser.add_argument("--nommq", help="Disables MMQ, only used for cuda backend. This flag may be removed in future.", action='store_true')
     advparser.add_argument("--nomodel", help="Allows you to launch the GUI alone, without selecting any model.", action='store_true')
-    advparser.add_argument("--nopipelineparallel", help="Disable Pipeline Parallelism. Pipeline Parallelism provides faster multigpu speeds but using more memory, only active for multigpu.", action='store_true')
     advparser.add_argument("--noshift","--no-context-shift", help="If set, do not attempt to Trim and Shift the GGUF context.", action='store_true')
     advparser.add_argument("--noswa","--swa-full", help="If set, uses full-size SWA KV Cache. Otherwise, SWA will be enabled automatically on models that support it. SWA saves memory but cannot be used with context shifting.", action='store_true')
     advparser.add_argument("--onready", help="An optional shell command to execute after the model has been loaded.", metavar=('[shell command]'), type=str, default="")
@@ -14039,21 +13828,12 @@ if __name__ == '__main__':
     advparser.add_argument("--overridekv","--override-kv", metavar=('[name=type:value]'), help="Override metadata value by key. Separate multiple values with commas. Format is name=type:value. Types: int, float, bool, str", default="")
     advparser.add_argument("--overridenativecontext", help="Overrides the native trained context of the loaded model with a custom value to be used for Rope scaling.",metavar=('[trained context]'), type=int, default=0)
     advparser.add_argument("--overridetensors","--override-tensor","-ot", metavar=('[tensor name pattern=buffer type]'), help="Override selected backend for specific tensors matching tensor_name_regex_pattern=buffer_type, same as in llama.cpp.", default="")
-    advparser.add_argument("--parallelrequests","--continuous-batching","--contbatch", help="Allows multiple requests to be batched and executed in parallel. Only works for basic text generation requests (Experimental, No media)", metavar=('[slots]'), type=check_range(int,0,32), default=1)
-    advparser.add_argument("--ngram-draft", type=check_range(int,0,32), default=0, help="Maximum history-based speculative tokens per batched request (attention-only models; 0 disables). Requires --parallelrequests greater than 1.")
-    advparser.add_argument("--suffix-draft", type=check_range(int,0,32), default=0, help="Maximum adaptive suffix-speculative tokens per batched request (0 disables; takes precedence over --ngram-draft).")
-    advparser.add_argument("--schedule-tokens", type=check_range(int,0,65536), default=0, help="Unified continuous-batching token budget per scheduler round (0 uses batch size; decodes are admitted before prompt tokens).")
-    advparser.add_argument("--profile-lanes", type=check_range(int,1,32), default=1, help="Native concurrent contexts sharing model weights. Each lane owns its KV/compute buffers and parallelrequests slots. CPU threads are divided across lanes; memory use increases.")
-    advparser.add_argument("--max-queued-requests", type=check_range(int,0,1000000), default=0, help="friend.cpp: maximum live continuous-batching requests, including waiting/running/paused requests; overloads are rejected when full (0 disables).")
-    advparser.add_argument("--kv-watermark", type=check_range(float,0.0,0.9), default=0.0, help="friend.cpp: reserve this fraction of estimated continuous-batching KV capacity for active sequences (0 disables).")
-    advparser.add_argument("--max-lora-profiles", type=check_range(int,0,1024), default=0, help="friend.cpp: cap distinct live LoRA/steering/head profiles admitted by native batching (0 disables).")
-    advparser.add_argument("--disaggregated-prefill", action='store_true', help="friend.cpp: prefill on lane 0 and hand serialized KV to a decode lane; requires --profile-lanes >= 2 and continuous batching.")
-    advparser.add_argument("--stream-interval", type=check_range(int,1,64), default=1, help="friend.cpp: stream this many generated tokens per event when possible; final partial chunks always flush.")
-    advparser.add_argument("--prefill-tokens", dest="prefilltokens", metavar='[tokens]', type=check_range(int,0,65536), default=0, help="friend.cpp: maximum prompt tokens admitted per continuous-batching round after ready decodes. Lower values protect inter-token latency; 0 uses the full batch size.")
+    advparser.add_argument("--parallelrequests","--continuous-batching","--contbatch", help="Allows multiple text and multimodal generation requests to be processed in parallel (Experimental).", metavar=('[slots]'), type=check_range(int,0,32), default=1)
     advparser.add_argument("--password", metavar=('[API key]'), help="Enter a password required to use this instance. This key will be required for all text endpoints. Image endpoints are not secured. Can also be set with env var KCPP_PASSWORD", default=os.getenv('KCPP_PASSWORD',None))
     advparser.add_argument("--preloadstory", metavar=('[savefile]'), help="Configures a prepared story json save file to be hosted on the server, which frontends (such as KoboldAI Lite) can access over the API.", default="")
     advparser.add_argument("--prompt","-p", metavar=('[prompt]'), help="Passing a prompt string triggers a direct inference, loading the model, outputs the response to stdout and exits. Can be used alone or with benchmark.", type=str, default="")
     advparser.add_argument("--quantkv", help="Sets the KV cache data type quantization, options are f16/bf16/q8_0/q5_1/q4_0. Requires Flash Attention for full effect, otherwise only K cache is quantized.",metavar=('[quantization level f16/bf16/q8_0/q5_1/q4_0]'), type=str, choices=["f16","bf16","q8_0","q5_1","q4_0","0","1","2","3"], default="f16")
+    advparser.add_argument("--queuelimit", help="Set maximum number of queued incoming requests allowed.", metavar=('limit'), type=int, default=queue_concurrent_limit)
     advparser.add_argument("--quiet", help="Enable quiet mode, which hides generation inputs and outputs in the terminal. Quiet mode is automatically enabled when running a horde worker.", action='store_true')
     advparser.add_argument("--ratelimit", metavar=('[seconds]'), help="If enabled, rate limit generative request by IP address. Each IP can only send a new request once per X seconds.", type=int, default=0)
     advparser.add_argument("--reasoningeffort", help="A quick way to set the default reasoning effort. API values override this.", type=str, choices=['default','none','low','medium','high','xhigh'], default="default")
@@ -14091,8 +13871,8 @@ if __name__ == '__main__':
     sdparsergroup.add_argument("--sdaudiovae", metavar=('[filename]'), help="Specify an image generation audio VAE for LTX2.3 video generation.", default="")
     sdparsergroup.add_argument("--sdclamped", metavar=('[maxres]'), help="If specified, limit generation steps and image size for shared use. Accepts an extra optional parameter that indicates maximum resolution (eg. 768 clamps to 768x768, min 512px, disabled if 0).", nargs='?', const=512, type=int, default=0)
     sdparsergroup.add_argument("--sdclampedsoft", metavar=('[maxres]'), help="If specified, limit max image size to curb memory usage. Similar to --sdclamped, but less strict, allows trade-offs between width and height (e.g. 640 would allow 640x640, 512x768 and 768x512 images).", type=int, default=0)
-    sdparsergroup.add_argument("--sdclip1", "--sdclipl", metavar=('[filename]'), help="Specify first safetensors Clip model (SD3 or Flux Clip-L, WAN or QwenImg vision). Leave blank if prebaked or unused.", default="")
-    sdparsergroup.add_argument("--sdclip2", "--sdclipg", metavar=('[filename]'), help="Specify second safetensors Clip model (SD3 Clip-G). Leave blank if prebaked or unused.", default="")
+    sdparsergroup.add_argument("--sdclip1", "--sdclipl", metavar=('[filename]'), help="Specify first safetensors Clip model. Leave blank if prebaked or unused.", default="")
+    sdparsergroup.add_argument("--sdclip2", "--sdclipg", metavar=('[filename]'), help="Specify second safetensors Clip model. Leave blank if prebaked or unused. Put tokenizer here if required.", default="")
     sdparsergroup.add_argument("--sdclipdevice", metavar=('[Device ID]'), help=f"CLIP / T5 / LLM device for image generation. GPU index, -1 or 'main' for the main GPU, or 'CPU' (default: {default_sdclipdevice}).", type=sd_get_device_number, default=None)
     sdparsergroup.add_argument("--sdconvdirect", help="Enables Conv2D Direct. May improve performance or reduce memory usage. Might crash if not supported by the backend. Can be 'off' (default) to disable, 'full' to turn it on for all operations, or 'vaeonly' to enable only for the VAE.", type=sd_convdirect_option, choices=sd_convdirect_choices, default=sd_convdirect_choices[0])
     sdparsergroup.add_argument("--sdflashattention", help="Enables Flash Attention for image generation.", action='store_true')
@@ -14104,7 +13884,7 @@ if __name__ == '__main__':
     sdparsergroup.add_argument("--sdoffloadcpu", help="Offload image weights in RAM to save VRAM, swap into VRAM when needed.", action='store_true')
     sdparsergroup.add_argument("--sdphotomaker", metavar=('[filename]'), help="PhotoMaker is a model that allows face cloning. Specify a PhotoMaker safetensors model which will be applied replacing img2img. SDXL models only. Leave blank if unused.", default="")
     sdparsergrouplora.add_argument("--sdquant",  metavar=('[quantization level 0/1/2]'), help="If specified, loads the model quantized to save memory. 0=off, 1=q8, 2=q4", type=int, choices=[0,1,2], nargs="?", const=2, default=0)
-    sdparsergroup.add_argument("--sdt5xxl", metavar=('[filename]'), help="Specify a T5-XXL safetensors model. Leave blank if prebaked or unused.", default="")
+    sdparsergroup.add_argument("--sdllm", metavar=('[filename]'), help="Specify an image generation text encoder or LLM (.safetensors or .gguf). Leave blank if prebaked or unused.", default="")
     sdparsergroup.add_argument("--sdthreads", metavar=('[threads]'), help="Use a different number of threads for image generation if specified. Otherwise, has the same value as --threads.", type=int, default=0)
     sdparsergroup.add_argument("--sdtiledvae", metavar=('[maxres]'), help="Adjust the automatic VAE tiling trigger for images above this size. 0 disables vae tiling.", type=int, default=default_vae_tile_threshold)
     sdparsergroup.add_argument("--sdupscaler", metavar=('[filename]'), help="You can use ESRGAN as an upscaling model to resize images. Leave blank if unused.", default="")
@@ -14151,8 +13931,9 @@ if __name__ == '__main__':
     admingroup.add_argument("--admindir", metavar=('[directory]'), help="Specify a directory to look for .kcpps configs in, which can be used to swap models.", default="")
     admingroup.add_argument("--adminunloadtimeout", help="Set an idle timeout in seconds after which KoboldCpp will automatically unload the current model.", type=int, default=0)
     admingroup.add_argument("--routermode", help="Router mode uses a reverse proxy router, allowing you to easily hotswap models and configs within a single request. Requires admin mode.", action='store_true')
-    admingroup.add_argument("--reqtimeout", metavar=('[seconds]'), help="Timeout in seconds for HTTP requests.", type=int, default=default_reqtimeout)
+    admingroup.add_argument("--reqtimeout", metavar=('[seconds]'), help="Timeout in seconds for HTTP requests. Use 0 for the default timeout.", type=parse_reqtimeout, default=default_reqtimeout)
     admingroup.add_argument("--autoswapmode", help="Autoswap mode builds on router mode to allow switching of model types within the same config automatically. Requires admin mode and router mode. All models desired must be defined within the same config.", action='store_true')
+    admingroup.add_argument("--autoswapthreshold", help=f"Keep model families at or below this combined file size resident in autoswap mode, in MB (default {default_autoswap_threshold}). Only one model family above the threshold is loaded at a time.", type=check_range(int,0,1048576), default=default_autoswap_threshold)
     admingroup.add_argument("--baseconfig", help="Specify a base .kcpps config to apply, if no custom base config is selected during a model swap", default="")
 
     deprecatedgroup = parser.add_argument_group('Deprecated Commands, DO NOT USE!')
@@ -14160,16 +13941,24 @@ if __name__ == '__main__':
     deprecatedgroup.add_argument("--sdconfig", help=argparse.SUPPRESS, nargs='+')
     compatgroup.add_argument("--noblas", help=argparse.SUPPRESS, action='store_true')
     compatgroup3.add_argument("--nommap","--no-mmap", help=argparse.SUPPRESS, action='store_true')
+    deprecatedgroup.add_argument("--nopipelineparallel", help=argparse.SUPPRESS, action='store_true') #now to automatically enable when ubatch < batchsize and multigpu
     deprecatedgroup.add_argument("--pipelineparallel", help=argparse.SUPPRESS, action='store_true') #changed to nopipelineparallel
     deprecatedgroup.add_argument("--sdnotile", help=argparse.SUPPRESS, action='store_true') # legacy option, see sdtiledvae
+    deprecatedgroup.add_argument("--sdt5xxl", help=argparse.SUPPRESS, metavar=('[filename]')) # legacy option, see sdllm
     deprecatedgroup.add_argument("--sdvaecpu", help=argparse.SUPPRESS, action='store_true') # legacy option, see sdvaedevice
     deprecatedgroup.add_argument("--sdclipgpu", help=argparse.SUPPRESS, action='store_true') # legacy option, see sdclipgpu
     deprecatedgroup.add_argument("--forceversion", help=argparse.SUPPRESS, action='store_true') #no longer used
     deprecatedgroup.add_argument("--sdgendefaults", help=argparse.SUPPRESS, action='store_true') # legacy option, see gendefaults
     deprecatedgroup.add_argument("--flashattention","--flash-attn","-fa", help=argparse.SUPPRESS, action='store_true') #flash attention now default on
     deprecatedgroup.add_argument("--useswa", help=argparse.SUPPRESS, action='store_true')
+    deprecatedgroup.add_argument("--multiuser", help=argparse.SUPPRESS, metavar=('limit'), type=int, nargs='?', const=queue_concurrent_limit, default=None)
 
-    debuggroup = parser.add_argument_group('Debug Commands')
-    debuggroup.add_argument("--testmemory", help=argparse.SUPPRESS, action='store_true')
+    internalgroup = parser.add_argument_group('Internal Commands')
+    internalgroup.add_argument("--testmemory", help=argparse.SUPPRESS, action='store_true')
+    internalgroup.add_argument("--run-bundled-agent", "--run-agent", dest="run_bundled_agent", help=argparse.SUPPRESS, action='store_true')
+    internalgroup.add_argument("--agent-base-url", help=argparse.SUPPRESS, default=None)
+    internalgroup.add_argument("--agent-api-key", help=argparse.SUPPRESS, default=None)
 
-    main(launch_args=parser.parse_args(),default_args=parser.parse_args([]))
+    launch_args = parser.parse_args()
+    cli_arg_overrides = get_cli_arg_overrides(parser)
+    main(launch_args=launch_args,default_args=parser.parse_args([]))

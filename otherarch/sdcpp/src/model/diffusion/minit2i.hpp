@@ -2,6 +2,7 @@
 #define __SD_MODEL_DIFFUSION_MINIT2I_HPP__
 
 #include <algorithm>
+#include <cinttypes>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -9,7 +10,10 @@
 #include <string>
 #include <vector>
 
-#include "core/ggml_extend.hpp"
+#include "core/ggml_extend.h"
+#include "core/ggml_runner.h"
+#include "core/util.h"
+#include "model/common/ggml_block.hpp"
 #include "model/common/rope.hpp"
 #include "model/diffusion/dit.hpp"
 #include "model/diffusion/model.hpp"
@@ -108,15 +112,15 @@ namespace MiniT2I {
                 config.head_dim  = config.hidden_size == 1248 ? 52 : 64;
                 config.num_heads = config.hidden_size / config.head_dim;
             }
-            LOG_DEBUG("minit2i: hidden_size=%" PRId64 ", txt_hidden_size=%" PRId64 ", heads=%" PRId64 ", head_dim=%" PRId64 ", double_blocks=%" PRId64 ", txt_blocks=%" PRId64 ", patch=%" PRId64 ", in_channels=%" PRId64,
-                      config.hidden_size,
-                      config.txt_hidden_size,
-                      config.num_heads,
-                      config.head_dim,
-                      config.depth_double,
-                      config.txt_preamble_depth,
-                      config.patch_size,
-                      config.in_channels);
+            LOG_VERBOSE("minit2i: hidden_size=%" PRId64 ", txt_hidden_size=%" PRId64 ", heads=%" PRId64 ", head_dim=%" PRId64 ", double_blocks=%" PRId64 ", txt_blocks=%" PRId64 ", patch=%" PRId64 ", in_channels=%" PRId64,
+                        config.hidden_size,
+                        config.txt_hidden_size,
+                        config.num_heads,
+                        config.head_dim,
+                        config.depth_double,
+                        config.txt_preamble_depth,
+                        config.patch_size,
+                        config.in_channels);
             return config;
         }
     };
@@ -150,18 +154,26 @@ namespace MiniT2I {
         return Rope::flatten(Rope::rope(Rope::linspace(0.f, static_cast<float>(length - 1), length), head_dim, 10000.f));
     }
 
-    inline std::vector<float> make_vision_rope(int side, int head_dim) {
+    inline Rope::Embedding make_vision_rope(int side, int head_dim) {
         GGML_ASSERT(head_dim % 4 == 0);
         int dim     = head_dim / 2;
         int quarter = dim / 2;
         int length  = side * side;
+        Rope::Embedding result;
+        result.positions.append_image(side, side);
         std::vector<float> out(static_cast<size_t>(length) * (head_dim / 2) * 4);
         std::vector<float> freqs(quarter);
         for (int i = 0; i < quarter; ++i) {
             freqs[i] = 1.0f / std::pow(10000.0f, static_cast<float>(2 * i) / static_cast<float>(dim));
         }
+        for (int axis : {1, 2}) {
+            for (float frequency : freqs) {
+                result.frequencies.push_back({static_cast<size_t>(axis), frequency});
+            }
+        }
         for (int y = 0; y < side; ++y) {
             for (int x = 0; x < side; ++x) {
+                result.ids.push_back({0.f, static_cast<float>(y), static_cast<float>(x)});
                 int pos     = y * side + x;
                 size_t base = static_cast<size_t>(pos) * (head_dim / 2) * 4;
                 for (int i = 0; i < quarter; ++i) {
@@ -178,7 +190,8 @@ namespace MiniT2I {
                 }
             }
         }
-        return out;
+        result.values = std::move(out);
+        return result;
     }
 
     struct SwiGLUMlp : public GGMLBlock {
@@ -471,6 +484,8 @@ namespace MiniT2I {
         int64_t cached_txt_len                      = -1;
         int64_t cached_hidden_size                  = -1;
         int64_t cached_head_dim                     = -1;
+        bool cached_circular_x                      = false;
+        bool cached_circular_y                      = false;
 
         MiniT2IRunner(ggml_backend_t backend,
                       const String2TensorStorage& tensor_storage_map      = {},
@@ -517,6 +532,8 @@ namespace MiniT2I {
                 cached_txt_len == txt_len &&
                 cached_hidden_size == config.hidden_size &&
                 cached_head_dim == config.head_dim &&
+                cached_circular_x == circular_x_enabled &&
+                cached_circular_y == circular_y_enabled &&
                 cached_pos_embed != nullptr &&
                 cached_txt_pe != nullptr &&
                 cached_joint_pe != nullptr) {
@@ -527,7 +544,7 @@ namespace MiniT2I {
 
             auto pos_embed_vec = make_2d_sincos_pos_embed(static_cast<int>(img_side), static_cast<int>(config.hidden_size));
             auto txt_pe_vec    = make_text_rope(static_cast<int>(txt_len), static_cast<int>(config.head_dim));
-            auto img_pe_vec    = make_vision_rope(static_cast<int>(img_side), static_cast<int>(config.head_dim));
+            auto img_pe_vec    = finish_rope_pe(make_vision_rope(static_cast<int>(img_side), static_cast<int>(config.head_dim)));
             auto joint_pe_vec  = txt_pe_vec;
             joint_pe_vec.insert(joint_pe_vec.end(), img_pe_vec.begin(), img_pe_vec.end());
 
@@ -557,6 +574,8 @@ namespace MiniT2I {
             cached_txt_len     = txt_len;
             cached_hidden_size = config.hidden_size;
             cached_head_dim    = config.head_dim;
+            cached_circular_x  = circular_x_enabled;
+            cached_circular_y  = circular_y_enabled;
         }
 
         ggml_cgraph* build_graph(const sd::Tensor<float>& x_tensor,
@@ -589,7 +608,7 @@ namespace MiniT2I {
             auto get_graph = [&]() -> ggml_cgraph* {
                 return build_graph(x, timesteps, context, mask);
             };
-            return restore_trailing_singleton_dims(GGMLRunner::compute<float>(get_graph, n_threads, false, false, false), x.dim());
+            return restore_trailing_singleton_dims(GGMLRunner::compute(get_graph, n_threads, false), x.dim());
         }
 
         sd::Tensor<float> compute(int n_threads,

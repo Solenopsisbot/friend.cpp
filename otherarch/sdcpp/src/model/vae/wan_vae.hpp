@@ -4,6 +4,8 @@
 #include <map>
 #include <memory>
 #include <utility>
+#include "core/ggml_extend_backend.h"
+#include "core/ggml_tensor_utils.h"
 
 #include "model/common/block.hpp"
 #include "model/vae/vae.hpp"
@@ -22,8 +24,16 @@ namespace WAN {
         std::tuple<int, int, int> padding;
         std::tuple<int, int, int> dilation;
         bool bias;
+        float scale = 1.f;
 
         void init_params(ggml_context* ctx, const String2TensorStorage& tensor_storage_map = {}, const std::string prefix = "") override {
+            auto weight = tensor_storage_map.find(prefix + "weight");
+            if (weight != tensor_storage_map.end() && weight->second.ne[2] == 1 &&
+                weight->second.ne[3] == in_channels * out_channels) {
+                // Image VAE exports may retain Conv3d weights with a singleton temporal kernel.
+                std::get<0>(kernel_size) = 1;
+                std::get<0>(padding)     = 0;
+            }
             params["weight"] = ggml_new_tensor_4d(ctx,
                                                   GGML_TYPE_F16,
                                                   std::get<2>(kernel_size),
@@ -51,6 +61,10 @@ namespace WAN {
               dilation(std::move(dilation)),
               bias(bias) {}
 
+        void set_scale(float scale_value) {
+            scale = scale_value;
+        }
+
         ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x, ggml_tensor* cache_x = nullptr) {
             // x: [N*IC, ID, IH, IW]
             // result: x: [N*OC, ID, IH, IW]
@@ -73,10 +87,25 @@ namespace WAN {
             }
 
             x = ggml_ext_pad_ext(ctx->ggml_ctx, ctx->backend, x, lp0, rp0, lp1, rp1, lp2, rp2, 0, 0, ctx->circular_x_enabled, ctx->circular_y_enabled);
+            if (w->ne[2] == 1 && x->ne[2] == 1 && x->ne[3] == in_channels) {
+                // One frame through a one-frame-deep kernel is a 2D conv; backends without
+                // im2col_3d (Metal) otherwise fall back to a much slower direct conv_3d.
+                if (!ggml_is_contiguous(x)) {
+                    x = ggml_cont(ctx->ggml_ctx, x);
+                }
+                ggml_tensor* x2 = ggml_reshape_4d(ctx->ggml_ctx, x, x->ne[0], x->ne[1], in_channels, 1);
+                ggml_tensor* w2 = ggml_reshape_4d(ctx->ggml_ctx, w, w->ne[0], w->ne[1], in_channels, out_channels);
+                x2              = ggml_ext_conv_2d(ctx->ggml_ctx, x2, w2, b,
+                                                   std::get<2>(stride), std::get<1>(stride), 0, 0,
+                                                   std::get<2>(dilation), std::get<1>(dilation),
+                                                   ctx->conv2d_direct_enabled, false, false, scale);
+                return ggml_reshape_4d(ctx->ggml_ctx, x2, x2->ne[0], x2->ne[1], 1, out_channels);
+            }
             return ggml_ext_conv_3d(ctx->ggml_ctx, ctx->backend, x, w, b, in_channels,
                                     std::get<2>(stride), std::get<1>(stride), std::get<0>(stride),
                                     0, 0, 0,
-                                    std::get<2>(dilation), std::get<1>(dilation), std::get<0>(dilation));
+                                    std::get<2>(dilation), std::get<1>(dilation), std::get<0>(dilation),
+                                    false, ctx->conv3d_direct_enabled, scale);
         }
     };
 
@@ -137,7 +166,7 @@ namespace WAN {
         std::string mode;
 
     public:
-        Resample(int64_t dim, const std::string& mode, bool wan2_2 = false)
+        Resample(int64_t dim, const std::string& mode, bool wan2_2 = false, bool is_2D = false)
             : dim(dim), mode(mode) {
             if (mode == "upsample2d") {
                 if (wan2_2) {
@@ -151,12 +180,20 @@ namespace WAN {
                 } else {
                     blocks["resample.1"] = std::shared_ptr<GGMLBlock>(new Conv2d(dim, dim / 2, {3, 3}, {1, 1}, {1, 1}));
                 }
-                blocks["time_conv"] = std::shared_ptr<GGMLBlock>(new CausalConv3d(dim, dim * 2, {3, 1, 1}, {1, 1, 1}, {1, 0, 0}));
+                if (is_2D) {
+                    blocks["time_conv"] = std::make_shared<Conv2dBut3d>(dim, dim * 2, std::pair<int, int>{1, 1});
+                } else {
+                    blocks["time_conv"] = std::shared_ptr<GGMLBlock>(new CausalConv3d(dim, dim * 2, {3, 1, 1}, {1, 1, 1}, {1, 0, 0}));
+                }
             } else if (mode == "downsample2d") {
                 blocks["resample.1"] = std::shared_ptr<GGMLBlock>(new Conv2d(dim, dim, {3, 3}, {2, 2}));
             } else if (mode == "downsample3d") {
                 blocks["resample.1"] = std::shared_ptr<GGMLBlock>(new Conv2d(dim, dim, {3, 3}, {2, 2}));
-                blocks["time_conv"]  = std::shared_ptr<GGMLBlock>(new CausalConv3d(dim, dim, {3, 1, 1}, {2, 1, 1}, {0, 0, 0}));
+                if (is_2D) {
+                    blocks["time_conv"] = std::make_shared<Conv2dBut3d>(dim, dim, std::pair<int, int>{1, 1});
+                } else {
+                    blocks["time_conv"] = std::shared_ptr<GGMLBlock>(new CausalConv3d(dim, dim, {3, 1, 1}, {2, 1, 1}, {0, 0, 0}));
+                }
             } else if (mode == "none") {
                 // nn.Identity()
             } else {
@@ -466,7 +503,7 @@ namespace WAN {
             }
             if (down_flag) {
                 std::string mode                           = temperal_downsample ? "downsample3d" : "downsample2d";
-                blocks["downsamples." + std::to_string(i)] = std::shared_ptr<GGMLBlock>(new Resample(out_dim, mode, true));
+                blocks["downsamples." + std::to_string(i)] = std::shared_ptr<GGMLBlock>(new Resample(out_dim, mode, true, is_2D));
                 i++;
             }
         }
@@ -529,7 +566,7 @@ namespace WAN {
             }
             if (up_flag) {
                 std::string mode                         = temperal_upsample ? "upsample3d" : "upsample2d";
-                blocks["upsamples." + std::to_string(i)] = std::shared_ptr<GGMLBlock>(new Resample(out_dim, mode, true));
+                blocks["upsamples." + std::to_string(i)] = std::shared_ptr<GGMLBlock>(new Resample(out_dim, mode, true, is_2D));
                 i++;
             }
         }
@@ -613,8 +650,8 @@ namespace WAN {
             auto v = qkv_vec[2];
             v      = ggml_reshape_3d(ctx->ggml_ctx, v, h * w, c, n);  // [t, c, h * w]
 
-            v = ggml_cont(ctx->ggml_ctx, ggml_ext_torch_permute(ctx->ggml_ctx, v, 1, 0, 2, 3));                            // [t, h * w, c]
-            x = ggml_ext_attention_ext(ctx->ggml_ctx, ctx->backend, q, k, v, 1, nullptr, false, ctx->flash_attn_enabled);  // [t, h * w, c]
+            v = ggml_cont(ctx->ggml_ctx, ggml_ext_torch_permute(ctx->ggml_ctx, v, 1, 0, 2, 3));    // [t, h * w, c]
+            x = ggml_ext_attention_ext(ctx, q, k, v, 1, nullptr, false, ctx->flash_attn_enabled);  // [t, h * w, c]
 
             x = ggml_ext_cont(ctx->ggml_ctx, ggml_permute(ctx->ggml_ctx, x, 1, 0, 2, 3));  // [t, c, h * w]
             x = ggml_reshape_4d(ctx->ggml_ctx, x, w, h, c, n);                             // [t, c, h, w]
@@ -1047,13 +1084,28 @@ namespace WAN {
 
                 _conv_num     = 34;
                 _enc_conv_num = 26;
-            } else if (version == VERSION_QWEN_IMAGE_LAYERED) {
+            } else if (version == VERSION_QWEN_IMAGE_LAYERED || version == VERSION_MING_IMAGE) {
                 input_channels = 4;
             }
 
+            if (version == VERSION_QWEN_IMAGE_2_1) {
+                wan2_2         = true;
+                dec_dim        = 144;
+                z_dim          = 64;
+                input_channels = 4;
+                dim_mult       = {1, 2, 4, 8, 8};
+            }
+
             if (is_2D) {
-                temperal_upsample   = {false, false, false};
-                temperal_downsample = {false, false, false};
+                temperal_upsample.assign(dim_mult.size() - 1, false);
+                temperal_downsample.assign(dim_mult.size() - 1, false);
+            }
+            if (version == VERSION_QWEN_IMAGE_2_1) {
+                // Temporal shortcut factors still affect single-frame channel grouping.
+                temperal_upsample   = {true, true, true, false};
+                temperal_downsample = {false, true, true, true};
+                _conv_num           = 2 * (2 + static_cast<int>(dim_mult.size()) * (num_res_blocks + 1)) + 3 + (is_2D ? 0 : 2);
+                _enc_conv_num       = 2 * (2 + static_cast<int>(dim_mult.size()) * num_res_blocks) + 3 + (is_2D ? 0 : 2);
             }
 
             if (!decode_only) {
@@ -1069,6 +1121,19 @@ namespace WAN {
                 blocks["conv2"] = std::shared_ptr<GGMLBlock>(new Conv2dBut3d(z_dim, z_dim, {1, 1}));
             } else {
                 blocks["conv2"] = std::shared_ptr<GGMLBlock>(new CausalConv3d(z_dim, z_dim, {1, 1, 1}));
+            }
+            if (version == VERSION_QWEN_IMAGE_2_1) {
+                // Keep large VAE activations within the FP16 convolution range.
+                const float conv_scale = 1.f / 128.f;
+                std::vector<GGMLBlock*> all_blocks;
+                get_all_blocks(all_blocks);
+                for (auto block : all_blocks) {
+                    if (auto conv = dynamic_cast<Conv2d*>(block)) {
+                        conv->set_scale(conv_scale);
+                    } else if (auto conv = dynamic_cast<CausalConv3d*>(block)) {
+                        conv->set_scale(conv_scale);
+                    }
+                }
             }
         }
 
@@ -1268,18 +1333,9 @@ namespace WAN {
                      SDVersion version                                   = VERSION_WAN2,
                      std::shared_ptr<RunnerWeightManager> weight_manager = nullptr)
             : VAE(version, backend, prefix, weight_manager), decode_only(decode_only) {
-            bool is_2D = false;
-            for (const auto& [name, tensor_storage] : tensor_storage_map) {
-                if (ends_with(name, "decoder.conv1.weight")) {
-                    if (tensor_storage.ne[2] > 3) {
-                        is_2D = true;
-                    }
-                    break;
-                }
-            }
-            if (is_2D) {
-                LOG_DEBUG("USING 2D VAE");
-            }
+            const auto conv_in = tensor_storage_map.find((prefix.empty() ? "" : prefix + ".") + "decoder.conv1.weight");
+            const bool is_2D   = conv_in != tensor_storage_map.end() && conv_in->second.ne[2] > 3;
+            LOG_VERBOSE("Wan VAE convolution type: %s", is_2D ? "2D" : "3D");
             ae = WanVAE(decode_only, version, is_2D);
             ae.init(params_ctx, tensor_storage_map, prefix);
         }
@@ -1339,17 +1395,45 @@ namespace WAN {
                 std_tensor.reshape_(stats_shape);
                 return {std::move(mean_tensor), std::move(std_tensor)};
             }
+            if (version == VERSION_QWEN_IMAGE_2_1 && latents.shape()[channel_dim] == 64) {
+                stats_shape[static_cast<size_t>(channel_dim)] = 64;
+                auto mean_tensor                              = sd::Tensor<float>::from_vector({0.5126f, 0.7721f, -0.0631f, 1.3506f, -0.7855f, -2.1025f, -0.3458f, 1.3722f,
+                                                                                                1.8873f, -1.7177f, -0.6510f, 0.2732f, 0.7562f, -0.6163f, -1.0277f, 3.8363f,
+                                                                                                2.0210f, 0.0472f, 0.9320f, 2.0087f, 2.4954f, -0.1391f, -1.4249f, 1.8464f,
+                                                                                                -0.5236f, 1.2826f, 3.7046f, -1.3035f, 2.7286f, -1.4518f, -1.9036f, -1.9955f,
+                                                                                                -0.0342f, -1.0265f, -0.7636f, 3.0555f, 0.0746f, -3.0751f, -0.1076f, 1.7376f,
+                                                                                                -1.0914f, -1.9435f, -0.2784f, -1.3680f, 0.4809f, -0.4433f, 0.3764f, 0.5729f,
+                                                                                                -2.0595f, 1.0960f, -1.3260f, -2.0211f, -5.0179f, 0.5275f, 4.0162f, 1.8505f,
+                                                                                                0.3026f, 1.9373f, 1.4937f, 0.2632f, 0.5547f, -1.7121f, -0.1562f, 0.0304f});
+                auto std_tensor                               = sd::Tensor<float>::from_vector({3.2001f, 3.2936f, 3.4321f, 3.0091f, 3.1061f, 4.0379f, 4.0705f, 3.7910f,
+                                                                                                3.0785f, 3.6500f, 3.9308f, 3.0904f, 2.8778f, 3.7675f, 3.7320f, 5.0756f,
+                                                                                                3.2864f, 4.0397f, 3.1317f, 4.0443f, 2.9249f, 3.9454f, 3.0988f, 4.2489f,
+                                                                                                3.4896f, 3.8513f, 3.9323f, 3.4719f, 3.7498f, 4.2830f, 3.5694f, 4.2467f,
+                                                                                                3.9037f, 3.2947f, 5.0770f, 3.5075f, 3.2700f, 3.4767f, 2.8063f, 5.1125f,
+                                                                                                3.5327f, 4.7833f, 3.1286f, 4.1819f, 3.8527f, 3.8312f, 3.5605f, 4.3875f,
+                                                                                                3.9624f, 4.0168f, 3.5643f, 4.0550f, 5.5614f, 4.2963f, 4.4080f, 3.4959f,
+                                                                                                3.8747f, 3.7608f, 3.5735f, 3.1490f, 3.7662f, 3.6746f, 3.4563f, 3.8161f});
+                mean_tensor.reshape_(stats_shape);
+                std_tensor.reshape_(stats_shape);
+                return {std::move(mean_tensor), std::move(std_tensor)};
+            }
             GGML_ABORT("unexpected latent channel dimension %lld for version %d",
                        (long long)latents.shape()[channel_dim],
                        version);
         }
 
         sd::Tensor<float> diffusion_to_vae_latents(const sd::Tensor<float>& latents) override {
+            if (version == VERSION_MING_IMAGE) {
+                return latents / 8.0064f;
+            }
             auto [mean_tensor, std_tensor] = get_latents_mean_std(latents);
             return (latents * std_tensor) / scale_factor + mean_tensor;
         }
 
         sd::Tensor<float> vae_to_diffusion_latents(const sd::Tensor<float>& latents) override {
+            if (version == VERSION_MING_IMAGE) {
+                return latents * 8.0064f;
+            }
             auto [mean_tensor, std_tensor] = get_latents_mean_std(latents);
             return ((latents - mean_tensor) * scale_factor) / std_tensor;
         }
@@ -1383,15 +1467,14 @@ namespace WAN {
 
             ggml_tensor* z = make_input(z_tensor);
 
-            auto runner_ctx = get_context();
+            auto runner_ctx = get_context(gf);
 
             ggml_tensor* out = ae.decode_tiled_chunk(&runner_ctx, z, chunk_idx);
 
             for (size_t feat_idx = 0; feat_idx < ae._feat_map.size(); feat_idx++) {
                 ggml_tensor* feat_cache = ae._feat_map[feat_idx];
                 if (feat_cache != nullptr) {
-                    cache("feat_idx:" + std::to_string(feat_idx), feat_cache);
-                    ggml_build_forward_expand(gf, feat_cache);
+                    runner_ctx.persist_cache_tensor("feat_idx:" + std::to_string(feat_idx), feat_cache);
                 }
             }
 
@@ -1409,31 +1492,29 @@ namespace WAN {
             stateful_config.overlap                 = 0;
             auto plan                               = make_vae_temporal_tile_plan(input.shape()[2], stateful_config);
 
-            LOG_DEBUG("Wan VAE stateful temporal tiling: tile_frames=%d, total latent frames=%lld, tiles=%d",
-                      plan.tile_frames,
-                      (long long)input.shape()[2],
-                      (int)plan.tiles.size());
+            LOG_VERBOSE("Wan VAE stateful temporal tiling: tile_frames=%d, total latent frames=%lld, tiles=%d",
+                        plan.tile_frames,
+                        (long long)input.shape()[2],
+                        (int)plan.tiles.size());
 
             free_cache_ctx_and_buffer();
-            cache_tensor_map.clear();
             ae.clear_cache();
 
             auto output = process_vae_temporal_tiles(input, plan, [&](const sd::Tensor<float>& input_tile, const VAETemporalTile& tile) {
-                LOG_DEBUG("Wan VAE temporal tile %d/%d: latent frames [%lld, %lld)",
-                          tile.index + 1,
-                          (int)plan.tiles.size(),
-                          (long long)tile.start,
-                          (long long)tile.end);
+                LOG_VERBOSE("Wan VAE temporal tile %d/%d: latent frames [%lld, %lld)",
+                            tile.index + 1,
+                            (int)plan.tiles.size(),
+                            (long long)tile.start,
+                            (long long)tile.end);
                 auto get_graph = [&]() -> ggml_cgraph* {
                     return build_temporal_tile_graph(input_tile, static_cast<int>(tile.start));
                 };
                 return restore_trailing_singleton_dims(
-                    GGMLRunner::compute<float>(get_graph, n_threads, true, true, true),
+                    GGMLRunner::compute(get_graph, n_threads, false),
                     static_cast<size_t>(input.dim()));
             });
 
             free_cache_ctx_and_buffer();
-            cache_tensor_map.clear();
             ae.clear_cache();
             return output;
         }
@@ -1448,7 +1529,7 @@ namespace WAN {
             auto get_graph = [&]() -> ggml_cgraph* {
                 return build_graph(input.empty() ? z : input, decode_graph);
             };
-            auto result = restore_trailing_singleton_dims(GGMLRunner::compute<float>(get_graph, n_threads, true, true, true),
+            auto result = restore_trailing_singleton_dims(GGMLRunner::compute(get_graph, n_threads, false),
                                                           input.empty() ? z.dim() : input.dim());
             if (!result.empty() && z.dim() == 4) {
                 result.squeeze_(2);
@@ -1481,7 +1562,7 @@ namespace WAN {
                 GGML_ASSERT(!out_opt.empty());
                 out = std::move(out_opt);
                 print_sd_tensor(out);
-                LOG_DEBUG("decode test done in %ldms", t1 - t0);
+                LOG_VERBOSE("decode test done in %ldms", t1 - t0);
             }
         };
 
@@ -1494,13 +1575,14 @@ namespace WAN {
             {
                 LOG_INFO("loading from '%s'", file_path.c_str());
 
-                ModelLoader& model_loader = model_manager->loader();
+                ModelLoader model_loader;
                 if (!model_loader.init_from_file_and_convert_name(file_path, "vae.")) {
                     LOG_ERROR("init model loader from file failed: '%s'", file_path.c_str());
                     return;
                 }
 
-                if (!model_manager->register_runner_params("Wan VAE test",
+                if (!model_manager->set_loader(model_loader) ||
+                    !model_manager->register_runner_params(ModelComponent::VAE,
                                                            *vae,
                                                            ModelManager::ResidencyMode::ParamBackend,
                                                            backend,

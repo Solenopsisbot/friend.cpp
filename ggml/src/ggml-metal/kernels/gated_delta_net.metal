@@ -3,10 +3,6 @@
 constant short FC_gated_delta_net_ne20 [[function_constant(FC_GATED_DELTA_NET + 0)]];
 constant short FC_gated_delta_net_ne30 [[function_constant(FC_GATED_DELTA_NET + 1)]];
 constant short FC_gated_delta_net_K    [[function_constant(FC_GATED_DELTA_NET + 2)]];
-constant bool  FC_gated_delta_net_rows       [[function_constant(FC_GATED_DELTA_NET + 3)]];
-constant bool  FC_gated_delta_net_write_rows [[function_constant(FC_GATED_DELTA_NET_WRITE_ROWS)]];
-constant bool  FC_gated_delta_net_raw_gates  [[function_constant(FC_GATED_DELTA_NET_RAW_GATES)]];
-constant bool  FC_gated_delta_net_qk_l2      [[function_constant(FC_GATED_DELTA_NET_QK_L2)]];
 
 #if 1
 template<short NSG>
@@ -18,23 +14,14 @@ kernel void kernel_gated_delta_net_impl(
         device const char * g,
         device const char * b,
         device const char * s,
-        device const char * rows,
-        device const char * write_rows,
-        device       char * state_dst,
         device       char * dst,
         device       char * dst_fuse,
-        device const char * raw_dt_bias,
-        device const char * raw_a,
         uint3 tgpig[[threadgroup_position_in_grid]],
         uint3 tpitg[[thread_position_in_threadgroup]],
         uint3   ntg[[threads_per_threadgroup]])  {
-#define S_v        FC_gated_delta_net_ne20
-#define G          FC_gated_delta_net_ne30
-#define K          FC_gated_delta_net_K
-#define HAS_ROWS   FC_gated_delta_net_rows
-#define WRITE_ROWS FC_gated_delta_net_write_rows
-#define RAW_GATES  FC_gated_delta_net_raw_gates
-#define QK_L2      FC_gated_delta_net_qk_l2
+#define S_v FC_gated_delta_net_ne20
+#define G   FC_gated_delta_net_ne30
+#define K   FC_gated_delta_net_K
 
     const uint tx = tpitg.x;
     const uint ty = tpitg.y;
@@ -48,14 +35,9 @@ kernel void kernel_gated_delta_net_impl(
 
     const float scale = 1.0f / sqrt((float)S_v);
 
-    // input state read base. scratch mode: layout [S_v, S_v, H, n_seqs] (s0
-    // only), per-seq stride H*D. rows mode: s is a 2D cache view with D-wide
-    // contiguous rows; seq i23's live state is at cache row rows[i23].
+    // input state layout [S_v, S_v, H, n_seqs] (s0 only): per-seq stride is H*D.
     // state is stored transposed: M[i20][is] = S[is][i20], so row i20 is contiguous
-    const uint state_seq_base = HAS_ROWS
-        ? ((uint)((device const int *) rows)[i23])*(uint)(args.ne21*S_v*S_v)
-        : (i23*args.ne21)*S_v*S_v;
-    const uint state_in_base = state_seq_base + i21*S_v*S_v + i20*S_v;
+    const uint state_in_base = (i23*args.ne21 + i21)*S_v*S_v + i20*S_v;
     device const float * s_ptr = (device const float *) (s) + state_in_base;
 
     float ls[NSG];
@@ -73,11 +55,6 @@ kernel void kernel_gated_delta_net_impl(
 
     device const float * b_ptr = (device const float *) (b) + (i23*args.ne22*args.ne21 + i21);
     device const float * g_ptr = (device const float *) (g) + (i23*args.ne22*args.ne21 + i21)*G;
-
-    // raw gates: beta -> sigmoid(beta), g -> a[h] * softplus(g + dt_bias[h]); same formulas
-    // as the unary kernels the graph used to run separately
-    const float rg_bias = RAW_GATES ? ((device const float *) raw_dt_bias)[i21] : 0.0f;
-    const float rg_a    = RAW_GATES ? ((device const float *) raw_a)[i21]       : 0.0f;
 
     // snapshot slot mapping: slot 0 = most recent state, slot s = s tokens back.
     // When n_tokens < K, only slots 0..n_tokens-1 are written; older slots are caller-owned.
@@ -98,48 +75,14 @@ kernel void kernel_gated_delta_net_impl(
     for (short t = 0; t < args.ne22; t++) {
         float s_k = 0.0f;
 
-        // friend.cpp: this lane's slice of the head's q and k, l2-normalised in place when the
-        // norm is folded in -- the simdgroup holds the whole head row (32 lanes x NSG), so the
-        // norm is one simd_sum each, with the arithmetic of scale(rms_norm(x, eps/n), 1/sqrt(n))
-        float kv[NSG];
-        float qv[NSG];
-        FOR_UNROLL (short j = 0; j < NSG; j++) {
-            const short is = tx*NSG + j;
-            kv[j] = k_ptr[is];
-            qv[j] = q_ptr[is];
-        }
-        if (QK_L2) {
-            float sk = 0.0f;
-            float sq = 0.0f;
-            FOR_UNROLL (short j = 0; j < NSG; j++) {
-                sk += kv[j]*kv[j];
-                sq += qv[j]*qv[j];
-            }
-            sk = simd_sum(sk);
-            sq = simd_sum(sq);
-            const float n  = (float) (32*NSG);
-            const float rk = 1.0f/sqrt(sk/n + args.qk_l2_eps/n);
-            const float rq = 1.0f/sqrt(sq/n + args.qk_l2_eps/n);
-            const float s2 = 1.0f/sqrt(n);
-            FOR_UNROLL (short j = 0; j < NSG; j++) {
-                kv[j] = (kv[j]*rk)*s2;
-                qv[j] = (qv[j]*rq)*s2;
-            }
-        }
-
         if (G == 1) {
-            float g0 = g_ptr[0];
-            if (RAW_GATES) {
-                const float x = g0 + rg_bias;
-                g0 = rg_a * ((x > 20.0f) ? x : log(1.0f + exp(x)));
-            }
-            const float g_exp = exp(g0);
+            const float g_exp = exp(g_ptr[0]);
 
             FOR_UNROLL (short j = 0; j < NSG; j++) {
                 const short is = tx*NSG + j;
                 ls[j] *= g_exp;
 
-                s_k += ls[j]*kv[j];
+                s_k += ls[j]*k_ptr[is];
             }
         } else {
             // KDA
@@ -147,26 +90,21 @@ kernel void kernel_gated_delta_net_impl(
                 const short is = tx*NSG + j;
                 ls[j] *= exp(g_ptr[is]);
 
-                s_k += ls[j]*kv[j];
+                s_k += ls[j]*k_ptr[is];
             }
         }
 
         s_k = simd_sum(s_k);
 
-        float bt = b_ptr[0];
-        if (RAW_GATES) {
-            bt = 1.0f / (1.0f + exp(-bt));
-        }
-
-        const float d = (v_ptr[i20] - s_k)*bt;
+        const float d = (v_ptr[i20] - s_k)*b_ptr[0];
 
         float y = 0.0f;
 
         FOR_UNROLL (short j = 0; j < NSG; j++) {
             const short is = tx*NSG + j;
-            ls[j] += kv[j]*d;
+            ls[j] += k_ptr[is]*d;
 
-            y += ls[j]*qv[j];
+            y += ls[j]*q_ptr[is];
         }
 
         y = simd_sum(y);
@@ -185,28 +123,10 @@ kernel void kernel_gated_delta_net_impl(
         if (K > 1) {
             const int target_slot = (int)args.ne22 - 1 - (int)t;
             if (target_slot >= 0 && target_slot < (int)K) {
-                // always populate the op's own snapshot output (or, when fused with the
-                // cache cpy, its cache destination): the rows write-fold below must not
-                // leave the documented output region uninitialized for other consumers
-                // (or output/eval callbacks)
                 device float * dst_state = (device float *)state_out + (uint)target_slot * slot_stride + state_out_base;
                 FOR_UNROLL (short j = 0; j < NSG; j++) {
                     const short is = tx*NSG + j;
                     dst_state[is] = ls[j];
-                }
-
-                if (WRITE_ROWS) {
-                    // additionally scatter into the state cache in place of
-                    // the folded SET_ROWS. The written slots are the leading
-                    // min(T, K) ones (slot 0 = final state), so target_slot
-                    // indexes the compact row-index input directly.
-                    const uint64_t row = ((device const int64_t *) write_rows)[(uint)target_slot * args.ne23 + i23];
-                    device float * dst_rows = (device float *) state_dst + row * (uint64_t)(S_v * S_v * args.ne21)
-                        + (uint) i21 * S_v * S_v + i20 * S_v;
-                    FOR_UNROLL (short j = 0; j < NSG; j++) {
-                        const short is = tx*NSG + j;
-                        dst_rows[is] = ls[j];
-                    }
                 }
             }
         }
@@ -218,27 +138,11 @@ kernel void kernel_gated_delta_net_impl(
             const short is = tx*NSG + j;
             dst_state[is] = ls[j];
         }
-
-        if (WRITE_ROWS) {
-            // single snapshot slot: scatter it to the cache row in place of
-            // the folded SET_ROWS, same as the K > 1 branch above
-            const uint64_t row = ((device const int64_t *) write_rows)[i23];
-            device float * dst_rows = (device float *) state_dst + row * (uint64_t)(S_v * S_v * args.ne21)
-                + (uint) i21 * S_v * S_v + i20 * S_v;
-            FOR_UNROLL (short j = 0; j < NSG; j++) {
-                const short is = tx*NSG + j;
-                dst_rows[is] = ls[j];
-            }
-        }
     }
 
 #undef S_v
 #undef G
 #undef K
-#undef HAS_ROWS
-#undef WRITE_ROWS
-#undef RAW_GATES
-#undef QK_L2
 }
 
 typedef decltype(kernel_gated_delta_net_impl<4>) kernel_gated_delta_net_t;

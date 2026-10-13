@@ -34,9 +34,11 @@ struct TensorStorage {
     std::shared_ptr<kcpp_safetensors_quant::TensorStorageExt> kcpp_ext;
 
     std::string storage_key;
-    size_t file_index = 0;
-    int index_in_zip  = -1;  // >= means stored in a zip file
-    uint64_t offset   = 0;   // offset in file
+    size_t file_index      = 0;
+    uint64_t file_id       = 0;
+    uint64_t file_revision = 0;
+    int index_in_zip       = -1;  // >= means stored in a zip file
+    uint64_t offset        = 0;   // offset in file
 
     TensorStorage() = default;
 
@@ -62,7 +64,7 @@ struct TensorStorage {
     int64_t nbytes_to_read() const {
         if (is_f64 || is_i64) {
             return nbytes() * 2;
-#if !KCPP_MAINLINE_FP8_SCALED
+#ifdef SD_USE_UPSTREAM_GGML
         } else if (is_f8_e4m3 || is_f8_e5m2) {
             return nbytes() / 2;
 #endif

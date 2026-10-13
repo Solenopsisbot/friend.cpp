@@ -27,10 +27,8 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cctype>
 #include <cfloat>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <functional>
@@ -57,6 +55,7 @@
 #include "models/bloom.cpp"
 #include "models/chameleon.cpp"
 #include "models/chatglm.cpp"
+#include "models/clef.cpp"
 #include "models/codeshell.cpp"
 #include "models/cogvlm.cpp"
 #include "models/cohere2.cpp"
@@ -71,7 +70,6 @@
 #include "models/deepseek4.cpp"
 #include "models/delta-net-base.cpp"
 #include "models/dflash.cpp"
-#include "models/dspark.cpp" // prism: DSpark drafter arch
 #include "models/dots1.cpp"
 #include "models/dots3note.cpp"
 #include "models/dream.cpp"
@@ -85,6 +83,7 @@
 #include "models/falcon-h1.cpp"
 #include "models/falcon.cpp"
 #include "models/gemma-embedding.cpp"
+#include "models/gemma-embedding2.cpp"
 #include "models/gemma.cpp"
 #include "models/gemma2.cpp"
 #include "models/gemma3.cpp"
@@ -94,6 +93,7 @@
 #include "models/glm-dsa.cpp"
 #include "models/glm4-moe.cpp"
 #include "models/glm4.cpp"
+#include "models/glm5-next.cpp"
 #include "models/gpt2.cpp"
 #include "models/gptneox.cpp"
 #include "models/granite-hybrid.cpp"
@@ -103,6 +103,7 @@
 #include "models/granite.cpp"
 #include "models/grok.cpp"
 #include "models/grovemoe.cpp"
+#include "models/hrm-text.cpp"
 #include "models/hunyuan-dense.cpp"
 #include "models/hunyuan-moe.cpp"
 #include "models/hunyuan-vl.cpp"
@@ -114,6 +115,7 @@
 #include "models/jamba.cpp"
 #include "models/jina-bert-v2.cpp"
 #include "models/jina-bert-v3.cpp"
+#include "models/k2-horizon.cpp"
 #include "models/kimi-k3.cpp"
 #include "models/kimi-linear.cpp"
 #include "models/laguna.cpp"
@@ -314,6 +316,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_gemma4_assistant(params);
         case LLM_ARCH_GEMMA_EMBEDDING:
             return new llama_model_gemma_embedding(params);
+        case LLM_ARCH_GEMMA_EMBEDDING2:
+            return new llama_model_gemma_embedding2(params);
         case LLM_ARCH_STARCODER2:
             return new llama_model_starcoder2(params);
         case LLM_ARCH_MAMBA:
@@ -472,6 +476,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_minimax_m2(params);
         case LLM_ARCH_MINIMAX_M3:
             return new llama_model_minimax_m3(params);
+        case LLM_ARCH_HRM_TEXT:
+            return new llama_model_hrm_text(params);
         case LLM_ARCH_COGVLM:
             return new llama_model_cogvlm(params);
         case LLM_ARCH_PANGU_EMBED:
@@ -482,6 +488,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_qwen35(params);
         case LLM_ARCH_QWEN35MOE:
             return new llama_model_qwen35moe(params);
+        case LLM_ARCH_CLEF:
+            return new llama_model_clef(params);
         case LLM_ARCH_QWEN4EXP:
             return new llama_model_qwen4exp(params);
         case LLM_ARCH_MISTRAL3:
@@ -496,12 +504,14 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_kimi_linear(params);
         case LLM_ARCH_KIMI_K3:
             return new llama_model_kimi_k3(params);
+        case LLM_ARCH_GLM5_NEXT:
+            return new llama_model_glm5_next(params);
         case LLM_ARCH_STEP35:
             return new llama_model_step35(params);
         case LLM_ARCH_SPARK2_5:
             return new llama_model_spark2_5(params);
-        case LLM_ARCH_DSPARK:
-            return new llama_model_dspark(params);
+        case LLM_ARCH_K2_HORIZON:
+            return new llama_model_k2_horizon(params);
         default:
             throw std::runtime_error(std::string("unsupported model architecture: '") + llm_arch_name(arch) + "'");
     }
@@ -539,6 +549,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
 
     static const std::regex pattern_q_weight        ("blk\\.\\d*\\.attn_q.weight");
     static const std::regex pattern_kv_weight       ("blk\\.\\d*\\.attn_(k|v).weight");
+    static const std::regex pattern_v_exps_weight   ("blk\\.\\d*\\.attn_v_exps.weight"); // K2 Horizon MoVA
     static const std::regex pattern_qkv_weight      ("blk\\.\\d*\\.attn_qkv.weight");
     static const std::regex pattern_q_bias          ("blk\\.\\d*\\.attn_q\\.bias");
     static const std::regex pattern_kv_bias         ("blk\\.\\d*\\.attn_(k|v)\\.bias");
@@ -633,6 +644,10 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
     };
 
     auto get_tensor_config = [&]() -> tensor_config {
+        if (ud->model->arch == LLM_ARCH_HRM_TEXT) {
+            // aliased cache slots cannot satisfy the meta-split invariants, so replicate all tensors
+            return {GGML_BACKEND_SPLIT_AXIS_MIRRORED, tensor, 0, 0};
+        }
         if (is_dsv4) {
             if (std::regex_match(tensor_name, pattern_kv_cache) ||
                     std::regex_match(tensor_name, pattern_dsv4_state)) {
@@ -672,6 +687,10 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         // standard attention
         if (std::regex_match(tensor_name, pattern_q_weight) || std::regex_match(tensor_name, pattern_kv_weight)) {
             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1, "attn_output.weight", "ssm_out.weight");
+        }
+        // routed value experts {n_embd, n_embd_v_gqa, n_expert} produce V, so they split like attn_v
+        if (std::regex_match(tensor_name, pattern_v_exps_weight)) {
+            return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_1, "attn_output.weight");
         }
         if (std::regex_match(tensor_name, pattern_q_bias) || std::regex_match(tensor_name, pattern_kv_bias)) {
             return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_0, "attn_output.weight", "ssm_out.weight");
@@ -756,9 +775,21 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         return get_tensor_config_impl(GGML_BACKEND_SPLIT_AXIS_MIRRORED);
     };
 
+    // if a model has fused tensors they need to be separated into "segments", see the comments on ggml_backend_meta_split_state struct
     auto get_split_segments = [&](int axis, uint32_t il) -> std::vector<std::pair<int64_t, uint32_t>> {
-        if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE ||
+        // TODO: deduplicate condition [TAG_SPLIT_QGATE_QWEN]
+        if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE || ud->model->arch == LLM_ARCH_CLEF ||
                 ud->model->arch == LLM_ARCH_QWEN4EXP) {
+
+            // fused full attention layers with Q gate tensors that need n_embd doubled:
+            if (!hparams.is_recr(il) && (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_qkv_bias))) {
+                const int64_t n_embd      = hparams.n_head(il) * hparams.n_embd_head_k(il) * 2;
+                const int64_t n_embd_gqa  = hparams.n_embd_v_gqa(il);
+                GGML_ASSERT(hparams.n_embd_k_gqa(il) == n_embd_gqa);
+                GGML_ASSERT(tensor->ne[axis] == n_embd + 2*n_embd_gqa);
+                return {{n_embd, 1}, {n_embd_gqa, 2}};
+            }
+
             const int64_t head_k_dim = hparams.ssm_d_state;
             const int64_t head_v_dim = hparams.ssm_d_state;
             const int64_t n_k_heads  = hparams.ssm_n_group;
@@ -808,11 +839,16 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
         }
 
         if (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_qkv_bias)) {
-            const int64_t n_embd      = hparams.n_embd;
-            const int64_t n_embd_gqa  = hparams.n_embd_v_gqa(il);
-            GGML_ASSERT(hparams.n_embd_k_gqa() == n_embd_gqa);
-            GGML_ASSERT(tensor->ne[axis] == n_embd + 2*n_embd_gqa);
-            return {{n_embd, 1}, {n_embd_gqa, 2}};
+            const int64_t n_embd_q = hparams.n_head(il) * hparams.n_embd_head_k(il);
+            const int64_t n_embd_k = hparams.n_embd_k_gqa(il);
+            const int64_t n_embd_v = hparams.n_embd_v_gqa(il);
+            GGML_ASSERT(tensor->ne[axis] == n_embd_q + n_embd_k + n_embd_v);
+            if (n_embd_k == n_embd_v) {
+                return {{n_embd_q, 1}, {n_embd_k, 2}};
+            }
+            // uneven K/V head sizes (e.g. MiMo d_k=192 d_v=128): split K and V as separate
+            // segments so each device gets whole heads of both
+            return {{n_embd_q, 1}, {n_embd_k, 1}, {n_embd_v, 1}};
         }
         if (std::regex_match(tensor_name, pattern_ffn_up_weight) || std::regex_match(tensor_name, pattern_ffn_up_bias)) {
             const int64_t n_ff = hparams.n_ff(il);
@@ -896,7 +932,8 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             if (std::regex_match(tensor_name, pattern_q_weight) || std::regex_match(tensor_name, pattern_q_bias)) {
                 GGML_ASSERT(segments.size() == 1);
                 // some models have Q gate tensors, for those cases the granularity needs to be doubled:
-                if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE ||
+                // TODO: deduplicate condition [TAG_SPLIT_QGATE_QWEN]
+                if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE || ud->model->arch == LLM_ARCH_CLEF ||
                         ud->model->arch == LLM_ARCH_QWEN4EXP) {
                     return {std::lcm(2*n_embd_q, blck_size_perf)};
                 }
@@ -904,7 +941,7 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             }
             if (std::regex_match(tensor_name, pattern_attn_out_weight)) {
                 GGML_ASSERT(segments.size() == 1);
-                return {granularity_q};
+                return {granularity_head * hparams.n_embd_head_v(il)};
             }
             if (std::regex_match(tensor_name, pattern_attn_gate_weight)) {
                 GGML_ASSERT(segments.size() == 1);
@@ -915,13 +952,29 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             }
 
             const int64_t granularity_kv = granularity_q / n_gqa;
+            // the V head size can differ from the K head size (e.g. MiMo d_k=192 d_v=128):
+            // align V tensors to whole V heads at the same head-index scale as Q and K so all
+            // three stay in lockstep per device
+            const int64_t granularity_v  = (granularity_kv / hparams.n_embd_head_k(il)) * hparams.n_embd_head_v(il);
             if (std::regex_match(tensor_name, pattern_kv_weight) ||
+                std::regex_match(tensor_name, pattern_v_exps_weight) ||
                 std::regex_match(tensor_name, pattern_kv_bias) ||
                 std::regex_match(tensor_name, pattern_kv_cache)) {
                 GGML_ASSERT(segments.size() == 1);
-                return {granularity_kv};
+                const bool is_v = tensor_name.find("attn_v") != std::string::npos || tensor_name.find("cache_v") != std::string::npos;
+                return {is_v ? granularity_v : granularity_kv};
             }
             if (std::regex_match(tensor_name, pattern_qkv_weight) || std::regex_match(tensor_name, pattern_qkv_bias)) {
+                // fused full attention layers need Q gate tensors handled like above:
+                // TODO: deduplicate condition [TAG_SPLIT_QGATE_QWEN]
+                if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE || ud->model->arch == LLM_ARCH_CLEF ||
+                        ud->model->arch == LLM_ARCH_QWEN4EXP) {
+                    return {std::lcm(2*n_embd_q, blck_size_perf), granularity_kv};
+                }
+                if (segments.size() == 3) {
+                    // uneven K/V head sizes: per-segment granularity, V aligned to whole V heads
+                    return {granularity_q, granularity_kv, granularity_v};
+                }
                 GGML_ASSERT(segments.size() == 2);
                 return {granularity_q, granularity_kv};
             }
@@ -1134,6 +1187,7 @@ const char * llm_type_name(llm_type type) {
         case LLM_TYPE_685B_A37B:     return "685B.A37B";
         case LLM_TYPE_744B_A40B:     return "744B.A40B";
         case LLM_TYPE_2_8T_A50B:     return "2.8T.A50B";
+        case LLM_TYPE_320B_A18B:     return "320B.A18B";
         case LLM_TYPE_E2B:           return "E2B";
         case LLM_TYPE_E4B:           return "E4B";
         default:                     return "?B";
@@ -1170,18 +1224,28 @@ static llama_rope_scaling_type llama_rope_scaling_type_from_string(const std::st
     return LLAMA_ROPE_SCALING_TYPE_UNSPECIFIED;
 }
 
-// Maps the GGUF `<arch>.hidden_activation` string to the FFN op type used by the
-// graph builders. Only gated activations that map cleanly to llm_ffn_op_type are
-// listed; unrecognized values fall back to GeGLU, which matches the historical
-// default for ModernBert-style architectures.
+// Maps GGUF activation names to the FFN op type used by the graph builders.
 static const std::map<std::string, llm_ffn_op_type> LLM_FFN_OP_TYPES_FROM_STRING = {
-    { "gelu",   LLM_FFN_GEGLU  },
-    { "geglu",  LLM_FFN_GEGLU  },
-    { "silu",   LLM_FFN_SWIGLU },
-    { "swish",  LLM_FFN_SWIGLU },
-    { "swiglu", LLM_FFN_SWIGLU },
-    { "relu",   LLM_FFN_RELU   },
-    { "reglu",  LLM_FFN_REGLU  },
+    { "gelu",              LLM_FFN_GEGLU_ERF },
+    { "gelu_python",       LLM_FFN_GEGLU_ERF },
+    { "gelu_pytorch_tanh", LLM_FFN_GEGLU     },
+    { "gelu_new",          LLM_FFN_GEGLU     },
+    { "gelu_fast",         LLM_FFN_GEGLU     },
+    { "gelu_accurate",     LLM_FFN_GEGLU     },
+    { "gelu_python_tanh",  LLM_FFN_GEGLU     },
+    { "geglu",             LLM_FFN_GEGLU     },
+    { "silu",              LLM_FFN_SWIGLU    },
+    { "swish",             LLM_FFN_SWIGLU    },
+    { "swiglu",            LLM_FFN_SWIGLU    },
+    { "relu",              LLM_FFN_RELU      },
+    { "reglu",             LLM_FFN_REGLU     },
+};
+
+// transformers names, "gelu" is the exact (erf) variant
+static const std::map<std::string, ggml_unary_op> LLM_CLS_ACT_TYPES_FROM_STRING = {
+    { "gelu", GGML_UNARY_OP_GELU_ERF },
+    { "silu", GGML_UNARY_OP_SILU     },
+    { "tanh", GGML_UNARY_OP_TANH     },
 };
 
 llm_ffn_op_type llm_ffn_op_type_from_string(const std::string & name, llm_ffn_op_type fallback) {
@@ -1342,6 +1406,56 @@ struct llama_model::impl {
     std::vector<float> tensor_split_owned;
 };
 
+bool llama_prec_policy::apply(ggml_tensor * res) const {
+    if (!res || !res->src[0]) {
+        return false;
+    }
+
+    const auto it = prec_src1.find(res->src[0]);
+    if (it == prec_src1.end()) {
+        return false;
+    }
+
+    return ggml_prec_set_src(res, it->second, 1);
+}
+
+void llama_prec_policy::load(llama_model_loader & ml, const llama_model & model) {
+    std::vector<std::string> tensor_names;
+    if (!ml.get_arr(LLM_KV_GENERAL_TENSOR_EXTRA_NAME, tensor_names, false)) {
+        return;
+    }
+
+    const gguf_context * ctx = ml.metadata;
+    const std::string key = ml.llm_kv(LLM_KV_GENERAL_TENSOR_EXTRA_PREC_A4);
+    const int kid = gguf_find_key(ctx, key.c_str());
+    if (kid < 0 || gguf_get_kv_type(ctx, kid) != GGUF_TYPE_ARRAY || gguf_get_arr_type(ctx, kid) != GGUF_TYPE_BOOL) {
+        throw std::runtime_error(format("%s must be a bool array", key.c_str()));
+    }
+
+    const size_t n_values = gguf_get_arr_n(ctx, kid);
+    if (n_values != tensor_names.size()) {
+        throw std::runtime_error(format(
+            "%s tensor/value length mismatch (%zu vs %zu)",
+            key.c_str(), tensor_names.size(), n_values));
+    }
+
+    // tensors that can not use 4-bit activations, keep src1 at higher precision
+    const int8_t * values = (const int8_t *) gguf_get_arr_data(ctx, kid);
+    std::unordered_set<std::string> want;
+    for (size_t i = 0; i < n_values; ++i) {
+        if (values[i] == 0) {
+            want.insert(tensor_names[i]);
+        }
+    }
+
+    // resolve names to tensor pointers
+    for (const auto & [name, w] : model.tensors_by_name) {
+        if (want.count(name)) {
+            prec_src1.emplace(w, GGML_PREC_Q8);
+        }
+    }
+}
+
 llama_model::llama_model(const llama_model_params & params) : params(params), pimpl(std::make_unique<impl>()) {
     if (params.tensor_split != nullptr) {
         // llama_model_params stores tensor_split as a borrowed pointer, but the model
@@ -1377,147 +1491,6 @@ void llama_model_base::load_hparams(llama_model_loader & ml) {
         gguf_kv.emplace(name, value);
     }
 
-    uint32_t hadamard_version = 0;
-    if (ml.get_key("prism.hadamard.version", hadamard_version, false)) {
-        if (hadamard_version != 1) {
-            throw std::runtime_error(format("unsupported prism.hadamard.version: %u", hadamard_version));
-        }
-
-        uint32_t block_size = 0;
-        std::string transform;
-        std::string axis;
-        std::string sign_mode;
-        std::vector<std::string> weight_names;
-
-        ml.get_key("prism.hadamard.block_size", block_size);
-        ml.get_key("prism.hadamard.transform", transform);
-        ml.get_key("prism.hadamard.axis", axis);
-        ml.get_key("prism.hadamard.sign_mode", sign_mode);
-        ml.get_arr("prism.hadamard.weight_names", weight_names);
-
-        if (block_size == 0 || (block_size & (block_size - 1)) != 0) {
-            throw std::runtime_error(format("invalid prism.hadamard.block_size: %u", block_size));
-        }
-        if (transform != "normalized-sylvester-walsh-hadamard") {
-            throw std::runtime_error(format("unsupported prism.hadamard.transform: %s", transform.c_str()));
-        }
-        if (axis != "input-last-dimension") {
-            throw std::runtime_error(format("unsupported prism.hadamard.axis: %s", axis.c_str()));
-        }
-        if (sign_mode != "identity" && sign_mode != "explicit") {
-            throw std::runtime_error(format("unsupported prism.hadamard.sign_mode: %s", sign_mode.c_str()));
-        }
-        if (weight_names.empty()) {
-            throw std::runtime_error("prism.hadamard.weight_names is empty");
-        }
-
-        if (sign_mode == "explicit") {
-            std::vector<int32_t> sign_widths;
-            std::vector<int32_t> sign_values;
-            ml.get_arr("prism.hadamard.sign_widths", sign_widths);
-            ml.get_arr("prism.hadamard.sign_values", sign_values);
-            // explicit mode with no widths would leave the sign table empty, which reads
-            // as identity later and silently changes the model function
-            if (sign_widths.empty()) {
-                throw std::runtime_error("prism.hadamard.sign_mode is explicit but sign_widths is empty");
-            }
-            size_t off = 0;
-            for (const int32_t width : sign_widths) {
-                if (width <= 0 || (uint32_t) width % block_size != 0 || off + width > sign_values.size()) {
-                    throw std::runtime_error(format("invalid prism.hadamard sign width: %d", width));
-                }
-                auto & vec = hadamard_sign_data[width];
-                vec.assign(sign_values.begin() + off, sign_values.begin() + off + width);
-                for (const int32_t v : vec) {
-                    if (v != 1 && v != -1) {
-                        throw std::runtime_error("prism.hadamard sign values must be +/-1");
-                    }
-                }
-                off += width;
-            }
-            if (off != sign_values.size()) {
-                throw std::runtime_error("prism.hadamard.sign_values length mismatch");
-            }
-        }
-
-        ml.get_key("prism.hadamard.gdn_v_grouped", hadamard_gdn_v_grouped, false);
-
-        // the activation-side transform is applied only by build_lora_mm/build_lora_mm_id;
-        // refuse to load folded weights for architectures or tensor kinds that are not
-        // verified to route every matmul through those helpers, rather than run wrong math
-        switch (arch) {
-            case LLM_ARCH_LLAMA:
-            case LLM_ARCH_QWEN3:
-            case LLM_ARCH_QWEN3MOE:
-            case LLM_ARCH_QWEN35:
-            case LLM_ARCH_QWEN35MOE:
-            case LLM_ARCH_QWEN3NEXT:
-            case LLM_ARCH_DSPARK:
-                break;
-            default:
-                throw std::runtime_error(format(
-                    "prism.hadamard: arch '%s' is not verified to apply the activation transform to all folded weights",
-                    llm_arch_name(arch)));
-        }
-
-        const auto is_foldable_weight = [](const std::string & name) {
-            static const char * kinds[] = {
-                "attn_q", "attn_k", "attn_v", "attn_qkv", "attn_gate", "attn_output",
-                "ffn_gate", "ffn_up", "ffn_down",
-                "ffn_gate_exps", "ffn_up_exps", "ffn_down_exps", "ffn_gate_up_exps",
-                "ffn_gate_shexp", "ffn_up_shexp", "ffn_down_shexp",
-                "ssm_out",
-            };
-            if (name == "output.weight") {
-                return true; // the output head is built through build_lora_mm in every arch
-            }
-            if (name.compare(0, 4, "blk.") != 0) {
-                return false;
-            }
-            size_t pos = 4;
-            while (pos < name.size() && isdigit((unsigned char) name[pos])) {
-                pos++;
-            }
-            if (pos == 4 || pos >= name.size() || name[pos] != '.') {
-                return false;
-            }
-            pos++;
-            for (const char * kind : kinds) {
-                const std::string suffix = std::string(kind) + ".weight";
-                if (name.compare(pos, std::string::npos, suffix) == 0) {
-                    return true;
-                }
-            }
-            return false;
-        };
-
-        for (const auto & weight_name : weight_names) {
-            if (!is_foldable_weight(weight_name) || (arch == LLM_ARCH_DSPARK && weight_name != "output.weight")) {
-                throw std::runtime_error(format(
-                    "prism.hadamard: weight '%s' is not on a verified Hadamard-aware matmul path", weight_name.c_str()));
-            }
-            if (!hadamard_weight_blocks.emplace(weight_name, block_size).second) {
-                throw std::runtime_error(format("duplicate prism.hadamard weight: %s", weight_name.c_str()));
-            }
-        }
-
-        // tensors consumed by row lookup store latent rows and need the
-        // inverse transform applied to the lookup result instead
-        std::vector<std::string> inverse_names;
-        ml.get_arr("prism.hadamard.inverse_weight_names", inverse_names, false);
-        for (const auto & name : inverse_names) {
-            // the graph applies the inverse only to the token-embedding lookup; any
-            // other latent table would load and silently stay rotated
-            if (name != "token_embd.weight" || arch == LLM_ARCH_DSPARK) {
-                throw std::runtime_error(format(
-                    "prism.hadamard: weight '%s' is not a verified inverse-after-lookup table", name.c_str()));
-            }
-            if (hadamard_weight_blocks.count(name) || !hadamard_inverse_blocks.emplace(name, block_size).second) {
-                throw std::runtime_error(format("duplicate prism.hadamard inverse weight: %s", name.c_str()));
-            }
-        }
-    }
-
     // get general kv
     ml.get_key(LLM_KV_GENERAL_NAME, name, false);
 
@@ -1532,6 +1505,13 @@ void llama_model_base::load_hparams(llama_model_loader & ml) {
     ml.get_key(LLM_KV_EMBEDDING_LENGTH_OUT,    hparams.n_embd_out_impl, false);
     ml.get_key(LLM_KV_ATTENTION_CAUSAL,        hparams.causal_attn,     false);
     ml.get_key(LLM_KV_POOLING_TYPE,            hparams.pooling_type,    false);
+    ml.get_key(LLM_KV_CLASSIFIER_POOLING_TYPE, hparams.pooling_type_cls, false);
+    std::string act_cls;
+    if (ml.get_key(LLM_KV_CLASSIFIER_ACTIVATION, act_cls, false)) {
+        const auto it = LLM_CLS_ACT_TYPES_FROM_STRING.find(act_cls);
+        GGML_ASSERT(it != LLM_CLS_ACT_TYPES_FROM_STRING.end() && "unsupported classifier activation");
+        hparams.act_cls = it->second;
+    }
     ml.get_key(LLM_KV_BLOCK_COUNT,             hparams.n_layer_all);
     GGML_ASSERT(hparams.n_layer_all > 0 && hparams.n_layer_all <= LLAMA_MAX_LAYERS);
     ml.get_key(LLM_KV_NEXTN_PREDICT_LAYERS,    hparams.n_layer_nextn,   false);
@@ -1706,9 +1686,6 @@ void llama_model_base::load_vocab(llama_model_loader & ml) {
 }
 
 bool llama_model_base::load_tensors(llama_model_loader & ml) {
-    if (params.dspark_head_source && arch != LLM_ARCH_DSPARK) {
-        throw std::runtime_error("Shared target head is supported only for DSpark");
-    }
     const auto & split_mode   = params.split_mode;
     const bool use_mlock      = params.load_mode == LLAMA_LOAD_MODE_MLOCK || params.load_mode == LLAMA_LOAD_MODE_MMAP_MLOCK;
     const auto & tensor_split = params.tensor_split;
@@ -1995,7 +1972,14 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             }
         }
     }
+
     ml.done_getting_tensors();
+
+    if (per_layer_tok_embd && ml.lazy.has(per_layer_tok_embd)) {
+        LLAMA_LOG_INFO("%s: enabling prefetch for '%s'\n", __func__, per_layer_tok_embd->name);
+
+        can_prefetch.insert(per_layer_tok_embd);
+    }
 
     // Tied NVFP4 output is valid when no separate LM-head scale tensors are present.
     // If sidecar scales exist, the output weight must be an actual output tensor.
@@ -2010,9 +1994,8 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         }
     }
 
-    if (arch == LLM_ARCH_DSPARK && params.dspark_head_source) {
-        tensors_by_name.emplace_back("output.weight", output);
-    }
+    // per-tensor activation precision policy
+    prec_policy.load(ml, *this);
 
     ml.init_mappings(true, use_mlock ? &pimpl->mlock_mmaps : nullptr);
     pimpl->mappings.reserve(ml.mappings.size());
@@ -2113,7 +2096,6 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         ctx_buf_maps.emplace_back(ctx, buf_map);
     }
 
-
     if (llama_supports_gpu_offload()) {
         const int n_gpu = std::min(n_gpu_layers, n_layer_all);
 
@@ -2163,168 +2145,15 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
         }
     }
 
-    if (!hadamard_weight_blocks.empty() || !hadamard_inverse_blocks.empty()) {
-        struct hadamard_rotation {
-            uint32_t block_size;
-            ggml_backend_buffer_type_t buft;
-            ggml_tensor * tensor;
-        };
-
-        std::vector<hadamard_rotation> rotations;
-        std::map<std::pair<uint32_t, ggml_backend_buffer_type_t>, ggml_tensor *> sign_tensors;
-
-        const std::pair<const std::unordered_map<std::string, uint32_t> *, llama_hadamard_rotations *> groups[] = {
-            { &hadamard_weight_blocks,  &hadamard_rotations },
-            { &hadamard_inverse_blocks, &hadamard_inverses  },
-        };
-        // inverse (lookup-side) transforms must not inherit a host buffer
-        // type from a CPU-mapped table: the per-token transform would then
-        // ping-pong across the PCIe boundary. Prefer the buffer type the
-        // forward rotations live on (the GPU when layers are offloaded).
-        ggml_backend_buffer_type_t preferred_buft = nullptr;
-
-        for (const auto & [blocks, target] : groups)
-        for (const auto & entry : *blocks) {
-            const std::string & weight_name = entry.first;
-            const uint32_t block_size = entry.second;
-            const ggml_tensor * weight = get_tensor(weight_name.c_str());
-            if (weight == nullptr) {
-                throw std::runtime_error(format("prism.hadamard weight not found: %s", weight_name.c_str()));
-            }
-            if (weight->ne[0] % block_size != 0) {
-                throw std::runtime_error(format(
-                    "prism.hadamard block size %u does not divide input dimension %lld for %s",
-                    block_size, (long long) weight->ne[0], weight_name.c_str()));
-            }
-            if (weight->buffer == nullptr) {
-                throw std::runtime_error(format("prism.hadamard weight has no buffer: %s", weight_name.c_str()));
-            }
-
-            ggml_backend_buffer_type_t buft = ggml_backend_buffer_get_type(weight->buffer);
-            if (target == &hadamard_rotations) {
-                preferred_buft = buft;
-            } else if (preferred_buft) {
-                buft = preferred_buft;
-            }
-            auto it = std::find_if(rotations.begin(), rotations.end(),
-                    [block_size, buft](const hadamard_rotation & rotation) {
-                        return rotation.block_size == block_size && rotation.buft == buft;
-                    });
-
-            if (it == rotations.end()) {
-                ggml_init_params params = {
-                    /*.mem_size   =*/ ggml_tensor_overhead(),
-                    /*.mem_buffer =*/ NULL,
-                    /*.no_alloc   =*/ true,
-                };
-                ggml_context_ptr ctx { ggml_init(params) };
-                if (!ctx) {
-                    throw std::runtime_error("failed to create Hadamard rotation context");
-                }
-
-                ggml_tensor * rotation = ggml_new_tensor_2d(ctx.get(), GGML_TYPE_F32, block_size, block_size);
-                char rotation_name[GGML_MAX_NAME];
-                snprintf(rotation_name, sizeof(rotation_name), "prism.hadamard.%u", block_size);
-                ggml_set_name(rotation, rotation_name);
-
-                ggml_backend_buffer_ptr buffer { ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), buft) };
-                if (!buffer) {
-                    throw std::runtime_error(format("unable to allocate %s Hadamard rotation buffer", ggml_backend_buft_name(buft)));
-                }
-                ggml_backend_buffer_set_usage(buffer.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
-
-                std::vector<float> data((size_t) block_size * block_size);
-                const float scale = 1.0f / sqrtf((float) block_size);
-                for (uint32_t row = 0; row < block_size; ++row) {
-                    for (uint32_t col = 0; col < block_size; ++col) {
-                        uint32_t parity = row & col;
-                        parity ^= parity >> 16;
-                        parity ^= parity >> 8;
-                        parity ^= parity >> 4;
-                        parity ^= parity >> 2;
-                        parity ^= parity >> 1;
-                        data[(size_t) row * block_size + col] = (parity & 1) ? -scale : scale;
-                    }
-                }
-                ggml_backend_tensor_set(rotation, data.data(), 0, data.size() * sizeof(float));
-
-                std::vector<ggml_backend_buffer_ptr> buffers;
-                buffers.emplace_back(std::move(buffer));
-                pimpl->ctxs_bufs.emplace_back(std::move(ctx), std::move(buffers));
-                rotations.push_back({ block_size, buft, rotation });
-                it = std::prev(rotations.end());
-            }
-
-            ggml_tensor * sign_tensor = nullptr;
-            if (!hadamard_sign_data.empty()) {
-                const uint32_t width = (uint32_t) weight->ne[0];
-                const auto sd = hadamard_sign_data.find(width);
-                if (sd == hadamard_sign_data.end()) {
-                    throw std::runtime_error(format(
-                        "prism.hadamard has no sign vector for width %u (%s)", width, weight_name.c_str()));
-                }
-                const auto key = std::make_pair(width, buft);
-                auto st = sign_tensors.find(key);
-                if (st == sign_tensors.end()) {
-                    ggml_init_params params = {
-                        /*.mem_size   =*/ ggml_tensor_overhead(),
-                        /*.mem_buffer =*/ NULL,
-                        /*.no_alloc   =*/ true,
-                    };
-                    ggml_context_ptr ctx { ggml_init(params) };
-                    if (!ctx) {
-                        throw std::runtime_error("failed to create Hadamard sign context");
-                    }
-
-                    ggml_tensor * signs = ggml_new_tensor_1d(ctx.get(), GGML_TYPE_F32, width);
-                    char sign_name[GGML_MAX_NAME];
-                    snprintf(sign_name, sizeof(sign_name), "prism.hadamard.signs.%u", width);
-                    ggml_set_name(signs, sign_name);
-
-                    ggml_backend_buffer_ptr buffer { ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), buft) };
-                    if (!buffer) {
-                        throw std::runtime_error(format("unable to allocate %s Hadamard sign buffer", ggml_backend_buft_name(buft)));
-                    }
-                    ggml_backend_buffer_set_usage(buffer.get(), GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
-
-                    std::vector<float> data(width);
-                    for (uint32_t i = 0; i < width; ++i) {
-                        data[i] = (float) sd->second[i];
-                    }
-                    ggml_backend_tensor_set(signs, data.data(), 0, data.size() * sizeof(float));
-
-                    std::vector<ggml_backend_buffer_ptr> buffers;
-                    buffers.emplace_back(std::move(buffer));
-                    pimpl->ctxs_bufs.emplace_back(std::move(ctx), std::move(buffers));
-                    st = sign_tensors.emplace(key, signs).first;
-                }
-                sign_tensor = st->second;
-            }
-
-            llama_hadamard_transform transform { it->tensor, sign_tensor };
-            if (hadamard_gdn_v_grouped && weight_name.find(".ssm_out.") != std::string::npos) {
-                const int64_t n_v = hparams.ssm_dt_rank;
-                const int64_t n_k = hparams.ssm_n_group;
-                if (n_k <= 0 || n_v <= 0 || n_v % n_k != 0 || weight->ne[0] % n_v != 0) {
-                    throw std::runtime_error(format("prism.hadamard: bad GDN head geometry for %s", weight_name.c_str()));
-                }
-                transform.perm_hd  = weight->ne[0] / n_v;
-                transform.perm_nk  = n_k;
-                transform.perm_rep = n_v / n_k;
-            }
-            target->emplace(weight, transform);
-        }
-
-        LLAMA_LOG_INFO("%s: loaded %zu Hadamard-folded weight(s) (%zu inverse-lookup) using %zu rotation(s) and %zu sign vector(s)\n",
-                __func__, hadamard_rotations.size() + hadamard_inverses.size(), hadamard_inverses.size(),
-                rotations.size(), sign_tensors.size());
-    }
-
     return true;
 }
 
 ggml_tensor * llama_model_base::create_tensor(llama_model_loader & ml, const LLM_TN_IMPL & tn, const std::initializer_list<int64_t> & ne, int flags) {
-    const buft_list_t * buft_list_layer = tn.bid == -1 ? nullptr : pimpl->dev_layer.at(tn.bid).buft_list;
+    const buft_list_t * buft_list_layer = nullptr;
+    if (tn.bid != -1) {
+        // blocks that are not model layers (e.g. the blocks of a head) go with the output
+        buft_list_layer = (size_t) tn.bid < pimpl->dev_layer.size() ? pimpl->dev_layer.at(tn.bid).buft_list : pimpl->dev_output.buft_list;
+    }
     return ml.create_tensor(
         hparams, &pimpl->cpu_buft_list, pimpl->dev_input.buft_list, pimpl->dev_output.buft_list, buft_list_layer,
         tn, ne, flags);
@@ -2715,6 +2544,11 @@ ggml_tensor * llama_model::get_rope_factors(const llama_cparams & cparams, int i
 llama_memory_i * llama_model::create_memory(const llama_memory_params & params, const llama_cparams & cparams) const {
     llama_memory_i * res;
 
+    // the non-causal LFM2 decision graph reads the whole prompt in one batch, nothing is kept
+    if (arch == LLM_ARCH_LFM2 && !hparams.causal_attn && hparams.n_layer_decision > 0) {
+        return nullptr;
+    }
+
     switch (arch) {
         // Models that need specific instantiation should be handled in the
         // switch statement
@@ -2728,10 +2562,12 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
         case LLM_ARCH_WAVTOKENIZER_DEC:
         case LLM_ARCH_MODERN_BERT:
         case LLM_ARCH_GEMMA_EMBEDDING:
+        case LLM_ARCH_GEMMA_EMBEDDING2:
         case LLM_ARCH_DREAM:
         case LLM_ARCH_LLADA:
         case LLM_ARCH_LLADA_MOE:
         case LLM_ARCH_RND1:
+        case LLM_ARCH_CLEF:
             {
                 res = nullptr;
             } break;
@@ -2809,6 +2645,50 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             filter_lid,
                             nullptr);
                 }
+            } break;
+        case LLM_ARCH_GLM5_NEXT:
+            {
+                // KDA layers are recurrent, the DSA layers use a K-only MLA cache plus an indexer cache.
+                // tThe Nextn block is never attended by the trunk graph
+                llama_memory_hybrid_idx::layer_filter_cb filter_attn = [&](uint32_t il) {
+                    return il < hparams.n_layer() && !hparams.is_recr(il);
+                };
+                llama_memory_hybrid_idx::layer_filter_cb filter_idx = [&](uint32_t il) {
+                    return il < hparams.n_layer() && !hparams.is_recr(il) && hparams.is_indexer_full(il);
+                };
+                llama_memory_hybrid_idx::layer_filter_cb filter_recr = [&](uint32_t il) {
+                    return il < hparams.n_layer() && hparams.is_recr(il);
+                };
+
+                // the draft head is a single DSA layer
+                if (params.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
+                    if (hparams.n_layer_nextn == 0) {
+                        throw std::runtime_error("GLM5-Next MTP requires the NextN block, convert without --no-mtp");
+                    }
+                    filter_attn = [&](uint32_t il) { return il >= hparams.n_layer(); };
+                    filter_idx  = [&](uint32_t il) { return il >= hparams.n_layer(); };
+                    filter_recr = [&](uint32_t)    { return false; };
+                }
+
+                res = new llama_memory_hybrid_idx(
+                    /* model             */ *this,
+                    /* attn_type_k       */ params.type_k,
+                    /* attn_type_v       */ params.type_v,
+                    /* attn_v_trans      */ !cparams.flash_attn,
+                    /* attn_kv_size      */ cparams.n_ctx_seq,
+                    /* attn_n_pad        */ 1,
+                    /* attn_n_swa        */ hparams.n_swa,
+                    /* attn_swa_type     */ hparams.swa_type,
+                    /* recurrent_type_r  */ GGML_TYPE_F32,
+                    /* recurrent_type_s  */ GGML_TYPE_F32,
+                    /* recurrent_rs_size */ std::max((uint32_t) 1, cparams.n_seq_max),
+                    /* n_seq_max         */ cparams.n_seq_max,
+                    /* n_rs_seq          */ cparams.n_rs_seq,
+                    /* offload           */ cparams.offload_kqv,
+                    /* unified           */ cparams.kv_unified,
+                    /* filter_attn       */ std::move(filter_attn),
+                    /* filter_recr       */ std::move(filter_recr),
+                    /* filter_idx        */ std::move(filter_idx));
             } break;
         case LLM_ARCH_HY_V4:
             {
@@ -3028,6 +2908,15 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                                 return il < hparams.n_layer() && !hparams.is_recr(il);
                             };
                         }
+
+                        // the MTP draft context holds the MTP block alone: its attention and indexer, no recurrent layer
+                        if (arch == LLM_ARCH_QWEN4EXP && params.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
+                            filter_attn = [&](uint32_t il) { return il >= hparams.n_layer(); };
+                            filter_recr = [&](uint32_t)    { return false; };
+                            if (filter_idx) {
+                                filter_idx = [&](uint32_t il) { return il >= hparams.n_layer(); };
+                            }
+                        }
                     }
 
                     if (hparams.swa_type != LLAMA_SWA_TYPE_NONE) {
@@ -3227,7 +3116,6 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
 
 llama_model_params llama_model_default_params() {
     llama_model_params result = {
-        /*.dspark_head_source          =*/ nullptr,
         /*.devices                     =*/ nullptr,
         /*.tensor_buft_overrides       =*/ nullptr,
         /*.n_gpu_layers                =*/ -1,
@@ -3365,6 +3253,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_NEMOTRON_H_MOE:
         case LLM_ARCH_KIMI_LINEAR:
         case LLM_ARCH_KIMI_K3:
+        case LLM_ARCH_GLM5_NEXT:
             return LLAMA_ROPE_TYPE_NONE;
 
         // use what we call a normal RoPE, operating on pairs of consecutive head values
@@ -3397,7 +3286,6 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_GRANITE_SWA:
         case LLM_ARCH_CHAMELEON:
         case LLM_ARCH_BAILINGMOE:
-        case LLM_ARCH_BAILINGMOE3:
         case LLM_ARCH_NEO_BERT:
         case LLM_ARCH_SMOLLM3:
         case LLM_ARCH_ARCEE:
@@ -3412,6 +3300,10 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_DOTS3NOTE:
         case LLM_ARCH_NANBEIGE:
         case LLM_ARCH_POCKETTTS:
+            return LLAMA_ROPE_TYPE_NORM;
+        case LLM_ARCH_BAILINGMOE3:
+            // VL files carry mrope sections; text-only files keep NORM rope
+            return model->hparams.use_mrope() ? LLAMA_ROPE_TYPE_MROPE : LLAMA_ROPE_TYPE_NORM;
         // HY_V4 rotates consecutive pairs, matching the reference implementation
         case LLM_ARCH_HY_V4:
             return LLAMA_ROPE_TYPE_NORM;
@@ -3452,6 +3344,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_GEMMA4:
         case LLM_ARCH_GEMMA4_ASSISTANT:
         case LLM_ARCH_GEMMA_EMBEDDING:
+        case LLM_ARCH_GEMMA_EMBEDDING2:
         case LLM_ARCH_STARCODER2:
         case LLM_ARCH_OPENELM:
         case LLM_ARCH_GPTNEOX:
@@ -3487,8 +3380,10 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_STEP35:
         case LLM_ARCH_SPARK2_5:
         case LLM_ARCH_TALKIE:
+        case LLM_ARCH_K2_HORIZON:
         case LLM_ARCH_MELLUM:
         case LLM_ARCH_MAPLE:
+        case LLM_ARCH_HRM_TEXT:
             return LLAMA_ROPE_TYPE_NEOX;
 
         case LLM_ARCH_DFLASH:
@@ -3506,13 +3401,10 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_QWEN3VLMOE:
         case LLM_ARCH_QWEN35:
         case LLM_ARCH_QWEN35MOE:
+        case LLM_ARCH_CLEF:
         case LLM_ARCH_QWEN4EXP:
         case LLM_ARCH_QWEN3TTS:
             return LLAMA_ROPE_TYPE_IMROPE;
-        // dspark's own trunk is a plain dense Qwen3-style stack (standard
-        // rotate-half/NEOX RoPE), independent of the target's RoPE family --
-        case LLM_ARCH_DSPARK:
-            return LLAMA_ROPE_TYPE_NEOX;
 
         case LLM_ARCH_GLM4:
             return model->hparams.use_mrope() ? LLAMA_ROPE_TYPE_MROPE : LLAMA_ROPE_TYPE_NORM;
@@ -3678,91 +3570,6 @@ ggml_backend_dev_t llama_model_get_device(const struct llama_model * model, int 
     return model->devices[i].dev;
 }
 
-bool llama_model_dspark_get_meta(const llama_model * model, llama_dspark_meta * out) {
-    if (model == nullptr || out == nullptr) {
-        return false;
-    }
-
-    const auto & hp = model->hparams;
-    if (hp.dspark_block_size == 0) {
-        return false;  // not a dspark model
-    }
-
-    // dspark ships no tokenizer (converter calls _set_vocab_none(): it ties to
-    // the TARGET model's vocab), so the real vocab width only exists as
-    // token_embd.weight's own shape -- mirrors src/models/dspark.cpp's
-    // load_arch_tensors and tests/test-dspark-forward.cpp's n_vocab_from_model.
-    const ggml_tensor * tok_embd = model->get_tensor("token_embd.weight");
-    if (tok_embd == nullptr) {
-        return false;
-    }
-
-    out->n_embd          = hp.n_embd;
-    out->n_vocab         = tok_embd->ne[1];
-    out->n_capture       = hp.n_dspark_target_layers;
-    out->n_embd_cap      = out->n_capture * out->n_embd;
-    out->block_size      = (int32_t) hp.dspark_block_size;
-    out->mask_token_id   = (int32_t) hp.dspark_mask_token_id;
-    out->markov_rank     = hp.dspark_markov_rank;
-    out->graph_corrected = hp.dspark_hidden_correction;
-
-    return true;
-}
-
-bool llama_model_dspark_get_markov(const llama_model * model, std::vector<float> & w1, std::vector<float> & w2) {
-    if (model == nullptr || model->hparams.dspark_markov_rank == 0) {
-        return false;
-    }
-
-    const ggml_tensor * a = model->dspark_markov_head_a;
-    const ggml_tensor * b = model->dspark_markov_head_b;
-    if (a == nullptr || b == nullptr) {
-        return false;
-    }
-
-    GGML_ASSERT(a->ne[0] == b->ne[0] && a->ne[1] == b->ne[1] && "dspark: markov_head_a/b shape mismatch");
-
-    auto copy_to_f32 = [](const ggml_tensor * t, std::vector<float> & out) -> bool {
-        const int64_t n = ggml_nelements(t);
-        out.resize((size_t) n);
-
-        switch (t->type) {
-            case GGML_TYPE_F32:
-                ggml_backend_tensor_get(t, out.data(), 0, (size_t) n * sizeof(float));
-                return true;
-            case GGML_TYPE_F16:
-                {
-                    std::vector<ggml_fp16_t> tmp((size_t) n);
-                    ggml_backend_tensor_get(t, tmp.data(), 0, (size_t) n * sizeof(ggml_fp16_t));
-                    ggml_fp16_to_fp32_row(tmp.data(), out.data(), n);
-                    return true;
-                }
-            case GGML_TYPE_BF16:
-                {
-                    std::vector<ggml_bf16_t> tmp((size_t) n);
-                    ggml_backend_tensor_get(t, tmp.data(), 0, (size_t) n * sizeof(ggml_bf16_t));
-                    ggml_bf16_to_fp32_row(tmp.data(), out.data(), n);
-                    return true;
-                }
-            default:
-                {
-                    const auto * traits = ggml_get_type_traits(t->type);
-                    if (!ggml_is_quantized(t->type) || traits == nullptr || traits->to_float == nullptr) {
-                        LLAMA_LOG_ERROR("%s: unsupported markov head tensor type %s\n", __func__,
-                                        ggml_type_name(t->type));
-                        return false;
-                    }
-                    std::vector<uint8_t> raw(ggml_nbytes(t));
-                    ggml_backend_tensor_get(t, raw.data(), 0, raw.size());
-                    traits->to_float(raw.data(), out.data(), n);
-                    return true;
-                }
-        }
-    };
-
-    return copy_to_f32(a, w1) && copy_to_f32(b, w2);
-}
-
 //
 // llama_model_base
 //
@@ -3781,6 +3588,15 @@ ggml_tensor * llama_model_base::create_tensor(const LLM_TN_IMPL & tn, const std:
 }
 
 void llama_model_base::create_tensor_gate_up_exps(llama_layer & layer, int bid, int64_t n_embd_, int64_t n_ff_, int64_t n_expert_, int flags) {
+    if (flags & TENSOR_SKIP) {
+        const int skip = TENSOR_NOT_REQUIRED | TENSOR_SKIP;
+
+        create_tensor(tn(LLM_TENSOR_FFN_GATE_UP_EXPS, "weight", bid), {n_embd_, n_ff_ * 2, n_expert_}, skip | TENSOR_SKIP_IF_VIRTUAL);
+        create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS,    "weight", bid), {n_embd_, n_ff_,     n_expert_}, skip);
+        create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,      "weight", bid), {n_embd_, n_ff_,     n_expert_}, skip);
+        return;
+    }
+
     layer.ffn_gate_up_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_UP_EXPS, "weight", bid), {n_embd_, n_ff_ * 2, n_expert_}, TENSOR_NOT_REQUIRED);
     if (layer.ffn_gate_up_exps == nullptr) {
         layer.ffn_gate_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", bid), {n_embd_, n_ff_, n_expert_}, flags);
@@ -3826,6 +3642,36 @@ void llama_model_base::create_tensor_qkv(llama_layer & layer, int bid,
     }
 }
 
+llama_model_base::nextn_flags_t llama_model_base::nextn_flags(llama_model_loader & ml, llm_tensor trunk_probe) const {
+    int trunk = 0;
+    int mtp   = 0;
+
+    // a file without the first trunk layer is MTP-only, a file without the first NextN layer is trunk-only
+    if (hparams.n_layer_nextn > 0) {
+        if (ml.get_weight(tn(trunk_probe, "weight", 0).str().c_str()) == nullptr) {
+            trunk = TENSOR_NOT_REQUIRED;
+        }
+        if (ml.get_weight(tn(LLM_TENSOR_NEXTN_EH_PROJ, "weight", hparams.n_layer()).str().c_str()) == nullptr) {
+            mtp = TENSOR_NOT_REQUIRED;
+        }
+    }
+
+    if (!ml.load_mtp) {
+        mtp |= TENSOR_SKIP;
+    }
+
+    return { trunk, mtp };
+}
+
+void llama_model_base::load_swa_pattern(llama_model_loader & ml, uint32_t n_pattern, bool dense_first) {
+    if (ml.get_arr(LLM_KV_ATTENTION_SLIDING_WINDOW_PATTERN, hparams.is_swa_impl, false)) {
+        return;
+    }
+
+    ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW_PATTERN, n_pattern, false);
+    hparams.set_swa_pattern(n_pattern, dense_first);
+}
+
 const int32_t * llama_model_target_layer_ids(const struct llama_model * model) {
     const auto & v = model->target_layer_ids;
     return v.empty() ? nullptr : v.data();
@@ -3833,10 +3679,6 @@ const int32_t * llama_model_target_layer_ids(const struct llama_model * model) {
 
 uint32_t llama_model_target_layer_ids_n(const struct llama_model * model) {
     return (uint32_t) model->target_layer_ids.size();
-}
-
-bool llama_model_has_dspark_markov_head(const struct llama_model * model) {
-    return model->dspark_markov_w1 != nullptr;
 }
 
 uint32_t llama_model_get_tok_embd(const struct llama_model * model, float * out) {
