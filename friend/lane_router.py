@@ -9,7 +9,7 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-BACKENDS = [int(p) for p in os.environ.get("FRIEND_LANE_PORTS", "9201,9202,9203,9204").split(",")]
+BACKENDS = [int(p) for p in os.environ.get("FRIEND_LANE_PORTS", "9201,9202,9203,9204,9205").split(",")]
 
 class Router(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
