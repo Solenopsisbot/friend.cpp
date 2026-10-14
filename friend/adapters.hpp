@@ -117,6 +117,15 @@ inline registry & reg() {
     return r;
 }
 
+inline std::vector<const llama_adapter_head *> head_ptrs() {
+    std::vector<const llama_adapter_head *> out;
+    out.reserve(reg().heads.size());
+    for (const auto & entry : reg().heads) {
+        out.push_back(entry.head);
+    }
+    return out;
+}
+
 inline std::vector<std::string> split(const std::string & s, char sep) {
     std::vector<std::string> out;
     std::string cur;

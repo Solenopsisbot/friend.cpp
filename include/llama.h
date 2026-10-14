@@ -273,6 +273,9 @@ extern "C" {
         int32_t      *  n_seq_id;
         llama_seq_id ** seq_id;
         int8_t       *  logits;   // TODO: rename this to "output"
+        // Optional friend.cpp per-row LM-head selector. -1 means the model
+        // default head; non-negative values select a loaded pooled head.
+        int32_t      *  head_id;
     } llama_batch;
 
     enum llama_model_kv_override_type {

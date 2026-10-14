@@ -3819,6 +3819,10 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
                 fprintf(stderr, "%s: error: failed to load friend adapter pools\n", __func__);
                 return ModelLoadResult::FAIL;
             }
+            const auto head_ptrs = friend_adapters::head_ptrs();
+            for (llama_context * ctx : friend_model_contexts()) {
+                llama_set_adapter_head_pool(ctx, head_ptrs.data(), head_ptrs.size());
+            }
             batch_default_profile = friend_adapters::default_profile();
             if (!friend_adapters::apply(batch_default_profile, friend_model_contexts())) {
                 fprintf(stderr, "%s: error: failed to apply default friend adapter profile\n", __func__);
@@ -4624,6 +4628,12 @@ static BatchGenerateRequest * batch_find_request_locked(int request_id)
 static bool batch_is_live_state(BatchState state)
 {
     return state == BatchState::WAITING || state == BatchState::PREPARING || state == BatchState::PREFILL || state == BatchState::GENERATING;
+}
+
+// Requests with the same trunk adapters can share transformer/KV work even
+// when they select different LM heads.  The head identity travels per token.
+static const std::string & batch_group_key(const BatchGenerateRequest & req) {
+    return req.profile.kv_key;
 }
 
 static bool batch_has_live_locked()
@@ -5533,9 +5543,10 @@ static int batch_media_index_from_token(const BatchGenerateRequest & req, llama_
     return index < (int) req.media.objects.size() ? index : -1;
 }
 
-static int batch_add_token(common_batch & batch, llama_token token, llama_pos pos, llama_seq_id seq_id, bool output)
+static int batch_add_token(common_batch & batch, llama_token token, llama_pos pos, llama_seq_id seq_id, bool output, int32_t head_id = -1)
 {
     const int index = batch.add(token, pos, seq_id, output);
+    batch.tokens[index].head_id = head_id;
     if(use_mrope)
     {
         batch.tokens[index].pos = { pos, pos, pos, 0 };
@@ -5626,17 +5637,17 @@ static bool batch_select_profile_locked() {
         if (!target || req->last_round < target->last_round) target = req.get();
     }
     if (!target) return false;
-    batch_active_profile_key = target->profile_key;
+    batch_active_profile_key = batch_group_key(*target);
     if (friend_profiles_loaded && !friend_adapters::apply(target->profile, {llama_ctx_v4})) {
         for (auto & req : batch_requests) {
-            if (req && batch_is_live_state(req->state) && req->profile_key == batch_active_profile_key)
+            if (req && batch_is_live_state(req->state) && batch_group_key(*req) == batch_active_profile_key)
                 batch_finish_request_locked(*req, stop_reason::ERROR_ENCOUNTERED);
         }
         return false;
     }
     ++round;
     for (auto & req : batch_requests) {
-        if (req && req->slot >= 0 && batch_is_live_state(req->state) && req->profile_key == batch_active_profile_key)
+        if (req && req->slot >= 0 && batch_is_live_state(req->state) && batch_group_key(*req) == batch_active_profile_key)
             req->last_round = round;
     }
     return true;
@@ -5677,7 +5688,7 @@ static void batch_worker_loop()
             if (!batch_select_profile_locked()) continue;
             for(auto & req_ptr : batch_requests)
             {
-                if(req_ptr && req_ptr->profile_key == batch_active_profile_key && req_ptr->state == BatchState::PREPARING && req_ptr->slot >= 0)
+                if(req_ptr && batch_group_key(*req_ptr) == batch_active_profile_key && req_ptr->state == BatchState::PREPARING && req_ptr->slot >= 0)
                 {
                     prepare_req = req_ptr.get();
                     break;
@@ -5687,7 +5698,7 @@ static void batch_worker_loop()
             {
                 for(auto & req_ptr : batch_requests)
                 {
-                    if(!req_ptr || req_ptr->profile_key != batch_active_profile_key || req_ptr->state != BatchState::PREFILL || req_ptr->slot < 0 ||
+                    if(!req_ptr || batch_group_key(*req_ptr) != batch_active_profile_key || req_ptr->state != BatchState::PREFILL || req_ptr->slot < 0 ||
                        req_ptr->prompt_pos >= (int) req_ptr->prompt_tokens.size())
                     {
                         continue;
@@ -5719,7 +5730,7 @@ static void batch_worker_loop()
                         continue;
                     }
                     BatchGenerateRequest & req = *req_ptr;
-                    if(req.profile_key != batch_active_profile_key) continue;
+                    if(batch_group_key(req) != batch_active_profile_key) continue;
                     if ((pass == 0 && req.state != BatchState::GENERATING) ||
                         (pass == 1 && req.state != BatchState::PREFILL)) continue;
                     if(req.state == BatchState::PREFILL)
@@ -5740,7 +5751,7 @@ static void batch_worker_loop()
                                 req.i_batch = batch.size();
                                 req.i_batch_is_prefill = true;
                             }
-                            batch_add_token(batch, req.prompt_tokens[req.prompt_pos], req.n_past, req.slot, is_last);
+                            batch_add_token(batch, req.prompt_tokens[req.prompt_pos], req.n_past, req.slot, is_last, req.profile.head);
                             req.prompt_pos++;
                             req.n_past++;
                         }
@@ -5754,7 +5765,7 @@ static void batch_worker_loop()
                         affected_ids.push_back(req.id);
                         req.i_batch = batch.size();
                         req.i_batch_is_prefill = false;
-                        batch_add_token(batch, req.pending_token, req.n_past, req.slot, true);
+                        batch_add_token(batch, req.pending_token, req.n_past, req.slot, true, req.profile.head);
                         req.n_past++;
                         req.has_pending = false;
                     }
@@ -6717,7 +6728,7 @@ static bool batch_decode_media_tokens(BatchGenerateRequest & req, const std::vec
         for(int i = 0; i < count; ++i)
         {
             const bool output = logits_last && offset + i == (int) tokens.size() - 1;
-            batch_add_token(batch, tokens[offset + i], req.n_past + i, req.slot, output);
+            batch_add_token(batch, tokens[offset + i], req.n_past + i, req.slot, output, req.profile.head);
         }
         if(llama_process(llama_ctx_v4, LLAMA_PROCESS_TYPE_DECODE, batch.get()) != 0)
         {

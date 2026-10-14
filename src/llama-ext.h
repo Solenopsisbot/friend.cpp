@@ -113,6 +113,7 @@ enum llama_decision_order {
 };
 // The embeddings output has one value per entry: row i is the score of option i
 LLAMA_API bool llama_batch_ext_set_decision_order(struct llama_batch_ext * batch, int32_t idx, enum llama_decision_order order);
+LLAMA_API bool llama_batch_ext_set_head_id(struct llama_batch_ext * batch, int32_t idx, int32_t head_id);
 
 // mirrors:
 // LLAMA_API float * llama_get_embeddings(struct llama_context * ctx);
@@ -159,3 +160,4 @@ LLAMA_API struct llama_adapter_head * llama_model_get_head(const struct llama_mo
 // Returns -2 if the architecture has no context-local head implementation.
 LLAMA_API int32_t llama_set_adapter_head(struct llama_context * ctx, struct llama_adapter_head * head);
 LLAMA_API struct llama_adapter_head * llama_get_adapter_head(const struct llama_context * ctx);
+LLAMA_API void llama_set_adapter_head_pool(struct llama_context * ctx, const struct llama_adapter_head * const * heads, size_t n_heads);

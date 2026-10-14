@@ -128,6 +128,19 @@ protected:
 
 using llm_graph_input_ptr = std::unique_ptr<llm_graph_input_i>;
 
+// Per-token head selectors used by the shared-trunk multi-head projection.
+// Each mask is [1, n_tokens] and is populated from llama_ubatch::head_id.
+class llm_graph_input_head_masks final : public llm_graph_input_i {
+public:
+    llm_graph_input_head_masks(int32_t n_heads, int32_t n_tokens, ggml_context * ctx);
+    void set_input(const llama_ubatch * ubatch) override;
+    bool can_reuse(const llm_graph_params & params) override;
+    ggml_tensor * mask(int32_t head_id) const;
+private:
+    int32_t n_heads;
+    std::vector<ggml_tensor *> masks;
+};
+
 class llm_graph_input_embd : public llm_graph_input_i {
 public:
     llm_graph_input_embd(int64_t n_embd) : n_embd(n_embd) {}
@@ -804,6 +817,7 @@ struct llm_graph_params {
     // head tensor pointer, so a different epoch must not reuse the previous graph
     uint64_t head_epoch;
     const llama_adapter_head * adapter_head;
+    const std::vector<const llama_adapter_head *> * head_pool = nullptr;
 
     std::map<llama_seq_id, llama_sampler *> samplers;
 
@@ -867,6 +881,16 @@ struct llm_graph_params {
             return false;
         }
 
+        bool has_head_rows = false;
+        bool other_has_head_rows = false;
+        for (uint32_t i = 0; i < ubatch.n_tokens; ++i) {
+            has_head_rows |= ubatch.head_id && ubatch.head_id[i] >= 0;
+            other_has_head_rows |= other.ubatch.head_id && other.ubatch.head_id[i] >= 0;
+        }
+        if (has_head_rows != other_has_head_rows) {
+            return false;
+        }
+
         if (!samplers_equal(samplers, other.samplers)) {
             return false;
         }
@@ -899,6 +923,7 @@ struct llm_graph_params {
             gtype == other.gtype &&
             head_epoch == other.head_epoch &&
             adapter_head == other.adapter_head &&
+            head_pool == other.head_pool &&
             cvec  == other.cvec  &&
             loras == other.loras &&
             cross == other.cross;
@@ -1010,6 +1035,8 @@ struct llm_graph_context {
     const llama_ubatch  & ubatch;
 
     const llama_adapter_head * adapter_head;
+    const std::vector<const llama_adapter_head *> * head_pool;
+    class llm_graph_input_head_masks * head_masks = nullptr;
 
     const int64_t n_embd;
     const int64_t n_layer;
@@ -1066,8 +1093,12 @@ struct llm_graph_context {
     virtual ~llm_graph_context() = default;
 
     ggml_tensor * head_tensor(ggml_tensor * base) const;
+    ggml_tensor * head_tensor_for(ggml_tensor * base, int32_t head_id) const;
     ggml_tensor * head_norm_tensor(ggml_tensor * base) const;
     ggml_tensor * head_scale_tensor(ggml_tensor * base) const;
+    ggml_tensor * head_scale_tensor_for(ggml_tensor * base, int32_t head_id) const;
+    bool has_head_batch() const;
+    ggml_tensor * head_mask(int32_t head_id) const;
 
     void cb(ggml_tensor * cur, const char * name, int il) const;
 
