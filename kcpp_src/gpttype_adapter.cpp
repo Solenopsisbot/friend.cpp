@@ -4548,6 +4548,13 @@ struct BatchGenerateRequest
     }
 };
 
+// Per-slot prompt cache for continuous batching. A slot keeps the last prompt
+// KV until another request needs it; reuse is gated by the LoRA/control-vector
+// KV identity. Head swaps are deliberately excluded: LM heads only change
+// logits, so personas sharing a channel can reuse the same transformer KV.
+static std::vector<std::string> batch_slot_kv_key;
+static std::vector<llama_tokens> batch_slot_prompt;
+
 static std::mutex batch_mutex;
 static std::condition_variable batch_cv;
 static std::deque<int> batch_waiting;
@@ -4560,6 +4567,48 @@ static bool batch_touched_since_legacy = false;
 static int batch_legacy_waiting = 0;
 static int batch_next_request_id = 1;
 static std::string batch_empty_string = "";
+
+static void batch_prepare_slot_cache_locked(BatchGenerateRequest & req)
+{
+    if(req.slot < 0) return;
+    if(batch_slot_kv_key.size() <= (size_t) req.slot)
+    {
+        batch_slot_kv_key.resize(req.slot + 1);
+        batch_slot_prompt.resize(req.slot + 1);
+    }
+    size_t keep = 0;
+    if(batch_slot_kv_key[req.slot] == req.profile.kv_key && !batch_slot_prompt[req.slot].empty())
+    {
+        keep = std::min(batch_slot_prompt[req.slot].size(), req.prompt_tokens.size());
+        while(keep > 0 && !std::equal(batch_slot_prompt[req.slot].begin(),
+                                      batch_slot_prompt[req.slot].begin() + keep,
+                                      req.prompt_tokens.begin()))
+        {
+            --keep;
+        }
+        // Re-evaluate the final prompt token so its logits belong to req.
+        if(keep >= req.prompt_tokens.size()) --keep;
+    }
+    llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), req.slot, (int64_t) keep, -1);
+    req.prompt_pos = (int) keep;
+    req.n_past = (int) keep;
+    batch_slot_kv_key[req.slot] = req.profile.kv_key;
+}
+
+static void batch_update_slot_cache_locked(const BatchGenerateRequest & req)
+{
+    if(req.slot < 0) return;
+    if(batch_slot_kv_key.size() <= (size_t) req.slot)
+    {
+        batch_slot_kv_key.resize(req.slot + 1);
+        batch_slot_prompt.resize(req.slot + 1);
+    }
+    llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), req.slot,
+                        (int64_t) req.prompt_tokens.size(), -1);
+    batch_slot_kv_key[req.slot] = req.profile.kv_key;
+    batch_slot_prompt[req.slot] = req.prompt_tokens;
+}
+
 static BatchGenerateRequest * batch_find_request_locked(int request_id)
 {
     for(auto & req : batch_requests)
@@ -5445,7 +5494,14 @@ static void batch_finish_request_locked(BatchGenerateRequest & req, stop_reason 
     req.state = reason == stop_reason::ERROR_ENCOUNTERED ? BatchState::FAILED : (reason == stop_reason::INVALID ? BatchState::ABORTED : BatchState::FINISHED);
     if(req.slot >= 0 && llama_ctx_v4)
     {
-        llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), req.slot, -1, -1);
+        if(reason != stop_reason::ERROR_ENCOUNTERED && !req.prompt_tokens.empty())
+        {
+            batch_update_slot_cache_locked(req);
+        }
+        else
+        {
+            llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), req.slot, -1, -1);
+        }
     }
     req.slot = -1;
     printf("\n[%s] BatchRequest:%d, Init:%.2fs, Processed:%d in %.2fs (%.2fT/s), Generated:%d/%d in %.2fs (%.2fT/s), Total:%.2fs, Stop:%d",
@@ -5553,7 +5609,6 @@ static bool batch_claim_waiting_locked()
         req->state = BatchState::PREPARING;
         batch_touched_since_legacy = true;
         req->start_time = std::chrono::steady_clock::now();
-        llama_memory_seq_rm(llama_get_memory(llama_ctx_v4), slot, -1, -1);
         claimed = true;
     }
     return claimed;
@@ -5735,6 +5790,7 @@ static void batch_worker_loop()
             }
             else
             {
+                batch_prepare_slot_cache_locked(*req);
                 req->state = BatchState::PREFILL;
             }
             continue;
