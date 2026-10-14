@@ -58,6 +58,7 @@ struct llama_ubatch {
     int32_t      *  seq_idx;    // [LLAMA_MAX_SEQ]    | -   | seq_idx
     int8_t       *  output;     // [n_tokens]         | i   | -
     int8_t       *  type;       // [n_tokens]         | i   | -     (mixed ubatch only, 0 - token, 1 - embd)
+    int32_t      *  head_id;    // [n_tokens]         | i   | optional pooled LM head
     int32_t      *  decision_order; // [n_tokens], NULL if no entry has one, see llama_batch_ext_set_decision_order()
 
     struct data_t {
@@ -70,6 +71,7 @@ struct llama_ubatch {
         std::vector<int32_t>        seq_idx;
         std::vector<int8_t>         output;
         std::vector<int8_t>         type;
+        std::vector<int32_t>        head_id;
         std::vector<int32_t>        batch_idxs;  // original batch index for each token
         std::vector<int32_t>        decision_order;
 
@@ -108,6 +110,7 @@ struct llama_batch_ext {
         bool         has_embd = false; // whether embd_off is set
         size_t       embd_off = 0; // index offset in the embd array
         bool         output = false; // TODO: have dedicated output flags
+        int32_t      head_id = -1; // optional friend.cpp pooled LM head
         int32_t      decision_order = 0; // see llama_batch_ext_set_decision_order()
         std::unordered_set<llama_seq_id> seq_ids;
         std::array<llama_pos, GGML_MROPE_SECTIONS> pos = {0, 0, 0, 0};

@@ -228,16 +228,33 @@ llama_model_llama::graph<embed>::graph(const llama_model & model, const llm_grap
     }
     cur = inpL;
 
+    const bool head_batch = has_head_batch();
+    ggml_tensor * base_output = model.head_base.saved ? model.head_base.output : model.output;
+    ggml_tensor * base_output_norm = model.head_base.saved ? model.head_base.output_norm : model.output_norm;
+
     cur = build_norm(cur,
-            head_norm_tensor(model.output_norm), NULL,
+            head_batch ? base_output_norm : head_norm_tensor(model.output_norm), NULL,
             LLM_NORM_RMS, -1);
 
     cb(cur, "result_norm", -1);
     res->t_embd = cur;
 
     if constexpr (!embed) {
-        // lm_head
-        cur = build_lora_mm(head_tensor(model.output), cur, head_scale_tensor(model.output_s));
+        // lm_head. With per-row head IDs, all transformer layers and the final
+        // shared norm run once; only the inexpensive output projections fan out.
+        if (head_batch) {
+            ggml_tensor * logits = nullptr;
+            for (int32_t head_id = -1; head_id < (int32_t) head_pool->size(); ++head_id) {
+                ggml_tensor * projected = build_lora_mm(
+                    head_tensor_for(base_output, head_id), cur,
+                    head_scale_tensor_for(model.head_base.saved ? model.head_base.output_s : model.output_s, head_id));
+                projected = ggml_mul(ctx0, projected, head_mask(head_id));
+                logits = logits ? ggml_add(ctx0, logits, projected) : projected;
+            }
+            cur = logits;
+        } else {
+            cur = build_lora_mm(head_tensor(model.output), cur, head_scale_tensor(model.output_s));
+        }
 
         cb(cur, "result_output", -1);
         res->t_logits = cur;

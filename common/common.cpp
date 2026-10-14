@@ -2168,7 +2168,7 @@ void common_batch::clear() {
 }
 
 int32_t common_batch::add(llama_token id, llama_pos pos, llama_seq_id seq_id, bool output) {
-    tokens.push_back({ id, { pos, 0, 0, 0 }, seq_id, output, { nullptr, 0, 0 }, {} });
+    tokens.push_back({ id, { pos, 0, 0, 0 }, seq_id, output, { nullptr, 0, 0 }, {}, 0, -1 });
     return size() - 1;
 }
 
@@ -2207,7 +2207,7 @@ bool common_batch::set_embd(int32_t idx, llama_embd embd) {
 }
 
 int32_t common_batch::add_embd(llama_embd embd, const llama_pos * pos, llama_seq_id seq_id, bool output) {
-    token t = { LLAMA_TOKEN_NULL, { 0, 0, 0, 0 }, seq_id, output, embd, {} };
+    token t = { LLAMA_TOKEN_NULL, { 0, 0, 0, 0 }, seq_id, output, embd, {}, 0, -1 };
     for (int32_t j = 0; j < n_pos; ++j) {
         t.pos[j] = pos[j];
     }
@@ -2243,6 +2243,9 @@ llama_batch_ext * common_batch::get_sub_batch(int32_t off, int32_t n) {
             llama_batch_ext_set_pos(res, idx, t.pos.data());
         }
         GGML_ASSERT(idx == i - off);
+        if (!llama_batch_ext_set_head_id(res, idx, t.head_id)) {
+            GGML_ABORT("%s: failed to set head %d at index %d\n", __func__, t.head_id, i);
+        }
 
         for (const llama_seq_id seq_id : t.seq_ids_extra) {
             if (!llama_batch_ext_add_seq(res, idx, seq_id)) {

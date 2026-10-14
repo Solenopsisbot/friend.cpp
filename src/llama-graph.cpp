@@ -162,6 +162,34 @@ void llm_graph_input_embd_h::set_input(const llama_ubatch * ubatch) {
     }
 }
 
+llm_graph_input_head_masks::llm_graph_input_head_masks(int32_t n_heads_, int32_t n_tokens, ggml_context * ctx)
+    : n_heads(n_heads_) {
+    masks.reserve(n_heads + 1);
+    for (int32_t i = 0; i <= n_heads; ++i) {
+        masks.push_back(ggml_new_tensor_2d(ctx, GGML_TYPE_F32, 1, n_tokens));
+    }
+}
+
+void llm_graph_input_head_masks::set_input(const llama_ubatch * ubatch) {
+    std::vector<float> values(ubatch->n_tokens);
+    for (int32_t h = -1; h < n_heads; ++h) {
+        std::fill(values.begin(), values.end(), 0.0f);
+        for (uint32_t i = 0; i < ubatch->n_tokens; ++i) {
+            const int32_t row_head = ubatch->head_id ? ubatch->head_id[i] : -1;
+            values[i] = row_head == h ? 1.0f : 0.0f;
+        }
+        ggml_backend_tensor_set(masks[h + 1], values.data(), 0, values.size()*sizeof(float));
+    }
+}
+
+bool llm_graph_input_head_masks::can_reuse(const llm_graph_params & params) {
+    return params.ubatch.n_tokens == masks[0]->ne[1];
+}
+
+ggml_tensor * llm_graph_input_head_masks::mask(int32_t head_id) const {
+    return masks.at(head_id + 1);
+}
+
 bool llm_graph_input_embd_h::can_reuse(const llm_graph_params & params) {
     bool res = true;
 
@@ -1528,6 +1556,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     moe_cache        (params.moe_cache),
     prec_policy      (params.prec_policy),
     adapter_head       (params.adapter_head),
+    head_pool          (params.head_pool),
 
     samplers         (params.samplers),
     cb_func          (params.cb),
@@ -1535,6 +1564,16 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     ctx0             (res->get_ctx()),
     gf               (res->get_gf()) {
         res->set_params(params);
+        bool has_selected_head = false;
+        if (ubatch.head_id) {
+            for (uint32_t i = 0; i < ubatch.n_tokens; ++i) {
+                has_selected_head |= ubatch.head_id[i] >= 0;
+            }
+        }
+        if (head_pool && !head_pool->empty() && has_selected_head) {
+            head_masks = static_cast<llm_graph_input_head_masks *>(res->add_input(
+                std::make_unique<llm_graph_input_head_masks>((int32_t) head_pool->size(), ubatch.n_tokens, ctx0)));
+        }
     }
 
 void llm_graph_context::cb(ggml_tensor * cur, const char * name, int il) const {
@@ -1547,6 +1586,13 @@ ggml_tensor * llm_graph_context::head_tensor(ggml_tensor * base) const {
     return adapter_head && adapter_head->output ? adapter_head->output : base;
 }
 
+ggml_tensor * llm_graph_context::head_tensor_for(ggml_tensor * base, int32_t head_id) const {
+    if (head_id >= 0 && head_pool && head_id < (int32_t) head_pool->size() && (*head_pool)[head_id]) {
+        return (*head_pool)[head_id]->output ? (*head_pool)[head_id]->output : base;
+    }
+    return base;
+}
+
 ggml_tensor * llm_graph_context::head_norm_tensor(ggml_tensor * base) const {
     return adapter_head && adapter_head->output_norm ? adapter_head->output_norm : base;
 }
@@ -1555,6 +1601,29 @@ ggml_tensor * llm_graph_context::head_scale_tensor(ggml_tensor * base) const {
     // The scale is part of the projection weight. Reusing the base weight's
     // scale for a replacement head would silently corrupt its logits.
     return adapter_head ? adapter_head->output_s : base;
+}
+
+ggml_tensor * llm_graph_context::head_scale_tensor_for(ggml_tensor * base, int32_t head_id) const {
+    if (head_id >= 0 && head_pool && head_id < (int32_t) head_pool->size() && (*head_pool)[head_id]) {
+        return (*head_pool)[head_id]->output_s;
+    }
+    return base;
+}
+
+bool llm_graph_context::has_head_batch() const {
+    if (!head_masks || !head_pool || head_pool->empty() || !ubatch.head_id) {
+        return false;
+    }
+    for (uint32_t i = 0; i < ubatch.n_tokens; ++i) {
+        if (ubatch.head_id[i] >= 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+ggml_tensor * llm_graph_context::head_mask(int32_t head_id) const {
+    return head_masks ? head_masks->mask(head_id) : nullptr;
 }
 
 

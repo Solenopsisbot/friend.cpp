@@ -62,6 +62,7 @@ struct llama_context {
 
     int32_t set_adapter_head(llama_adapter_head * head);
     llama_adapter_head * get_adapter_head() const;
+    void set_adapter_head_pool(const std::vector<const llama_adapter_head *> & heads) { head_pool = heads; }
 
     const llama_model   & get_model()   const;
     const llama_cparams & get_cparams() const;
@@ -297,6 +298,7 @@ private:
     const llama_model & model;
 
     llama_adapter_head * adapter_head = nullptr;
+    std::vector<const llama_adapter_head *> head_pool;
 
     llama_cparams cparams;
 

@@ -2651,6 +2651,7 @@ llm_graph_params llama_context::graph_params(
         /*.prec_policy =*/ &model.prec_policy,
         /*.head_epoch  =*/ model.head_epoch,
         /*.adapter_head=*/ adapter_head,
+        /*.head_pool   =*/ &head_pool,
         /*.samplers    =*/ sampling.samplers,
         /*.n_outputs   =*/ n_outputs,
         /*.cb          =*/ graph_get_cb(),
@@ -4649,4 +4650,11 @@ int32_t llama_set_adapter_head(struct llama_context * ctx, struct llama_adapter_
 
 struct llama_adapter_head * llama_get_adapter_head(const struct llama_context * ctx) {
     return ctx ? ctx->get_adapter_head() : nullptr;
+}
+
+void llama_set_adapter_head_pool(struct llama_context * ctx, const struct llama_adapter_head * const * heads, size_t n_heads) {
+    if (!ctx) {
+        return;
+    }
+    ctx->set_adapter_head_pool(std::vector<const llama_adapter_head *>(heads, heads + n_heads));
 }

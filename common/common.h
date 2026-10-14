@@ -1077,6 +1077,7 @@ struct common_batch {
         llama_embd   embd; // non-owning view of the data passed to add_embd()/set_embd(), data == NULL if none
         std::vector<llama_seq_id> seq_ids_extra; // see add_seq()
         int32_t      decision_order = 0; // see llama_batch_ext_set_decision_order()
+        int32_t      head_id = -1; // optional per-row output head; -1 selects the base head
     };
 
     std::vector<token> tokens; // mirror of the entries, tokens[i] describes batch index i
