@@ -4630,10 +4630,13 @@ static bool batch_is_live_state(BatchState state)
     return state == BatchState::WAITING || state == BatchState::PREPARING || state == BatchState::PREFILL || state == BatchState::GENERATING;
 }
 
-// Requests with the same trunk adapters can share transformer/KV work even
-// when they select different LM heads.  The head identity travels per token.
+// Keep the selected LM head in the scheduling key.  The per-row head projection
+// path is not safe on every backend yet (Metal can reuse a projection graph
+// across rows and return another row's head), so sharing a decode batch across
+// different heads can silently produce the wrong persona's logits.  Same-head
+// requests still batch normally; headless requests retain the regular path.
 static const std::string & batch_group_key(const BatchGenerateRequest & req) {
-    return req.profile.kv_key;
+    return req.profile_key;
 }
 
 static bool batch_has_live_locked()
