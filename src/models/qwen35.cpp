@@ -260,9 +260,7 @@ ggml_tensor * llama_model_qwen35::graph::build_norm_gated(
         ggml_tensor * gate,
         int           layer) {
     ggml_tensor * normalized = build_norm(input, weights, nullptr, LLM_NORM_RMS, layer);
-    ggml_tensor * gated_silu = ggml_silu(ctx0, gate);
-
-    return ggml_mul(ctx0, normalized, gated_silu);
+    return ggml_swiglu_split(ctx0, gate, normalized);
 }
 
 ggml_tensor * llama_model_qwen35::graph::build_layer_attn(
@@ -276,15 +274,10 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn(
 
     // Order: joint QG projection, QG split, Q norm, KV projection, K norm, RoPE, attention
 
-    // Qwen3Next uses a single Q projection that outputs query + gate
-    auto [Qcur_full, Kcur, Vcur] = build_qkv(model.layers[il], cur,
-            n_embd_head * 2, n_head,
-            n_embd_head,     n_head_kv,
-            n_embd_head,     n_head_kv,
-            il, false);
+    // Qwen3.5 stores the three projections independently.  Building them
+    // explicitly avoids the legacy QKV helper's grouped layout assumptions.
+    ggml_tensor * Qcur_full = build_lora_mm(model.layers[il].wq, cur, model.layers[il].wq_s);
     cb(Qcur_full, "Qcur_full", il);
-    cb(Kcur, "Kcur", il);
-    cb(Vcur, "Vcur", il);
 
     ggml_tensor * Qcur = ggml_view_3d(ctx0, Qcur_full, n_embd_head, n_head, n_tokens,
         ggml_element_size(Qcur_full) * n_embd_head * 2,
@@ -294,6 +287,11 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn(
     // Apply Q normalization
     Qcur = build_norm(Qcur, model.layers[il].attn_q_norm, nullptr, LLM_NORM_RMS, il);
     cb(Qcur, "Qcur_normed", il);
+
+    ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk, cur, model.layers[il].wk_s);
+    ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv, cur, model.layers[il].wv_s);
+    cb(Kcur, "Kcur", il);
+    cb(Vcur, "Vcur", il);
 
     // Apply K normalization
     Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
@@ -440,8 +438,23 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn_linear(
 
     const float eps_norm = hparams.f_norm_rms_eps;
 
-    q_conv = build_gdn_l2_norm(ctx0, q_conv, eps_norm);
-    k_conv = build_gdn_l2_norm(ctx0, k_conv, eps_norm);
+    // Qwen3.5 normalizes the concatenated Q/K head groups together.  Applying
+    // two independent norms changes the scale of each head and makes PTQ1
+    // logits diverge from the reference implementation.
+    ggml_tensor * qk_conv = ggml_view_4d(ctx0, conv_qkv_mix, head_k_dim, 2 * num_k_heads,
+            n_seq_tokens, n_seqs,
+            ggml_row_size(conv_qkv_mix->type, head_k_dim),
+            nb1_qkv,
+            nb1_qkv * n_seq_tokens,
+            0);
+    qk_conv = ggml_l2_norm(ctx0, qk_conv, eps_norm);
+    cb(qk_conv, "qk_conv_l2", il);
+
+    q_conv = ggml_view_4d(ctx0, qk_conv, head_k_dim, num_k_heads, n_seq_tokens, n_seqs,
+            qk_conv->nb[1], qk_conv->nb[2], qk_conv->nb[3], 0);
+    k_conv = ggml_view_4d(ctx0, qk_conv, head_k_dim, num_k_heads, n_seq_tokens, n_seqs,
+            qk_conv->nb[1], qk_conv->nb[2], qk_conv->nb[3],
+            num_k_heads * qk_conv->nb[1]);
 
     //q_conv = ggml_cont_4d(ctx0, q_conv, head_k_dim, num_k_heads, n_seq_tokens, n_seqs);
     //k_conv = ggml_cont_4d(ctx0, k_conv, head_k_dim, num_k_heads, n_seq_tokens, n_seqs);

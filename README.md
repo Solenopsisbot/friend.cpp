@@ -95,6 +95,7 @@ KoboldCpp also retains backward compatibility with legacy GGML `.bin` models, th
 
 - General Text Generation: [Qwen3-VL-8B](https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/main/Qwen3-VL-8B-Instruct-Q4_K_S.gguf) **(Most Recommended, best all rounder model)**
   - Add [optional Qwen3-VL-8B MMproj file](https://huggingface.co/unsloth/Qwen3-VL-8B-Instruct-GGUF/resolve/main/mmproj-BF16.gguf) for vision recognition capabilities.
+- Qwen3.5-0.8B has an optional fused CUDA backend for BF16/FP16 Hugging Face checkpoints; see [the megakernel guide](docs/QWEN35_MEGAKERNEL.md). Quantised Qwen3.5 GGUF files continue to use the regular loader.
 - Creative Writing and Roleplay: [L3-8B-Stheno-v3.2](https://huggingface.co/bartowski/L3-8B-Stheno-v3.2-GGUF/resolve/main/L3-8B-Stheno-v3.2-Q4_K_S.gguf)
 - Lightweight and Fast: [Gemma3-4B](https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main/gemma-3-4b-it-Q4_K_M.gguf)
   - Add [optional Gemma3-4B MMproj file](https://huggingface.co/koboldcpp/mmproj/resolve/main/gemma3-4b-mmproj-q8.gguf) for vision recognition capabilities.

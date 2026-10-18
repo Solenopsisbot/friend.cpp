@@ -69,8 +69,8 @@
 #define GGML_CUDA_CC_GCN4       (GGML_CUDA_CC_OFFSET_AMD + 0x803)  // Tonga, Fiji, Polaris, minimum for fast fp16
 #define GGML_CUDA_CC_VEGA       (GGML_CUDA_CC_OFFSET_AMD + 0x900)  // Vega56/64, minimum for fp16 dual issue
 #define GGML_CUDA_CC_VEGA20     (GGML_CUDA_CC_OFFSET_AMD + 0x906)  // MI50/Radeon VII, minimum for dp4a
-#define GGML_CUDA_CC_GFX909     (GGML_CUDA_CC_OFFSET_AMD + 0x909)  // GCN APU
-#define GGML_CUDA_CC_GFX90C     (GGML_CUDA_CC_OFFSET_AMD + 0x90c)  // GCN APU
+#define GGML_CUDA_CC_GFX909     (GGML_CUDA_CC_OFFSET_AMD + 0x909)
+#define GGML_CUDA_CC_GFX90C     (GGML_CUDA_CC_OFFSET_AMD + 0x90c)
 #define GGML_CUDA_CC_CDNA1      (GGML_CUDA_CC_OFFSET_AMD + 0x908)  // MI100, minimum for MFMA, acc registers
 #define GGML_CUDA_CC_CDNA2      (GGML_CUDA_CC_OFFSET_AMD + 0x90a)  // MI210 (gfx90a), minimum acc register renaming
 #define GGML_CUDA_CC_CDNA3      (GGML_CUDA_CC_OFFSET_AMD + 0x942)  // MI300
@@ -94,10 +94,10 @@
 #define GGML_CUDA_CC_IS_GCN_APU(cc) ((cc) == GGML_CUDA_CC_GFX909 || (cc) == GGML_CUDA_CC_GFX90C)
 #define GGML_CUDA_CC_IS_GCN(cc)     ((cc > GGML_CUDA_CC_OFFSET_AMD && cc < GGML_CUDA_CC_CDNA1) || GGML_CUDA_CC_IS_GCN_APU(cc))
 #define GGML_CUDA_CC_IS_CDNA(cc)    (!GGML_CUDA_CC_IS_GCN_APU(cc) && cc >= GGML_CUDA_CC_CDNA1 && cc < GGML_CUDA_CC_RDNA1)
-#define GGML_CUDA_CC_IS_CDNA1(cc)   (GGML_CUDA_CC_IS_CDNA(cc) && cc >= GGML_CUDA_CC_CDNA1 && cc < GGML_CUDA_CC_CDNA2)
-#define GGML_CUDA_CC_IS_CDNA2(cc)   (GGML_CUDA_CC_IS_CDNA(cc) && cc >= GGML_CUDA_CC_CDNA2 && cc < GGML_CUDA_CC_CDNA3)
-#define GGML_CUDA_CC_IS_CDNA3(cc)   (GGML_CUDA_CC_IS_CDNA(cc) && cc >= GGML_CUDA_CC_CDNA3 && cc < GGML_CUDA_CC_CDNA4)
-#define GGML_CUDA_CC_IS_CDNA4(cc)   (GGML_CUDA_CC_IS_CDNA(cc) && cc >= GGML_CUDA_CC_CDNA4 && cc < GGML_CUDA_CC_RDNA1)
+#define GGML_CUDA_CC_IS_CDNA1(cc)   (cc >= GGML_CUDA_CC_CDNA1 && cc < GGML_CUDA_CC_CDNA2)
+#define GGML_CUDA_CC_IS_CDNA2(cc)   (cc >= GGML_CUDA_CC_CDNA2 && cc < GGML_CUDA_CC_CDNA3)
+#define GGML_CUDA_CC_IS_CDNA3(cc)   (cc >= GGML_CUDA_CC_CDNA3 && cc < GGML_CUDA_CC_CDNA4)
+#define GGML_CUDA_CC_IS_CDNA4(cc)   (cc >= GGML_CUDA_CC_CDNA4 && cc < GGML_CUDA_CC_RDNA1)
 
 // Moore Threads
 #define MUSART_HMASK 40300 // MUSA rc4.3, min. ver. for half2 -> uint mask comparisons
@@ -111,9 +111,9 @@
 #define GGML_CUDA_CC_IS_QY2(cc)      (cc >= GGML_CUDA_CC_QY2 && cc < GGML_CUDA_CC_PH1)
 #define GGML_CUDA_CC_IS_PH1(cc)      (cc >= GGML_CUDA_CC_PH1)
 
-#if !defined(GGML_USE_HIP) && (defined(GGML_USE_MUSA) || CUDART_VERSION >= 11070)
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && CUDART_VERSION >= 11070
 #    define GGML_CUDA_USE_CUB
-#endif  // !defined(GGML_USE_HIP) && (defined(GGML_USE_MUSA) || CUDART_VERSION >= 11070)
+#endif  // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && CUDART_VERSION >= 11070
 
 // PDL host-side support (cudaLaunchKernelEx) requires CUDART >= 11.8.
 // However, this has been bugged in CTK < 12.3 for MSVC builds, see
@@ -124,22 +124,22 @@
 #    define GGML_CUDA_USE_PDL
 #endif  // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && (CUDART_VERSION >= 12030 || (!(defined(_MSC_VER) && !defined(__clang__)) && CUDART_VERSION >= 11080))
 
-static __device__ __forceinline__ void ggml_cuda_syncwarp() {
-#ifndef GGML_USE_HIP
-    __syncwarp();
-#endif // GGML_USE_HIP
+static __device__ __forceinline__ void ggml_cuda_pdl_sync() {
+#if defined(GGML_CUDA_USE_PDL) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= GGML_CUDA_CC_HOPPER
+    cudaGridDependencySynchronize();
+#endif // defined(GGML_CUDA_USE_PDL) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= GGML_CUDA_CC_HOPPER
 }
 
-static __device__ __forceinline__ void ggml_cuda_pdl_sync() {
-#if defined(GGML_CUDA_USE_PDL) && __CUDA_ARCH__ >= GGML_CUDA_CC_HOPPER
-    cudaGridDependencySynchronize();
-#endif // defined(GGML_CUDA_USE_PDL) && __CUDA_ARCH__ >= GGML_CUDA_CC_HOPPER
+static __device__ __forceinline__ void ggml_cuda_syncwarp() {
+#if !defined(GGML_USE_HIP)
+    __syncwarp();
+#endif
 }
 
 static __device__ __forceinline__ void ggml_cuda_pdl_lc() {
-#if defined(GGML_CUDA_USE_PDL) && __CUDA_ARCH__ >= GGML_CUDA_CC_HOPPER
+#if defined(GGML_CUDA_USE_PDL) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= GGML_CUDA_CC_HOPPER
     cudaTriggerProgrammaticLaunchCompletion();
-#endif // defined(GGML_CUDA_USE_PDL) && __CUDA_ARCH__ >= GGML_CUDA_CC_HOPPER
+#endif // defined(GGML_CUDA_USE_PDL) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= GGML_CUDA_CC_HOPPER
 }
 
 #ifdef __CUDA_ARCH_LIST__
@@ -158,7 +158,6 @@ constexpr bool ggml_cuda_has_arch(const int arch) {
 
 constexpr int ggml_cuda_highest_compiled_arch_impl(const int /*arch*/, const int cur) {
     if (cur == 0) {
-        GGML_LOG_WARN("ggml was not compiled with any CUDA arch warning");
         return -1;
     }
     return cur;
@@ -178,15 +177,19 @@ constexpr int ggml_cuda_highest_compiled_arch(const int arch) {
 }
 #else
 static int ggml_cuda_highest_compiled_arch(const int arch) {
-#ifndef KCPP_LIMIT_CUDA_MAX_ARCH
     return arch;
-#else
-    return (arch > KCPP_LIMIT_CUDA_MAX_ARCH ? KCPP_LIMIT_CUDA_MAX_ARCH : arch);
-#endif
 }
 #endif // __CUDA_ARCH_LIST__
 
 // ---------------------------------------------------------------------------------------------------------
+
+// GGML_CUDA_BATCH_INVARIANT=1: prefer kernels whose per-column arithmetic does not depend on the
+// number of columns in the batch (1 to 8), so that a token decoded alone and a token verified
+// inside a speculative batch see the same logits bit for bit. Costs some throughput at 2 to 8 columns.
+static inline bool ggml_cuda_batch_invariant() {
+    static const bool enabled = getenv("GGML_CUDA_BATCH_INVARIANT") != nullptr;
+    return enabled;
+}
 
 #define MATRIX_ROW_PADDING 512 // last row of quant. matrices is a multiple of this to avoid out-of-bounds memory accesses
 
@@ -242,7 +245,7 @@ static const char * cu_get_error_str(CUresult err) {
 #define CU_CHECK(err) CUDA_CHECK_GEN(err, CUDA_SUCCESS, cu_get_error_str)
 #endif
 
-#if !defined(GGML_USE_HIP)
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 #    define CUDA_SET_SHARED_MEMORY_LIMIT(kernel, nbytes)                                                       \
         do {                                                                                                   \
             static bool shared_memory_limit_raised[GGML_CUDA_MAX_DEVICES] = { false };                         \
@@ -257,7 +260,7 @@ static const char * cu_get_error_str(CUresult err) {
         do {                                             \
             GGML_UNUSED(nbytes);                         \
         } while (0)
-#endif // !defined(GGML_USE_HIP)
+#endif // !(defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 
 #if CUDART_VERSION >= 11010 || defined(GGML_USE_MUSA)
 #define GGML_CUDA_ASSUME(x) __builtin_assume(x)
@@ -273,7 +276,7 @@ static const char * cu_get_error_str(CUresult err) {
 #define FP16_AVAILABLE
 #endif // defined(GGML_USE_HIP) || defined(GGML_USE_MUSA) || __CUDA_ARCH__ >= GGML_CUDA_CC_PASCAL
 
-#if defined(FP16_AVAILABLE) && __CUDA_ARCH__ > GGML_CUDA_CC_VOLTA
+#if defined(FP16_AVAILABLE) && __CUDA_ARCH__ != 610
 #define FAST_FP16_AVAILABLE
 #endif // defined(FP16_AVAILABLE) && __CUDA_ARCH__ != 610
 
@@ -287,24 +290,24 @@ static const char * cu_get_error_str(CUresult err) {
 
 // The Volta instructions are in principle available on Turing or newer but they are effectively unusable:
 #if !defined(GGML_USE_HIP) && __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
-// #define VOLTA_MMA_AVAILABLE
+#define VOLTA_MMA_AVAILABLE
 #endif // !defined(GGML_USE_HIP) && __CUDA_ARCH__ == GGML_CUDA_CC_VOLTA
 
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && __CUDA_ARCH__ >= GGML_CUDA_CC_TURING
+#if !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_TURING
 #define TURING_MMA_AVAILABLE
-#endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && __CUDA_ARCH__ >= GGML_CUDA_CC_TURING
+#endif // !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_TURING
 
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#if !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 #define AMPERE_MMA_AVAILABLE
-#endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#endif // !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 
 #if !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_BLACKWELL && __CUDA_ARCH__ < GGML_CUDA_CC_RUBIN
-// #    define BLACKWELL_MMA_AVAILABLE // kcpp: no blackwell mma for now, requires too high cuda
+#    define BLACKWELL_MMA_AVAILABLE
 #endif // !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_BLACKWELL
 
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#if !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 #define CP_ASYNC_AVAILABLE
-#endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#endif // !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 
 #if !defined(GGML_CUDA_NO_FA) && !(defined(GGML_USE_MUSA) && __MUSA_ARCH__ < 220)
 #define FLASH_ATTN_AVAILABLE
@@ -317,8 +320,13 @@ static bool fp16_available(const int cc) {
 
 static bool fast_fp16_available(const int cc) {
     return GGML_CUDA_CC_IS_AMD(cc) ||
-        (GGML_CUDA_CC_IS_NVIDIA(cc) && fp16_available(cc) && cc > GGML_CUDA_CC_VOLTA) ||
+        (GGML_CUDA_CC_IS_NVIDIA(cc) && fp16_available(cc) && ggml_cuda_highest_compiled_arch(cc) != 610) ||
         (GGML_CUDA_CC_IS_MTHREADS(cc) && fp16_available(cc));
+}
+
+static bool fast_bf16_hardware_available(const int cc) {
+    return (GGML_CUDA_CC_IS_NVIDIA(cc) && cc >= GGML_CUDA_CC_AMPERE) ||
+        GGML_CUDA_CC_IS_CDNA(cc) || GGML_CUDA_CC_IS_RDNA3(cc) || GGML_CUDA_CC_IS_RDNA4(cc);
 }
 
 // To be used for feature selection of external libraries, e.g. cuBLAS.
@@ -329,15 +337,9 @@ static bool fast_fp16_hardware_available(const int cc) {
 
 // To be used for feature selection of external libraries, e.g. cuBLAS.
 static bool fp16_mma_hardware_available(const int cc) {
-    return (GGML_CUDA_CC_IS_NVIDIA(cc) && cc > GGML_CUDA_CC_VOLTA) ||
+    return (GGML_CUDA_CC_IS_NVIDIA(cc) && cc >= GGML_CUDA_CC_VOLTA) ||
         GGML_CUDA_CC_IS_CDNA(cc) || GGML_CUDA_CC_IS_RDNA3(cc) || GGML_CUDA_CC_IS_RDNA4(cc) ||
         (GGML_CUDA_CC_IS_MTHREADS(cc) && cc >= GGML_CUDA_CC_QY2);
-}
-
-// To be used for feature selection of external libraries, e.g. cuBLAS.
-static bool fast_bf16_hardware_available(const int cc) {
-        return (GGML_CUDA_CC_IS_AMD(cc) && (cc >= GGML_CUDA_CC_RDNA3 || GGML_CUDA_CC_IS_CDNA(cc)))
-            || (GGML_CUDA_CC_IS_NVIDIA(cc) && cc >= GGML_CUDA_CC_AMPERE);
 }
 
 static bool bf16_mma_hardware_available(const int cc) {
@@ -363,8 +365,7 @@ static bool amd_wmma_available(const int cc) {
 }
 
 static bool volta_mma_available(const int cc) {
-    return false;
-    // return GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_VOLTA;
+    return GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) == GGML_CUDA_CC_VOLTA;
 }
 
 static bool turing_mma_available(const int cc) {
@@ -380,7 +381,6 @@ static bool cp_async_available(const int cc) {
 }
 
 static bool blackwell_mma_available(const int cc) {
-    return false; //kcpp: no blackwell mma for now, requires too high cuda
     return GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_BLACKWELL &&
            ggml_cuda_highest_compiled_arch(cc) < GGML_CUDA_CC_RUBIN;
 }
@@ -404,7 +404,7 @@ static constexpr __device__ int ggml_cuda_get_physical_warp_size() {
 
 // Maximum number of bytes that can be copied in a single instruction.
 static constexpr __device__ int ggml_cuda_get_max_cpy_bytes() {
-#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#ifdef GGML_USE_HIP
     return 16;
 #else
 #if __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
@@ -412,7 +412,7 @@ static constexpr __device__ int ggml_cuda_get_max_cpy_bytes() {
 #else
     return 8;
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_VOLTA
-#endif // defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#endif // GGML_USE_HIP
 }
 
 
@@ -431,6 +431,10 @@ static __device__ void no_device_code(
     __trap();
 
     GGML_UNUSED(no_device_code); // suppress unused function warning
+
+#if defined(GGML_USE_MUSA)
+    __builtin_unreachable();
+#endif // defined(GGML_USE_MUSA)
 }
 
 #ifdef __CUDA_ARCH__
@@ -460,7 +464,7 @@ struct ggml_cuda_unroll<1> {
 
 template<int width = WARP_SIZE>
 static __device__ __forceinline__ int warp_reduce_sum(int x) {
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#if !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
     return __reduce_add_sync(0xffffffff, x);
 #else
 #pragma unroll
@@ -468,7 +472,7 @@ static __device__ __forceinline__ int warp_reduce_sum(int x) {
         x += __shfl_xor_sync(0xffffffff, x, offset, width);
     }
     return x;
-#endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
+#endif // !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 }
 
 template<int width = WARP_SIZE>
@@ -699,11 +703,16 @@ static __device__ __forceinline__ half2 ggml_cuda_hmax2(const half2 a, const hal
 
 template<int width = WARP_SIZE>
 static __device__ __forceinline__ half2 warp_reduce_max(half2 x) {
+#if !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_PASCAL || defined(GGML_USE_HIP)
 #pragma unroll
    for (int offset = width/2; offset > 0; offset >>= 1) {
        x = ggml_cuda_hmax2(x, __shfl_xor_sync(0xffffffff, x, offset, width));
    }
    return x;
+#else
+   GGML_UNUSED(x);
+   NO_DEVICE_CODE;
+#endif // !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_PASCAL || defined(GGML_USE_HIP)
 }
 
 #if (defined(CUDART_VERSION) && CUDART_VERSION < CUDART_HMASK) || defined(GGML_USE_HIP) || \
@@ -753,6 +762,20 @@ static __device__ __forceinline__ int ggml_cuda_dp4a(const int a, const int b, i
 #endif // __CUDA_ARCH__ >= GGML_CUDA_CC_DP4A || defined(GGML_USE_MUSA)
 
 #endif // defined(GGML_USE_HIP)
+}
+
+// c += dot(a as 4 unsigned bytes, b as 4 signed bytes). Used by the ternary paths that keep the raw
+// digits {0,1,2} and subtract the exact integer activation sum once per block instead of biasing
+// every word (two SIMD ops per 4 weights). PTX dp4a takes mixed .u32.s32 operand types directly.
+static __device__ __forceinline__ int ggml_cuda_dp4a_us(const unsigned int a, const int b, int c) {
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && __CUDA_ARCH__ >= GGML_CUDA_CC_DP4A
+    asm("dp4a.u32.s32 %0, %1, %2, %3;" : "=r"(c) : "r"(a), "r"(b), "r"(c));
+    return c;
+#else
+    const uint8_t * a8 = (const uint8_t *) &a;
+    const int8_t  * b8 = (const int8_t *)  &b;
+    return c + (int) a8[0]*b8[0] + (int) a8[1]*b8[1] + (int) a8[2]*b8[2] + (int) a8[3]*b8[3];
+#endif
 }
 
 static __device__ __forceinline__ void ggml_cuda_mad(float & acc, const float v, const float u) {
@@ -983,7 +1006,6 @@ template<>
 struct ggml_cuda_type_traits<GGML_TYPE_F16> {
     static constexpr int qk = 1;
     static constexpr int qr = 1;
-    static constexpr int bs = sizeof(ggml_half);
 };
 
 template<>
@@ -991,7 +1013,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_Q1_0> {
     static constexpr int qk = QK1_0;
     static constexpr int qr = QR1_0;
     static constexpr int qi = QI1_0;
-    static constexpr int bs = sizeof(block_q1_0);
 };
 
 template<>
@@ -999,15 +1020,107 @@ struct ggml_cuda_type_traits<GGML_TYPE_Q2_0> {
     static constexpr int qk = QK2_0;
     static constexpr int qr = QR2_0;
     static constexpr int qi = QI2_0;
-    static constexpr int bs = sizeof(block_q2_0);
 };
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_PQ2_0> {
+    static constexpr int qk = QK_PQ2_0;
+    static constexpr int qr = QR_PQ2_0;
+    static constexpr int qi = QI_PQ2_0;
+};
+
+// PTQ1_0 packs trits base-3, five per byte, so element order is not positional. It
+// follows the CPU codec exactly: a 16-byte chunk of qs, then an 8-byte chunk, then qh
+// at four trits per byte. Trits come out by the base-3 remainder recurrence
+// t = (v*3)>>8 with v = (v*3)&0xFF, two integer ops per step and no table.
+static __device__ __forceinline__ int ptq1_0_trit(const block_ptq1_0 * x, const int e) {
+    uint8_t b;
+    int n;
+    if (e < 80) {                       // qs[0..15], chunk of 16
+        b = x->qs[e & 15];              n = e >> 4;
+    } else if (e < 120) {               // qs[16..23], chunk of 8
+        const int t = e - 80;
+        b = x->qs[16 + (t & 7)];        n = t >> 3;
+    } else {                            // qh[0..1], four trits per byte
+        const int t = e - 120;
+        b = x->qh[t & 1];               n = t >> 1;
+    }
+
+    uint32_t v = b;
+#pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        if (i < n) {
+            v = (v * 3) & 0xFF;
+        }
+    }
+    return (int) ((v * 3) >> 8) - 1;
+}
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_PTQ1_0> {
+    static constexpr int qk = QK_PTQ1_0;
+    static constexpr int qr = QR_PTQ1_0;
+    static constexpr int qi = QI_PTQ1_0;
+};
+
+// Activation (src1) q8_1 layouts produced by quantize_row_q8_1_cuda and consumed by the MMVQ kernels.
+// Every layout keeps block_q8_1's bytes per row, so launcher strides in block_q8_1 units are valid
+// for all three; only the byte order inside a column differs.
+enum ggml_cuda_q8_1_layout : int {
+    GGML_CUDA_Q8_1_AOS      = 0, // plain block_q8_1 array (every type except the PTQ1_0 cases below)
+    GGML_CUDA_Q8_1_SOA_ISUM = 1, // PTQ1_0, one column: warp-transposed, exact int sums (ggml_cuda_ptq1_q8_word)
+    GGML_CUDA_Q8_1_PT       = 2, // PTQ1_0, 2-8 columns or MoE ids: planar-transposed (mmvq-ptq1_0.cuh)
+    GGML_CUDA_Q8_1_PQ2      = 3, // PQ2_0, 3-8 columns, plain 2D, Ada: permuted qs plus half2 (d, int sum) per block (mmvq-pq2_0.cuh)
+};
+
+// Column-count helper, not the layout decision. 2-8 columns and MoE (ids) take the planar
+// kernel. One column returns the Ada default (SOA_ISUM). Ampere and GGML_CUDA_BATCH_INVARIANT
+// override that to PT in ggml_cuda_q8_1_layout_host, which is what the quantizer and the kernel
+// switch both call. This helper does not consult the compute capability.
+static constexpr __host__ __device__ ggml_cuda_q8_1_layout ggml_cuda_q8_1_layout_for(ggml_type type_src0, int ncols_dst, bool has_ids) {
+#if defined(GGML_USE_HIP)
+    GGML_UNUSED(type_src0); GGML_UNUSED(ncols_dst); GGML_UNUSED(has_ids);
+    return GGML_CUDA_Q8_1_AOS;
+#else
+    if (type_src0 != GGML_TYPE_PTQ1_0) {
+        return GGML_CUDA_Q8_1_AOS;
+    }
+    return (ncols_dst == 1 && !has_ids) ? GGML_CUDA_Q8_1_SOA_ISUM : GGML_CUDA_Q8_1_PT;
+#endif
+}
+
+// ggml_cuda_q8_1_layout_host is defined below ggml_cuda_info(); it reads the device
+// compute capability, which is not declared yet at this point in the header.
+
+// Warp-transposed (SoA) q8_1 activation layout for the ternary MMVQ.
+//
+// One PTQ1_0 K-block (128 weights) consumes 4 block_q8_1 = 36 words (32 qs + 4 ds). In the
+// small-K MMVQ geometry each lane owns one K-block, so with the plain AoS layout a warp-wide
+// load of "word w" touches 32 lines 144 B apart: ~36 L1 wavefronts per instruction, ~1300 per
+// K-iteration against ~250 for the weights themselves. That LSU traffic, not GDDR, capped the
+// PTQ1 GEMV near 370 GB/s on Ada. Here K-blocks are grouped by 32 and word w of the group is
+// stored contiguously, so the same load is 32 consecutive words = 1 wavefront.
+// Bytes per column are unchanged when K is padded to a multiple of 32*128 = 4096.
+#define GGML_CUDA_PTQ1_Q8_GROUP_KB     32
+#define GGML_CUDA_PTQ1_Q8_WORDS_PER_KB 36
+#define GGML_CUDA_PTQ1_Q8_GROUP_WORDS  (GGML_CUDA_PTQ1_Q8_GROUP_KB * GGML_CUDA_PTQ1_Q8_WORDS_PER_KB)
+#define GGML_CUDA_PTQ1_K_PAD           (GGML_CUDA_PTQ1_Q8_GROUP_KB * QK_PTQ1_0)
+
+// Word offset (within one activation column) of word w (0..7 = qs words, 8 = ds) of block_q8_1 ib.
+static constexpr __host__ __device__ int ggml_cuda_ptq1_q8_word(int ib, int w) {
+    const int kb   = ib >> 2;
+    const int sub  = ib & 3;
+    const int g    = kb >> 5;
+    const int lane = kb & 31;
+    const int ww   = w < 8 ? sub * 8 + w : 32 + sub;
+    return g * GGML_CUDA_PTQ1_Q8_GROUP_WORDS + ww * GGML_CUDA_PTQ1_Q8_GROUP_KB + lane;
+}
 
 template<>
 struct ggml_cuda_type_traits<GGML_TYPE_Q4_0> {
     static constexpr int qk = QK4_0;
     static constexpr int qr = QR4_0;
     static constexpr int qi = QI4_0;
-    static constexpr int bs = sizeof(block_q4_0);
 };
 
 template<>
@@ -1015,7 +1128,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_Q4_1> {
     static constexpr int qk = QK4_1;
     static constexpr int qr = QR4_1;
     static constexpr int qi = QI4_1;
-    static constexpr int bs = sizeof(block_q4_1);
 };
 
 template<>
@@ -1023,7 +1135,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_Q5_0> {
     static constexpr int qk = QK5_0;
     static constexpr int qr = QR5_0;
     static constexpr int qi = QI5_0;
-    static constexpr int bs = sizeof(block_q5_0);
 };
 
 template<>
@@ -1031,7 +1142,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_Q5_1> {
     static constexpr int qk = QK5_1;
     static constexpr int qr = QR5_1;
     static constexpr int qi = QI5_1;
-    static constexpr int bs = sizeof(block_q5_1);
 };
 
 template<>
@@ -1039,7 +1149,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_Q8_0> {
     static constexpr int qk = QK8_0;
     static constexpr int qr = QR8_0;
     static constexpr int qi = QI8_0;
-    static constexpr int bs = sizeof(block_q8_0);
 };
 
 template<>
@@ -1047,7 +1156,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_MXFP4> {
     static constexpr int qk = QK_MXFP4;
     static constexpr int qr = QR_MXFP4;
     static constexpr int qi = QI_MXFP4;
-    static constexpr int bs = sizeof(block_mxfp4);
 };
 
 template<>
@@ -1055,7 +1163,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_NVFP4> {
     static constexpr int qk = QK_NVFP4;
     static constexpr int qr = QR_NVFP4;
     static constexpr int qi = QI_NVFP4;
-    static constexpr int bs = sizeof(block_nvfp4);
 };
 
 template<>
@@ -1063,7 +1170,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_Q2_K> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR2_K;
     static constexpr int qi = QI2_K;
-    static constexpr int bs = sizeof(block_q2_K);
 };
 
 template<>
@@ -1071,7 +1177,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_Q3_K> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR3_K;
     static constexpr int qi = QI3_K;
-    static constexpr int bs = sizeof(block_q3_K);
 };
 
 template<>
@@ -1079,7 +1184,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_Q4_K> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR4_K;
     static constexpr int qi = QI4_K;
-    static constexpr int bs = sizeof(block_q4_K);
 };
 
 template<>
@@ -1087,7 +1191,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_Q5_K> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR5_K;
     static constexpr int qi = QI5_K;
-    static constexpr int bs = sizeof(block_q5_K);
 };
 
 template<>
@@ -1095,7 +1198,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_Q6_K> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR6_K;
     static constexpr int qi = QI6_K;
-    static constexpr int bs = sizeof(block_q6_K);
 };
 
 template<>
@@ -1103,7 +1205,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ2_XXS> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR2_XXS;
     static constexpr int qi = QI2_XXS;
-    static constexpr int bs = sizeof(block_iq2_xxs);
 };
 
 template<>
@@ -1111,7 +1212,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ2_XS> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR2_XS;
     static constexpr int qi = QI2_XS;
-    static constexpr int bs = sizeof(block_iq2_xs);
 };
 
 template<>
@@ -1119,7 +1219,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ2_S> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR2_S;
     static constexpr int qi = QI2_S;
-    static constexpr int bs = sizeof(block_iq2_s);
 };
 
 template<>
@@ -1127,7 +1226,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ3_XXS> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR3_XXS;
     static constexpr int qi = QI3_XXS;
-    static constexpr int bs = sizeof(block_iq3_xxs);
 };
 
 template<>
@@ -1135,7 +1233,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ1_S> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR1_S;
     static constexpr int qi = QI1_S;
-    static constexpr int bs = sizeof(block_iq1_s);
 };
 
 template<>
@@ -1143,7 +1240,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ1_M> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR1_M;
     static constexpr int qi = QI1_M;
-    static constexpr int bs = sizeof(block_iq1_m);
 };
 
 template<>
@@ -1151,7 +1247,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ4_NL> {
     static constexpr int qk = QK4_NL;
     static constexpr int qr = QR4_NL;
     static constexpr int qi = QI4_NL;
-    static constexpr int bs = sizeof(block_iq4_nl);
 };
 
 template<>
@@ -1159,7 +1254,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ4_XS> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR4_XS;
     static constexpr int qi = QI4_XS;
-    static constexpr int bs = sizeof(block_iq4_xs);
 };
 
 template<>
@@ -1167,7 +1261,6 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ3_S> {
     static constexpr int qk = QK_K;
     static constexpr int qr = QR3_S;
     static constexpr int qi = QI3_S;
-    static constexpr int bs = sizeof(block_iq3_s);
 };
 
 //////////////////////
@@ -1201,6 +1294,42 @@ const ggml_cuda_device_info & ggml_cuda_info();
 
 void ggml_cuda_set_device(int device);
 int ggml_cuda_get_device();
+
+// Host-side wrapper used by both the quantizer call and the kernel switch.
+// Under GGML_CUDA_BATCH_INVARIANT the one-column case must run the same arithmetic as 2-8
+// columns, so it takes the planar layout (the SoA vec-dot sums in a different order).
+// Ampere (sm_80/86, including the 3060/3090/170HX): the #218 PT kernel wins at one column
+// too (+5.9% tg128 vs SoA on a 3060). Ada and newer keep SOA_ISUM at one column (4070 win).
+// Lives here, after ggml_cuda_info(), because the body reads the current device's cc.
+// PQ2_0 multi-column mat-vec (mmvq-pq2_0.cuh): Ada only, plain 2D (no ids, no batch dims), 3-8 columns.
+// Batch invariance keeps the generic kernel.
+static inline bool ggml_cuda_pq2_multicol(int ncols_dst) {
+#if defined(GGML_USE_HIP)
+    GGML_UNUSED(ncols_dst);
+    return false;
+#else
+    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+    return !ggml_cuda_batch_invariant() && GGML_CUDA_CC_IS_NVIDIA(cc) && cc == GGML_CUDA_CC_ADA_LOVELACE &&
+        ncols_dst >= 3 && ncols_dst <= 8;
+#endif
+}
+
+static inline ggml_cuda_q8_1_layout ggml_cuda_q8_1_layout_host(ggml_type type_src0, int ncols_dst, bool has_ids, bool plain_2d = true) {
+    if (type_src0 == GGML_TYPE_PQ2_0 && plain_2d && !has_ids && ggml_cuda_pq2_multicol(ncols_dst)) {
+        return GGML_CUDA_Q8_1_PQ2;
+    }
+    const ggml_cuda_q8_1_layout l = ggml_cuda_q8_1_layout_for(type_src0, ncols_dst, has_ids);
+    if (l == GGML_CUDA_Q8_1_SOA_ISUM && ggml_cuda_batch_invariant()) {
+        return GGML_CUDA_Q8_1_PT;
+    }
+    if (l == GGML_CUDA_Q8_1_SOA_ISUM) {
+        const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+        if (GGML_CUDA_CC_IS_NVIDIA(cc) && cc >= GGML_CUDA_CC_AMPERE && cc < GGML_CUDA_CC_ADA_LOVELACE) {
+            return GGML_CUDA_Q8_1_PT;
+        }
+    }
+    return l;
+}
 
 struct ggml_cuda_pool {
     virtual ~ggml_cuda_pool() = default;
@@ -1450,6 +1579,79 @@ struct ggml_cuda_stream_context {
     }
 };
 
+// Fused recurrent-state gather for GATED_DELTA_NET. build_rs materialises GET_ROWS(cache, s_copy)
+// into a temp per layer that only the GDN kernel reads; when the graph evaluator can prove that, it
+// skips the GET_ROWS and records the gather here so the kernel reads cache row ids[seq] directly.
+struct ggml_cuda_gated_delta_net_gather {
+    const float *   base       = nullptr; // cache rows [row_stride floats each]
+    const int32_t * ids        = nullptr; // per-seq row index
+    int64_t         row_stride = 0;       // in floats
+};
+
+// Owned by the backend context that evaluates the graph: registrations are keyed by node pointer,
+// so they are only meaningful for the evaluation that made them. Reset at the start of every
+// graph evaluation/capture; never shared between contexts or threads.
+struct ggml_cuda_gdn_gather_context {
+    std::unordered_map<const ggml_tensor *, ggml_cuda_gated_delta_net_gather> gathers;
+
+    void reset() {
+        gathers.clear();
+    }
+
+    void set(const ggml_tensor * gdn, const ggml_cuda_gated_delta_net_gather & gather) {
+        gathers[gdn] = gather;
+    }
+
+    const ggml_cuda_gated_delta_net_gather * find(const ggml_tensor * gdn) const {
+        const auto it = gathers.find(gdn);
+        return it == gathers.end() ? nullptr : &it->second;
+    }
+};
+
+// A Hadamard transform (MUL_MAT with GGML_HINT_SRC0_IS_HADAMARD, optionally preceded by the sign
+// flip) whose only consumers are PTQ1_0 mat-vecs writes the q8_1-quantized activation into its own
+// output buffer instead of the F32 result (the quantized rows are 9/8 bytes per element, so they
+// fit in the F32 allocation), and the mat-vecs skip their quantize launch. The output buffer's
+// lifetime is exactly the consumers' lifetime, so nothing about allocation changes. Keyed by tensor
+// identity (the transform output and every reshape view of it that a mat-vec consumes), never by
+// data pointer: ggml-alloc recycles a dead output's block for later tensors in the same graph, and a
+// later PTQ1_0 mat-vec whose src1 landed there must not mistake its F32 rows for q8_1. Valid for one
+// graph evaluation.
+struct ggml_cuda_fwht_q8 {
+    ggml_cuda_q8_1_layout layout = GGML_CUDA_Q8_1_AOS;
+    int64_t               ne0    = 0;       // padded row width the quantizer wrote (what the mat-vec expects)
+    int64_t               ncols  = 0;       // rows quantized (src1->ne[1] of every consumer)
+    const void *          data   = nullptr; // the q8_1 rows: the transform's own output buffer, or a pool block
+                                            // held for the rest of the graph when that buffer aliases the input
+};
+
+struct ggml_cuda_fwht_q8_context {
+    std::unordered_map<const ggml_tensor *, ggml_cuda_fwht_q8> entries;
+    std::vector<std::unique_ptr<ggml_cuda_pool_alloc<char>>> held; // released at reset(), newest first (VMM pool is LIFO)
+
+    // the implicit destructor would release `held` oldest first, which the VMM pool asserts on. The
+    // owning context also calls reset() before its pools go away (this member is declared before them).
+    ~ggml_cuda_fwht_q8_context() {
+        reset();
+    }
+
+    void reset() {
+        entries.clear();
+        while (!held.empty()) {
+            held.pop_back();
+        }
+    }
+
+    void set(const ggml_tensor * out, const ggml_cuda_fwht_q8 & e) {
+        entries[out] = e;
+    }
+
+    const ggml_cuda_fwht_q8 * find(const ggml_tensor * out) const {
+        const auto it = entries.find(out);
+        return it == entries.end() ? nullptr : &it->second;
+    }
+};
+
 struct ggml_backend_cuda_context {
     int device;
     std::string name;
@@ -1520,6 +1722,8 @@ struct ggml_backend_cuda_context {
     }
 
     ggml_cuda_stream_context concurrent_stream_context;
+    ggml_cuda_gdn_gather_context gdn_gather_context;
+    ggml_cuda_fwht_q8_context    fwht_q8_context;
 
     ~ggml_backend_cuda_context();
 
@@ -1534,6 +1738,10 @@ struct ggml_backend_cuda_context {
     cudaStream_t stream() { return stream(device, curr_stream_no); }
 
     ggml_cuda_stream_context & stream_context() { return concurrent_stream_context; }
+
+    ggml_cuda_gdn_gather_context & gdn_gathers() { return gdn_gather_context; }
+
+    ggml_cuda_fwht_q8_context & fwht_q8() { return fwht_q8_context; }
 
     cublasHandle_t cublas_handle() {
         if (cublas_handles[device][curr_stream_no] == nullptr) {
@@ -1576,11 +1784,11 @@ struct ggml_cuda_mm_fusion_args_host {
     const ggml_tensor * gate_bias = nullptr;
     const ggml_tensor * x_scale = nullptr;
     const ggml_tensor * gate_scale = nullptr;
-    ggml_glu_op glu_op;
     float glu_limit = 0.0f;
     const ggml_tensor * shared_up = nullptr;
     const ggml_tensor * shared_gate = nullptr;
     ggml_tensor * shared_dst = nullptr;
+    ggml_glu_op glu_op;
 };
 struct ggml_cuda_mm_fusion_args_device {
     const void * x_bias = nullptr;
@@ -1588,12 +1796,11 @@ struct ggml_cuda_mm_fusion_args_device {
     const void * gate_bias = nullptr;
     const void * x_scale = nullptr;
     const void * gate_scale = nullptr;
-    ggml_glu_op glu_op;
     float glu_limit = 0.0f;
     const void * shared_up = nullptr;
     const void * shared_gate = nullptr;
-    float * shared_dst = nullptr;
-    uint32_t shared_stride_col_dst = 0;
+    void * shared_dst = nullptr;
+    ggml_glu_op glu_op;
 };
 
 struct ggml_cuda_kernel_launch_params {
@@ -1694,11 +1901,11 @@ static bool ggml_cuda_kernel_can_use_pdl(const void * kernel) {
 #endif //defined(GGML_CUDA_USE_PDL)
 
 // PDL and __restrict__ need to be mutually exclusive, see https://github.com/ggml-org/llama.cpp/pull/24030
-# if (defined(GGML_CUDA_USE_PDL) && __CUDA_ARCH__ >= GGML_CUDA_CC_HOPPER)
+# if (defined(GGML_CUDA_USE_PDL) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= GGML_CUDA_CC_HOPPER)
 # define GGML_CUDA_RESTRICT
 # else
 # define GGML_CUDA_RESTRICT __restrict__
-# endif // defined(GGML_CUDA_USE_PDL) && __CUDA_ARCH__ >= GGML_CUDA_CC_HOPPER
+# endif // defined(GGML_CUDA_USE_PDL) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= GGML_CUDA_CC_HOPPER
 
 template<typename Kernel, typename... Args>
 static __inline__ void ggml_cuda_kernel_launch(Kernel kernel, const ggml_cuda_kernel_launch_params & launch_params, Args&&... args) {
