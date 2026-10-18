@@ -90,7 +90,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.123"
+KcppVersion = "1.123.1"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_base_config":"", "last_active_timestamp":datetime.now(), "triggered_sleeping":False, "current_model":"initial_model", "base_config":"", "swapReqType": None, "loadedReqTypes": [], "autoswapmode": False}
@@ -13143,7 +13143,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
         nocertify = True
         ssl._create_default_https_context = ssl._create_unverified_context
 
-    if args.usecpu and args.rpcmode!="connect":
+    if args.usecpu and sys.platform!="darwin" and args.rpcmode!="connect":
         args.gpulayers = 0
         args.autofit = False
 
