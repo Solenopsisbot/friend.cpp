@@ -161,6 +161,9 @@ extern "C" {
         LLAMA_FTYPE_MOSTLY_NVFP4         = 39, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_Q1_0          = 40, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_Q2_0          = 41, // except 1d tensors
+        LLAMA_FTYPE_MOSTLY_PQ2_0         = 141, // Prism group-128 Q2_0
+        LLAMA_FTYPE_MOSTLY_PQ2_0_LEGACY  = 142, // pre-rename value for PQ2_0
+        LLAMA_FTYPE_MOSTLY_PTQ1_0        = 143, // Prism group-128 ternary
 
         LLAMA_FTYPE_GUESSED = 1024, // not specified in the model file
     };

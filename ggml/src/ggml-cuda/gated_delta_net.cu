@@ -1,7 +1,20 @@
 #include "gated_delta_net.cuh"
 #include "ggml-cuda/common.cuh"
 
-constexpr int gdn_cols_per_warp = 4;
+constexpr int gdn_cols_per_warp = 1;
+
+// ggml's generic warp_reduce_sum uses __reduce_add_sync on Ampere+, which
+// always reduces all 32 lanes. GDN splits an Ampere warp into four 8-lane
+// column groups, so use a width-aware reduction here.
+template <int width>
+static __device__ __forceinline__ float gdn_reduce_sum(float x) {
+    const unsigned mask = __activemask();
+#pragma unroll
+    for (int offset = width / 2; offset > 0; offset >>= 1) {
+        x += __shfl_xor_sync(mask, x, offset, width);
+    }
+    return x;
+}
 
 template <int S_v, bool KDA, bool keep_rs_t, int cols_per_warp = gdn_cols_per_warp>
 __global__ void __launch_bounds__((ggml_cuda_get_physical_warp_size() < S_v ? ggml_cuda_get_physical_warp_size() : S_v) * 4, 2)
@@ -99,7 +112,7 @@ gated_delta_net_cuda(const float * q,
             for (int r = 0; r < rows_per_lane; r++) {
                 kv_shard += s_shard[r] * k_reg[r];
             }
-            float kv_col = warp_reduce_sum<lanes_per_col>(kv_shard);
+            float kv_col = gdn_reduce_sum<lanes_per_col>(kv_shard);
 
             // delta[col] = (v[col] - g * kv[col]) * beta
             float delta_col = (v_t[col] - g_val * kv_col) * beta_val;
@@ -113,7 +126,7 @@ gated_delta_net_cuda(const float * q,
                 attn_partial += s_shard[r] * q_reg[r];
             }
 
-            float attn_col = warp_reduce_sum<lanes_per_col>(attn_partial);
+            float attn_col = gdn_reduce_sum<lanes_per_col>(attn_partial);
 
             if (lane_in_col == 0) {
                 attn_data[col] = attn_col * scale;
@@ -127,7 +140,7 @@ gated_delta_net_cuda(const float * q,
                 kv_shard += expf(g_t[i]) * s_shard[r] * k_reg[r];
             }
 
-            float kv_col = warp_reduce_sum<lanes_per_col>(kv_shard);
+            float kv_col = gdn_reduce_sum<lanes_per_col>(kv_shard);
 
             // delta[col] = (v[col] - kv[col]) * beta
             float delta_col = (v_t[col] - kv_col) * beta_val;
@@ -142,7 +155,7 @@ gated_delta_net_cuda(const float * q,
                 attn_partial += s_shard[r] * q_reg[r];
             }
 
-            float attn_col = warp_reduce_sum<lanes_per_col>(attn_partial);
+            float attn_col = gdn_reduce_sum<lanes_per_col>(attn_partial);
 
             if (lane_in_col == 0) {
                 attn_data[col] = attn_col * scale;

@@ -583,6 +583,15 @@ void llama_context::resolve_fused_ops(const llama_memory_context_i * mctx, uint3
         LLAMA_LOG_INFO("%s: resolving fused Gated Delta Net support:\n", func);
         resolve(llm_fused_op_gdn_ar_probe, cparams.fused_gdn_ar);
         resolve(llm_fused_op_gdn_ch_probe, cparams.fused_gdn_ch);
+        // Keep the same A/B switch as Prism's reference fork.  This is useful
+        // when validating graph-level GDN semantics independently of the fused
+        // backend implementation.
+        if (const char * e = getenv("LLAMA_FUSED_GDN_AR"); e && atoi(e) == 0) {
+            cparams.fused_gdn_ar = false;
+        }
+        if (const char * e = getenv("LLAMA_FUSED_GDN_CH"); e && atoi(e) == 0) {
+            cparams.fused_gdn_ch = false;
+        }
         cparams.auto_fgdn = false;
     }
 
@@ -2649,6 +2658,8 @@ llm_graph_params llama_context::graph_params(
         /*.cross       =*/ &cross,
         /*.moe_cache   =*/ moe_cache.get(),
         /*.prec_policy =*/ &model.prec_policy,
+        /*.hadamard_rotations =*/ &model.hadamard_rotations,
+        /*.hadamard_inverses  =*/ &model.hadamard_inverses,
         /*.head_epoch  =*/ model.head_epoch,
         /*.adapter_head=*/ adapter_head,
         /*.head_pool   =*/ &head_pool,
