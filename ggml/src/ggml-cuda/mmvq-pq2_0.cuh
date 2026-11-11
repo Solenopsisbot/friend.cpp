@@ -1,4 +1,4 @@
-// PQ2_0 mat-vec for 3-8 columns (plain 2D), tuned on Ada.
+// friend.cpp (9551fc6aa): PQ2_0 mat-vec for 3-8 columns (plain 2D), tuned on Ada.
 //
 // Why: the generic mmvq kernel loses most of its DRAM throughput from 3 columns on (RTX 4070, Bonsai 2 27B shapes:
 // 44% of peak at 4 columns). Here the activations use GGML_CUDA_Q8_1_PQ2: per column the qs bytes come first,

@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,8 @@ struct kcpp_params {
     float adaptive_target     = -1.0f; // 0.0 - 1.0, <=0.0 is disabled
     float adaptive_decay      = 0.9f;
     int reasoning_budget       = 0; //if > 0, controls thinking budget
+    bool blue_noise            = false; // use blue-noise RNG for token sampling
+    int rng_type               = 0; // 0 = mt19937, 1 = lowbias32
 
     std::string model_filename       = ""; // model path
     std::string prompt               = "";
@@ -516,6 +519,9 @@ struct media_chunk
     int32_t clp_image_tokens = 0; //holds number of tokens used in this chunk
     int32_t nx = 0; //only used for 2d roped images
     int32_t ny = 0;
+    // Immutable encoder output. Shared copies let the bounded multimodal cache
+    // reuse the expensive projector result without copying opaque mtmd state.
+    std::shared_ptr<const std::vector<float>> encoded_embd;
 };
 struct media_object
 {
@@ -532,6 +538,8 @@ struct speculative_draft_result
     std::vector<int32_t> verify_tokens;
     std::vector<float *> actual_logits;
     bool draft_success = false;
+    double draft_ms = 0.0;  // friend.cpp: timings for the adaptive draft-length tuner
+    double verify_ms = 0.0;
     int drafted_amount = 0;
     int verify_n_past = 0;
 };
@@ -546,6 +554,8 @@ struct savestate_data
     std::vector<float> latest_logits;
     int64_t last_used = 0; //unix timestamp, updated on save or load
     std::string media_signature = "";
+    std::string kv_key = "";          // friend.cpp: LoRA+cvec identity the KV was computed under
+    std::string logits_head_key = ""; // friend.cpp: LM head that produced latest_logits
 };
 
 const float default_norm_eps = 1e-5f;

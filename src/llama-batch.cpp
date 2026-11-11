@@ -215,6 +215,14 @@ bool llama_batch_allocr::init(
         }
     }
 
+    // friend.cpp: per-row pooled LM heads, kept empty if no entry selects one
+    for (int32_t i = 0; i < n_tok; ++i) {
+        if (batch_inp.tokens[i].head_id >= 0) {
+            head_id.resize(n_tok, -1);
+            head_id[i] = batch_inp.tokens[i].head_id;
+        }
+    }
+
     // kept empty if no entry has one
     for (int32_t i = 0; i < n_tok; ++i) {
         if (batch_inp.tokens[i].decision_order != 0) {
@@ -234,6 +242,7 @@ bool llama_batch_allocr::init(
     batch.n_seq_id = n_seq_id.data();
     batch.seq_id   = seq_id.data();
     batch.logits   = output.data();
+    batch.head_id  = head_id.empty() ? nullptr : head_id.data(); // friend.cpp
 
     //
     // compute stats
@@ -313,6 +322,7 @@ bool llama_batch_allocr::init(
             /*.seq_idx      =*/ this->seq_idx.data(),
             /*.output       =*/ batch.logits,
             /*.type         =*/ is_embd_vec.empty() ? nullptr : is_embd_vec.data(),
+            /*.head_id      =*/ batch.head_id,
             /*.decision_order =*/ decision_order.empty() ? nullptr : decision_order.data(),
             /*.data         =*/ {},
         };
@@ -514,7 +524,7 @@ llama_ubatch llama_batch_allocr::ubatch_reserve(uint32_t n_seq_tokens, uint32_t 
     udata->seq_id_unq.resize(0);
     udata->seq_idx   .resize(LLAMA_MAX_SEQ, -1);
     udata->output    .resize(n_tokens);
-    udata->head_id  .resize(n_tokens, -1);
+    udata->head_id   .resize(n_tokens, -1); // friend.cpp
 
     for (uint32_t s = 0; s < n_seqs; ++s) {
         udata->seq_idx[s] = s;
@@ -847,6 +857,7 @@ void llama_batch_allocr::clear() {
     seq_id_unq  .clear();
     output      .clear();
     decision_order.clear();
+    head_id.clear();
 
     for (auto & cur : seq_pos) {
         cur.clear();
@@ -899,6 +910,7 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
     udata->output    .resize(n_tokens);
     udata->type      .resize(mixed ? n_tokens : 0);
     udata->decision_order.resize(decision_order.empty() ? 0 : n_tokens);
+    udata->head_id   .resize(batch.head_id ? n_tokens : 0, -1); // friend.cpp
 
     udata->batch_idxs = idxs;
     udata->seq_id_data.reserve(n_tokens);
@@ -929,7 +941,7 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
         udata->n_seq_id[i] = batch.n_seq_id[idxs[i]];
         udata->output[i]   = batch.logits[idxs[i]];
         if (batch.head_id) {
-            udata->head_id[i] = batch.head_id[idxs[i]];
+            udata->head_id[i] = batch.head_id[idxs[i]]; // friend.cpp
         }
 
         if (!decision_order.empty()) {
@@ -979,7 +991,7 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
         /*.seq_idx      =*/ udata->seq_idx.data(),
         /*.output       =*/ udata->output.data(),
         /*.type         =*/ mixed ? udata->type.data() : nullptr,
-        /*.head_id      =*/ udata->head_id.data(),
+        /*.head_id      =*/ batch.head_id ? udata->head_id.data() : nullptr, // friend.cpp
         /*.decision_order =*/ udata->decision_order.empty() ? nullptr : udata->decision_order.data(),
         /*.data         =*/ std::move(udata),
     };
@@ -1122,6 +1134,7 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
     batch.seq_id[n_tokens_alloc] = nullptr;
 
     batch.logits   = (int8_t *)        malloc(sizeof(int8_t)         * n_tokens_alloc);
+    // friend.cpp: per-row pooled LM head, -1 = base head
     batch.head_id  = (int32_t *)       malloc(sizeof(int32_t)        * n_tokens_alloc);
     std::fill(batch.head_id, batch.head_id + n_tokens_alloc, -1);
 
@@ -1157,6 +1170,10 @@ size_t llama_batch_ext_select_n_embd_inp(llama_context_type ctx_type, llm_arch a
 size_t llama_batch_ext_select_n_embd_state(llama_context_type ctx_type, const llama_hparams & hparams) {
     if (ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
         return hparams.n_embd_out();
+    }
+    // TODO: this probably should become a function of `llm_arch`
+    if (hparams.lilicorr_candidate_topk > 0) {
+        return hparams.n_embd_inp();
     }
     return 0;
 }
@@ -1412,8 +1429,9 @@ bool llama_batch_ext_set_decision_order(llama_batch_ext * batch, int32_t idx, ll
     return batch->set_decision_order(idx, order);
 }
 
+// friend.cpp: per-row pooled LM head (see llama_set_adapter_head_pool)
 bool llama_batch_ext_set_head_id(llama_batch_ext * batch, int32_t idx, int32_t head_id) {
-    if (!batch || idx < 0 || idx >= (int32_t) batch->tokens.size()) {
+    if (!batch || idx < 0 || idx >= (int32_t) batch->tokens.size() || head_id < -1) {
         return false;
     }
     batch->tokens[idx].head_id = head_id;
@@ -1448,7 +1466,7 @@ void llama_batch_compat::init(llama_batch_ext & dst, const llama_batch & batch_i
 
         llama_batch_ext::token t;
         if (batch_inp.head_id) {
-            t.head_id = batch_inp.head_id[i];
+            t.head_id = batch_inp.head_id[i]; // friend.cpp
         }
 
         // seq_ids

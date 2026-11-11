@@ -6,6 +6,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // TODO: pimpl
@@ -110,9 +111,12 @@ struct llama_adapter_head {
     ggml_tensor * output_s    = nullptr; // optional NVFP4 scale2
     ggml_tensor * output_in_s = nullptr; // optional NVFP4 input scale
 
+    // Contexts are unbound before this head's buffers are released. The caller
+    // still serializes binding/freeing with inference on those contexts.
+    std::unordered_set<llama_context *> bound_contexts;
+
     std::vector<ggml_context_ptr> ctxs;
     std::vector<ggml_backend_buffer_ptr> bufs;
-    std::unordered_set<llama_context *> bound_contexts;
 
     // gguf metadata
     std::unordered_map<std::string, std::string> gguf_kv;

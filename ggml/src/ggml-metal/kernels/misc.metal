@@ -60,6 +60,140 @@ kernel void kernel_argmax_f32(
     dst_i32[tgpig] = arg_val;
 }
 
+kernel void kernel_argmax_part_f32(
+        constant ggml_metal_kargs_argmax & args,
+        device   const char * src0,
+        device         char * tmp,
+        threadgroup    char * shmem [[threadgroup(0)]],
+        uint3 tgpig[[threadgroup_position_in_grid]],
+        uint3 tpitg[[thread_position_in_threadgroup]],
+        uint  sgitg[[simdgroup_index_in_threadgroup]],
+        uint  tiisg[[thread_index_in_simdgroup]],
+        uint3  ntg[[threads_per_threadgroup]]) {
+    const int row  = tgpig.y;
+    const int part = tgpig.x;
+    const int ne00 = (int) args.ne00;
+    const int npart = (int) args.npart;
+    const int chunk = (ne00 + npart - 1) / npart;
+    const int start = part * chunk;
+    const int end   = min(start + chunk, ne00);
+
+    device const float * x_row = (device const float *) ((device const char *) src0 + row * args.nb01);
+
+    float   lmax = -INFINITY;
+    int32_t larg = -1;
+
+    for (int i00 = start + tpitg.x; i00 < end; i00 += ntg.x) {
+        if (x_row[i00] > lmax) {
+            lmax = x_row[i00];
+            larg = i00;
+        }
+    }
+
+    // find the argmax value in the block
+    float max_val = simd_max(lmax);
+    int32_t arg_val = simd_max(select(-1, larg, lmax == max_val));
+
+    threadgroup   float * shared_maxval = (threadgroup   float *) shmem;
+    threadgroup int32_t * shared_argmax = (threadgroup int32_t *) shmem + N_SIMDWIDTH;
+
+    if (ntg.x > N_SIMDWIDTH) {
+        if (sgitg == 0) {
+            shared_maxval[tiisg] = -INFINITY;
+            shared_argmax[tiisg] = -1;
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        if (tiisg == 0) {
+            shared_maxval[sgitg] = max_val;
+            shared_argmax[sgitg] = arg_val;
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        max_val = shared_maxval[tiisg];
+        arg_val = shared_argmax[tiisg];
+
+        float max_val_reduced   = simd_max(max_val);
+        int32_t arg_val_reduced = simd_max(select(-1, arg_val, max_val == max_val_reduced));
+
+        max_val = max_val_reduced;
+        arg_val = arg_val_reduced;
+    }
+
+    if (tpitg.x == 0) {
+        device float * tmp_max = (device float *) tmp;
+        device int32_t * tmp_arg = (device int32_t *) tmp + npart * (int) args.ne01;
+
+        tmp_max[row*npart + part] = max_val;
+        tmp_arg[row*npart + part] = arg_val;
+    }
+}
+
+kernel void kernel_argmax_final_f32(
+        constant ggml_metal_kargs_argmax & args,
+        device   const char * tmp,
+        device         char * dst,
+        threadgroup    char * shmem [[threadgroup(0)]],
+        uint3 tgpig[[threadgroup_position_in_grid]],
+        uint3 tpitg[[thread_position_in_threadgroup]],
+        uint  sgitg[[simdgroup_index_in_threadgroup]],
+        uint  tiisg[[thread_index_in_simdgroup]],
+        uint3  ntg[[threads_per_threadgroup]]) {
+    const int row = tgpig.x;
+    const int npart = (int) args.npart;
+
+    device const float * tmp_max = (device const float *) tmp;
+    device const int32_t * tmp_arg = (device const int32_t *) tmp + npart * (int) args.ne01;
+
+    float   lmax = -INFINITY;
+    int32_t larg = -1;
+
+    for (int i = tpitg.x; i < npart; i += ntg.x) {
+        if (tmp_max[row*npart + i] > lmax) {
+            lmax = tmp_max[row*npart + i];
+            larg = tmp_arg[row*npart + i];
+        }
+    }
+
+    // find the argmax value in the block
+    float max_val = simd_max(lmax);
+    int32_t arg_val = simd_max(select(-1, larg, lmax == max_val));
+
+    threadgroup   float * shared_maxval = (threadgroup   float *) shmem;
+    threadgroup int32_t * shared_argmax = (threadgroup int32_t *) shmem + N_SIMDWIDTH;
+
+    if (ntg.x > N_SIMDWIDTH) {
+        if (sgitg == 0) {
+            shared_maxval[tiisg] = -INFINITY;
+            shared_argmax[tiisg] = -1;
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        if (tiisg == 0) {
+            shared_maxval[sgitg] = max_val;
+            shared_argmax[sgitg] = arg_val;
+        }
+
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        max_val = shared_maxval[tiisg];
+        arg_val = shared_argmax[tiisg];
+
+        float max_val_reduced   = simd_max(max_val);
+        int32_t arg_val_reduced = simd_max(select(-1, arg_val, max_val == max_val_reduced));
+
+        max_val = max_val_reduced;
+        arg_val = arg_val_reduced;
+    }
+
+    if (tpitg.x == 0) {
+        ((device int32_t *) dst)[row] = arg_val;
+    }
+}
+
 kernel void kernel_diag_f32(
         constant ggml_metal_kargs_diag & args,
         device   const char * src0,
@@ -410,6 +544,7 @@ kernel void kernel_fwht(
         constant ggml_metal_kargs_fwht & args,
         device const src_t * src,
         device float * dst,
+        device const float * signs,
         uint3  tgpig[[threadgroup_position_in_grid]],
         ushort sgitg[[simdgroup_index_in_threadgroup]],
         ushort tiisg[[thread_index_in_simdgroup]],
@@ -426,6 +561,10 @@ kernel void kernel_fwht(
         return;
     }
 
+    // the Hadamard sign flip that precedes the transform in the graph is applied
+    // on load when fused in: exact, since the factors are +-1
+    signs += (args.n_blk > 0 ? (r % args.n_blk) * N : 0);
+
     src += r * N;
     dst += r * N;
 
@@ -433,7 +572,8 @@ kernel void kernel_fwht(
 
     float reg[NE];
     for (int i = 0; i < NE; i++) {
-        reg[i] = float(src[i*NW + lane])*scale;
+        const float s = args.n_blk > 0 ? signs[i*NW + lane] : 1.0f;
+        reg[i] = float(src[i*NW + lane])*s*scale;
     }
     for (int i = 1; i < NW; i *= 2) {
         for (int j = 0; j < NE; j++) {
@@ -470,6 +610,7 @@ kernel void kernel_fwht_tg(
         constant ggml_metal_kargs_fwht & args,
         device const src_t * src,
         device float * dst,
+        device const float * signs,
         uint3  tgpig[[threadgroup_position_in_grid]],
         ushort sgitg[[simdgroup_index_in_threadgroup]],
         ushort tiisg[[thread_index_in_simdgroup]],
@@ -487,6 +628,8 @@ kernel void kernel_fwht_tg(
         return;
     }
 
+    signs += (args.n_blk > 0 ? (r % args.n_blk) * N : 0);
+
     src += r * N;
     dst += r * N;
 
@@ -494,7 +637,8 @@ kernel void kernel_fwht_tg(
 
     float reg[NE];
     for (int i = 0; i < NE; i++) {
-        reg[i] = float(src[i*NT + tid])*scale;
+        const float s = args.n_blk > 0 ? signs[i*NT + tid] : 1.0f;
+        reg[i] = float(src[i*NT + tid])*s*scale;
     }
 
     for (int i = 1; i < NW; i *= 2) {
@@ -534,6 +678,203 @@ kernel void kernel_fwht_tg(
         dst[i*NT + tid] = reg[i];
     }
 }
+
+// friend.cpp: residual ADD (optional) + RMS_NORM + weight MUL + Hadamard sign MUL + FWHT, the
+// whole input side of a Hadamard-folded matmul in one launch instead of three dependent ones.
+// Writes the add result (dst_add, the residual), the normed row (dst_norm, read by unrotated
+// consumers) and the rotated row (dst_rot, the folded matmul's input).
+//
+// Grid: (ne0/N blocks, rows), N/4 threads per threadgroup, each thread owning 4 contiguous
+// elements of its block as one float4. At batch 1 this is latency-bound, not bandwidth-bound,
+// so every load is issued up front: the thread's block float4 (and weight / signs) plus its
+// share of the full-row sum of squares, one memory round trip. Each threadgroup reduces the
+// whole row itself (a few KB) so the blocks run on separate cores; the host only fuses the ADD
+// when its output does not alias an input, as another threadgroup may still be reading.
+//
+// Transform on the float4 layout (element e = 4*t + c): strides 1, 2 inside the thread,
+// 4..64 across the simdgroup (thread t ^ stride/4), the rest through threadgroup memory.
+// Walsh-Hadamard stages commute, so this is the same transform as kernel_fwht_tg.
+template<int N>
+kernel void kernel_norm_fwht(
+        constant ggml_metal_kargs_norm_fwht & args,
+        device const float4 * a,
+        device const float4 * b,
+        device const float4 * w,
+        device const float4 * signs,
+        device       float4 * dst_add,
+        device       float4 * dst_norm,
+        device       float4 * dst_rot,
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort sgitg[[simdgroup_index_in_threadgroup]],
+        ushort tiisg[[thread_index_in_simdgroup]]) {
+
+    constexpr int NW = N_SIMDWIDTH;
+    constexpr int NT = N / 4;           // threads per threadgroup, one float4 each
+
+    threadgroup float4 shmem[NT];
+    threadgroup float  red[NT / NW];
+
+    const int     blk = tgpig.x;
+    const int64_t row = tgpig.y;
+    if (row >= args.nrows) {
+        return;
+    }
+
+    const int t  = sgitg * NW + tiisg;
+    const int R4 = args.ne0 / 4;        // float4s per row
+    const int64_t off = row * R4;
+
+    a        += off;
+    b        += off;
+    dst_add  += off;
+    dst_norm += off;
+    dst_rot  += off;
+
+    const int j = blk * NT + t;         // this thread's float4 in the row
+
+    // issue everything this thread needs at once
+    const float4 wj = w[j];
+    const float4 sj = signs[j];
+    const float4 vj = args.has_add ? a[j] + b[j] : a[j];
+
+    float sumf = 0.0f;
+    for (int i = t; i < R4; i += NT) {
+        const float4 v = args.has_add ? a[i] + b[i] : a[i];
+        sumf += dot(v, v);
+    }
+    sumf = simd_sum(sumf);
+    if (tiisg == 0) {
+        red[sgitg] = sumf;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    sumf = tiisg < NT / NW ? red[tiisg] : 0.0f;
+    sumf = simd_sum(sumf);
+
+    const float scale_norm = 1.0f/sqrt(sumf/args.ne0 + args.eps);
+    const float scale_h    = 1.0f/sqrt((float) N);
+
+    const float4 nv = (vj*scale_norm)*wj;
+    if (args.has_add) {
+        dst_add[j] = vj;
+    }
+    dst_norm[j] = nv;
+
+    float4 r = nv*sj*scale_h;
+
+    // strides 1 and 2: inside the thread
+    r = float4(r.x + r.y, r.x - r.y, r.z + r.w, r.z - r.w);
+    r = float4(r.x + r.z, r.y + r.w, r.x - r.z, r.y - r.w);
+
+    // strides 4 .. 4*(NW/2): partner thread t ^ m in the same simdgroup
+    for (int m = 1; m < NW && m < NT; m *= 2) {
+        const float4 p = simd_shuffle_xor(r, (ushort) m);
+        r = (t & m) == 0 ? p + r : p - r;
+    }
+
+    // wider strides: partner thread in another simdgroup
+    for (int m = NW; m < NT; m *= 2) {
+        shmem[t] = r;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        const float4 p = shmem[t ^ m];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        r = (t & m) == 0 ? p + r : p - r;
+    }
+
+    dst_rot[j] = r;
+}
+
+typedef decltype(kernel_norm_fwht<1024>) kernel_norm_fwht_t;
+
+template [[host_name("kernel_norm_fwht_512")]]  kernel kernel_norm_fwht_t kernel_norm_fwht<512>;
+template [[host_name("kernel_norm_fwht_1024")]] kernel kernel_norm_fwht_t kernel_norm_fwht<1024>;
+template [[host_name("kernel_norm_fwht_2048")]] kernel kernel_norm_fwht_t kernel_norm_fwht<2048>;
+
+// friend.cpp: SWIGLU + MUL(signs) + FWHT, optionally with the value side normalised per head
+// (rms_norm over hd elements * w) and the heads permuted from tiled [hd, nk, rep] to grouped
+// [hd, rep, nk] order on the way in -- the whole path from a GDN output / FFN up+gate to the
+// Hadamard-folded ssm_out / ffn_down input in one launch. Same thread layout as
+// kernel_norm_fwht: (blocks of N, rows) threadgroups of N/4 threads, one float4 per thread.
+// With the norm, the 128 elements of a head are exactly one simdgroup (32 lanes x float4), so
+// the per-head sum of squares is a single simd_sum.
+template<int N>
+kernel void kernel_glu_fwht(
+        constant ggml_metal_kargs_glu_fwht & args,
+        device const float4 * g,
+        device const float4 * x,
+        device const float4 * w,
+        device const float4 * signs,
+        device       float4 * dst_rot,
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort sgitg[[simdgroup_index_in_threadgroup]],
+        ushort tiisg[[thread_index_in_simdgroup]]) {
+
+    constexpr int NW = N_SIMDWIDTH;
+    constexpr int NT = N / 4;
+
+    threadgroup float4 shmem[NT];
+
+    const int     blk = tgpig.x;
+    const int64_t row = tgpig.y;
+    if (row >= args.nrows) {
+        return;
+    }
+
+    const int t = sgitg * NW + tiisg;
+    const int j = blk * NT + t;     // output float4 within the row
+    const int p = 4 * j;            // first output element
+
+    // source element for output position p (the permutation keeps d, moves whole heads)
+    int e = p;
+    if (args.perm_rep > 1) {
+        const int d  = p % args.hd;
+        const int gp = p / args.hd;         // grouped head index = r + rep*k
+        const int r  = gp % args.perm_rep;
+        const int k  = gp / args.perm_rep;
+        e = d + args.hd * (k + args.perm_nk * r);
+    }
+
+    g += row * (args.nbg / 4);
+    x += row * (args.nbx / 4);
+    dst_rot += row * (args.ne0 / 4);
+
+    const float4 gj = g[e / 4];
+    float4       xj = x[e / 4];
+    const float4 sj = signs[j];
+
+    if (args.norm) {
+        const float4 wj = w[(e % args.hd) / 4];
+        const float sum = simd_sum(dot(xj, xj));      // this simdgroup = this head
+        const float scale = 1.0f/sqrt(sum/args.hd + args.eps);
+        xj = (xj*scale)*wj;
+    }
+
+    const float4 silu = gj / (1.0f + exp(-gj));
+    float4 r = (silu*xj)*sj*(1.0f/sqrt((float) N));
+
+    r = float4(r.x + r.y, r.x - r.y, r.z + r.w, r.z - r.w);
+    r = float4(r.x + r.z, r.y + r.w, r.x - r.z, r.y - r.w);
+
+    for (int m = 1; m < NW && m < NT; m *= 2) {
+        const float4 q = simd_shuffle_xor(r, (ushort) m);
+        r = (t & m) == 0 ? q + r : q - r;
+    }
+
+    for (int m = NW; m < NT; m *= 2) {
+        shmem[t] = r;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        const float4 q = shmem[t ^ m];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        r = (t & m) == 0 ? q + r : q - r;
+    }
+
+    dst_rot[j] = r;
+}
+
+typedef decltype(kernel_glu_fwht<1024>) kernel_glu_fwht_t;
+
+template [[host_name("kernel_glu_fwht_512")]]  kernel kernel_glu_fwht_t kernel_glu_fwht<512>;
+template [[host_name("kernel_glu_fwht_1024")]] kernel kernel_glu_fwht_t kernel_glu_fwht<1024>;
+template [[host_name("kernel_glu_fwht_2048")]] kernel kernel_glu_fwht_t kernel_glu_fwht<2048>;
 
 typedef decltype(kernel_fwht<64, float>) kernel_fwht_f32_t;
 typedef decltype(kernel_fwht<64, half>)  kernel_fwht_f16_t;
@@ -772,3 +1113,99 @@ kernel void kernel_dsv4_hc_post_f32(
         *(device float *) (dst + i0*args.nb_d0 + idst*args.nb_d1 + it*args.nb_d2) = result[idst];
     }
 }
+
+constant bool FC_top_k_mask_has_score  [[function_constant(FC_TOP_K_MASK + 0)]];
+constant bool FC_top_k_mask_has_blocks [[function_constant(FC_TOP_K_MASK + 1)]];
+constant bool FC_top_k_mask_has_extra  [[function_constant(FC_TOP_K_MASK + 2)]];
+constant bool FC_top_k_mask_vec        [[function_constant(FC_TOP_K_MASK + 3)]];
+
+// the fill runs before the scatter, both are fully parallel over the whole dst and over the picks of one row
+template <typename T, typename T4>
+kernel void kernel_top_k_mask_fill(
+        constant ggml_metal_kargs_top_k_mask & args,
+        device char * dst,
+        uint  tid[[thread_position_in_grid]],
+        uint ntot[[threads_per_grid]]) {
+    const T ninf = T(-INFINITY);
+
+    if (FC_top_k_mask_vec) {
+        device T4 * dst_4 = (device T4 *) dst;
+        for (int64_t i = tid; i < args.n_elems/4; i += ntot) {
+            dst_4[i] = T4(ninf);
+        }
+    } else {
+        device T * dst_t = (device T *) dst;
+        for (int64_t i = tid; i < args.n_elems; i += ntot) {
+            dst_t[i] = ninf;
+        }
+    }
+}
+
+typedef decltype(kernel_top_k_mask_fill<half,  half4>)  kernel_top_k_mask_fill_h_t;
+typedef decltype(kernel_top_k_mask_fill<float, float4>) kernel_top_k_mask_fill_f_t;
+
+template [[host_name("kernel_top_k_mask_fill_f16")]] kernel kernel_top_k_mask_fill_h_t kernel_top_k_mask_fill<half,  half4>;
+template [[host_name("kernel_top_k_mask_fill_f32")]] kernel kernel_top_k_mask_fill_f_t kernel_top_k_mask_fill<float, float4>;
+
+// one threadgroup per row: copy the mask cells of the live picks and of the extra cells over the fill
+template <typename T, typename T4>
+kernel void kernel_top_k_mask(
+        constant ggml_metal_kargs_top_k_mask & args,
+        device const  char * mask,
+        device const  char * top_k,
+        device const  char * score,
+        device const  char * blocks,
+        device const  char * extra,
+        device        char * dst,
+        uint3   tgpig[[threadgroup_position_in_grid]],
+        uint3   tpitg[[thread_position_in_threadgroup]],
+        uint3 ntg_max[[threads_per_threadgroup]]) {
+    const int i1 = tgpig.x;
+    const int i2 = tgpig.y;
+    const int i3 = tgpig.z;
+
+    const int   tiitg = tpitg.x;
+    const int     ntg = ntg_max.x;
+
+    device const char * mask_row  = mask  + (i1 % args.m1)*args.nbm1 + (i2 % args.m2)*args.nbm2 + (i3 % args.m3)*args.nbm3;
+    device       char * dst_row   = dst   + i1*args.nb1 + i2*args.nb2 + i3*args.nb3;
+    device const char * top_k_row = top_k + i1*args.nbk1 + i2*args.nbk2 + i3*args.nbk3;
+
+    device const T * mask_row_t = (device const T *) mask_row;
+    device       T * dst_row_t  = (device       T *) dst_row;
+
+    for (int i = tiitg; i < args.n_top; i += ntg) {
+        const int32_t p = *(device const int32_t *) (top_k_row + i*args.nbk0);
+        if (p < 0 || p >= args.n_pick) {
+            continue;
+        }
+        if (FC_top_k_mask_has_score && !(*(device const float *) (score + p*args.nbs0 + i1*args.nbs1 + i2*args.nbs2 + i3*args.nbs3) > -INFINITY)) {
+            continue;
+        }
+        if (FC_top_k_mask_has_blocks) {
+            FOR_UNROLL (int k = 0; k < args.n_blk; ++k) {
+                const int32_t c = *(device const int32_t *) (blocks + k*args.nbb0 + p*args.nbb1);
+                if (c >= 0 && c < args.n_kv) {
+                    dst_row_t[c] = mask_row_t[c];
+                }
+            }
+        } else if (p < args.n_kv) {
+            dst_row_t[p] = mask_row_t[p];
+        }
+    }
+
+    if (FC_top_k_mask_has_extra) {
+        for (int i = tiitg; i < args.n_extra; i += ntg) {
+            const int32_t c = *(device const int32_t *) (extra + i*args.nbe0 + i1*args.nbe1 + i2*args.nbe2 + i3*args.nbe3);
+            if (c >= 0 && c < args.n_kv) {
+                dst_row_t[c] = mask_row_t[c];
+            }
+        }
+    }
+}
+
+typedef decltype(kernel_top_k_mask<half,  half4>)  kernel_top_k_mask_h_t;
+typedef decltype(kernel_top_k_mask<float, float4>) kernel_top_k_mask_f_t;
+
+template [[host_name("kernel_top_k_mask_f16")]] kernel kernel_top_k_mask_h_t kernel_top_k_mask<half,  half4>;
+template [[host_name("kernel_top_k_mask_f32")]] kernel kernel_top_k_mask_f_t kernel_top_k_mask<float, float4>;

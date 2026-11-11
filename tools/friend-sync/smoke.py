@@ -477,13 +477,18 @@ def check_head(s: Server, shared: dict):
     base = shared["greedy"]
     swapped = s.text(GREEDY, 32, head="self")
     back = s.text(GREEDY, 32)
-    bad = s.generate(GREEDY, 4, head="no-such-head")
+    # an unknown head is rejected before generation: HTTP 400 naming the head
+    # (older builds instead answered 200 with finish_reason "error")
+    bad_raw = s.post("/api/v1/generate", {"prompt": GREEDY, "max_length": 4, "head": "no-such-head"})
     if swapped != base:
         return "FAIL", "head=self != base: " + first_diff(swapped, base)
     if back != base:
         return "FAIL", "base after head swap changed: " + first_diff(back, base)
-    if bad.get("finish_reason") != "error":
-        return "FAIL", f"unknown head did not error (finish_reason={bad.get('finish_reason')!r})"
+    if bad_raw.get("_http_error") == 400:
+        if "no-such-head" not in bad_raw.get("_body", ""):
+            return "FAIL", f"unknown head: 400 without naming the head: {bad_raw.get('_body', '')[:120]!r}"
+    elif (bad_raw.get("results") or [{}])[0].get("finish_reason") != "error":
+        return "FAIL", f"unknown head did not error: {json.dumps(bad_raw)[:120]}"
     return "PASS", "head=self reproduces base greedy; unknown head errors"
 
 

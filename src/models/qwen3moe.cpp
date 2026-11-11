@@ -163,17 +163,15 @@ llama_model_qwen3moe::graph::graph(const llama_model & model, const llm_graph_pa
     cur = inpL;
 
     cur = build_norm(cur,
-            head_norm_tensor(model.output_norm), NULL,
+            lm_head_norm_tensor(model), NULL, // friend.cpp: adapter heads
             LLM_NORM_RMS, -1);
 
     cb(cur, "result_norm", -1);
     res->t_embd = cur;
 
     // lm_head
-    cur = build_lora_mm(head_tensor(model.output), cur, head_scale_tensor(model.output_s));
+    cur = build_lm_head(model, cur); // friend.cpp: adapter heads + per-row head batching
 
     cb(cur, "result_output", -1);
     res->t_logits = cur;
-
-    ggml_build_forward_expand(gf, cur);
 }

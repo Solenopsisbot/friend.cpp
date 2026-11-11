@@ -202,7 +202,7 @@ inline bool load_pools(llama_model * model, const char * lora_pool, const char *
         e.name = f[0];
         e.path = f[1];
         printf("\nfriend: loading control vector '%s' from %s\n", e.name.c_str(), e.path.c_str());
-        common_control_vector_data cv = common_control_vector_load({ { 1.0f, e.path } });
+        common_control_vector_data cv = common_control_vector_load({ { 1.0f, e.path } }, r.n_layer);
         if (cv.n_embd == -1) {
             fprintf(stderr, "friend: failed to load control vector '%s'\n", e.name.c_str());
             return false;

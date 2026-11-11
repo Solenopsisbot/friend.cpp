@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "conditioning/conditioner.hpp"
+#include "conditioning/fibo2.hpp"
 #include "core/ggml_extend_backend.h"
 #include "core/util.h"
 #include "extensions/generation_extension.h"
@@ -14,10 +15,13 @@
 #include "model/diffusion/boogu.hpp"
 #include "model/diffusion/control.hpp"
 #include "model/diffusion/ernie_image.hpp"
+#include "model/diffusion/fibo2.hpp"
 #include "model/diffusion/flux.hpp"
+#include "model/diffusion/flux3.hpp"
 #include "model/diffusion/hidream_o1.hpp"
 #include "model/diffusion/hunyuan.hpp"
 #include "model/diffusion/ideogram4.hpp"
+#include "model/diffusion/iris.hpp"
 #include "model/diffusion/krea2.hpp"
 #include "model/diffusion/lens.hpp"
 #include "model/diffusion/lingbot_video.hpp"
@@ -29,6 +33,7 @@
 #include "model/diffusion/minit2i.hpp"
 #include "model/diffusion/mmdit.hpp"
 #include "model/diffusion/model.hpp"
+#include "model/diffusion/moss_image.hpp"
 #include "model/diffusion/pid.hpp"
 #include "model/diffusion/pixart.hpp"
 #include "model/diffusion/qwen_image.hpp"
@@ -37,6 +42,7 @@
 #include "model/diffusion/unet.hpp"
 #include "model/diffusion/wan.hpp"
 #include "model/diffusion/z_image.hpp"
+#include "model/diffusion/z_image_l2p.hpp"
 #include "model/vae/auto_encoder_kl.hpp"
 #include "model/vae/hunyuan_vae.hpp"
 #include "model/vae/ltx_audio_vae.hpp"
@@ -90,7 +96,12 @@ namespace sd::model_builders {
             return false;
         }
 
-        if (sd_version_is_sd3(version)) {
+        if (version == VERSION_FIBO2) {
+            result.conditioner = std::make_shared<Fibo2Conditioner>(ctx.backends.runtime_backend(SDBackendModule::TE),
+                                                                    tensor_storage_map, weight_manager, tokenizers);
+            result.diffusion   = std::make_shared<Fibo2::Fibo2Runner>(ctx.backends.runtime_backend(SDBackendModule::DIFFUSION),
+                                                                    tensor_storage_map, "model.diffusion_model", weight_manager);
+        } else if (sd_version_is_sd3(version)) {
             result.conditioner = std::make_shared<SD3CLIPEmbedder>(ctx.backends.runtime_backend(SDBackendModule::TE),
                                                                    tensor_storage_map,
                                                                    weight_manager,
@@ -171,6 +182,11 @@ namespace sd::model_builders {
                                                                   version,
                                                                   weight_manager,
                                                                   sd_ctx_params->model_args);
+        } else if (sd_version_is_flux3(version)) {
+            result.conditioner = std::make_shared<LLMEmbedder>(ctx.backends.runtime_backend(SDBackendModule::TE),
+                                                               tensor_storage_map, version, "", false, weight_manager, tokenizers);
+            result.diffusion   = std::make_shared<Flux3::Flux3Runner>(ctx.backends.runtime_backend(SDBackendModule::DIFFUSION),
+                                                                    tensor_storage_map, "model.diffusion_model", weight_manager);
         } else if (sd_version_is_flux2(version) || sd_version_is_sefi_image(version)) {
             bool is_chroma     = false;
             result.conditioner = std::make_shared<LLMEmbedder>(ctx.backends.runtime_backend(SDBackendModule::TE),
@@ -393,6 +409,18 @@ namespace sd::model_builders {
                                                                       "model.diffusion_model",
                                                                       version,
                                                                       weight_manager);
+        } else if (sd_version_is_z_image_l2p(version)) {
+            result.conditioner = std::make_shared<LLMEmbedder>(ctx.backends.runtime_backend(SDBackendModule::TE),
+                                                               tensor_storage_map,
+                                                               version,
+                                                               "",
+                                                               false,
+                                                               weight_manager,
+                                                               tokenizers);
+            result.diffusion   = std::make_shared<ZImageL2P::ZImageL2PRunner>(ctx.backends.runtime_backend(SDBackendModule::DIFFUSION),
+                                                                            tensor_storage_map,
+                                                                            "model.diffusion_model",
+                                                                            weight_manager);
         } else if (sd_version_is_llada_image(version)) {
             result.conditioner = std::make_shared<LLaDAImageEmbedder>(ctx.backends.runtime_backend(SDBackendModule::TE),
                                                                       tensor_storage_map,
@@ -443,6 +471,16 @@ namespace sd::model_builders {
                                                                   tensor_storage_map,
                                                                   "model.diffusion_model",
                                                                   weight_manager);
+        } else if (version == VERSION_IRIS) {
+            result.conditioner = std::make_shared<LLMEmbedder>(ctx.backends.runtime_backend(SDBackendModule::TE),
+                                                               tensor_storage_map, version, "", false, weight_manager, tokenizers);
+            result.diffusion   = std::make_shared<Iris::IrisRunner>(ctx.backends.runtime_backend(SDBackendModule::DIFFUSION),
+                                                                  tensor_storage_map, "model.diffusion_model", weight_manager);
+        } else if (version == VERSION_MOSS_IMAGE) {
+            result.conditioner = std::make_shared<LLMEmbedder>(ctx.backends.runtime_backend(SDBackendModule::TE),
+                                                               tensor_storage_map, version, "", false, weight_manager, tokenizers);
+            result.diffusion   = std::make_shared<MOSSImage::MOSSImageRunner>(ctx.backends.runtime_backend(SDBackendModule::DIFFUSION),
+                                                                            tensor_storage_map, "model.diffusion_model", weight_manager);
         } else {  // SD1.x SD2.x SDXL
             std::map<std::string, std::string> embbeding_map;
             for (uint32_t i = 0; i < sd_ctx_params->embedding_count; i++) {
@@ -459,10 +497,6 @@ namespace sd::model_builders {
                                                                  "model.diffusion_model",
                                                                  version,
                                                                  weight_manager);
-            if (sd_ctx_params->diffusion_conv_direct) {
-                LOG_INFO("Using Conv2d direct in the diffusion model");
-                result.diffusion->set_conv2d_direct_enabled(true);
-            }
         }
 
         if (strlen(SAFE_STR(sd_ctx_params->ip_adapter_path)) > 0 && result.clip_vision == nullptr) {
@@ -514,7 +548,7 @@ namespace sd::model_builders {
         }
 
         auto create_tae = [&](bool decode_only) -> std::shared_ptr<VAE> {
-            if (sd_version_uses_wan_vae(version) || sd_version_is_hunyuan_video(version) || sd_version_is_ltxav(version) || sd_version_is_minimax_h3(version)) {
+            if ((sd_version_uses_wan_vae(version) && version != VERSION_QWEN_IMAGE_2_1) || sd_version_is_hunyuan_video(version) || sd_version_is_ltxav(version) || sd_version_is_minimax_h3(version)) {
                 return std::make_shared<TinyVideoAutoEncoder>(ctx.backends.runtime_backend(SDBackendModule::VAE),
                                                               tensor_storage_map,
                                                               "decoder",
@@ -613,7 +647,12 @@ namespace sd::model_builders {
             }
         };
 
-        if (version == VERSION_CHROMA_RADIANCE || version == VERSION_HIDREAM_O1 || sd_version_is_minit2i(version) || sd_version_is_sensenova_u1(version)) {
+        if (version == VERSION_CHROMA_RADIANCE ||
+            version == VERSION_HIDREAM_O1 ||
+            sd_version_is_minit2i(version) ||
+            sd_version_is_sensenova_u1(version) ||
+            sd_version_is_z_image_l2p(version) ||
+            version == VERSION_IRIS) {
             LOG_INFO("using FakeVAE");
             result.vae = std::make_shared<FakeVAE>(version,
                                                    ctx.backends.runtime_backend(SDBackendModule::VAE),
@@ -644,15 +683,6 @@ namespace sd::model_builders {
             }
         }
 
-        if (sd_ctx_params->vae_conv_direct) {
-            LOG_INFO("Using Conv2d/Conv3d direct in the vae model");
-            result.vae->set_conv2d_direct_enabled(true);
-            result.vae->set_conv3d_direct_enabled(true);
-            if (result.preview) {
-                result.preview->set_conv2d_direct_enabled(true);
-                result.preview->set_conv3d_direct_enabled(true);
-            }
-        }
         if (result.vae) {
             result.vae->set_scale_overrides(sd_ctx_params->linear_scale, sd_ctx_params->attn_scale);
         }
@@ -679,10 +709,6 @@ namespace sd::model_builders {
                                                         version,
                                                         "",
                                                         weight_manager);
-        if (sd_ctx_params->diffusion_conv_direct) {
-            LOG_INFO("Using Conv2d direct in the control net");
-            control_net->set_conv2d_direct_enabled(true);
-        }
         control_net->set_scale_overrides(sd_ctx_params->linear_scale, sd_ctx_params->attn_scale);
         runner = std::move(control_net);
         return true;

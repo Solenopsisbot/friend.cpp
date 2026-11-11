@@ -1,4 +1,5 @@
 import type { ChatMessagePromptProgress, ChatRole } from './chat';
+import type { ModelSidecar } from '$lib/constants';
 import type {
 	ContentPartType,
 	FileTypeAudio,
@@ -102,6 +103,8 @@ export interface ApiModelDataEntry {
 	architecture?: ApiModelArchitecture;
 	/** Trained context of the model, read from its GGUF metadata at registration */
 	context_length?: number;
+	/** Sidecar kinds a cached model or an unfinished download has on disk, as -hf resolves them */
+	sidecars?: ModelSidecar[];
 	/** Legacy meta field (may be present in older responses) */
 	meta?: Record<string, unknown> | null;
 }
@@ -170,6 +173,8 @@ export interface ApiModelsSseEvent {
  */
 export interface ApiModelsDownloadRequest {
 	model: string;
+	/** Sidecar kinds pulled with the model, picked by the server as -hf picks them */
+	sidecars: ModelSidecar[];
 }
 
 /**
@@ -232,6 +237,8 @@ export interface ApiLlamaCppServerProps {
 			dry_allowed_length: number;
 			dry_penalty_last_n: number;
 			dry_sequence_breakers: string[];
+			blue_noise: boolean;
+			rng_type: string;
 			mirostat: number;
 			mirostat_tau: number;
 			mirostat_eta: number;
@@ -279,6 +286,10 @@ export interface ApiLlamaCppServerProps {
 		video: boolean;
 	};
 	chat_template: string;
+	chat_template_caps?: {
+		/** reasoning_effort values the chat template renders distinctly, from lowest to highest */
+		reasoning_effort_levels?: string[];
+	};
 	bos_token: string;
 	eos_token: string;
 	build_info: string;
@@ -303,6 +314,7 @@ export interface ApiChatCompletionRequest {
 	tools?: ApiChatCompletionTool[];
 	// Reasoning parameters
 	reasoning_format?: string;
+	reasoning_effort?: string;
 	// Generation parameters
 	temperature?: number;
 	max_tokens?: number;
@@ -327,6 +339,8 @@ export interface ApiChatCompletionRequest {
 	// Sampler configuration
 	samplers?: string[];
 	backend_sampling?: boolean;
+	blue_noise?: boolean;
+	rng_type?: string;
 	// Custom parameters (JSON string)
 	custom?: Record<string, unknown>;
 	timings_per_token?: boolean;
@@ -418,6 +432,8 @@ export interface ApiSlotData {
 		dry_base: number;
 		dry_allowed_length: number;
 		dry_penalty_last_n: number;
+		blue_noise: boolean;
+		rng_type: string;
 		mirostat: number;
 		mirostat_tau: number;
 		mirostat_eta: number;
@@ -434,6 +450,8 @@ export interface ApiSlotData {
 		generation_prompt: string;
 		samplers: string[];
 		backend_sampling: boolean;
+		blue_noise: boolean;
+		rng_type: string;
 		'speculative.n_max': number;
 		'speculative.n_min': number;
 		'speculative.p_min': number;

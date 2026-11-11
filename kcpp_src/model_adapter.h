@@ -97,6 +97,7 @@ bool gpttype_batch_generate_has_finished(int request_id);
 int gpttype_batch_generate_stream_count(int request_id);
 const char * gpttype_batch_generate_new_token(int request_id, int idx);
 const char * gpttype_batch_generate_pending_output(int request_id);
+const char * gpttype_batch_generate_logprobs(int request_id, int begin, int end);
 generation_outputs gpttype_batch_generate_result(int request_id);
 bool gpttype_batch_generate_abort(int request_id);
 void gpttype_batch_generate_release(int request_id);
@@ -104,12 +105,11 @@ void gpttype_batch_generate_release(int request_id);
 int gpttype_get_stream_count();
 const char * gpttype_new_token(int idx);
 const std::string & gpttype_get_pending_output();
-std::string gpttype_friend_validate_profile(const char * spec); // friend.cpp: "" = valid
 std::vector<int> gpttype_get_token_arr(const std::string & input, bool addbos);
 std::string gpttype_detokenize(const std::vector<int> & input, bool render_special);
 const std::vector<TopPicksData> gpttype_get_top_picks_data();
 
-bool host_rpc_server(std::string endpoint, std::string devices);
+bool host_rpc_server(std::string endpoint, std::string devices, std::string cache_dir);
 
 bool sdtype_load_model(const sd_load_model_inputs inputs);
 sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs);
@@ -130,6 +130,7 @@ embeddings_generation_outputs embeddingstype_generate(const embeddings_generatio
 
 bool musictype_load_model(const music_load_model_inputs inputs);
 music_generation_outputs musictype_generate(const music_generation_inputs inputs);
+const char * musictype_get_family();
 
 void timer_start();
 double timer_check();
@@ -143,6 +144,7 @@ int ArrFindIndexOf(const std::vector<int> targetArray, const std::vector<int> se
 FileFormat check_file_format(const std::string & fname, FileFormatExtraMeta * fileformatmeta);
 void ContextFastForward(std::vector<int> &current_context_tokens, std::vector<int> &embd_inp, int &n_past, std::vector<int> &last_n_tokens, const int nctx, std::vector<int> &smartcontext, const bool useSmartContext, const bool requireFullSubset, const int minimum_to_proceed, const int minimum_input_to_keep);
 bool gguf_tensor_exists(const std::string & filename, std::string tensor_name, bool exactmatch);
+std::string gguf_get_string(const std::string & filename, const std::string & key);
 std::string gguf_get_model_arch(const std::string & filename);
 
 size_t gpttype_calc_new_state_kv();
@@ -152,6 +154,17 @@ size_t gpttype_calc_old_state_tokencount(int slot);
 size_t gpttype_save_state_kv(int slot);
 bool gpttype_load_state_kv(int slot);
 bool gpttype_clear_state_kv(bool shrink);
+// friend.cpp: prompt cache management (friend/prompt_cache.hpp)
+std::string gpttype_friend_cache_list_json();
+std::string gpttype_friend_metrics();
+size_t gpttype_friend_cache_clear(bool include_pinned);
+bool gpttype_friend_cache_pin(uint64_t id, bool pinned);
+// friend.cpp: build a steering vector from contrastive prompts (friend/steering.hpp); JSON in, JSON out
+std::string gpttype_friend_build_steering(const std::string & request_json);
+std::string gpttype_friend_validate_profile(const char * spec); // friend.cpp: "" = valid
 int get_oldest_slot(int excludeSlotId);
 void touch_slot(int slot);
 int get_identical_existing_slot();
+
+std::string gpttype_friend_requests();
+bool gpttype_friend_request_control(int id, bool pause);

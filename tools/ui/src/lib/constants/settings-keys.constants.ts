@@ -11,6 +11,9 @@ export const SETTINGS_KEYS = {
 	API_KEY: 'apiKey',
 	AUTO_MIC_ON_EMPTY: 'autoMicOnEmpty',
 	BACKEND_SAMPLING: 'backend_sampling',
+	COMPACTION_PRESERVED_STEPS: 'compactionPreservedSteps',
+	COMPACTION_PROMPT: 'compactionPrompt',
+	BLUE_NOISE: 'blue_noise',
 	CONVERSATION_TABS: 'conversationTabs',
 	COPY_TEXT_ATTACHMENTS_AS_PLAIN_TEXT: 'copyTextAttachmentsAsPlainText',
 	CUSTOM_CSS: 'customCss',
@@ -26,6 +29,7 @@ export const SETTINGS_KEYS = {
 	DYNATEMP_EXPONENT: 'dynatemp_exponent',
 	DYNATEMP_RANGE: 'dynatemp_range',
 	ENABLE_CONTINUE_GENERATION: 'enableContinueGeneration',
+	ENABLE_DISCOVER_MODELS: 'enableDiscoverModels',
 	EXCLUDE_REASONING_FROM_CONTEXT: 'excludeReasoningFromContext',
 	FREQUENCY_PENALTY: 'frequency_penalty',
 	FULL_HEIGHT_CODE_BLOCKS: 'fullHeightCodeBlocks',
@@ -48,6 +52,7 @@ export const SETTINGS_KEYS = {
 	RENDER_USER_CONTENT_AS_MARKDOWN: 'renderUserContentAsMarkdown',
 	// Penalties
 	REPEAT_LAST_N: 'repeat_last_n',
+	RNG_TYPE: 'rng_type',
 	REPEAT_PENALTY: 'repeat_penalty',
 	SAMPLERS: 'samplers',
 	SEND_ON_ENTER: 'sendOnEnter',
@@ -64,6 +69,7 @@ export const SETTINGS_KEYS = {
 	SHOW_RAW_OUTPUT_SWITCH: 'showRawOutputSwitch',
 	SHOW_SYSTEM_MESSAGE: 'showSystemMessage',
 	SHOW_THOUGHT_IN_PROGRESS: 'showThoughtInProgress',
+	SHOW_TOOL_CALL_IN_PROGRESS: 'showToolCallInProgress',
 	SYMBOLIC_MATH_ENABLED: 'symbolicMathEnabled',
 	SYSTEM_MESSAGE: 'systemMessage',
 	// Sampling

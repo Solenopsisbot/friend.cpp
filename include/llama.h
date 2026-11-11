@@ -161,9 +161,11 @@ extern "C" {
         LLAMA_FTYPE_MOSTLY_NVFP4         = 39, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_Q1_0          = 40, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_Q2_0          = 41, // except 1d tensors
-        LLAMA_FTYPE_MOSTLY_PQ2_0         = 141, // Prism group-128 Q2_0
-        LLAMA_FTYPE_MOSTLY_PQ2_0_LEGACY  = 142, // pre-rename value for PQ2_0
-        LLAMA_FTYPE_MOSTLY_PTQ1_0        = 143, // Prism group-128 ternary
+        LLAMA_FTYPE_MOSTLY_F8_E4M3       = 42, // except 1d tensors
+        // friend.cpp: Prism group-128 types (ftype values fixed by published Bonsai ggufs)
+        LLAMA_FTYPE_MOSTLY_PQ2_0     = 141, // except 1d tensors (Prism group-128 Q2_0; matches published PQ2_0 ggufs)
+        LLAMA_FTYPE_MOSTLY_PQ2_0_LEGACY = 142, // pre-rename value for the same format, still found in published ggufs
+        LLAMA_FTYPE_MOSTLY_PTQ1_0    = 143, // except 1d tensors (Prism group-128 ternary, 1.75 bpw)
 
         LLAMA_FTYPE_GUESSED = 1024, // not specified in the model file
     };
@@ -202,6 +204,11 @@ extern "C" {
     };
 
     LLAMA_API const char * llama_flash_attn_type_name(enum llama_flash_attn_type flash_attn_type);
+
+    enum llama_rng_type {
+        LLAMA_RNG_TYPE_MT19937   = 0,
+        LLAMA_RNG_TYPE_LOWBIAS32 = 1,
+    };
 
     enum llama_split_mode {
         LLAMA_SPLIT_MODE_NONE   = 0, // single GPU
@@ -276,8 +283,8 @@ extern "C" {
         int32_t      *  n_seq_id;
         llama_seq_id ** seq_id;
         int8_t       *  logits;   // TODO: rename this to "output"
-        // Optional friend.cpp per-row LM-head selector. -1 means the model
-        // default head; non-negative values select a loaded pooled head.
+        // friend.cpp: optional per-row LM-head selector. -1 (or a NULL array) means the
+        // model default head; non-negative values select a head from llama_set_adapter_head_pool
         int32_t      *  head_id;
     } llama_batch;
 
@@ -327,6 +334,10 @@ extern "C" {
     };
 
     struct llama_model_params {
+        // Opt-in DSpark head borrowing. Caller guarantees the bound target and keeps it alive
+        // until the drafter and all drafter contexts are destroyed. No head weights are copied.
+        const struct llama_model * dspark_head_source;
+
         // NULL-terminated list of devices to use for offloading (if NULL, all available devices are used)
         ggml_backend_dev_t * devices;
 
@@ -407,6 +418,14 @@ extern "C" {
 
         size_t moe_cache_size; // device cache in bytes for the experts kept in host memory, split among the devices like the layers, 0 = disabled [EXPERIMENTAL]
 
+        // friend.cpp: optional path to a per-layer K-cache mean-centering bias file (GGUF), or NULL to disable.
+        // the bias is subtracted from the K vector for each (kv-head, channel) right before it is
+        // written into the K cache, which improves quantization fidelity for GGML_TYPE_Q4_0 without
+        // changing attention results (the same constant is added to every logit in a query's row,
+        // which softmax is invariant to). currently only supported when type_k == GGML_TYPE_Q4_0.
+        // see tools/kv-mean-center to generate this file and docs/kv-mean-center.md for details.
+        const char * path_kv_mean_center;
+
         // Abort callback
         // if it returns true, execution of llama_decode() will be aborted
         // currently works only with CPU execution
@@ -414,7 +433,7 @@ extern "C" {
         void *              abort_callback_data;
 
         // Keep the booleans together and at the end of the struct to avoid misalignment during copy-by-value.
-        bool embeddings;  // if true, extract embeddings (together with logits)
+        bool embeddings;  // if true, extract embeddings (together with logits, except for a pooling type other than NONE)
         bool offload_kqv; // offload the KQV ops (including the KV cache) to GPU
         bool no_perf;     // measure performance timings
         bool op_offload;  // offload host tensor operations to device
@@ -1065,7 +1084,8 @@ extern "C" {
     // "state" here means extra hidden state carried over from a previous stage, e.g.:
     //   - MTP: state from N layers of the target model
     //   - Qwen3 VL (deepstack): state from N layers of the vision encoder
-    // Returns false if the context does not take a state embedding (currently only MTP contexts do)
+    //   - LiliCorr: context embeddings for the transformers
+    // Returns false if the context does not take a state embedding (MTP and LiliCorr contexts do)
     LLAMA_API bool llama_batch_ext_set_embd_state(
                                 struct llama_batch_ext * batch,
                                                int32_t   idx,
@@ -1482,6 +1502,8 @@ extern "C" {
 
     /// seed == LLAMA_DEFAULT_SEED to use a random seed.
     LLAMA_API struct llama_sampler * llama_sampler_init_dist(uint32_t seed);
+    LLAMA_API struct llama_sampler * llama_sampler_init_dist_rng(uint32_t seed, bool blue_noise, enum llama_rng_type rng_type);
+    LLAMA_API struct llama_sampler * llama_sampler_init_dist_blue(uint32_t seed);
 
     /// @details Top-K sampling described in academic paper "The Curious Case of Neural Text Degeneration" https://arxiv.org/abs/1904.09751
     /// Setting k <= 0 makes this a noop
@@ -1571,6 +1593,10 @@ extern "C" {
                                float   penalty_repeat,   // must be > 0.0, 1.0 = disabled
                                float   penalty_freq,     // must be finite, 0.0 = disabled
                                float   penalty_present); // must be finite, 0.0 = disabled
+
+    /// maximum number of distinct DRY sequence breakers, duplicates not counted
+    /// processing each breaker scans the entire vocabulary, so the init cost is O(num_breakers x n_vocab)
+    #define LLAMA_DRY_MAX_SEQ_BREAKERS 64
 
     ///  @details DRY sampler, designed by p-e-w, as described in: https://github.com/oobabooga/text-generation-webui/pull/5677, porting Koboldcpp implementation authored by pi6am: https://github.com/LostRuins/koboldcpp/pull/982
     LLAMA_API struct llama_sampler * llama_sampler_init_dry(
@@ -1695,6 +1721,8 @@ extern "C" {
         int32_t n_p_eval;   // number of prompt tokens
         int32_t n_eval;     // number of generated tokens
         int32_t n_reused;   // number of times a ggml compute graph had been reused
+        int32_t n_reallocs_same; // number of graph reallocations during inference with an unchanged graph size
+        int32_t n_reallocs_diff; // number of graph reallocations during inference with a changed graph size
     };
 
     struct llama_perf_sampler_data {

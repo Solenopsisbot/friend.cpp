@@ -636,6 +636,11 @@ static bool ggml_metal_fusion_check_moe_reduce(
         if (!match.experts->data || !match.weights->data || !match.dst->data) {
             return false;
         }
+
+        // the fused kernel reads experts and weights while writing dst, so dst must not overlap either input
+        if (ggml_metal_fusion_overlap(match.dst, match.experts) || ggml_metal_fusion_overlap(match.dst, match.weights)) {
+            return false;
+        }
     }
 
     return true;
@@ -706,6 +711,73 @@ static bool ggml_metal_fusion_check_mul_mat_add(
         (add->data == res->data || !ggml_metal_fusion_overlap(add, res));
 }
 
+// friend.cpp: [ADD] RMS_NORM MUL MUL MUL_MAT / [RMS_NORM MUL] GLU [CONT] MUL MUL_MAT ending in a
+// Hadamard-hinted MUL_MAT that consumes the chain (through views). Structural mode only: this
+// entry exists so ggml_graph_optimize keeps the chain adjacent; the Metal encoders do the full
+// match (ggml_metal_op_can_fuse_norm_fwht / _glu_fwht), so FULL mode always declines.
+static bool ggml_metal_fusion_check_hadamard_input(
+        const ggml_metal_fusion       * fusion,
+        const ggml_tensor * const     * nodes,
+        const ggml_cgraph             * gf,
+        const int                     * node_idxs,
+              int                       idx,
+              ggml_metal_fusion_mode    mode) {
+    GGML_UNUSED(gf);
+    GGML_UNUSED(node_idxs);
+    GGML_UNUSED(idx);
+
+    if (mode == GGML_METAL_FUSION_FULL) {
+        return false;
+    }
+
+    const int n = (int) fusion->ops.size();
+    const ggml_tensor * mm = nodes[n - 1];
+    if (mm->op != GGML_OP_MUL_MAT || ggml_get_op_params_i32(mm, 1) != GGML_HINT_SRC0_IS_HADAMARD) {
+        return false;
+    }
+
+    const auto skip = [](const ggml_tensor * t) {
+        while (t && (t->op == GGML_OP_RESHAPE || t->op == GGML_OP_VIEW || t->op == GGML_OP_PERMUTE)) {
+            t = t->src[0];
+        }
+        return t;
+    };
+
+    // each node feeds the next one (through views), as src0 or src1
+    for (int j = 1; j < n; j++) {
+        const ggml_tensor * a = skip(nodes[j]->src[0]);
+        const ggml_tensor * b = skip(nodes[j]->src[1]);
+        if (a != nodes[j - 1] && b != nodes[j - 1]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// friend.cpp: CONCAT -> CPY(view of it) + SSM_CONV(it) -> SILU, the decode conv step. Packing
+// hint only (see ggml_metal_op_can_fuse_ssm_conv_step); FULL mode declines, and the SSM_CONV +
+// SILU tail then still gets upstream's GGML_METAL_FUSION_SSM_CONV_SILU when the step kernel
+// does not apply.
+static bool ggml_metal_fusion_check_conv_step(
+        const ggml_metal_fusion       * fusion,
+        const ggml_tensor * const     * nodes,
+        const ggml_cgraph             * gf,
+        const int                     * node_idxs,
+              int                       idx,
+              ggml_metal_fusion_mode    mode) {
+    GGML_UNUSED(fusion);
+    GGML_UNUSED(gf);
+    GGML_UNUSED(node_idxs);
+    GGML_UNUSED(idx);
+    if (mode == GGML_METAL_FUSION_FULL) {
+        return false;
+    }
+    const ggml_tensor * cat = nodes[0];
+    const ggml_tensor * cpy = nodes[1];
+    return cpy->src[0] && cpy->src[0]->view_src == cat && nodes[2]->src[0] == cat && nodes[3]->src[0] == nodes[2];
+}
+
 // ---- patterns ------------------------------------------------------------
 
 static const std::vector<ggml_op> ops_norm_mul         = { GGML_OP_NORM, GGML_OP_MUL };
@@ -757,6 +829,15 @@ static const std::vector<ggml_op> ops_moe_reduce_8 = {
 
 static const std::vector<ggml_op> ops_mul_mat_add = { GGML_OP_MUL_MAT, GGML_OP_ADD };
 
+// friend.cpp: Hadamard-input chains and the decode conv step (packing hints, see the checks above)
+static const std::vector<ggml_op> ops_conv_step        = { GGML_OP_CONCAT, GGML_OP_CPY, GGML_OP_SSM_CONV, GGML_OP_UNARY };
+static const std::vector<ggml_op> ops_hi_add_norm      = { GGML_OP_ADD, GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_MUL, GGML_OP_MUL_MAT };
+static const std::vector<ggml_op> ops_hi_norm          = { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_MUL, GGML_OP_MUL_MAT };
+static const std::vector<ggml_op> ops_hi_glu           = { GGML_OP_GLU, GGML_OP_MUL, GGML_OP_MUL_MAT };
+static const std::vector<ggml_op> ops_hi_glu_perm      = { GGML_OP_GLU, GGML_OP_CONT, GGML_OP_MUL, GGML_OP_MUL_MAT };
+static const std::vector<ggml_op> ops_hi_norm_glu      = { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_GLU, GGML_OP_MUL, GGML_OP_MUL_MAT };
+static const std::vector<ggml_op> ops_hi_norm_glu_perm = { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_GLU, GGML_OP_CONT, GGML_OP_MUL, GGML_OP_MUL_MAT };
+
 static const std::vector<ggml_metal_fusion> ggml_metal_fusions = {
     { GGML_METAL_FUSION_NORM_MUL,       ops_norm_mul,               {},     false, ggml_metal_fusion_check_norm },
     { GGML_METAL_FUSION_NORM_MUL_ADD,   ops_norm_mul_add,           {},     false, ggml_metal_fusion_check_norm },
@@ -785,6 +866,14 @@ static const std::vector<ggml_metal_fusion> ggml_metal_fusions = {
     { GGML_METAL_FUSION_MOE_REDUCE,     ops_moe_reduce_8,           {},     true,  ggml_metal_fusion_check_moe_reduce },
     { GGML_METAL_FUSION_SSM_CONV_SILU,  ops_ssm_conv_silu,          {},     false, ggml_metal_fusion_check_ssm_conv_silu },
     { GGML_METAL_FUSION_MUL_MAT_ADD,    ops_mul_mat_add,            {},     false, ggml_metal_fusion_check_mul_mat_add },
+    // friend.cpp: packing hints only; their checks decline in FULL mode
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_conv_step,              {},     true,  ggml_metal_fusion_check_conv_step },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_hi_add_norm,            {},     true,  ggml_metal_fusion_check_hadamard_input },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_hi_norm,                {},     true,  ggml_metal_fusion_check_hadamard_input },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_hi_glu,                 {},     true,  ggml_metal_fusion_check_hadamard_input },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_hi_glu_perm,            {},     true,  ggml_metal_fusion_check_hadamard_input },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_hi_norm_glu,            {},     true,  ggml_metal_fusion_check_hadamard_input },
+    { GGML_METAL_FUSION_HADAMARD_INPUT, ops_hi_norm_glu_perm,       {},     true,  ggml_metal_fusion_check_hadamard_input },
 };
 
 // ---- alloc deps -----------------------------------------------------------

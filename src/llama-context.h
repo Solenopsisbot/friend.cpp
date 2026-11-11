@@ -62,6 +62,7 @@ struct llama_context {
 
     int32_t set_adapter_head(llama_adapter_head * head);
     llama_adapter_head * get_adapter_head() const;
+    // friend.cpp: pooled heads selectable per row (llama_ubatch::head_id), see llm_graph_input_head_masks
     void set_adapter_head_pool(const std::vector<const llama_adapter_head *> & heads) { head_pool = heads; }
 
     const llama_model   & get_model()   const;
@@ -97,6 +98,13 @@ struct llama_context {
 
     float * get_embeddings_layer_inp(uint32_t lid);
 
+    // multi-layer hidden-state tap (EAGLE3 / dspark target-feature reuse).
+    // get_embeddings_capture_ith returns the concatenated [n_capture * n_embd] row
+    // for output position i, captured layers laid out in capture order.
+    float *  get_embeddings_capture();
+    float *  get_embeddings_capture_ith(int32_t i);
+    uint32_t get_n_capture() const;
+
     llama_token * get_sampled_tokens() const;
     llama_token   get_sampled_token_ith(int32_t idx);
 
@@ -123,6 +131,17 @@ struct llama_context {
 
     void set_embeddings (bool value);
     void set_embeddings_nextn(bool value, bool masked);
+
+    // register the ordered set of intermediate layers to capture. pass an empty
+    // list to disable. the concatenation order follows the order of layer_ids.
+    void set_capture_layers(const std::vector<int32_t> & layer_ids);
+
+    // dspark drafter: stage the target-tap context window consumed by the next
+    // decode() call. feat is [n_ctx_rows * n_embd_cap] row-major (row i is
+    // position pos[i]'s raw concatenated multi-layer tap feature, pre dspark.fc).
+    // pass n_ctx_rows <= 0 (or feat == nullptr) to clear the staged context.
+    void set_dspark_ctx(const float * feat, int64_t n_ctx_rows, int64_t n_embd_cap, const int32_t * pos);
+
     void set_embeddings_layer_inp(uint32_t lid, bool enable);
     void set_nextn_layer_offset(int32_t offset);
     void set_causal_attn(bool value);
@@ -277,8 +296,14 @@ private:
 
     llm_graph_cb graph_get_cb() const;
 
+    // create a new backend scheduler for a graph of the specified size and register the callbacks below
+    void sched_new(size_t max_nodes, bool parallel);
+
     // ggml_backend_sched copy callback, copies only the experts used by MUL_MAT_ID and updates the MoE cache
     static bool sched_copy_experts(ggml_backend_t backend, const ggml_tensor * src, ggml_tensor * dst, ggml_cgraph * graph, void * user_data);
+
+    // ggml_backend_sched realloc callback, counts and traces the graph reallocations of this context
+    static void sched_graph_realloc(ggml_backend_sched_t sched, ggml_cgraph * gf, bool backend_ids_changed, bool graph_size_changed, void * user_data);
 
     // disable auto fused ops (Flash Attention, Gated Delta Net) whose op lands on a device
     // that differs from the layer it belongs to (usually due to missing backend support)
@@ -310,6 +335,11 @@ private:
     llama_memory_ptr memory;
     llama_moe_cache_ptr moe_cache;
 
+    // friend.cpp: dspark drafter: staged target-tap context window for the next decode call.
+    // see llama_dspark_ctx in llama-graph.h for why this needs its own side channel
+    // instead of riding batch.token/embd.
+    llama_dspark_ctx dspark_ctx;
+
     // decode output (2-dimensional array: [n_outputs][n_vocab])
     buffer_view<float> logits = {nullptr, 0};
 
@@ -326,6 +356,11 @@ private:
     // populated when cparams.output_layer_inp[il] is true
     std::vector<buffer_view<float>> embd_layer_inp;
     std::vector<int32_t> embd_batch_idxs; // extracted index -> original batch index
+
+    // concatenated multi-layer hidden states (2-dimensional array:
+    // [n_outputs][n_capture_layers * n_embd]). populated only when
+    // cparams.n_capture_layers > 0 and the model graph filled t_h_capture.
+    buffer_view<float> embd_capture = { nullptr, 0 };
 
     struct sampling_info {
         // !samplers.empty() to check if any samplers are active
@@ -369,6 +404,10 @@ private:
 
     bool sched_need_reserve = true;
 
+    // whether the reserve graph has a logits tensor, set in sched_reserve()
+    // true until then, because the first output_reserve() runs before any graph is reserved
+    bool graph_has_logits = true;
+
     // state of sched_copy_experts, reset before each graph compute
     struct copy_experts_info {
         const ggml_tensor *  ids = nullptr;
@@ -383,6 +422,11 @@ private:
     };
 
     copy_experts_info copy_experts;
+
+    // graph reallocations during inference where the backend assignments did not change, split by whether the
+    // graph size is the same as the previously scheduled one (unexpected) or different
+    int32_t n_reallocs_same = 0;
+    int32_t n_reallocs_diff = 0;
 
     ggml_backend_t backend_cpu = nullptr;
     std::vector<ggml_backend_ptr> backends;
@@ -419,6 +463,9 @@ private:
 
     // env: LLAMA_GRAPH_REUSE_DISABLE
     bool graph_reuse_disable = false;
+
+    // true after the prism.hadamard coverage check passes on a reserved graph
+    bool hadamard_verified = false;
 
     // perf
     mutable int64_t t_start_us  = 0;

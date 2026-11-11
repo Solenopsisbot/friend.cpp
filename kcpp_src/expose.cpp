@@ -197,9 +197,9 @@ extern "C"
         }
     }
 
-    bool launch_rpc_server(const char * endpoint, const char * devices)
+    bool launch_rpc_server(const char * endpoint, const char * devices, const char * cache_dir)
     {
-        return host_rpc_server(endpoint,devices);
+        return host_rpc_server(endpoint,devices,cache_dir);
     }
 
     bool sd_load_model(const sd_load_model_inputs inputs)
@@ -266,6 +266,10 @@ extern "C"
     {
         return musictype_generate(inputs);
     }
+    const char * music_get_family()
+    {
+        return musictype_get_family();
+    }
 
     const char * new_token(int idx) {
         return gpttype_new_token(idx);
@@ -292,6 +296,9 @@ extern "C"
     }
     const char * batch_generate_new_token(int request_id, int idx) {
         return gpttype_batch_generate_new_token(request_id, idx);
+    }
+    const char * batch_generate_logprobs(int request_id, int begin, int end) {
+        return gpttype_batch_generate_logprobs(request_id, begin, end);
     }
     const char * batch_generate_pending_output(int request_id) {
         return gpttype_batch_generate_pending_output(request_id);
@@ -476,6 +483,42 @@ extern "C"
     bool clear_state_kv()
     {
         return gpttype_clear_state_kv(true);
+    }
+
+    // friend.cpp: prompt cache management. The returned string stays valid until the next call.
+    const char * friend_requests() {
+        static thread_local std::string buffer;
+        buffer = gpttype_friend_requests();
+        return buffer.c_str();
+    }
+    bool friend_request_control(int id, bool pause) {
+        return gpttype_friend_request_control(id, pause);
+    }
+    const char * friend_metrics()
+    {
+        static thread_local std::string buffer;
+        buffer = gpttype_friend_metrics();
+        return buffer.c_str();
+    }
+    static std::string friend_cache_list_buf;
+    const char * friend_cache_list()
+    {
+        friend_cache_list_buf = gpttype_friend_cache_list_json();
+        return friend_cache_list_buf.c_str();
+    }
+    size_t friend_cache_clear(bool include_pinned)
+    {
+        return gpttype_friend_cache_clear(include_pinned);
+    }
+    bool friend_cache_pin(uint64_t id, bool pinned)
+    {
+        return gpttype_friend_cache_pin(id, pinned);
+    }
+    static std::string friend_steer_buf;
+    const char * friend_build_steering(const char * request_json)
+    {
+        friend_steer_buf = gpttype_friend_build_steering(request_json ? request_json : "{}");
+        return friend_steer_buf.c_str();
     }
 
     int set_environment_variable(const char * identifier, const char * value)

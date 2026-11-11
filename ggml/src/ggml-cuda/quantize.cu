@@ -1,6 +1,4 @@
 #include "quantize.cuh"
-#include "fwht.cuh"
-#include "mmvq-ptq1_0.cuh"
 #include "unary.cuh"
 #include <cstdint>
 
@@ -174,174 +172,71 @@ static __global__ void quantize_q8_1(
     y[ib].ds = make_half2(d, sum);
 }
 
-// Hadamard transform folded into the activation quantizer (see ggml_cuda_fwht_skip): one block per
-// (transform width N, row), the same butterfly as fwht_cuda_block, then the same per-32 quantization
-// and stores as quantize_q8_1<layout> above. Element i*NT + tid of the transform sits in reg[i], so
-// each 32-block kb = i*(NT/32) + tid/32 lies in one warp and is reduced with 32-wide warp reductions.
-// Rows of x are contiguous (ne00 elements); row index = ((i3*ne2 + i2)*ne1 + i1) like a contiguous src1.
-template <int N, int NT, ggml_cuda_q8_1_layout layout, typename T, bool has_signs>
-__launch_bounds__(NT, 1)
-static __global__ void fwht_quantize_q8_1(
-        const T * x_ptr, const float * signs, void * vy_ptr,
-        const int64_t ne00, const int64_t ne0, const uint32_t ne1, const uint3 ne2, const float scale) {
-    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-    constexpr int NE        = N / NT;
-    static_assert(NE >= 1 && N % NT == 0 && NT % warp_size == 0 && NT % QK8_1 == 0, "bad fused FWHT shape");
-    static_assert(warp_size % QK8_1 == 0, "a 32-block must not span two warps");
+// friend.cpp: q8_1 in bit-plane form for the no-dp4a Q1_0 / PQ2_0 mat-vec path (see the comment
+// above vec_dot_q1_0_q8_1_bitplanes in vecdotq.cuh). Same scale and rounding as quantize_q8_1
+// (the expressions are kept identical so d and every int8 value match bit for bit), but the
+// block is written as: ds = {d, int16 sum of the 32 values (raw bits)}, qs = 8 uint32 planes.
+// One warp == one 32-value block, so each plane is a single __ballot_sync.
+// pq2_order permutes the lanes so plane bit 2j <-> element j and bit 2j+1 <-> element 16+j,
+// which matches the interleaved 2-bit code layout of PQ2_0.
+template <bool pq2_order>
+__launch_bounds__(CUDA_QUANTIZE_BLOCK_SIZE, 1)
+static __global__ void quantize_q8_1_bitplanes(
+        const float * __restrict__ x, void * __restrict__ vy,
+        const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
+        const int64_t ne0, const uint32_t ne1, const uint3 ne2) {
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    static_assert(QK8_1 == WARP_SIZE, "one warp per q8_1 block");
+    const int64_t i0 = (int64_t)blockDim.x*blockIdx.x + threadIdx.x;
 
-    __shared__ float s[N];
+    if (i0 >= ne0) {
+        return; // ne0 % QK8_1 == 0, so whole warps exit together
+    }
 
-    ggml_cuda_pdl_lc();
+    const int64_t i3 = fastdiv(blockIdx.z, ne2);
+    const int64_t i2 = blockIdx.z - i3*ne2.z;
+    const int64_t i1 = blockIdx.y;
 
-    const int64_t blk = blockIdx.x;                 // transform block within the row
-    const int64_t i3  = fastdiv(blockIdx.z, ne2);
-    const int64_t i2  = blockIdx.z - i3*ne2.z;
-    const int64_t i1  = blockIdx.y;
-    const int64_t row = (i3*ne2.z + i2) * ne1 + i1;
+    const int64_t i_cont = ((i3*ne2.z + i2) * ne1 + i1) * ne0 + i0;
 
-    const int tid  = threadIdx.x;
-    const int lane = tid % warp_size;
+    block_q8_1 * y = (block_q8_1 *) vy;
 
-    const int64_t base = blk * N;                   // first element of this transform in the row
+    const int64_t ib   = i_cont / QK8_1;
+    const int     lane = i_cont % QK8_1;
 
-    float reg[NE];
-    ggml_cuda_pdl_sync();
-    if (base < ne00) {
-        const T *     src       = x_ptr + row * ne00 + base;
-        const float * signs_row = has_signs ? signs + base : nullptr; // (r % n_blk) * N with r = row*n_blk + blk
+    const float xi = i0 < ne00 ? x[i3*s03 + i2*s02 + i1*s01 + i0] : 0.0f;
+    float amax = fabsf(xi);
+    amax = warp_reduce_max<QK8_1>(amax);
+
+    const float  d = amax / 127.0f;
+    const int8_t q = amax == 0.0f ? 0 : roundf(xi / d);
+
+    int sum = q;
 #pragma unroll
-        for (int i = 0; i < NE; ++i) {
-            reg[i] = (float) src[i * NT + tid] * scale;
-            if (has_signs) {
-                reg[i] *= signs_row[i * NT + tid];
-            }
-        }
-        ggml_cuda_fwht_block_butterfly<N, NT>(reg, s, tid, lane);
-    } else {
-        // padding beyond the real row: zero blocks, same as the plain quantizer's x = 0 path
+    for (int offset = QK8_1/2; offset > 0; offset >>= 1) {
+        sum += __shfl_xor_sync(0xffffffff, sum, offset, QK8_1);
+    }
+
+    const int src = pq2_order ? ((lane & 1) ? 16 + (lane >> 1) : (lane >> 1)) : lane;
+    const int qp  = __shfl_sync(0xffffffff, (int) q, src, QK8_1);
+
+    uint32_t plane = 0;
 #pragma unroll
-        for (int i = 0; i < NE; ++i) {
-            reg[i] = 0.0f;
-        }
+    for (int k = 0; k < 8; ++k) {
+        const uint32_t b = __ballot_sync(0xffffffff, (qp >> k) & 1);
+        plane = lane == k ? b : plane;
     }
 
-    void * GGML_CUDA_RESTRICT vy = vy_ptr;
-
-#pragma unroll
-    for (int i = 0; i < NE; ++i) {
-        const float xi = reg[i];
-        const int64_t i0 = base + i * NT + tid;   // element within the row (i0 % 32 == tid % 32)
-
-        float amax = fabsf(xi);
-        float sum  = xi;
-        amax = warp_reduce_max<QK8_1>(amax);
-        sum  = warp_reduce_sum<QK8_1>(sum);
-
-        const float  d = amax / 127.0f;
-        const int8_t q = amax == 0.0f ? 0 : roundf(xi / d);
-
-        const int iqs = lane % QK8_1;
-
-        if constexpr (layout == GGML_CUDA_Q8_1_PT) {
-            char * ycol = (char *) vy + row * (ne0 * 9 / 8);
-            const int64_t nblk = ne0 / QK_PTQ1_0;
-            const int64_t kb   = i0 / QK_PTQ1_0;
-            const int     e    = i0 % QK_PTQ1_0;
-            ycol[((e / 16)*nblk + kb) * 16 + (e % 16)] = q;
-
-            int isum = q;
-            isum = warp_reduce_sum<QK8_1>(isum);
-            if (iqs == 0) {
-                half2 * ds = (half2 *) (ycol + 8*nblk*16) + kb*4 + e / QK8_1;
-                *ds = make_half2(__float2half(d), __short_as_half((short) isum));
-            }
-        } else if constexpr (layout == GGML_CUDA_Q8_1_SOA_ISUM) {
-            int isum = q;
-            isum = warp_reduce_sum<QK8_1>(isum);
-            int32_t *     yw       = (int32_t *) vy;
-            const int64_t col_base = row * (ne0 / QK8_1) * (int64_t) (sizeof(block_q8_1) / 4);
-            const int     ib_col   = (int) (i0 / QK8_1);
-            ((int8_t *) (yw + col_base + ggml_cuda_ptq1_q8_word(ib_col, iqs / 4)))[iqs % 4] = q;
-            if (iqs == 0) {
-                const half2 ds = make_half2(__float2half(d), __short_as_half((short) isum));
-                yw[col_base + ggml_cuda_ptq1_q8_word(ib_col, 8)] = *reinterpret_cast<const int32_t *>(&ds);
-            }
-        } else {
-            block_q8_1 * y = (block_q8_1 *) vy;
-            const int64_t ib = (row * ne0 + i0) / QK8_1;
-            y[ib].qs[iqs] = q;
-            if (iqs == 0) {
-                y[ib].ds = make_half2(d, sum);
-            }
-        }
+    if (lane < 8) {
+        ((uint32_t *) y[ib].qs)[lane] = plane;
     }
-}
-
-template <int N, typename T>
-static void fwht_quantize_launch_layout(
-        const T * x, const float * signs, void * vy, const ggml_cuda_q8_1_layout layout,
-        const int64_t ne00, const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3,
-        const float scale, cudaStream_t stream) {
-    constexpr int NT = N < 256 ? N : 256;
-    const uint3 ne2_fastdiv = init_fastdiv_values(ne2);
-    const dim3 num_blocks((unsigned) (ne0 / N), (unsigned) ne1, (unsigned) (ne2*ne3));
-    const dim3 block_size(NT, 1, 1);
-    const ggml_cuda_kernel_launch_params lp = ggml_cuda_kernel_launch_params(num_blocks, block_size, 0, stream);
-#define FWHT_Q_LAUNCH(LAYOUT) \
-    if (signs) { \
-        ggml_cuda_kernel_launch(fwht_quantize_q8_1<N, NT, LAYOUT, T, true>,  lp, x, signs, vy, ne00, ne0, (uint32_t) ne1, ne2_fastdiv, scale); \
-    } else { \
-        ggml_cuda_kernel_launch(fwht_quantize_q8_1<N, NT, LAYOUT, T, false>, lp, x, signs, vy, ne00, ne0, (uint32_t) ne1, ne2_fastdiv, scale); \
+    if (lane == 0) {
+        y[ib].ds = __halves2half2(__float2half(d), __short_as_half((short) sum));
     }
-    switch (layout) {
-        case GGML_CUDA_Q8_1_PT:       FWHT_Q_LAUNCH(GGML_CUDA_Q8_1_PT);       break;
-        case GGML_CUDA_Q8_1_SOA_ISUM: FWHT_Q_LAUNCH(GGML_CUDA_Q8_1_SOA_ISUM); break;
-        default:                      FWHT_Q_LAUNCH(GGML_CUDA_Q8_1_AOS);      break;
-    }
-#undef FWHT_Q_LAUNCH
-}
-
-template <typename T>
-static void fwht_quantize_launch(
-        const T * x, const float * signs, void * vy, const ggml_cuda_q8_1_layout layout, const int n,
-        const int64_t ne00, const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3,
-        const float scale, cudaStream_t stream) {
-    switch (n) {
-        case   64: fwht_quantize_launch_layout<  64, T>(x, signs, vy, layout, ne00, ne0, ne1, ne2, ne3, scale, stream); break;
-        case  128: fwht_quantize_launch_layout< 128, T>(x, signs, vy, layout, ne00, ne0, ne1, ne2, ne3, scale, stream); break;
-        case  256: fwht_quantize_launch_layout< 256, T>(x, signs, vy, layout, ne00, ne0, ne1, ne2, ne3, scale, stream); break;
-        case  512: fwht_quantize_launch_layout< 512, T>(x, signs, vy, layout, ne00, ne0, ne1, ne2, ne3, scale, stream); break;
-        case 1024: fwht_quantize_launch_layout<1024, T>(x, signs, vy, layout, ne00, ne0, ne1, ne2, ne3, scale, stream); break;
-        case 2048: fwht_quantize_launch_layout<2048, T>(x, signs, vy, layout, ne00, ne0, ne1, ne2, ne3, scale, stream); break;
-        default: GGML_ABORT("fused FWHT quantizer: unsupported transform width %d", n);
-    }
-}
-
-bool ggml_cuda_fwht_quantize_supported(const int n, const int64_t ne00) {
-    switch (n) {
-        case 64: case 128: case 256: case 512: case 1024: case 2048:
-            break;
-        default:
-            return false;
-    }
-    return ne00 % n == 0 && ne00 % QK8_1 == 0;
-}
-
-void fwht_quantize_row_q8_1_cuda(
-        const void * x, const ggml_type x_type, const float * signs, const int n, void * vy,
-        const ggml_cuda_q8_1_layout layout, const int64_t ne00, const int64_t ne0, const int64_t ncols, cudaStream_t stream) {
-    GGML_ASSERT(ggml_cuda_fwht_quantize_supported(n, ne00));
-    GGML_ASSERT(ne0 % n == 0 && ne0 >= ne00);
-    if (layout == GGML_CUDA_Q8_1_PT) {
-        GGML_ASSERT(ne0 % QK_PTQ1_0 == 0);
-    }
-    const float scale = 1.0f / sqrtf((float) n);
-    if (x_type == GGML_TYPE_F16) {
-        fwht_quantize_launch<half>((const half *) x, signs, vy, layout, n, ne00, ne0, ncols, 1, 1, scale, stream);
-    } else {
-        GGML_ASSERT(x_type == GGML_TYPE_F32);
-        fwht_quantize_launch<float>((const float *) x, signs, vy, layout, n, ne00, ne0, ncols, 1, 1, scale, stream);
-    }
+#else
+    GGML_UNUSED_VARS(x, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
+    NO_DEVICE_CODE;
+#endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 }
 
 __device__ __forceinline__ uint8_t compute_e8m0_scale(float amax) {
@@ -374,8 +269,6 @@ static __global__ void quantize_mmq_nvfp4(
         const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
         const int64_t ne0, const int64_t ne1, const int64_t ne2, const int n_expert_used) {
 #if defined(BLACKWELL_MMA_AVAILABLE)
-
-    const int64_t blocks_per_col = (ne0 + QK_FP4_MMQ - 1) / QK_FP4_MMQ;
 
     int64_t base_idx;
     if constexpr (scatter) {
@@ -561,7 +454,8 @@ static __global__ void quantize_mmq_nvfp4(
                 reinterpret_cast<uint8_t *>(yb->d4)[sub] = fp8_code;
             }
         } else {
-            block_fp4_mmq * yb = y + (blockIdx.y * ((int64_t) blocks_per_col * ne1) + k_block * ne1 + blockIdx.x);
+            const int64_t blocks_per_col = (ne0 + QK_FP4_MMQ - 1) / QK_FP4_MMQ;
+            block_fp4_mmq * yb = y + (blockIdx.y * (blocks_per_col * ne1) + k_block * ne1 + blockIdx.x);
             uint32_t * yqs = reinterpret_cast<uint32_t *>(yb->qs);
             yqs[2 * sub + 0] = q0;
             yqs[2 * sub + 1] = q1;
@@ -878,7 +772,8 @@ void quantize_mmq_q8_1_rms_cuda(
     }
 }
 
-void quantize_row_q8_1_cuda(
+// friend.cpp: layout-aware q8_1 quantizer for the PTQ1_0 / PQ2_0 mat-vec kernels (see ggml_cuda_q8_1_layout)
+void quantize_row_q8_1_layout_cuda(
         const float * x, const int32_t * ids, void * vy, const ggml_cuda_q8_1_layout layout,
         const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
         const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3, cudaStream_t stream) {
@@ -909,6 +804,34 @@ void quantize_row_q8_1_cuda(
     }
 }
 
+void quantize_row_q8_1_cuda(
+        const float * x, const int32_t * ids, void * vy, const ggml_type type_src0,
+        const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
+        const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3, cudaStream_t stream) {
+    // friend.cpp: PTQ1_0 consumers on NVIDIA read the planar layout (see ggml_cuda_q8_1_layout_op_path)
+    quantize_row_q8_1_layout_cuda(x, ids, vy, ggml_cuda_q8_1_layout_op_path(type_src0), ne00, s01, s02, s03, ne0, ne1, ne2, ne3, stream);
+}
+
+// friend.cpp: bit-plane q8_1 for the no-dp4a Q1_0 / PQ2_0 mat-vec path.
+void quantize_row_q8_1_bitplanes_cuda(
+        const float * x, void * vy, const ggml_type type_src0,
+        const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
+        const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3, cudaStream_t stream) {
+    GGML_ASSERT(ne0 % QK8_1 == 0);
+    GGML_ASSERT(type_src0 == GGML_TYPE_Q1_0 || type_src0 == GGML_TYPE_PQ2_0);
+
+    const uint3 ne2_fastdiv = init_fastdiv_values(ne2);
+
+    const int64_t block_num_x = (ne0 + CUDA_QUANTIZE_BLOCK_SIZE - 1) / CUDA_QUANTIZE_BLOCK_SIZE;
+    const dim3 num_blocks(block_num_x, ne1, ne2*ne3);
+    const dim3 block_size(CUDA_QUANTIZE_BLOCK_SIZE, 1, 1);
+    if (type_src0 == GGML_TYPE_PQ2_0) {
+        quantize_q8_1_bitplanes<true><<<num_blocks, block_size, 0, stream>>>(x, vy, ne00, s01, s02, s03, ne0, ne1, ne2_fastdiv);
+    } else {
+        quantize_q8_1_bitplanes<false><<<num_blocks, block_size, 0, stream>>>(x, vy, ne00, s01, s02, s03, ne0, ne1, ne2_fastdiv);
+    }
+}
+
 void quantize_mmq_q8_1_cuda(
         const float * x, const int32_t * ids, void * vy, const ggml_type type_src0,
         const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
@@ -935,7 +858,6 @@ void quantize_mmq_q8_1_cuda(
             break;
         default:
             GGML_ABORT("fatal error");
-            break;
     }
 }
 
@@ -965,7 +887,6 @@ void quantize_scatter_mmq_q8_1_cuda(
             break;
         default:
             GGML_ABORT("fatal error");
-            break;
     }
 }
 

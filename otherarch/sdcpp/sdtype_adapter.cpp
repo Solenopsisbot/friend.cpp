@@ -18,13 +18,17 @@
 #include <filesystem>
 
 #include "otherarch/utils.h"
+#include "otherarch/webp_image.h"
 #include "model_adapter.h"
 
 #include "stable-diffusion.h"
 #include "src/kcpp_sd_extensions.h"
+#include "sdcpp_gguf_tokenizer.h"
 #include "src/core/util.h"
 #include "src/model.h"
 #include "src/model_loader.h"
+#include "src/model_io/gguf_io.h"
+#include "src/model_io/safetensors_io.h"
 #include "ggml-backend.h"
 
 using namespace kcpp_sd;
@@ -40,6 +44,160 @@ using namespace kcpp_sd;
 #include "stb_image_resize.h"
 
 #include "avi_writer.h"
+#include "webp/encode.h"
+#include "webp/mux.h"
+
+// Encodes an array of RGB, RGBA or grayscale frames into an animated WebP.
+// The returned buffer uses malloc so callers can continue to release it with
+// free(), matching the old GIF helper's ownership contract.
+static int create_animated_webp_buf_from_sd_images(sd_image_t* images,
+                                                    int num_images,
+                                                    int fps,
+                                                    uint8_t** out_data,
+                                                    size_t* out_len) {
+    if (out_data == nullptr || out_len == nullptr) {
+        return -1;
+    }
+    *out_data = nullptr;
+    *out_len  = 0;
+
+    if (images == nullptr || num_images <= 0 || fps <= 0 ||
+        images[0].data == nullptr || images[0].width == 0 || images[0].height == 0 ||
+        images[0].width > WEBP_MAX_DIMENSION || images[0].height > WEBP_MAX_DIMENSION) {
+        fprintf(stderr, "Invalid animated WebP input.\n");
+        return -1;
+    }
+
+    const int width  = static_cast<int>(images[0].width);
+    const int height = static_cast<int>(images[0].height);
+
+    WebPAnimEncoderOptions anim_options;
+    WebPConfig config;
+    if (!WebPAnimEncoderOptionsInit(&anim_options) ||
+        !WebPConfigPreset(&config, WEBP_PRESET_PICTURE, 80.0f)) {
+        fprintf(stderr, "Failed to initialize the animated WebP encoder.\n");
+        return -1;
+    }
+
+    // Avoid exhaustively encoding every compression/disposal candidate. Mixed
+    // mode still uses heuristics to choose lossless coding when appropriate.
+    anim_options.minimize_size = 0;
+    anim_options.allow_mixed   = 1;
+    config.method              = 3;
+    config.thread_level        = 1;
+    if (!WebPValidateConfig(&config)) {
+        fprintf(stderr, "Invalid animated WebP encoder configuration.\n");
+        return -1;
+    }
+
+    WebPAnimEncoder* encoder = WebPAnimEncoderNew(width, height, &anim_options);
+    if (encoder == nullptr) {
+        fprintf(stderr, "Failed to create the animated WebP encoder.\n");
+        return -1;
+    }
+
+    int last_timestamp_ms = -1;
+    for (int i = 0; i < num_images; ++i) {
+        const sd_image_t& image = images[i];
+        if (image.data == nullptr || static_cast<int>(image.width) != width ||
+            static_cast<int>(image.height) != height ||
+            (image.channel != 1 && image.channel != 3 && image.channel != 4)) {
+            fprintf(stderr, "Animated WebP frame %d has invalid dimensions or channels.\n", i);
+            WebPAnimEncoderDelete(encoder);
+            return -1;
+        }
+
+        WebPPicture picture;
+        if (!WebPPictureInit(&picture)) {
+            fprintf(stderr, "Failed to initialize animated WebP frame %d.\n", i);
+            WebPAnimEncoderDelete(encoder);
+            return -1;
+        }
+        picture.use_argb = 1;
+        picture.width    = width;
+        picture.height   = height;
+
+        int imported = 0;
+        std::vector<uint8_t> rgb_buffer;
+        if (image.channel == 1) {
+            const size_t pixel_count = static_cast<size_t>(width) * static_cast<size_t>(height);
+            rgb_buffer.resize(pixel_count * 3);
+            for (size_t p = 0; p < pixel_count; ++p) {
+                rgb_buffer[p * 3 + 0] = image.data[p];
+                rgb_buffer[p * 3 + 1] = image.data[p];
+                rgb_buffer[p * 3 + 2] = image.data[p];
+            }
+            imported = WebPPictureImportRGB(&picture, rgb_buffer.data(), width * 3);
+        } else if (image.channel == 4) {
+            imported = WebPPictureImportRGBA(&picture, image.data, width * 4);
+        } else {
+            imported = WebPPictureImportRGB(&picture, image.data, width * 3);
+        }
+
+        if (!imported) {
+            fprintf(stderr, "Failed to import animated WebP frame %d.\n", i);
+            WebPPictureFree(&picture);
+            WebPAnimEncoderDelete(encoder);
+            return -1;
+        }
+
+        int timestamp_ms = static_cast<int>(
+            (static_cast<int64_t>(i) * 1000 + fps / 2) / fps);
+        if (timestamp_ms <= last_timestamp_ms) {
+            timestamp_ms = last_timestamp_ms + 1;
+        }
+        if (!WebPAnimEncoderAdd(encoder, &picture, timestamp_ms, &config)) {
+            const char* error = WebPAnimEncoderGetError(encoder);
+            fprintf(stderr, "Failed to encode animated WebP frame %d: %s\n",
+                    i, error != nullptr ? error : "unknown error");
+            WebPPictureFree(&picture);
+            WebPAnimEncoderDelete(encoder);
+            return -1;
+        }
+        WebPPictureFree(&picture);
+        last_timestamp_ms = timestamp_ms;
+    }
+
+    int final_timestamp_ms = static_cast<int>(
+        (static_cast<int64_t>(num_images) * 1000 + fps / 2) / fps);
+    if (final_timestamp_ms <= last_timestamp_ms) {
+        final_timestamp_ms = last_timestamp_ms + 1;
+    }
+    if (!WebPAnimEncoderAdd(encoder, nullptr, final_timestamp_ms, nullptr)) {
+        const char* error = WebPAnimEncoderGetError(encoder);
+        fprintf(stderr, "Failed to finalize animated WebP frames: %s\n",
+                error != nullptr ? error : "unknown error");
+        WebPAnimEncoderDelete(encoder);
+        return -1;
+    }
+
+    WebPData webp_data;
+    WebPDataInit(&webp_data);
+    if (!WebPAnimEncoderAssemble(encoder, &webp_data) ||
+        webp_data.bytes == nullptr || webp_data.size == 0) {
+        const char* error = WebPAnimEncoderGetError(encoder);
+        fprintf(stderr, "Failed to assemble animated WebP: %s\n",
+                error != nullptr ? error : "unknown error");
+        WebPDataClear(&webp_data);
+        WebPAnimEncoderDelete(encoder);
+        return -1;
+    }
+
+    uint8_t* owned_data = static_cast<uint8_t*>(malloc(webp_data.size));
+    if (owned_data == nullptr) {
+        fprintf(stderr, "Failed to allocate animated WebP output buffer.\n");
+        WebPDataClear(&webp_data);
+        WebPAnimEncoderDelete(encoder);
+        return -1;
+    }
+    memcpy(owned_data, webp_data.bytes, webp_data.size);
+    *out_data = owned_data;
+    *out_len  = webp_data.size;
+
+    WebPDataClear(&webp_data);
+    WebPAnimEncoderDelete(encoder);
+    return 0;
+}
 
 // early callback log initialization
 namespace {
@@ -139,9 +297,6 @@ struct SDParams {
     float eta                     = -1.0f;
     float strength                = 0.75f;
     int64_t seed                  = 42;
-    bool diffusion_flash_attn     = false;
-    bool diffusion_conv_direct    = false;
-    bool vae_conv_direct          = false;
     std::string ref_image_args    = "";
 
     LoraMap lora_map;
@@ -222,6 +377,11 @@ static struct {
     }
 } sd_generation;
 
+static std::string sd_get_u8path(const std::string& file_path)
+{
+    return std::filesystem::u8path(file_path).string();
+}
+
 static std::string read_str_from_disk(std::string filepath)
 {
     std::string output;
@@ -236,6 +396,22 @@ static std::string read_str_from_disk(std::string filepath)
 
     return output;
 }
+
+struct KcppTokenizerResources {
+    std::string explicit_umt5_json;
+    std::string extracted_umt5_json;
+    std::string extracted_gemma_merges;
+    std::string extracted_gemma_vocab;
+
+    void reset() {
+        explicit_umt5_json.clear();
+        extracted_umt5_json.clear();
+        extracted_gemma_merges.clear();
+        extracted_gemma_vocab.clear();
+    }
+};
+
+static KcppTokenizerResources kcpp_tokenizer_resources;
 
 static std::string load_embd_file(std::string& cache, const char* filename)
 {
@@ -259,11 +435,17 @@ std::string load_qwen2_merges()
 std::string load_gemma_merges()
 {
     static std::string cache;
+    if (!kcpp_tokenizer_resources.extracted_gemma_merges.empty()) {
+        return kcpp_tokenizer_resources.extracted_gemma_merges;
+    }
     return load_embd_file(cache, "embd_res/gemma_merges_utf8_c_str.embd");
 }
 std::string load_gemma_vocab_json()
 {
     static std::string cache;
+    if (!kcpp_tokenizer_resources.extracted_gemma_vocab.empty()) {
+        return kcpp_tokenizer_resources.extracted_gemma_vocab;
+    }
     return load_embd_file(cache, "embd_res/gemma_vocab_json.embd");
 }
 std::string load_mistral_merges()
@@ -284,6 +466,12 @@ std::string load_t5_tokenizer_json()
 std::string load_umt5_tokenizer_json()
 {
     static std::string cache;
+    if (!kcpp_tokenizer_resources.explicit_umt5_json.empty()) {
+        return kcpp_tokenizer_resources.explicit_umt5_json;
+    }
+    if (!kcpp_tokenizer_resources.extracted_umt5_json.empty()) {
+        return kcpp_tokenizer_resources.extracted_umt5_json;
+    }
     return load_embd_file(cache, "embd_res/umt5_tokenizer_json.embd");
 }
 static void step_callback(int step, int frame_count, sd_image_t* image, bool is_noisy, void* data);
@@ -373,12 +561,14 @@ public:
 // resolve model / diffusion_model and text encoder / llm / proj / vision paths
 static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, const sd_load_model_inputs& inputs)
 {
-    //if t5 is set, and model is a gguf, load it as a diffusion model path
-    bool endswithgguf = (sd_params.model_path.rfind(".gguf") == sd_params.model_path.size() - 5);
-    if((sd_params.t5xxl_path!="" || sd_params.clip_l_path!="" || sd_params.clip_g_path!="") && endswithgguf)
+    kcpp_tokenizer_resources.reset();
+
+    bool model_is_gguf = false;
+    if(sd_params.t5xxl_path!="" || sd_params.clip_l_path!="" || sd_params.clip_g_path!="")
     {
+        model_is_gguf = is_gguf_file(sd_params.model_path);
         //extra check - make sure there is no diffusion model prefix already inside!
-        if(!gguf_tensor_exists(sd_params.model_path,"model.diffusion_model.",false))
+        if(model_is_gguf && !gguf_tensor_exists(sd_params.model_path,"model.diffusion_model.",false))
         {
             printf("\nSwap to Diffusion Model Path:%s",sd_params.model_path.c_str());
             sd_params.diffusion_model_path = sd_params.model_path;
@@ -435,8 +625,8 @@ static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, c
             path_empty(params.diffusion_model_path) &&
             (!path_empty(params.t5xxl_path)||!path_empty(params.clip_l_path)))
         {
-            bool endswithsafetensors = ends_with(params.model_path, ".safetensors");
-            if(endswithsafetensors && !model_loader.has_diffusion_model_tensors())
+            bool model_is_safetensors = !model_is_gguf && is_safetensors_file(sd_params.model_path);
+            if(model_is_safetensors && !model_loader.has_diffusion_model_tensors())
             {
                 printf("SD Diffusion Model tensors missing! Fallback trying alternative tensor names...\n");
                 if (!model_loader.init_from_file(params.model_path, "model.diffusion_model.")) {
@@ -476,11 +666,34 @@ static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, c
         return result;
     };
 
+    auto is_json_path = [&](const char* path) -> bool {
+        if (path_empty(path)) {
+            return false;
+        }
+        return toLowerCase(std::filesystem::u8path(path).extension().string()) == ".json";
+    };
+
+    auto sibling_tokenizer_json = [&](const char* model_path) -> std::string {
+        if (path_empty(model_path)) {
+            return {};
+        }
+        std::error_code error;
+        const auto candidate = std::filesystem::u8path(model_path).parent_path() / "tokenizer.json";
+        if (std::filesystem::is_regular_file(candidate, error)) {
+            return candidate.string();
+        }
+        return {};
+    };
+
     bool iswan = sd_version_is_wan(tempver);
     bool is_wan21 = sd_version_is_wan(tempver) && tempver != VERSION_WAN2_2_TI2V;
     bool is_qwenimg = sd_version_is_qwen_image(tempver);
-    bool iszimg = sd_version_is_z_image(tempver);
-    bool isflux2 = sd_version_is_flux2(tempver);
+    bool is_zimg = sd_version_is_z_image(tempver);
+    bool is_zimg_l2p = sd_version_is_z_image_l2p(tempver);
+    bool is_iris = (tempver == VERSION_IRIS);
+    bool is_flux2 = sd_version_is_flux2(tempver);
+    bool is_flux3 = sd_version_is_flux3(tempver);
+    bool is_mosi = (tempver == VERSION_MOSS_IMAGE);
     bool is_ovis =  (tempver==VERSION_OVIS_IMAGE);
     bool is_anima = sd_version_is_anima(tempver);
     bool is_ernie = sd_version_is_ernie_image(tempver);
@@ -488,6 +701,7 @@ static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, c
     bool is_lens = sd_version_is_lens(tempver);
     bool is_ming = (tempver == VERSION_MING_IMAGE);
     bool is_pid = sd_version_is_pid(tempver);
+    bool is_llada = sd_version_is_llada_image(tempver);
     bool is_ltx = sd_version_is_ltxav(tempver);
     bool is_ideogram = sd_version_is_ideogram4(tempver);
     bool is_boogu = sd_version_is_boogu_image(tempver);
@@ -495,8 +709,10 @@ static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, c
     bool is_sefi = sd_version_is_sefi_image(tempver);
     bool is_mageflow = sd_version_is_mage_flow(tempver);
     bool is_minimaxh3 = sd_version_is_minimax_h3(tempver);
-    bool conditioner_is_llm = (is_qwenimg || iszimg || isflux2 || is_ovis || is_anima || is_ernie || is_longcat || is_lens || is_ltx || is_ideogram || is_boogu || is_krea2 || is_sefi || is_mageflow || is_minimaxh3 || is_pid || is_ming);
-    bool has_llm_vision = (is_qwenimg || is_longcat || is_boogu);
+    bool is_fibo2 = (tempver == VERSION_FIBO2);
+    bool conditioner_is_llm = (is_qwenimg || is_zimg || is_flux2 || is_flux3 || is_mosi || is_ovis || is_anima || is_ernie || is_longcat || is_lens || is_llada || is_ltx || is_ideogram || is_boogu || is_krea2 || is_sefi || is_mageflow || is_minimaxh3 || is_pid || is_ming || is_zimg_l2p || is_iris || is_fibo2);
+    bool has_llm_vision = (is_qwenimg || is_longcat || is_boogu || is_fibo2);
+    bool has_tokenizer = (is_lens || is_pid || is_ming || is_mosi || is_llada);
 
     //kcpp qol fallback: if a llm was loaded as t5 by mistake
     if(conditioner_is_llm && !path_empty(params.t5xxl_path))
@@ -538,7 +754,24 @@ static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, c
     //settle clip-g replacements
     if (!path_empty(params.clip_g_path))
     {
-        if(iswan && path_empty(params.clip_vision_path))
+        if (is_json_path(params.clip_g_path) && iswan)
+        {
+            try {
+                kcpp_tokenizer_resources.explicit_umt5_json = read_str_from_disk(params.clip_g_path);
+                printf("\nKCPP: using UMT5 tokenizer JSON from %s\n", params.clip_g_path);
+                params.clip_g_path = "";
+            } catch (const std::exception& exception) {
+                printf("\nKCPP: could not read UMT5 tokenizer JSON from %s: %s\n",
+                       params.clip_g_path,
+                       exception.what());
+            }
+        }
+        else if (is_json_path(params.clip_g_path) && is_ltx)
+        {
+            kcpp_main_tokenizer = params.clip_g_path;
+            params.clip_g_path = "";
+        }
+        else if(iswan && path_empty(params.clip_vision_path))
         {
             std::swap(params.clip_vision_path, params.clip_g_path);
         }
@@ -554,7 +787,7 @@ static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, c
         {
             std::swap(params.uncond_diffusion_model_path, params.clip_g_path);
         }
-        else if ((is_lens || is_pid || is_ming) && kcpp_main_tokenizer.empty())
+        else if (has_tokenizer && kcpp_main_tokenizer.empty())
         {
             // accept a tokenizer.json on clip_2
             kcpp_main_tokenizer = params.clip_g_path;
@@ -569,6 +802,36 @@ static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, c
         toLowerCase(params.llm_path).find("mmproj") != std::string::npos)
         {
             std::swap(params.llm_path, params.llm_vision_path);
+        }
+    }
+
+    // Safetensors encoders have no embedded tokenizer metadata, so Wan/LTX may
+    // use a tokenizer.json placed directly beside the selected text encoder.
+    // Never probe beside GGUF files; their tokenizer comes from GGUF metadata.
+    if (iswan && kcpp_tokenizer_resources.explicit_umt5_json.empty()) {
+        const char* tokenizer_source = !path_empty(params.t5xxl_path) ? params.t5xxl_path : params.model_path;
+        const std::string tokenizer_path =
+            !path_empty(tokenizer_source) && is_safetensors_file(tokenizer_source)
+                ? sibling_tokenizer_json(tokenizer_source)
+                : std::string();
+        if (!tokenizer_path.empty()) {
+            try {
+                kcpp_tokenizer_resources.explicit_umt5_json = read_str_from_disk(tokenizer_path);
+                printf("\nKCPP: using adjacent UMT5 tokenizer JSON from %s\n", tokenizer_path.c_str());
+            } catch (const std::exception& exception) {
+                printf("\nKCPP: could not read adjacent UMT5 tokenizer JSON from %s: %s\n",
+                       tokenizer_path.c_str(),
+                       exception.what());
+            }
+        }
+    }
+    if (is_ltx && kcpp_main_tokenizer.empty()) {
+        const char* tokenizer_source = !path_empty(params.llm_path) ? params.llm_path : params.model_path;
+        if (!path_empty(tokenizer_source) && is_safetensors_file(tokenizer_source)) {
+            kcpp_main_tokenizer = sibling_tokenizer_json(tokenizer_source);
+        }
+        if (!kcpp_main_tokenizer.empty()) {
+            printf("\nKCPP: using adjacent Gemma tokenizer JSON from %s\n", kcpp_main_tokenizer.c_str());
         }
     }
 
@@ -596,7 +859,11 @@ static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, c
         {
             tae_name = "taesd_f2.embd";
         }
-        else if(sd_version_uses_wan_vae(tempver) && tempver != VERSION_QWEN_IMAGE_2_1) // qwen 2.1 + tae crashing as of master-917
+        else if(tempver == VERSION_QWEN_IMAGE_2_1)
+        {
+            tae_name = "taesd_qi21.embd";
+        }
+        else if(sd_version_uses_wan_vae(tempver))
         {
             tae_name = "taesd_w21.embd";
         }
@@ -643,6 +910,47 @@ static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, c
     }
     params.taesd_path = kcpp_taesd_path.c_str();
 
+    const auto resource_missing = [&](const char* name) {
+        return !file_exists(executable_path + "embd_res/" + name);
+    };
+
+    // Reconstruct exactly what the existing tokenizer classes need from the
+    // selected text encoder's GGUF metadata, entirely in memory.
+    if (iswan && kcpp_tokenizer_resources.explicit_umt5_json.empty()) {
+        const char* tokenizer_gguf = !path_empty(params.t5xxl_path) ? params.t5xxl_path : params.model_path;
+        if (!path_empty(tokenizer_gguf) && is_gguf_file(tokenizer_gguf)) {
+            std::string tokenizer_error;
+            if (kcpp_sd::gguf_tokenizer_extractor::to_unigram_json(
+                    tokenizer_gguf,
+                    kcpp_tokenizer_resources.extracted_umt5_json,
+                    tokenizer_error)) {
+                printf("\nKCPP: using UMT5 tokenizer metadata from %s\n", tokenizer_gguf);
+            } else {
+                printf("\nKCPP: could not use UMT5 tokenizer metadata from %s: %s\n",
+                       tokenizer_gguf,
+                       tokenizer_error.c_str());
+            }
+        }
+    }
+
+    if (is_ltx && kcpp_main_tokenizer.empty()) {
+        const char* tokenizer_gguf = !path_empty(params.llm_path) ? params.llm_path : params.model_path;
+        if (!path_empty(tokenizer_gguf) && is_gguf_file(tokenizer_gguf)) {
+            std::string tokenizer_error;
+            if (kcpp_sd::gguf_tokenizer_extractor::to_vocab_and_merges(
+                    tokenizer_gguf,
+                    kcpp_tokenizer_resources.extracted_gemma_vocab,
+                    kcpp_tokenizer_resources.extracted_gemma_merges,
+                    tokenizer_error)) {
+                printf("\nKCPP: using Gemma tokenizer metadata from %s\n", tokenizer_gguf);
+            } else {
+                printf("\nKCPP: could not use Gemma tokenizer metadata from %s: %s\n",
+                       tokenizer_gguf,
+                       tokenizer_error.c_str());
+            }
+        }
+    }
+
     if (!kcpp_main_tokenizer.empty()) {
         // assemble the tokenizer config
         if (!file_exists(kcpp_main_tokenizer)) {
@@ -654,6 +962,35 @@ static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, c
         kcpp_tokenizer_path += "main=";
         kcpp_tokenizer_path += kcpp_main_tokenizer;
         params.tokenizer = kcpp_tokenizer_path.c_str();
+    } else if (kcpp_tokenizer_path.empty()) {
+        // Explicit tokenizer JSON wins. Models with built-in tokenizer assets
+        // keep using them; GGUF metadata is only the final in-memory fallback.
+        const bool uses_baked_qwen = conditioner_is_llm && !has_tokenizer && !is_flux2 && !is_ernie && !is_ltx;
+        const bool uses_baked_mistral = is_flux2 || is_ernie;
+        const bool baked_missing =
+            (uses_baked_qwen && resource_missing("qwen2_merges_utf8_c_str.embd")) ||
+            (uses_baked_mistral &&
+             (resource_missing("mistral2_merges_utf8_c_str.embd") || resource_missing("mistral2_vocab_json.embd")));
+
+        if (has_tokenizer || baked_missing) {
+            const char* tokenizer_gguf = !path_empty(params.llm_path) ? params.llm_path : params.model_path;
+            if (!path_empty(tokenizer_gguf) && is_gguf_file(tokenizer_gguf)) {
+                std::string tokenizer_error;
+                const auto profile = is_mosi ? kcpp_sd::tokenizer_profile::MOSS_IMAGE
+                                             : kcpp_sd::tokenizer_profile::DEFAULT;
+                if (kcpp_sd::gguf_tokenizer_extractor::to_hf_json(tokenizer_gguf,
+                                                                  kcpp_tokenizer_path,
+                                                                  tokenizer_error,
+                                                                  profile)) {
+                    params.tokenizer = kcpp_tokenizer_path.c_str();
+                    printf("\nKCPP: using tokenizer metadata from %s\n", tokenizer_gguf);
+                } else {
+                    printf("\nKCPP: could not use tokenizer metadata from %s: %s\n",
+                           tokenizer_gguf,
+                           tokenizer_error.c_str());
+                }
+            }
+        }
     }
 
     // patch hidream to fix broken images on vulkan
@@ -661,6 +998,16 @@ static void kcpp_set_model_paths(sd_ctx_params_t& params, SDParams& sd_params, c
     if(tempver == VERSION_HIDREAM_O1 && path_empty(params.tensor_type_rules))
     {
         params.tensor_type_rules = "^model.language_model.layers.[0-9]+.mlp.down_proj.weight=bf16";
+    }
+
+    params.flash_attn_mode = "off";
+    if(inputs.flash_attention) {
+        if(sd_version_is_qwen_image(tempver)) {
+            // edit 14feb, breaks qwen image edit (moved from diffusion_engine)
+            params.flash_attn_mode = "on,te=off";
+        } else {
+            params.flash_attn_mode = "on";
+        }
     }
 
     //debug print
@@ -700,6 +1047,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     std::string backend = inputs.backend ? inputs.backend : "";
     std::string params_backend = inputs.params_backend ? inputs.params_backend : "";
     std::string split_mode = inputs.split_mode ? inputs.split_mode : "";
+    std::string conv_direct_mode = inputs.conv_direct_mode ? inputs.conv_direct_mode : "";
 
     int lora_apply_mode = LORA_APPLY_AT_RUNTIME;
     bool lora_dynamic = false;
@@ -771,13 +1119,9 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     {
         printf("Flash Attention is enabled\n");
     }
-    if(inputs.diffusion_conv_direct)
+    if(!conv_direct_mode.empty())
     {
-        printf("Conv2D Direct for diffusion model is enabled\n");
-    }
-    if(inputs.vae_conv_direct)
-    {
-        printf("Conv2D Direct for VAE model is enabled\n");
+        printf("Conv2D Direct mode: \"%s\"\n", conv_direct_mode.c_str());
     }
     if(backend != "")
     {
@@ -823,9 +1167,6 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
         printf("Diffusion Model quantized to %s\n", sd_type_name(sd_params->wtype));
     }
     sd_params->n_threads = inputs.threads; //if -1 use physical cores
-    sd_params->diffusion_flash_attn = inputs.flash_attention;
-    sd_params->diffusion_conv_direct = inputs.diffusion_conv_direct;
-    sd_params->vae_conv_direct = inputs.vae_conv_direct;
     sd_params->vae_path = vaefilename;
     sd_params->audio_vae_path = audiovaefilename;
     sd_params->t5xxl_path = t5xxl_filename;
@@ -842,9 +1183,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
 
     params.n_threads = sd_params->n_threads;
     params.wtype = sd_params->wtype;
-    params.diffusion_flash_attn = sd_params->diffusion_flash_attn;
-    params.diffusion_conv_direct = sd_params->diffusion_conv_direct;
-    params.vae_conv_direct = sd_params->vae_conv_direct;
+    params.conv_direct_mode = conv_direct_mode.c_str();
     params.model_args = "chroma_use_dit_mask=true";
     params.max_vram = max_vram.c_str();
     params.eager_load = true; //kcpp should preload everything
@@ -855,14 +1194,16 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     params.auto_fit = inputs.auto_fit;
     params.lora_apply_mode = (lora_apply_mode_t)lora_apply_mode;
 
-    // also switches flash attn for the vae and conditioner
-    params.flash_attn = params.diffusion_flash_attn;
-
     kcpp_set_model_paths(params, *sd_params, inputs);
 
     if(inputs.debugmode==1)
     {
+        const char* tokenizer = params.tokenizer;
+        if (tokenizer != nullptr && *tokenizer == '{') {
+            params.tokenizer = "<in-memory tokenizer JSON>";
+        }
         char* buf = sd_ctx_params_to_str(&params);
+        params.tokenizer = tokenizer;
         if(buf)
         {
             printf("\n%s\n", buf);
@@ -901,7 +1242,7 @@ bool sdtype_load_model(const sd_load_model_inputs inputs) {
     if (upscaler_filename!="") {
         const int upscale_tile_size = 128;
         upscaler_ctx = new_upscaler_ctx(upscaler_filename.c_str(),
-                                        params.diffusion_conv_direct,
+                                        conv_direct_mode == "on",
                                         params.n_threads,
                                         upscale_tile_size,
                                         params.backend,
@@ -1151,6 +1492,10 @@ uint8_t* load_image_from_b64(const std::string & b64str, int& width, int& height
     std::vector<uint8_t> decoded_buf = kcpp_base64_decode(b64str);
     int c = 0;
     uint8_t* image_buffer = (uint8_t*)stbi_load_from_memory(decoded_buf.data(), decoded_buf.size(), &width, &height, &c, expected_channel);
+    if (image_buffer == nullptr) {
+        image_buffer = kcpp_decode_webp_from_memory(
+            decoded_buf.data(), decoded_buf.size(), &width, &height, &c, expected_channel);
+    }
 
     if (image_buffer == NULL) {
         fprintf(stderr, "load_image_from_b64 failed\n");
@@ -2112,11 +2457,19 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
             int status = 0;
             int status2 = 0;
 
-            if(video_output_type==0 || video_output_type==2)
+            const bool output_gif  = video_output_type == 0 || video_output_type == 2;
+            const bool output_webp = video_output_type == 3 || video_output_type == 4;
+            const bool output_avi  = video_output_type == 1 || video_output_type == 2 || video_output_type == 4;
+
+            if(output_gif)
             {
                 status = create_gif_buf_from_sd_images_msf(results, generated_num_results, vid_fps, &out_data,&out_len);
             }
-            if(video_output_type==1 || video_output_type==2)
+            else if(output_webp)
+            {
+                status = create_animated_webp_buf_from_sd_images(results, generated_num_results, vid_fps, &out_data,&out_len);
+            }
+            if(output_avi)
             {
                 status2 = create_mjpg_avi_membuf_from_sd_images(results, generated_num_results, vid_fps, 40, &out_data2,&out_len2, generated_audio);
             }
@@ -2129,7 +2482,10 @@ sd_generation_outputs sdtype_generate(const sd_generation_inputs inputs)
 
             if(!sd_is_quiet && sddebugmode==1)
             {
-                printf("Video Output Sizes: GIF=%zu AVI=%zu\n",out_len,out_len2);
+                printf("Video Output Sizes: GIF=%zu WEBP=%zu AVI=%zu\n",
+                       output_gif ? out_len : 0,
+                       output_webp ? out_len : 0,
+                       out_len2);
                 if(status==0 && status2==0)
                 {
                     printf("Video(s) Saved (Len %zu)!\n",out_len);

@@ -1,6 +1,4 @@
 #pragma once
-#ifndef KCPP_EXPOSE_H
-#define KCPP_EXPOSE_H
 
 #include <atomic>
 #include <cstdint>
@@ -93,12 +91,43 @@ struct load_model_inputs
     const bool quiet = false;
     const int debugmode = 0;
     const int continuous_batching_slots = 0;
+    // friend.cpp: maximum number of prefill tokens admitted alongside one decode round.
+    // Zero selects the backend batch size. Lower values protect inter-token latency.
+    const int friend_prefill_tokens = 0;
     const int rpc_mode = 0; //0=disabled, 1=connect, 2=host
     const char * rpc_targets = nullptr;
-    // Named adapter pools. Entries are NAME\tPATH[\tDEFAULT_SCALE], one per line.
+    const int lazy_mode = 1; // llama_lazy_mode: off=0, auto=1, on=2
+    const int moe_cache_mib = 0;
+    const int parallel_total_context = 0;
+    // friend.cpp: named adapter pools, see friend/adapters.hpp for the wire format
     const char * friend_lora_pool = nullptr;
     const char * friend_cvec_pool = nullptr;
     const char * friend_head_pool = nullptr;
+    // friend.cpp: tiered prompt cache (friend/prompt_cache.hpp); ram_mb 0 disables it
+    const int friend_cache_ram_mb = 0;
+    const int friend_cache_disk_mb = 0;
+    const char * friend_cache_dir = nullptr;
+    const int friend_cache_min_tokens = 64;
+    const int friend_cache_capture_tokens = 512;
+    // friend.cpp: where /api/extra/steer/build saves vectors ("" = keep in memory only)
+    const char * friend_cvec_dir = nullptr;
+    // friend.cpp: false = adaptive draft length (default), true = always --draftamount
+    const bool friend_draft_fixed = false;
+    // friend.cpp: snapshot the live context after this many ms of idle (0 = off)
+    const int friend_cache_idle_ms = 300;
+    const int friend_ngram_draft = 0;
+    const int friend_suffix_draft = 0;
+    // friend.cpp: unified per-round token budget; zero uses batchsize.
+    const int friend_schedule_tokens = 0;
+    const int friend_profile_lanes = 1;
+    // friend.cpp: cap live continuous-batching requests (waiting/running/paused); 0 disables.
+    const int friend_max_queued_requests = 0;
+    // friend.cpp: fraction of estimated KV capacity kept free for active sequences; 0 disables.
+    const float friend_kv_watermark = 0.0f;
+    // friend.cpp: maximum number of distinct live adapter profiles admitted at once; 0 disables.
+    const int friend_max_lora_profiles = 0;
+    // friend.cpp: run prompt prefill on lane 0 and hand its serialized KV to a decode lane.
+    const bool friend_disaggregated_prefill = false;
 };
 struct generation_inputs
 {
@@ -158,8 +187,23 @@ struct generation_inputs
     const int banned_tokens_len = 0;
     const char ** banned_tokens = nullptr;
     const int reasoning_budget = -1;
-    // Canonical per-request adapter profile; empty selects model defaults.
+    const bool blue_noise = false;
+    const int rng_type = 0;
+    // friend.cpp: per-request adapter profile (LoRA mix / steering / head), see friend/adapters.hpp
     const char * adapter_profile = nullptr;
+    // friend.cpp: if set, snapshot the processed prompt into the prompt cache, pinned, under this label
+    const char * cache_pin_label = nullptr;
+    // friend.cpp: lower values run first; ties use the existing fair round clock.
+    const int priority = 0;
+    // friend.cpp: number of top alternatives to retain for batch-native logprobs.
+    // Zero keeps the fast path and the legacy global logprob buffer unchanged.
+    const int logprobs = -1; // -1 disables; 0 reports selected token only
+    const int prompt_logprobs = -1;
+    // friend.cpp: request opts into the prefill/decode lane handoff.
+    const bool disaggregated_prefill = false;
+    // friend.cpp: per-request cap for history-based speculative tokens.
+    // -1 uses the server flag, 0 disables it for this request.
+    const int friend_draft_max = -1;
 };
 struct generation_outputs
 {
@@ -168,6 +212,11 @@ struct generation_outputs
     int prompt_tokens = 0;
     int completion_tokens = 0;
     const char * text; //response will now be stored in c++ allocated memory
+    // friend.cpp: JSON encoded per-request logprobs; valid until the next result call
+    // on the same thread. Kept at the end for ABI compatibility with older callers.
+    const char * logprobs_json = nullptr;
+    // friend.cpp: JSON encoded queue/prefill/TTFT/decode timing for batch requests.
+    const char * timing_json = nullptr;
 };
 struct token_count_outputs
 {
@@ -205,8 +254,7 @@ struct sd_load_model_inputs
     const bool flash_attention = false;
     const char * params_backend = nullptr;
     const bool use_mmap = false;
-    const bool diffusion_conv_direct = false;
-    const bool vae_conv_direct = false;
+    const char * conv_direct_mode = nullptr;
     const bool taesd = false;
     const int tiled_vae_threshold = 0;
     const char * llm_filename = nullptr;
@@ -259,7 +307,7 @@ struct sd_generation_inputs
     const int clip_skip = -1;
     const int vid_req_frames = 1;
     const int vid_fps = 16;
-    const int video_output_type = 0; //0=gif, 1=avi, 2=both
+    const int video_output_type = 0; // 0=GIF, 1=AVI, 2=GIF+AVI, 3=animated WebP, 4=animated WebP+AVI
     const bool remove_limits = false;
     const bool circular_x = false;
     const bool circular_y = false;
@@ -340,6 +388,8 @@ struct tts_generation_inputs
     const char * speaker_instruction = "";
     const char * language = "";
     const bool use_mp3 = false;
+    const char * reference_text = "";
+    const char * audiocpp_extra_params_json = "";
 };
 struct tts_generation_outputs
 {
@@ -433,5 +483,3 @@ const char * gpttype_batch_generate_pending_output(int request_id);
 generation_outputs gpttype_batch_generate_result(int request_id);
 bool gpttype_batch_generate_abort(int request_id);
 void gpttype_batch_generate_release(int request_id);
-
-#endif // KCPP_EXPOSE_H

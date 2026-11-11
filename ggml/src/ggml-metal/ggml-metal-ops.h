@@ -27,16 +27,27 @@ int ggml_metal_op_n_nodes(ggml_metal_op_t ctx);
 
 int ggml_metal_op_encode(ggml_metal_op_t ctx, int idx);
 
+// friend.cpp: GGML_METAL_TIMING=1 launch statistics -- every encoded kernel is counted by the
+// op chain it covers (e.g. RMS_NORM+MUL when fused), plus memory barriers. dump prints the
+// per-graph averages over n_graphs graphs and resets.
+bool ggml_metal_op_stats_enabled(void);
+void ggml_metal_op_stats_dump(int n_graphs);
+
 //
 // available ops:
 //
+
+// activation bit-planes for the Q1_0 word-parallel path
+size_t ggml_metal_op_mul_mat_extra_q1_0_planes(const struct ggml_tensor * op);
+
+// friend.cpp: activation lookup tables for the small-batch Bonsai LUT mat-vec
+size_t ggml_metal_op_mul_mat_extra_lut(const struct ggml_tensor * op);
 
 // tokens per expert
 size_t ggml_metal_op_mul_mat_id_extra_tpe(const struct ggml_tensor * op);
 
 // id map [n_tokens, n_expert]
 size_t ggml_metal_op_mul_mat_id_extra_ids(const struct ggml_tensor * op);
-size_t ggml_metal_op_mul_mat_id_extra_amax(const struct ggml_tensor * op);
 
 // return true if we should use the FA vector kernel for this op
 bool ggml_metal_op_flash_attn_ext_use_vec(const struct ggml_tensor * op);
@@ -46,6 +57,8 @@ size_t ggml_metal_op_flash_attn_ext_extra_blk(const struct ggml_tensor * op);
 size_t ggml_metal_op_flash_attn_ext_extra_tmp(const struct ggml_tensor * op);
 size_t ggml_metal_op_flash_attn_ext_extra_kv_f16(const struct ggml_tensor * op);
 size_t ggml_metal_op_flash_attn_ext_extra_idx(const struct ggml_tensor * op);
+
+size_t ggml_metal_op_argmax_extra(const struct ggml_tensor * op);
 
 int ggml_metal_op_concat            (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_repeat            (ggml_metal_op_t ctx, int idx);
@@ -59,6 +72,7 @@ int ggml_metal_op_get_rows          (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_set_rows          (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_diag              (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_lightning_indexer (ggml_metal_op_t ctx, int idx);
+int ggml_metal_op_top_k_mask        (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_dsv4_hc           (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_soft_max          (ggml_metal_op_t ctx, int idx);
 int ggml_metal_op_ssm_conv          (ggml_metal_op_t ctx, int idx);

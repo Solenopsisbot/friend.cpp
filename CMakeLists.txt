@@ -142,6 +142,11 @@ if (LLAMA_CUBLAS)
 
         set(LLAMA_EXTRA_LIBS ${LLAMA_EXTRA_LIBS} CUDA::cuda_driver)
 
+    # CUDA graphs are independent of whether GPU architectures were supplied.
+    if(CUDAToolkit_VERSION VERSION_GREATER 12)
+        add_compile_definitions(GGML_CUDA_USE_GRAPHS)
+    endif()
+
     if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
         # 50 == lowest CUDA 12 standard
         # 60 == f16 CUDA intrinsics
@@ -151,11 +156,9 @@ if (LLAMA_CUBLAS)
         # 80 == Ampere, asynchronous data loading, faster tensor core instructions
         message("CUDA Toolkit Version: ${CUDAToolkit_VERSION}")
         if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 13)
-                add_compile_definitions(GGML_CUDA_USE_GRAPHS) #try enable cuda graphs on cu12 build
                 add_compile_definitions(KCPP_LIMIT_CUDA_MAX_ARCH=860)
                 set(CMAKE_CUDA_ARCHITECTURES "75-virtual;80-virtual;86-virtual") # lowest CUDA 13 standard
         elseif(CUDAToolkit_VERSION VERSION_GREATER 12)
-                add_compile_definitions(GGML_CUDA_USE_GRAPHS) #try enable cuda graphs on cu12 build
                 add_compile_definitions(KCPP_LIMIT_CUDA_MAX_ARCH=800)
                 set(CMAKE_CUDA_ARCHITECTURES "50-virtual;61-virtual;75-virtual;80-virtual") # lowest CUDA 12 standard + lowest for integer intrinsics
         else()
@@ -288,6 +291,10 @@ execute_process(
 if (output MATCHES "dyld-1015\.7")
     add_compile_definitions(HAVE_BUGGY_APPLE_LINKER)
 endif()
+
+# Configure the scalar-only WebP target before the architecture block below
+# adds AVX/NEON/native flags to the main KoboldCpp targets.
+add_subdirectory(vendor/tinylibwebp)
 
 # Architecture specific
 # TODO: probably these flags need to be tweaked on some architectures
@@ -522,6 +529,8 @@ add_library(common2
             vendor/hash/hash.h
             vendor/hash/sha256/sha256.c
             vendor/hash/sha256/sha256.h
+            vendor/zstd/zstd.c
+            vendor/zstd/zstd.h
             tools/mtmd/mtmd-audio.cpp
             tools/mtmd/mtmd-audio.h)
 target_include_directories(common2 PUBLIC . ./ggml/include ./ggml/src ./ggml/src/ggml-cpu ./include ./otherarch ./otherarch/tools ./vendor/stb ./vendor/nlohmann ./vendor ./vendor/hash ./otherarch/sdcpp ./otherarch/sdcpp/thirdparty ./tools ./common)
@@ -534,8 +543,10 @@ else()
     set(KCPP_HASH_NO_WARN_FLAG -w)
 endif()
 set_source_files_properties(vendor/hash/sha256/sha256.c PROPERTIES COMPILE_OPTIONS ${KCPP_HASH_NO_WARN_FLAG})
+set_source_files_properties(vendor/zstd/zstd.c PROPERTIES COMPILE_OPTIONS ${KCPP_HASH_NO_WARN_FLAG}) # friend.cpp: prompt cache compression
 
 add_library(sdtype_adapter
+            kcpp_src/sdcpp_gguf_tokenizer.cpp
             otherarch/sdcpp/sdtype_adapter.cpp
             otherarch/sdcpp/src/conditioning/wan_audio.cpp
             otherarch/sdcpp/src/core/compute_workspace.cpp
@@ -544,6 +555,9 @@ add_library(sdtype_adapter
             otherarch/sdcpp/src/core/ggml_graph_cut.cpp
             otherarch/sdcpp/src/core/ggml_graph_cut.h
             otherarch/sdcpp/src/core/parallel.cpp
+            otherarch/sdcpp/src/core/probe/backend_probe.cpp
+            otherarch/sdcpp/src/core/probe/conv_direct.cpp
+            otherarch/sdcpp/src/core/probe/flash_attn.cpp
             otherarch/sdcpp/src/core/regex.cpp
             otherarch/sdcpp/src/core/ggml_tensor_utils.cpp
             otherarch/sdcpp/src/core/runner_cache.cpp
@@ -614,28 +628,30 @@ add_library(sdtype_adapter
 target_include_directories(sdtype_adapter PUBLIC . ./kcpp_src ./ggml/include ./ggml/src ./ggml/src/ggml-cpu ./include ./otherarch ./otherarch/tools ./vendor/stb ./vendor/nlohmann ./vendor ./otherarch/sdcpp ./otherarch/sdcpp/include ./otherarch/sdcpp/src ./otherarch/sdcpp/examples ./otherarch/sdcpp/thirdparty/oniguruma ./otherarch/sdcpp/thirdparty/utf8proc ./tools ./common)
 target_compile_definitions(sdtype_adapter PRIVATE ONIG_STATIC UTF8PROC_STATIC SD_USE_UPSTREAM_GGML)
 target_compile_features(sdtype_adapter PUBLIC cxx_std_17) # don't bump
-target_link_libraries(sdtype_adapter PRIVATE common2 ggml ${LLAMA_EXTRA_LIBS})
+target_link_libraries(sdtype_adapter PRIVATE common2 ggml tinylibwebp ${LLAMA_EXTRA_LIBS})
 set_target_properties(sdtype_adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+add_subdirectory(otherarch/audiocpp)
 
 add_library(whisper_adapter
             otherarch/whispercpp/whisper_adapter.cpp)
 target_include_directories(whisper_adapter PUBLIC . ./kcpp_src ./ggml/include ./ggml/src ./ggml/src/ggml-cpu ./include ./otherarch ./otherarch/tools ./vendor/stb ./vendor/nlohmann ./vendor ./otherarch/whispercpp ./tools ./common)
 target_compile_features(whisper_adapter PUBLIC cxx_std_17) # don't bump
-target_link_libraries(whisper_adapter PRIVATE common2 ggml ${LLAMA_EXTRA_LIBS})
+target_link_libraries(whisper_adapter PRIVATE common2 ggml audiocpp ${LLAMA_EXTRA_LIBS})
 set_target_properties(whisper_adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(music_adapter
             otherarch/acestep/music_adapter.cpp)
 target_include_directories(music_adapter PUBLIC . ./kcpp_src ./ggml/include ./ggml/src ./ggml/src/ggml-cpu ./include ./otherarch ./otherarch/tools ./vendor/stb ./vendor/nlohmann ./vendor ./otherarch/acestep ./tools ./common)
 target_compile_features(music_adapter PUBLIC cxx_std_17) # don't bump
-target_link_libraries(music_adapter PRIVATE common2 ggml ${LLAMA_EXTRA_LIBS})
+target_link_libraries(music_adapter PRIVATE common2 ggml audiocpp ${LLAMA_EXTRA_LIBS})
 set_target_properties(music_adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(tts_adapter
             otherarch/tts_adapter.cpp)
 target_include_directories(tts_adapter PUBLIC . ./kcpp_src ./ggml/include ./ggml/src ./ggml/src/ggml-cpu ./include ./otherarch ./otherarch/tools ./vendor/stb ./vendor/nlohmann ./vendor ./otherarch/ttscpp/include ./otherarch/ttscpp/src ./otherarch/qwen3tts ./tools ./common)
 target_compile_features(tts_adapter PUBLIC cxx_std_17) # don't bump
-target_link_libraries(tts_adapter PRIVATE common2 ggml ${LLAMA_EXTRA_LIBS})
+target_link_libraries(tts_adapter PRIVATE common2 ggml audiocpp ${LLAMA_EXTRA_LIBS})
 set_target_properties(tts_adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(embeddings_adapter
@@ -652,7 +668,7 @@ add_library(gpttype_adapter
             src/llama-model.cpp)
 target_include_directories(gpttype_adapter PUBLIC . ./kcpp_src ./src ./ggml/include ./ggml/src ./ggml/src/ggml-cpu ./include ./otherarch ./otherarch/tools ./vendor/stb ./vendor/nlohmann ./vendor ./otherarch/sdcpp ./otherarch/sdcpp/thirdparty ./tools ./common)
 target_compile_features(gpttype_adapter PUBLIC cxx_std_17) # don't bump
-target_link_libraries(gpttype_adapter PRIVATE common2 ggml ggml_v1 ggml_v2 ggml_v3 ${LLAMA_EXTRA_LIBS})
+target_link_libraries(gpttype_adapter PRIVATE common2 ggml ggml_v1 ggml_v2 ggml_v3 tinylibwebp ${LLAMA_EXTRA_LIBS})
 set_target_properties(gpttype_adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if (LLAMA_CUBLAS)

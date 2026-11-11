@@ -65,6 +65,32 @@ def test_with_and_without_draft():
     assert res.body["tokens"] == tokens_no_draft
 
 
+def test_draft_acceptance_floor():
+    # The other tests check that drafting happens, not that drafts are accepted.
+    # This drafter/target pair is mismatched on purpose, so accept is only 15-17%.
+    global server
+    server.start()
+    for prompt in [
+        "I believe the meaning of life is",
+        "Once upon a time there was a little girl who",
+    ]:
+        res = server.make_request("POST", "/completion", data={
+            "prompt": prompt,
+            "temperature": 0.0,
+            "top_k": 1,
+            "n_predict": 64,
+        })
+        assert res.status_code == 200
+        draft_n = res.body["timings"]["draft_n"]
+        draft_n_accepted = res.body["timings"]["draft_n_accepted"]
+        assert draft_n > 0, f"nothing was drafted for {prompt!r}"
+        accept_rate = draft_n_accepted / draft_n
+        assert accept_rate > 0.05, (
+            f"draft acceptance collapsed to {100 * accept_rate:.2f}% "
+            f"({draft_n_accepted}/{draft_n}) for {prompt!r}"
+        )
+
+
 def test_different_draft_min_draft_max():
     global server
     test_values = [
@@ -152,6 +178,32 @@ def test_synth_ignores_target_tokens():
     assert res.body["stop_type"] == "limit"
 
 
+def test_draft_n_ubatch_smaller_than_target():
+    global server
+    request = {
+        "prompt": "I believe the meaning of life is",
+        "temperature": 0.0,
+        "top_k": 1,
+        "n_predict": 16,
+    }
+
+    # draft with the default ubatch size of the draft context
+    server.start()
+    res_default = server.make_request("POST", "/completion", data=request)
+    server.stop()
+    assert res_default.status_code == 200
+    assert res_default.body["timings"]["draft_n"] > 0
+
+    # a smaller draft ubatch splits the draft batches into more ubatches, but must not change the result
+    server.spec_draft_n_ubatch = 8
+    server.start()
+    res_small = server.make_request("POST", "/completion", data=request)
+    server.stop()
+    assert res_small.status_code == 200
+    assert res_small.body["timings"]["draft_n"] > 0
+    assert res_small.body["tokens"] == res_default.body["tokens"]
+
+
 def test_slot_ctx_not_exceeded():
     global server
     server.n_ctx = 256
@@ -203,3 +255,39 @@ def test_multi_requests_parallel(n_slots: int, n_requests: int):
     for res in results:
         assert res.status_code == 200
         assert match_regex("(wise|kind|owl|answer)+", res.body["content"])
+
+
+def test_draft_token_probs():
+    # tokens accepted from the draft must carry the target model's probabilities,
+    # same as without speculative decoding (#24271)
+    global server
+    request = {
+        "prompt": "I believe the meaning of life is",
+        "temperature": 0.0,
+        "top_k": 1,
+        "n_predict": 16,
+        "n_probs": 4,
+    }
+
+    server.model_draft = None  # disable draft model
+    server.spec_type = None
+    server.start()
+    res = server.make_request("POST", "/completion", data=request)
+    assert res.status_code == 200
+    probs_no_draft = res.body["completion_probabilities"]
+    server.stop()
+
+    create_server()
+    server.start()
+    res = server.make_request("POST", "/completion", data=request)
+    assert res.status_code == 200
+    assert res.body["timings"]["draft_n"] > 0
+    probs_draft = res.body["completion_probabilities"]
+
+    assert len(probs_draft) == len(probs_no_draft)
+    for tok_draft, tok_no_draft in zip(probs_draft, probs_no_draft):
+        assert tok_draft["id"] == tok_no_draft["id"]
+        assert len(tok_draft["top_logprobs"]) == len(tok_no_draft["top_logprobs"])
+        assert abs(tok_draft["logprob"] - tok_no_draft["logprob"]) < 0.25
+    # real logprobs are not all exactly 0.0 (prob 1.0)
+    assert any(tok["logprob"] < -1e-4 for tok in probs_draft)

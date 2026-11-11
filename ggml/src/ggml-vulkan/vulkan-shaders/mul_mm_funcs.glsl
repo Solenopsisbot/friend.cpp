@@ -69,6 +69,41 @@ void load_a_to_shmem(const uint pos_a, const uint row, const uint col, const uin
     } else {
         store_a(col, row, FLOAT_TYPEV2(0.0f));
     }
+#elif defined(DATA_A_PTQ1_0)
+    // PTQ1_0 (Prism ternary, group 128, base-3 packed) is compiled as its own per-type
+    // shader rather than a case of the unified MULMAT_QUANT switch below: the trit decode
+    // lives in ptq1_0.glsl (included by mul_mm.comp) and reads data_a[] directly.
+    // LOAD_VEC_A == 8: each idx covers 8 consecutive weights, 16 idx per 128-weight block.
+    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+    const uint k_pair = row * LOAD_VEC_A / 2;
+
+    const uint ib  = idx / 16;
+    const uint grp = idx & 0xfu;      // which 8-element group inside the block
+    const uint e0  = grp * 8u;
+
+    const float d = float(data_a[ib].d);
+
+    // friend.cpp: two 4-element word decodes instead of eight per-element ones (same values)
+    const vec4 lo = ptq1_0_trits4(ib, 0u, e0)      * d;
+    const vec4 hi = ptq1_0_trits4(ib, 0u, e0 + 4u) * d;
+    store_a(col, k_pair,      FLOAT_TYPEV2(lo.xy));
+    store_a(col, k_pair + 1u, FLOAT_TYPEV2(lo.zw));
+    store_a(col, k_pair + 2u, FLOAT_TYPEV2(hi.xy));
+    store_a(col, k_pair + 3u, FLOAT_TYPEV2(hi.zw));
+#elif defined(DATA_A_PQ2_0)
+    // friend.cpp: PQ2_0 (Q2_0 codec at group 128), standalone per-type shader like PTQ1_0.
+    // LOAD_VEC_A == 4: each idx is one byte of 2-bit codes, 32 idx per 128-weight block.
+    const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
+    const uint k_pair = row * LOAD_VEC_A / 2;
+
+    const uint ib  = idx / 32;
+    const uint iqs = idx & 0x1fu;
+
+    const FLOAT_TYPE d = FLOAT_TYPE(data_a[ib].d);
+    const uint bits = uint(data_a[ib].qs[iqs]);
+
+    store_a(col, k_pair,     d * (FLOAT_TYPEV2(bits & 3u, (bits >> 2u) & 3u) - FLOAT_TYPEV2(1.0f)));
+    store_a(col, k_pair + 1, d * (FLOAT_TYPEV2((bits >> 4u) & 3u, bits >> 6u) - FLOAT_TYPEV2(1.0f)));
 #elif defined(DATA_A_IQ1_S)
     const uint idx = pos_a + col * p.stride_a / LOAD_VEC_A + row;
     const uint k_pair = row * LOAD_VEC_A / 2;

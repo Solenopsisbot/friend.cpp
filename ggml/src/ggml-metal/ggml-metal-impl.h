@@ -14,7 +14,8 @@
 #define N_MM_SIMD_GROUP_X 2
 #define N_MM_SIMD_GROUP_Y 2
 
-#define N_MM_NPART_AMAX 256
+#define N_ARGMAX_NPART_MAX 256
+#define N_ARGMAX_CHUNK 4096
 
 // kernel parameters for mat-vec threadgroups
 //
@@ -26,8 +27,28 @@
 #define N_R0_Q1_0 8
 #define N_SG_Q1_0 2
 
+// Q1_0 word-parallel (popcount) verify path: rows per simdgroup, and the uint32
+// stride of one activation bit-plane record (8 planes x 4 words + scale + sum + pad).
+#define N_R0_Q1_0_PC 4
+#define Q1_0_PLANE_STRIDE 36
+
 #define N_R0_Q2_0 8
 #define N_SG_Q2_0 2
+
+#define N_R0_PQ2_0 8
+#define N_SG_PQ2_0 2
+#define N_R0_PTQ1_0 4
+#define N_SG_PTQ1_0 1
+
+// friend.cpp: small-batch (2..16 column) Bonsai mat-vec, see the "friend.cpp:
+// small-batch" section of mul_mv.metal.
+//   LUT path (Q1_0, PQ2_0): one src0 row per lane, N_SG_LUT simdgroups per threadgroup,
+//   at most LUT_MAX_NR1 columns per pass.
+//   MC path (PTQ1_0): N_R0_MC_PTQ1_0 rows per simdgroup, N_SG_MC_PTQ1_0 simdgroups.
+#define N_SG_LUT        8
+#define LUT_MAX_NR1     8
+#define N_R0_MC_PTQ1_0  4
+#define N_SG_MC_PTQ1_0  2
 
 #define N_R0_Q4_0 4
 #define N_SG_Q4_0 2
@@ -116,6 +137,9 @@
 #define FC_SUM_ROWS                    1400
 #define FC_UPSCALE                     1500
 #define FC_GATED_DELTA_NET             1600
+#define FC_GATED_DELTA_NET_WRITE_ROWS  (FC_GATED_DELTA_NET + 4)
+#define FC_GATED_DELTA_NET_RAW_GATES   (FC_GATED_DELTA_NET + 5)
+#define FC_GATED_DELTA_NET_QK_L2       (FC_GATED_DELTA_NET + 6) // friend.cpp
 #define FC_NORM                        1700
 #define FC_TOPK_MOE                    1800
 #define FC_MOE_REDUCE                  1900
@@ -124,6 +148,7 @@
 #define FC_FLASH_ATTN_EXT_TENSOR       2200
 #define FC_LIGHTNING_INDEXER           2200
 #define FC_MUL_MV_MMA                  2300
+#define FC_TOP_K_MASK                  2400
 
 // op-specific constants
 #define OP_FLASH_ATTN_EXT_NQPSG 8
@@ -539,6 +564,30 @@ typedef struct {
 } ggml_metal_kargs_mul_mv;
 
 typedef struct {
+    int32_t  nblk;
+    int32_t  ne11;
+    uint64_t nb11;
+} ggml_metal_kargs_q1_0_planes;
+
+// friend.cpp: small-batch LUT mat-vec (build pass + main pass share these)
+typedef struct {
+    int32_t  ne00;     // K
+    int32_t  ne01;     // rows of src0
+    int32_t  ne11;     // columns of src1 (tokens)
+    int32_t  ne0;      // rows of dst (= ne01)
+    uint64_t nb01;     // src0 row stride
+    uint64_t nb11;     // src1 column stride
+    int32_t  nr1;      // columns per pass
+    int32_t  nq;       // column vectors per pass = ceil(nr1/v)
+    int32_t  v;        // columns per table entry (2 or 4)
+    int32_t  npass;    // ceil(ne11/nr1)
+    int32_t  has_bsum; // also build per-block column sums (PQ2_0)
+    int32_t  kc;       // K blocks per split
+    int32_t  ksplit;   // K splits (> 1: partial sums go to the scratch, then a reduce pass)
+    uint64_t part_off; // float offset of the partial sums in the scratch
+} ggml_metal_kargs_mul_mv_lut;
+
+typedef struct {
     int32_t  ne00;
     int32_t  ne01;
     int32_t  ne02;
@@ -560,7 +609,6 @@ typedef struct {
 } ggml_metal_kargs_mul_mv_ext;
 
 typedef struct {
-    int32_t  ne02;
     int32_t  ne10;
     int32_t  ne11;  // n_expert_used (bcast)
     uint64_t nb11;
@@ -571,12 +619,11 @@ typedef struct {
 } ggml_metal_kargs_mul_mm_id_map0;
 
 typedef struct {
-    int32_t  ne00;
-    int32_t  ne01;
-    int32_t  ne02;
-    uint64_t nb01;
-    uint64_t nb02;
-} ggml_metal_kargs_mul_mm_id_amax;
+    int32_t  ne0;
+    uint64_t nb1;
+    uint64_t nb2;
+    uint64_t nb21;
+} ggml_metal_kargs_mul_mm_id_zero;
 
 typedef struct {
     int32_t  ne00;
@@ -590,7 +637,6 @@ typedef struct {
     uint64_t nb12;
     uint64_t nb13;
     int32_t  ne20;
-    int32_t  ne21;
     int32_t  ne0;
     int32_t  ne1;
     int16_t  r2;
@@ -1009,6 +1055,7 @@ typedef struct {
     uint64_t nb2;
     uint64_t nb3;
     uint64_t nb_out; // 0 => snapshots are appended after the attn scores (unfused)
+    float    qk_l2_eps; // friend.cpp: eps of the folded q/k l2 norm (FC_GATED_DELTA_NET_QK_L2)
 } ggml_metal_kargs_gated_delta_net;
 
 typedef struct {
@@ -1068,6 +1115,22 @@ typedef struct {
     uint64_t nb2;
     uint64_t nb3;
 } ggml_metal_kargs_set_rows;
+
+typedef struct {
+    int32_t  nv00; // row size in float4
+    int32_t  ne02;
+    uint64_t nb01;
+    uint64_t nb02;
+    uint64_t nb03;
+    int32_t  ne11;
+    int32_t  ne12;
+    uint64_t nb10;
+    uint64_t nb11;
+    uint64_t nb12;
+    uint64_t nb1;
+    uint64_t nb2;
+    uint64_t nb3;
+} ggml_metal_kargs_set_rows_wide;
 
 typedef struct {
     int32_t  ne00;
@@ -1268,7 +1331,45 @@ typedef struct {
 
 typedef struct {
     int32_t nrows;
+    int32_t n_blk; // sign rows per activation row (K / N); 0 = no sign flip fused in
 } ggml_metal_kargs_fwht;
+
+// friend.cpp: [ADD +] RMS_NORM + MUL(weight) + MUL(signs) + FWHT in one kernel -- the input side
+// of a Hadamard-folded matmul. One threadgroup per (block of N, row); the ADD is only fused when
+// its output does not alias an input (see ggml_metal_op_can_fuse_norm_fwht).
+typedef struct {
+    int32_t  ne0;      // row width (a multiple of the transform size N)
+    int32_t  nrows;
+    int32_t  has_add;  // src a + b (the residual ADD fused in) or just a
+    float    eps;
+} ggml_metal_kargs_norm_fwht;
+
+// friend.cpp: SWIGLU (+ per-head RMS_NORM * weight on the value side, + head permutation)
+// + MUL(signs) + FWHT -- the input side of a Hadamard-folded down / output projection.
+typedef struct {
+    int32_t  ne0;      // row width of the transform input (the folded matmul's K)
+    int32_t  nrows;
+    int32_t  norm;     // value side is rms_norm(x per head of hd) * w
+    int32_t  hd;       // head dim for the norm and the permutation (128)
+    int32_t  perm_nk;  // tiled [hd, nk, rep] -> grouped [hd, rep, nk]; rep == 1: no permutation
+    int32_t  perm_rep;
+    int64_t  nbg;      // row stride of the gate, in floats
+    int64_t  nbx;      // row stride of the value side, in floats
+    float    eps;
+} ggml_metal_kargs_glu_fwht;
+
+// friend.cpp: one decode step of the short causal conv (d_conv = 4): CONCAT(state, x) +
+// CPY(new state -> cache) + SSM_CONV + SILU. Strides in floats.
+typedef struct {
+    int32_t  C;        // channels
+    int32_t  n_seqs;
+    int64_t  st_c;     // gathered state: channel stride (d_conv - 1 = 3 when contiguous)
+    int64_t  st_s;     //                 seq stride
+    int64_t  x_c;      // new input column: channel stride
+    int64_t  x_s;      //                   seq stride
+    int64_t  out_s;    // conv output: seq stride
+    int64_t  dst_s;    // state cache destination: seq stride (channel stride 3)
+} ggml_metal_kargs_ssm_conv_step;
 
 typedef struct {
     int64_t  ne0;
@@ -1296,6 +1397,38 @@ typedef struct {
     uint64_t nbm1;
     uint64_t nbm3;
 } ggml_metal_kargs_lightning_indexer;
+
+typedef struct {
+    int32_t  n_kv;
+    int32_t  m1;
+    int32_t  m2;
+    int32_t  m3;
+    int32_t  n_top;
+    int32_t  n_pick;
+    int32_t  n_blk;
+    int32_t  n_extra;
+    int64_t  n_elems;
+    uint64_t nb1;
+    uint64_t nb2;
+    uint64_t nb3;
+    uint64_t nbm1;
+    uint64_t nbm2;
+    uint64_t nbm3;
+    uint64_t nbk0;
+    uint64_t nbk1;
+    uint64_t nbk2;
+    uint64_t nbk3;
+    uint64_t nbs0;
+    uint64_t nbs1;
+    uint64_t nbs2;
+    uint64_t nbs3;
+    uint64_t nbb0;
+    uint64_t nbb1;
+    uint64_t nbe0;
+    uint64_t nbe1;
+    uint64_t nbe2;
+    uint64_t nbe3;
+} ggml_metal_kargs_top_k_mask;
 
 typedef struct {
     int32_t  n_tokens;
@@ -1381,8 +1514,10 @@ typedef struct {
 } ggml_metal_kargs_pool_1d;
 
 typedef struct {
-     int64_t ne00;
+    int64_t ne00;
     uint64_t nb01;
+    int64_t npart;
+    int64_t ne01;
 } ggml_metal_kargs_argmax;
 
 typedef struct {

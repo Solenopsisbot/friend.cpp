@@ -63,6 +63,8 @@ static inline ggml_tensor * llama_mul_mat_hadamard(
 
     ggml_tensor * res;
 
+    // friend.cpp (9551fc6aa): keep the row structure, [n, ne0/n, ne1, ne2*ne3], instead of one flat
+    // [n, nelements/n] matrix. Same math; the rotation broadcasts over the extra dims.
     if (!ggml_is_contiguous(cur)) {
         res = ggml_cont_4d(ctx, cur, n, cur->ne[0]/n, cur->ne[1], cur->ne[2]*cur->ne[3]);
     } else {
@@ -108,4 +110,5 @@ std::string format(const char * fmt, ...);
 std::string llama_format_tensor_shape(const std::vector<int64_t> & ne);
 std::string llama_format_tensor_shape(const struct ggml_tensor * t);
 
-std::string gguf_kv_to_str(const struct gguf_context * ctx_gguf, int i);
+// arrays are rendered only until the result is longer than max_len
+std::string gguf_kv_to_str(const struct gguf_context * ctx_gguf, int i, size_t max_len = SIZE_MAX);

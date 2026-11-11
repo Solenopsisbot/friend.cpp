@@ -59,6 +59,10 @@ class Qwen2Model(TextModel):
     model_arch = gguf.MODEL_ARCH.QWEN2
 
     def set_vocab(self):
+        # HuggingFaceBio/Carbon-14B: Qwen3 with the HybridDNATokenizer (Qwen3 BPE plus DNA 6-mers)
+        if self._is_hybriddna():
+            self._set_vocab_hybriddna()
+            return
         try:
             self._set_vocab_sentencepiece()
         except FileNotFoundError:
@@ -78,6 +82,15 @@ class Qwen2Model(TextModel):
 @ModelBase.example("Qwen/Qwen1.5-MoE-A2.7B")
 class Qwen2MoeModel(TextModel):
     model_arch = gguf.MODEL_ARCH.QWEN2MOE
+
+    def _map_fp8_weight_names(self, name: str) -> tuple[str, ...]:
+        if name.removesuffix(".weight").endswith(".mlp.experts.gate_up_proj"):
+            bid = next(int(part) for part in self.map_tensor_name(name).split(".") if part.isdecimal())
+            return (
+                self.format_tensor_name(gguf.MODEL_TENSOR.FFN_GATE_EXP, bid),
+                self.format_tensor_name(gguf.MODEL_TENSOR.FFN_UP_EXP, bid),
+            )
+        return super()._map_fp8_weight_names(name)
 
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
@@ -253,6 +266,11 @@ class Qwen3Model(Qwen2Model):
                     yield from super().modify_tensors(data_torch, name, bid)
                 return
 
+        # output embedding projection (voyage-4-nano)
+        if name == "linear.weight":
+            self.gguf_writer.add_embedding_length_out(data_torch.shape[0])
+            name = "dense_2_out.weight"
+
         yield from super().modify_tensors(data_torch, name, bid)
 
 
@@ -372,6 +390,16 @@ class _QwenMtpMixin:
 @ModelBase.example("Qwen/Qwen3-Next-80B-A3B-Instruct")
 class Qwen3NextModel(_QwenMtpMixin, Qwen2MoeModel):
     model_arch = gguf.MODEL_ARCH.QWEN3NEXT
+
+    def _map_fp8_weight_names(self, name: str) -> tuple[str, ...]:
+        if name.endswith(".linear_attn.in_proj_qkvz.weight"):
+            bid = next(int(part) for part in self.map_tensor_name(name).split(".") if part.isdecimal())
+            # Both split projections keep the original per-tensor scales.
+            return (
+                self.format_tensor_name(gguf.MODEL_TENSOR.ATTN_QKV, bid),
+                self.format_tensor_name(gguf.MODEL_TENSOR.ATTN_GATE, bid),
+            )
+        return super()._map_fp8_weight_names(name)
 
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
@@ -570,17 +598,25 @@ class _LinearAttentionVReorderBase(Qwen3NextModel):
         elif name.endswith((".linear_attn.in_proj_a.weight", ".linear_attn.in_proj_b.weight")):
             weight, scale = reorder_rows(weight, scale, 1)
         elif name.endswith(".linear_attn.out_proj.weight"):
-            col_perm = self._reorder_v_heads(
-                torch.arange(num_v_heads * head_v_dim, dtype=torch.long).unsqueeze(0),
-                1, num_k_heads, num_v_per_k, head_v_dim,
-            ).squeeze(0)
-            weight, scale = apply_col_perm(weight, scale, col_perm)
+            if self._hadamard_folds_tensor(name):
+                # folded weight: keep the grouped V order, the runtime permutes the activation instead
+                self._hadamard_gdn_v_grouped = True
+            else:
+                col_perm = self._reorder_v_heads(
+                    torch.arange(num_v_heads * head_v_dim, dtype=torch.long).unsqueeze(0),
+                    1, num_k_heads, num_v_per_k, head_v_dim,
+                ).squeeze(0)
+                weight, scale = apply_col_perm(weight, scale, col_perm)
 
         return weight, scale
 
     def _repack_nvfp4(self, name: str, weight: Tensor, scale: Tensor, scale2: Tensor, input_scale: Tensor):
         weight, scale = self._transform_nvfp4_weight(name, weight, scale)
         super()._repack_nvfp4(name, weight, scale, scale2, input_scale)
+
+    def _hadamard_folds_tensor(self, name: str) -> bool:
+        # a manifest name and `name` can differ only by leading wrapper prefixes
+        return any(name.endswith(n) or n.endswith(name) for n in self.hadamard_folded_names())
 
     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
         num_k_heads = self.hparams.get("linear_num_key_heads", 0)
@@ -628,8 +664,12 @@ class _LinearAttentionVReorderBase(Qwen3NextModel):
                 data_torch = torch.cat([qk_part, v_part], dim=0)
 
             elif ".out_proj." in name:
-                # Out projection weight: reorder columns (input dimension)
-                data_torch = self._reorder_v_heads(data_torch, 1, num_k_heads, num_v_per_k, head_v_dim)
+                if self._hadamard_folds_tensor(name):
+                    # folded weight: keep the grouped V order, the runtime permutes the activation instead
+                    self._hadamard_gdn_v_grouped = True
+                else:
+                    # Out projection weight: reorder columns (input dimension)
+                    data_torch = self._reorder_v_heads(data_torch, 1, num_k_heads, num_v_per_k, head_v_dim)
 
         yield from super().modify_tensors(data_torch, name, bid)
 
@@ -667,6 +707,52 @@ class Qwen3_5TextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
         self._try_set_pooling_type()
+
+
+@ModelBase.register("MiniCPMOCRForSequenceClassification")
+class MiniCPMOCRSeqClsModel(Qwen3_5TextModel):
+    # OCR consistency judge: Qwen3.5 VL trunk with a value head read at the last token
+    # the class scores are [inconsistent, consistent], the softmax temperature is 1
+    model_arch = gguf.MODEL_ARCH.QWEN35
+    no_mtp = True  # the checkpoint has no MTP head
+
+    CLASS_LABELS = ["inconsistent", "consistent"]
+
+    def set_vocab(self):
+        super().set_vocab()
+        self.gguf_writer.add_chat_template([{"name": "systemone", "template": self._systemone_template()}])
+
+    def _systemone_template(self) -> str:
+        # the prompt of the training data, the two images are the original page and the one
+        # rendered from the OCR text; the task is fixed, there is nothing to fill in
+        # the trailing newlines are in an expression, so the template does not drop them
+        return (
+            "<|im_start|>user\n{{ images[0] }}\nOCR文本：\n{{ state }}\n{{ images[1] }}\n"
+            "第一张图是原图，第二张图是上述 OCR 文本渲染得到的图片。\n"
+            "请判断该 OCR 文本及其对应渲染图是否与原图内容一致。\n"
+            "这是一个二分类任务：一致标为 1，不一致标为 0。"
+            "{{ '<|im_end|>\\n<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n' }}"
+        )
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+
+        # the config.json of the checkpoint keeps the one of the base model, it has no num_labels / id2label
+        if "score.weight" not in self.model_tensors:
+            raise ValueError("the checkpoint has no score.weight classification head")
+
+        self.gguf_writer.add_pooling_type(gguf.PoolingType.LAST)
+        self.gguf_writer.add_embedding_length_out(len(self.CLASS_LABELS))
+        self.gguf_writer.add_classifier_output_labels(self.CLASS_LABELS)
+        self.gguf_writer.add_decision_type(gguf.DecisionType.MINICPM_OCR_JEV)
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        if name == "score.weight":
+            if data_torch.shape[0] != len(self.CLASS_LABELS):
+                raise ValueError(f"score.weight must have {len(self.CLASS_LABELS)} rows, got {data_torch.shape[0]}")
+            yield (gguf.TENSOR_NAMES[gguf.MODEL_TENSOR.CLS_OUT] + ".weight", data_torch)
+            return
+        yield from super().modify_tensors(data_torch, name, bid)
 
 
 def _is_openjev_checkpoint(dir_model: Path) -> bool:
@@ -930,6 +1016,133 @@ class DFlashModel(Qwen3Model):
             "model.candidate_selector.successor_codebook",
         ):
             name += ".weight"
+
+        yield from super().modify_tensors(data_torch, name, bid)
+
+
+@ModelBase.register("Qwen3DFlyModel", "Qwen3DSparkDFlareV2Model")
+@ModelBase.example("AngelSlim/Qwen3-8B-DFly-Block8")
+class DFlyModel(DFlashModel):
+    # AngelSpec DFly = DFlash + (a) a per-DRAFT-layer fusion of the raw target-layer features
+    # on top of the shared context projection, and (b) a TreeFlash predecessor correction
+    # applied before the target head. There is no Markov/confidence head, so the runtime reads
+    # it with the DFlash draft reader (block rows 1..n-1), not the DSpark one.
+    model_arch = gguf.MODEL_ARCH.DFLASH
+
+    def __init__(self, dir_model, *args, **kwargs):
+        hparams = kwargs.pop("hparams", None)
+        if hparams is None:
+            hparams = ModelBase.load_hparams(dir_model, False)
+
+        # DFly carries target_layer_ids/mask_token_id flat; normalize to DFlash's nested schema
+        hparams.setdefault("dflash_config", {
+            k: hparams[k] for k in ("target_layer_ids", "mask_token_id") if k in hparams
+        })
+
+        super().__init__(dir_model, *args, hparams=hparams, **kwargs)
+
+        hp = self.hparams
+
+        # The published main-branch config of the reference checkpoint states a target depth and
+        # vocab that do not match the weights (80/120832 against the real 36/151936), which loads
+        # clean and then mis-projects. Refuse instead of converting a checkpoint that lies.
+        target_layers = hp.get("target_num_hidden_layers")
+        layer_ids     = hp.get("target_layer_ids") or []
+
+        # A declared depth cannot police itself: the reference config's 80 is self-consistent with
+        # capture ids up to 33 and still wrong. The target model is the only authoritative shape,
+        # so compare the declared target_* against it and bound the ids by the real depth.
+        real = self._target_shapes()
+        for cfg_key, hp_key in (("num_hidden_layers", "target_num_hidden_layers"),
+                                ("vocab_size",        "target_vocab_size"),
+                                ("hidden_size",       "target_hidden_size")):
+            declared = hp.get(hp_key)
+            if declared is not None and cfg_key in real and int(declared) != real[cfg_key]:
+                raise ValueError(
+                    f"DFly {hp_key} is {declared} but the target model reports "
+                    f"{cfg_key}={real[cfg_key]}. The config metadata does not describe the target "
+                    "-- pin a known-good revision (the reference checkpoint's is 5712926)."
+                )
+        if "num_hidden_layers" in real:
+            target_layers = real["num_hidden_layers"]
+
+        if target_layers and layer_ids and max(layer_ids) >= int(target_layers):
+            raise ValueError(
+                f"DFly target_layer_ids {layer_ids} exceed target_num_hidden_layers {target_layers}. "
+                "The config metadata does not describe the weights -- pin a known-good revision "
+                "(the reference checkpoint's is 5712926)."
+            )
+
+        # an omitted target_hidden_size would default to the draft width and compare equal to itself,
+        # so prefer the target model's own hidden_size whenever it is readable
+        target_hidden = real.get("hidden_size", hp.get("target_hidden_size", hp["hidden_size"]))
+        if int(target_hidden) != int(hp["hidden_size"]):
+            raise ValueError(
+                "DFly residual fusion requires the target hidden_size to equal the drafter's, got "
+                f"{target_hidden} vs {hp['hidden_size']}."
+            )
+
+        if hp.get("markov_rank") or hp.get("enable_confidence_head"):
+            raise ValueError(
+                "DFly does not use the DSpark Markov/confidence head, but this config declares one. "
+                "A drafter reporting a Markov head is read one block row late by the runtime."
+            )
+
+        self._has_correction = bool(hp.get("enable_hidden_correction", True))
+        if self._has_correction:
+            correction_type = hp.get("hidden_correction_type", "swiglu")
+            if correction_type != "swiglu":
+                raise ValueError(f"unsupported hidden_correction_type {correction_type!r} (only 'swiglu')")
+
+        if not bool(hp.get("dspark_bonus_anchor", True)):
+            raise ValueError("DFly requires dspark_bonus_anchor=true; slot 0 is the committed anchor")
+        self._sample_from_anchor = False
+
+    def _target_shapes(self) -> dict[str, int]:
+        """Shapes read from --target-model-dir, for the keys it declares. Empty when unavailable."""
+        if self.target_model_dir is None:
+            return {}  # set_vocab raises on this later; nothing authoritative to compare against
+        try:
+            with open(self.target_model_dir / "config.json", "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (OSError, ValueError):
+            return {}  # unreadable; set_vocab reads the same file and raises
+        if not isinstance(cfg, dict):
+            return {}
+        cfg = {**cfg, **(cfg.get("text_config") or {})}
+        shapes = {}
+        for k in ("num_hidden_layers", "vocab_size", "hidden_size"):
+            try:
+                shapes[k] = int(cfg[k])
+            except (KeyError, ValueError, TypeError):
+                continue  # one unusable value must not disable the other comparisons
+        return shapes
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+        self.gguf_writer.add_sample_from_anchor(self._sample_from_anchor)
+
+    def prepare_tensors(self):
+        super().prepare_tensors()
+        if self._has_correction and not self._seen_correction:
+            raise ValueError(
+                "config sets enable_hidden_correction but no hidden_correction.* weights were "
+                "found; the export is incomplete and would draft without the correction."
+            )
+
+    _seen_correction = False
+    _dropped_correction = False
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        if "hidden_correction." in name:
+            # the runtime turns correction on from the presence of hidden_correction.down.weight,
+            # so shipping these while the config disables it silently re-enables the feature
+            if not self._has_correction:
+                if not self._dropped_correction:
+                    logger.info("DFly: enable_hidden_correction is false, dropping hidden_correction.* weights")
+                    self._dropped_correction = True
+                return
+            self._seen_correction = True
 
         yield from super().modify_tensors(data_torch, name, bid)
 

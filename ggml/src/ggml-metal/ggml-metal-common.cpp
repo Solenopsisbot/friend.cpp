@@ -22,6 +22,10 @@ static bool ggml_metal_fwht_supported_size(int64_t n, size_t max_tg_mem) {
     return false;
 }
 
+bool ggml_metal_fwht_supported(int64_t n, size_t max_tg_mem) {
+    return ggml_metal_fwht_supported_size(n, max_tg_mem);
+}
+
 // the FWHT kernels handle a Hadamard-hinted MUL_MAT only under these conditions. supports_op
 // and the dispatch must ask the same question: an F16 src1 that is admitted but then falls
 // through reaches the generic path, which has no F32 src0 by F16 src1 kernel.
@@ -43,9 +47,10 @@ bool ggml_metal_op_mul_mat_use_mm(const struct ggml_tensor * op, bool has_simdgr
 
 bool ggml_metal_op_mul_mat_id_use_mm(const struct ggml_tensor * op, bool has_simdgroup_mm) {
     const int64_t ne00 = op->src[0]->ne[0];
+    const int64_t ne02 = op->src[0]->ne[2];
     const int64_t ne21 = op->src[2]->ne[1];
 
-    return has_simdgroup_mm && ne00 >= 64 && ne21 >= 32;
+    return has_simdgroup_mm && ne00 >= 64 && ne02 <= 1024 && ne21 >= 32;
 }
 
 // the most src1 rows of the few-row MMA kernels
@@ -286,7 +291,10 @@ static bool ggml_mem_ranges_check(ggml_mem_ranges_t mrs, ggml_mem_range mr) {
             continue;
         }
 
-        if (mr.p0 < cmp.p1 && mr.p1 >= cmp.p0) {
+        // ranges are half-open [p0, p1): touching ranges do not intersect (friend.cpp: was
+        // `mr.p1 >= cmp.p0`, which made back-to-back allocations conflict and planted false
+        // barriers wherever the allocator packs buffers adjacently)
+        if (mr.p0 < cmp.p1 && mr.p1 > cmp.p0) {
             if (mrs->debug > 2) {
                 GGML_LOG_DEBUG("%s: the %s range buf=%lld, [%lld, %lld) overlaps with a previous %s range buf=%lld, [%lld, %lld)\n",
                         __func__,
@@ -333,6 +341,22 @@ bool ggml_mem_ranges_check(ggml_mem_ranges_t mrs, const ggml_tensor * tensor) {
     }
 
     return ggml_mem_ranges_check_dst(mrs, tensor);
+}
+
+bool ggml_mem_ranges_check_read(ggml_mem_ranges_t mrs, const ggml_tensor * tensor) {
+    return ggml_mem_ranges_check_src(mrs, tensor);
+}
+
+bool ggml_mem_ranges_check_write(ggml_mem_ranges_t mrs, const ggml_tensor * tensor) {
+    return ggml_mem_ranges_check_dst(mrs, tensor);
+}
+
+bool ggml_mem_ranges_add_read(ggml_mem_ranges_t mrs, const ggml_tensor * tensor) {
+    return ggml_mem_ranges_add_src(mrs, tensor);
+}
+
+bool ggml_mem_ranges_add_write(ggml_mem_ranges_t mrs, const ggml_tensor * tensor) {
+    return ggml_mem_ranges_add_dst(mrs, tensor);
 }
 
 struct node_info {

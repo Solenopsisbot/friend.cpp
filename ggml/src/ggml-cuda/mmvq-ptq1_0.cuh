@@ -1,4 +1,4 @@
-// PTQ1_0 mat-vec inner loop on a planar-transposed Q8_1 activation layout.
+// friend.cpp (9551fc6aa): PTQ1_0 mat-vec inner loop on a planar-transposed Q8_1 activation layout.
 //
 // Why: the stock mmvq path hands each thread one 128-weight PTQ1_0 block and
 // walks the activations as 32 scattered 4-byte loads per column out of
@@ -427,6 +427,9 @@ static __global__ void mul_mat_vec_ptq1_0_pt(
                             case GGML_GLU_OP_SWIGLU_OAI:
                                 result = ggml_cuda_op_swiglu_oai_single(gate_value, result);
                                 break;
+                            case GGML_GLU_OP_SWIGLU_CLAMP: // friend.cpp: upstream's clamped SwiGLU fusion
+                                result = ggml_cuda_op_swiglu_clamp_single(gate_value, result, fusion.glu_limit);
+                                break;
                             default:
                                 result = result * gate_value;
                                 break;
@@ -487,6 +490,9 @@ static __global__ void mul_mat_vec_ptq1_0_pt(
                             break;
                         case GGML_GLU_OP_SWIGLU_OAI:
                             result = ggml_cuda_op_swiglu_oai_single(gate_value, result);
+                            break;
+                        case GGML_GLU_OP_SWIGLU_CLAMP: // friend.cpp: upstream's clamped SwiGLU fusion
+                            result = ggml_cuda_op_swiglu_clamp_single(gate_value, result, fusion.glu_limit);
                             break;
                         default:
                             result = result * gate_value;
