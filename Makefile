@@ -699,7 +699,7 @@ sampling.o: common/sampling.cpp common/common.h common/sampling.h common/log.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 console.o: common/console.cpp common/console.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
-expose.o: kcpp_src/expose.cpp kcpp_src/expose.h kcpp_src/model_adapter.cpp
+expose.o: kcpp_src/expose.cpp kcpp_src/expose.h kcpp_src/model_adapter.cpp kcpp_src/model_adapter.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 llama-impl.o: src/llama-impl.cpp src/llama-impl.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -766,7 +766,10 @@ music_default.o: otherarch/acestep/music_adapter.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # idiotic "for easier compilation"
-GPTTYPE_ADAPTER = kcpp_src/gpttype_adapter.cpp kcpp_src/kcpp_backend.h kcpp_src/model_adapter.h otherarch/otherarch.h include/llama.h otherarch/llama_v2.cpp otherarch/llama_v3.cpp otherarch/gptj_v1.cpp otherarch/gptj_v2.cpp otherarch/gptj_v3.cpp otherarch/gpt2_v1.cpp otherarch/gpt2_v2.cpp otherarch/gpt2_v3.cpp otherarch/rwkv_v2.cpp otherarch/rwkv_v3.cpp otherarch/neox_v2.cpp otherarch/neox_v3.cpp otherarch/mpt_v3.cpp
+# friend.cpp: the friend/*.hpp modules are header-only and compiled into gpttype_adapter,
+# so list them (and expose.h, which model_adapter.h pulls in) or edits to them never rebuild it
+FRIEND_HEADERS = $(wildcard friend/*.hpp)
+GPTTYPE_ADAPTER = kcpp_src/gpttype_adapter.cpp kcpp_src/kcpp_backend.h kcpp_src/model_adapter.h kcpp_src/expose.h $(FRIEND_HEADERS) otherarch/otherarch.h include/llama.h otherarch/llama_v2.cpp otherarch/llama_v3.cpp otherarch/gptj_v1.cpp otherarch/gptj_v2.cpp otherarch/gptj_v3.cpp otherarch/gpt2_v1.cpp otherarch/gpt2_v2.cpp otherarch/gpt2_v3.cpp otherarch/rwkv_v2.cpp otherarch/rwkv_v3.cpp otherarch/neox_v2.cpp otherarch/neox_v3.cpp otherarch/mpt_v3.cpp
 gpttype_adapter_default.o: $(GPTTYPE_ADAPTER) common/fit.h
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
