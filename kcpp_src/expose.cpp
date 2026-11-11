@@ -385,6 +385,14 @@ extern "C"
        return gpttype_get_pending_output().c_str();
     }
 
+    // friend.cpp: "" when the adapter profile spec is valid for the loaded model, else why not.
+    // thread_local: HTTP handler threads validate concurrently.
+    const char* friend_validate_profile(const char * spec) {
+        static thread_local std::string err;
+        err = gpttype_friend_validate_profile(spec);
+        return err.c_str();
+    }
+
     bool abort_generate() {
         return gpttype_generate_abort();
     }
