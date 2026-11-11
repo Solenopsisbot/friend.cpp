@@ -1106,6 +1106,8 @@ def init_library():
     handle.music_generate.argtypes = [music_generation_inputs]
     handle.music_generate.restype = music_generation_outputs
     handle.last_logprobs.restype = last_logprobs_outputs
+    handle.friend_validate_profile.argtypes = [ctypes.c_char_p]
+    handle.friend_validate_profile.restype = ctypes.c_char_p
     handle.detokenize.argtypes = [detokenize_inputs]
     handle.detokenize.restype = ctypes.c_char_p
     handle.launch_rpc_server.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
@@ -2186,6 +2188,35 @@ def friend_adapter_profile_spec(genparams):
             raise ValueError(f"unknown head {head!r} (available: {known})")
         parts.append(f"H {head}")
     return ";".join(parts)
+
+def friend_adapter_request_error(genparams):
+    """friend.cpp: why this request's lora/steer/neurons/head fields can't run, or None.
+
+    Runs before the request is queued so the client gets a 400 naming the problem.
+    Python checks the format and pool names; the C++ side checks what only the loaded
+    model knows (e.g. neuron layer/index ranges). generate() still re-checks, so a request
+    that skips this (internal callers) fails safely, just with a less helpful message."""
+    try:
+        spec = friend_adapter_profile_spec(genparams)
+    except (ValueError, TypeError) as exc:
+        return str(exc)
+    if not spec:
+        return None
+    try:
+        err = handle.friend_validate_profile(spec.encode("UTF-8"))
+    except Exception:
+        return None  # library without the export; generate() will still enforce it
+    return err.decode("UTF-8", "ignore") if err else None
+
+def friend_invalid_request_body(message, api_format):
+    """Error JSON in the shape each API family's clients expect."""
+    if api_format in (3, 4, 8):   # OpenAI completions / chat / responses
+        return {"error": {"message": message, "type": "invalid_request_error", "param": None, "code": None}}
+    if api_format == 9:           # Anthropic messages
+        return {"type": "error", "error": {"type": "invalid_request_error", "message": message}}
+    if api_format in (6, 7):      # Ollama
+        return {"error": message}
+    return {"detail": {"msg": message, "type": "bad_input"}}  # KoboldAI, as for unparseable bodies
 
 def fetch_gpu_properties(testCU,testVK,testmemory=False):
     gpumem_ignore_limit_min = 1024*1024*600 #600 mb min
@@ -8189,6 +8220,19 @@ Change Mode<br>
                 if args.debugmode >= 1:
                     printablegenparams = truncate_long_json(genparams,trunc_len)
                     utfprint("\nAdapted Input: " + json.dumps(printablegenparams),1)
+
+                # friend.cpp: reject bad adapter fields up front with the actual reason,
+                # before the request takes a batch slot or the generation lock
+                if api_format > 0:
+                    adapter_err = friend_adapter_request_error(genparams)
+                    if adapter_err:
+                        utfprint(f"\nRejected request: {adapter_err}", 1)
+                        errbody = json.dumps(friend_invalid_request_body(adapter_err, api_format)).encode()
+                        self.send_response(400)
+                        self.send_header('content-length', str(len(errbody)))
+                        self.end_headers(content_type='application/json')
+                        self.wfile.write(errbody)
+                        return
 
                 if args.foreground:
                     bring_terminal_to_foreground()

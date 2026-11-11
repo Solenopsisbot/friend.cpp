@@ -6306,6 +6306,24 @@ std::string gpttype_detokenize(const std::vector<int> & inputids, bool render_sp
     return output;
 }
 
+// friend.cpp: check a request's adapter profile spec (see friend/adapters.hpp) against the
+// loaded model before the request is queued, so the HTTP layer can answer 400 with the
+// actual reason instead of a generic generation failure. Returns "" when the spec is valid.
+// Does not apply anything: parse_profile only reads the (load-time) registry.
+std::string gpttype_friend_validate_profile(const char * spec)
+{
+    const std::string s = spec ? spec : "";
+    if (!friend_profiles_loaded) {
+        return s.empty() ? "" : "LoRA/steering/neuron/head selection needs a GGUF text model";
+    }
+    friend_adapters::profile profile;
+    std::string err;
+    if (!friend_adapters::parse_profile(s.c_str(), profile, err)) {
+        return err.empty() ? std::string("invalid adapter profile") : err;
+    }
+    return "";
+}
+
 const std::string & gpttype_get_pending_output()
 {
     // Keep the returned storage alive until this thread's next call.
