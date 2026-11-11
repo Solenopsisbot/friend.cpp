@@ -10,8 +10,9 @@
 //   - LoRA set change   -> llama re-reserves its scheduler on the next decode (ms-scale)
 //                          and INVALIDATES KV computed under a different set
 //   - control vectors   -> same as LoRA (re-reserve + KV invalidation)
+//   - neuron doses      -> folded into the control vector, so same as cvecs
 //   - head swap         -> graph rebuild only; KV stays valid (only logits change)
-// So `profile::kv_key` covers LoRA + cvec only, and caches must key on it; the head is
+// So `profile::kv_key` covers LoRA + cvec + neurons only, and caches must key on it; the head is
 // tracked separately in `profile::head_key`.
 //
 // Wire format (built by koboldcpp.py, which validates names first):
@@ -25,6 +26,13 @@
 //           "L <name> <scale>"   LoRA
 //           "C <name> <strength>" control vector
 //           "H <name>"           head
+//           "N <layer> <neuron> <dose>"  neuron steering: add `dose` to residual-stream
+//                                channel `neuron` (0..n_embd-1) at the output of block
+//                                `layer` (1..n_layer-1, control-vector numbering; block 0
+//                                has no cvec slot in llama). Composed into the same
+//                                per-layer bias tensor as "C" entries, so it costs nothing
+//                                extra at decode time and works on every architecture
+//                                that already supports control vectors.
 
 #include "llama.h"
 #include "vendor/hash/hash.h"
@@ -32,6 +40,7 @@
 #include "common/common.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <map>
@@ -78,9 +87,17 @@ struct head_entry {
     llama_adapter_head * head = nullptr;
 };
 
+// One neuron-steering term. Ordered by (layer, neuron) so profiles canonicalise.
+struct neuron_dose {
+    int32_t layer  = 0;
+    int32_t neuron = 0;
+    float   dose   = 0.0f;
+};
+
 struct profile {
     std::vector<std::pair<int, float>> loras; // (pool index, scale), sorted, non-zero only
     std::vector<std::pair<int, float>> cvecs; // (pool index, strength), sorted, non-zero only
+    std::vector<neuron_dose> neurons;         // sorted by (layer, neuron), merged, non-zero only
     int head = -1;                            // pool index, -1 = model's own head
 
     std::string cache_salt; // SHA-256 namespace supplied by the request
@@ -270,6 +287,16 @@ static int find_by_name(const std::vector<T> & pool, const std::string & name) {
     return -1;
 }
 
+// Identity of a profile's neuron doses (part of kv_key and of the applied-cvec key).
+// Many doses make for a long string; keys are only compared and hashed, so that's fine.
+inline std::string neuron_key(const profile & p) {
+    std::string k;
+    for (const auto & n : p.neurons) {
+        k += "N:" + std::to_string(n.layer) + ":" + std::to_string(n.neuron) + "@" + fmt_scale(n.dose) + ";";
+    }
+    return k;
+}
+
 // Canonicalise: drop zero weights, sort, compute keys.
 inline void finalize(profile & p) {
     auto & r = reg();
@@ -290,6 +317,25 @@ inline void finalize(profile & p) {
     canon(p.loras);
     canon(p.cvecs);
 
+    // neurons: same treatment, keyed on (layer, neuron)
+    {
+        auto & v = p.neurons;
+        std::sort(v.begin(), v.end(), [](const neuron_dose & a, const neuron_dose & b) {
+            return a.layer != b.layer ? a.layer < b.layer : a.neuron < b.neuron;
+        });
+        std::vector<neuron_dose> merged;
+        for (const auto & e : v) {
+            if (!merged.empty() && merged.back().layer == e.layer && merged.back().neuron == e.neuron) {
+                merged.back().dose += e.dose;
+            } else {
+                merged.push_back(e);
+            }
+        }
+        // drop zeros *after* merging, so {+2, -2} on the same neuron cancels to nothing
+        merged.erase(std::remove_if(merged.begin(), merged.end(), [](const neuron_dose & e) { return e.dose == 0.0f; }), merged.end());
+        v.swap(merged);
+    }
+
     std::string k;
     for (const auto & [i, s] : p.loras) {
         k += "L:" + r.loras[i].name + "#" + r.loras[i].ident + "@" + fmt_scale(s) + ";";
@@ -297,6 +343,7 @@ inline void finalize(profile & p) {
     for (const auto & [i, s] : p.cvecs) {
         k += "C:" + r.cvecs[i].name + "#" + r.cvecs[i].ident + "@" + fmt_scale(s) + ";";
     }
+    k += neuron_key(p);
     p.execution_key = k;
     p.kv_key = k + (p.cache_salt.empty() ? "" : "S:" + p.cache_salt + ";");
     p.head_key = p.head >= 0 ? r.heads[p.head].name : "";
@@ -339,6 +386,25 @@ inline bool parse_profile_impl(const char * spec, profile & out, std::string & e
             const int i = find_by_name(r.cvecs, f[1]);
             if (i < 0) { err = "unknown control vector '" + f[1] + "'"; return false; }
             out.cvecs.emplace_back(i, std::stof(f[2]));
+        } else if (f[0] == "N" && f.size() == 4) {
+            neuron_dose n;
+            n.layer  = std::stoi(f[1]);
+            n.neuron = std::stoi(f[2]);
+            n.dose   = std::stof(f[3]);
+            // koboldcpp.py checks the format; only C++ knows the model's shape
+            if (n.layer < 1 || n.layer >= r.n_layer) {
+                err = "neuron steering layer " + f[1] + " out of range (valid: 1.." + std::to_string(r.n_layer - 1) + ")";
+                return false;
+            }
+            if (n.neuron < 0 || n.neuron >= r.n_embd) {
+                err = "neuron steering index " + f[2] + " out of range (valid: 0.." + std::to_string(r.n_embd - 1) + ")";
+                return false;
+            }
+            if (!std::isfinite(n.dose)) {
+                err = "neuron steering dose for " + f[1] + ":" + f[2] + " must be finite";
+                return false;
+            }
+            out.neurons.push_back(n);
         } else if (f[0] == "H" && f.size() == 2) {
             const int i = find_by_name(r.heads, f[1]);
             if (i < 0) { err = "unknown head '" + f[1] + "'"; return false; }
@@ -361,24 +427,30 @@ inline bool parse_profile_impl(const char * spec, profile & out, std::string & e
 inline bool parse_profile(const char * spec, profile & out, std::string & err) {
     try {
         return parse_profile_impl(spec, out, err);
-    } catch (const std::exception & e) { // std::stof on a malformed number
+    } catch (const std::exception & e) { // std::stof / std::stoi on a malformed number
         err = std::string("malformed adapter profile: ") + e.what();
         return false;
     }
 }
 
-// Composite steering vector for a profile (sum of strength * direction).
+// Composite steering vector for a profile: sum of strength * direction, plus each neuron
+// dose at its (layer, channel). Always covers every cvec slot (layers 1..n_layer-1):
+// llama_set_adapter_cvec only overwrites the layers the buffer reaches, so a shorter
+// buffer would leave a previous profile's values live in the remaining layers.
 inline std::vector<float> compose_cvec(const profile & p) {
     auto & r = reg();
-    std::vector<float> data;
+    const size_t full = (size_t) r.n_embd * (size_t) std::max(r.n_layer - 1, 0);
+    std::vector<float> data(full, 0.0f);
     for (const auto & [i, s] : p.cvecs) {
         const auto & src = r.cvecs[i].data;
-        if (data.size() < src.size()) {
-            data.resize(src.size(), 0.0f);
-        }
-        for (size_t j = 0; j < src.size(); ++j) {
+        const size_t n = std::min(src.size(), data.size());
+        for (size_t j = 0; j < n; ++j) {
             data[j] += s * src[j];
         }
+    }
+    for (const auto & nd : p.neurons) {
+        // layer 1 lives at offset 0 (common_control_vector layout); range-checked in parse
+        data[(size_t) (nd.layer - 1) * r.n_embd + nd.neuron] += nd.dose;
     }
     return data;
 }
@@ -401,6 +473,7 @@ inline bool apply(const profile & p, const std::vector<llama_context *> & ctxs) 
     for (const auto & [i, s] : p.cvecs) {
         cvec_key += r.cvecs[i].name + "#" + r.cvecs[i].ident + "@" + fmt_scale(s) + ";";
     }
+    cvec_key += neuron_key(p);
 
     std::vector<float> cvec_data;
     bool cvec_composed = false;
@@ -429,7 +502,7 @@ inline bool apply(const profile & p, const std::vector<llama_context *> & ctxs) 
         const std::string & have = it_c == r.applied_cvec.end() ? std::string() : it_c->second;
         if (have != cvec_key) {
             int32_t rc;
-            if (p.cvecs.empty()) {
+            if (p.cvecs.empty() && p.neurons.empty()) {
                 rc = llama_set_adapter_cvec(ctx, nullptr, 0, r.n_embd, -1, -1);
             } else {
                 if (!cvec_composed) {
