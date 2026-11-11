@@ -7000,6 +7000,8 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         std::string err;
         if (!friend_adapters::parse_profile(inputs.adapter_profile, profile, err) ||
             !friend_adapters::apply(profile, friend_model_contexts())) {
+            // friend.cpp: say why; the HTTP layer only reports a generic failure
+            if (!err.empty()) fprintf(stderr, "friend: invalid adapter profile: %s\n", err.c_str());
             output.text = nullptr;
             output.status = 0;
             output.prompt_tokens = output.completion_tokens = 0;

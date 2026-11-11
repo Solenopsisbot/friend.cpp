@@ -117,11 +117,11 @@ class Pool:
         try:
             value = json.loads(body.decode()) if body else {}
             sticky = value.get("cache_salt") or value.get("session_id")
-            # LoRA, steering vectors and heads mutate context-local state. Keep
+            # LoRA, steering vectors, neuron doses and heads mutate context-local state. Keep
             # each execution profile on one replica so its KV and adapter state
             # never cross a lane boundary. The canonical JSON also makes routing
             # stable across requests that use different key ordering.
-            profile = {key: value[key] for key in ("lora", "steer", "cvec", "head") if key in value}
+            profile = {key: value[key] for key in ("lora", "steer", "cvec", "neurons", "steer_neurons", "head") if key in value}
             if profile:
                 profile_key = json.dumps(profile, sort_keys=True, separators=(",", ":"))
                 sticky = f"{sticky or ''}|{profile_key}"

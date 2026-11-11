@@ -210,6 +210,14 @@ If the `lora` field is present, it **replaces** the default-on adapters for that
 ```
 Strengths are multipliers on each stored direction vector. Multiple vectors are summed.
 
+**Neuron steering** -- `"neurons"` (alias `"steer_neurons"`):
+```json
+{"neurons": {"12:4071": 3.5, "12:88": -2.0, "20:4071": 1.0}}
+```
+Each key is `"<layer>:<neuron>"`, and the value is a dose added straight to that residual-stream channel. No pool file needed. `layer` uses control-vector numbering: the dose goes on the output of transformer block `layer`, valid from `1` to `n_layer-1`. Block 0 has no steering slot in llama. `neuron` is a hidden-state channel from `0` to `n_embd-1`. Repeated keys (or the same key across a list of objects) add together, and a dose of `0` is dropped.
+
+Doses go into the same per-layer bias as `"steer"`, so the two combine freely and cost nothing extra at decode time. They also behave the same way for caching: a different set of doses means different KV, so the prompt cache and the batcher key on them. An out-of-range layer or neuron fails the request. Up to 65536 doses per request.
+
 **LM head** -- `"head"`:
 ```json
 {"head": "rook"}
@@ -238,7 +246,7 @@ Returns:
 
 This matters for performance, so pay attention to it:
 
-- **LoRA or steering vector changes invalidate the KV cache.** The prompt cache keys on the adapter set, so each unique combination gets its own cached prefixes. Switching adapters means reprocessing the prompt (or restoring a cache snapshot for that adapter set).
+- **LoRA, steering vector or neuron-dose changes invalidate the KV cache.** The prompt cache keys on the adapter set, so each unique combination gets its own cached prefixes. Switching adapters means reprocessing the prompt (or restoring a cache snapshot for that adapter set).
 - **Head swaps do NOT invalidate the KV cache.** The head only affects the final projection after the transformer stack, so switching heads per request is nearly free. This is why head-only fine-tunes are the recommended approach for per-persona customisation.
 
 ### Building steering vectors

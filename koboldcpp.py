@@ -2135,6 +2135,40 @@ def _friend_weighted_names(value, kind):
         out.append((name, w))
     return out
 
+_friend_neuron_key_re = re.compile(r'^\s*(\d+)\s*:\s*(\d+)\s*$')
+FRIEND_NEURON_STEER_MAX = 65536   # entries per request; each is one float in the composed cvec
+
+def _friend_neuron_doses(value):
+    """friend.cpp: parses neuron steering, {"<layer>:<neuron>": dose, ...} -> [(layer, neuron, dose)].
+
+    `layer` uses control-vector numbering (the output of block `layer`, 1..n_layer-1) and
+    `neuron` is a residual-stream channel (0..n_embd-1). Only the format is checked here;
+    the C++ side knows the model's shape and rejects out-of-range indices.
+    Also accepts a list of such objects, which merge (repeated keys sum)."""
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        value = [value]
+    if not isinstance(value, list):
+        raise ValueError("'neurons' must be an object like {\"<layer>:<neuron>\": dose}")
+    out = []
+    for chunk in value:
+        if not isinstance(chunk, dict):
+            raise ValueError(f"bad neurons entry {chunk!r}: expected {{\"<layer>:<neuron>\": dose}}")
+        for key, dose in chunk.items():
+            m = _friend_neuron_key_re.match(str(key))
+            if not m:
+                raise ValueError(f"bad neuron key {key!r}: expected \"<layer>:<neuron>\", e.g. \"12:4071\"")
+            if isinstance(dose, bool) or not isinstance(dose, (int, float, str)):
+                raise ValueError(f"neuron {key!r} dose must be a number")
+            dose = float(dose)
+            if not math.isfinite(dose):
+                raise ValueError(f"neuron {key!r} dose must be finite")
+            out.append((int(m.group(1)), int(m.group(2)), dose))
+    if len(out) > FRIEND_NEURON_STEER_MAX:
+        raise ValueError(f"too many neuron doses ({len(out)} > {FRIEND_NEURON_STEER_MAX})")
+    return out
+
 def friend_adapter_profile_spec(genparams):
     """Request fields -> C++ profile spec (see friend/adapters.hpp). Raises ValueError."""
     parts = []
@@ -2143,6 +2177,8 @@ def friend_adapter_profile_spec(genparams):
         parts += [f"L {n} {w!r}" for n, w in _friend_weighted_names(genparams.get("lora"), "lora")]
     steer = genparams.get("cvec", genparams.get("steer", None))
     parts += [f"C {n} {w!r}" for n, w in _friend_weighted_names(steer, "cvec")]
+    neurons = genparams.get("neurons", genparams.get("steer_neurons", None))
+    parts += [f"N {l} {n} {d!r}" for l, n, d in _friend_neuron_doses(neurons)]
     head = genparams.get("head", None)
     if head:
         if not isinstance(head, str) or head not in friend_adapter_pools["head"]:
